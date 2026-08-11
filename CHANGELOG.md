@@ -2,6 +2,11 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.4.0] — 2026-08-11
+
+### Added
+- Advisory markdown audit hook (`hooks/`): after Claude writes or edits a `.md` file, a `PostToolUse` hook audits it with the Part 4 rule engine and feeds one terse per-rule line back as context. It never blocks a write, stays silent when the file is clean, and skips non-markdown files, `node_modules`, and `.git`. Per-project off switch: `.iso-24495-4/hooks.json` with `{"markdownAudit": false}`; an unreadable switch file leaves the hook on. Plain-language checks for script comments are deferred to 0.5.0.
+
 ## [0.3.1] — 2026-08-11
 
 ### Fixed

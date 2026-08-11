@@ -62,6 +62,18 @@ The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-
 
 When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. Without a config it waits, watching for one to appear; it never exits on its own, so the host never raises a "task ended" notification. Removing the config mid-session returns it to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
+## Advisory markdown hook (Claude Code)
+
+The plugin ships a `PostToolUse` hook (`hooks/`) that audits every markdown file Claude writes or edits, using the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts; a clean file produces nothing. The hook never blocks a write.
+
+To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
+
+```json
+{ "markdownAudit": false }
+```
+
+It requires Bun and is Claude Code-specific; the skills themselves work without it.
+
 ## Releasing a new version
 
 Installs are pinned to tagged releases: the marketplace manifest points at a `vX.Y.Z` tag, so `main` can move without affecting users. To ship a release:

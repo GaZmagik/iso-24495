@@ -2,7 +2,7 @@
 name: iso-24495-5
 description: Provisional sector-specific Plain Language standard for document design (based on ISO/WD 24495-5, under development). Applied when structuring complex documents so readers can find and navigate content through layout, visual hierarchy, and navigation aids.
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
   iso-standard: "ISO/WD 24495-5"
   iso-status: "working-draft"
 ---
