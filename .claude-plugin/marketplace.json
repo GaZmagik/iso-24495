@@ -13,7 +13,11 @@
       "author": {
         "name": "Gareth Williams"
       },
-      "source": "./",
+      "source": {
+        "source": "github",
+        "repo": "GaZmagik/iso-24495",
+        "ref": "v0.3.0"
+      },
       "skills": [
         "./skills/iso-24495-1",
         "./skills/iso-24495-2",
