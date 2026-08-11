@@ -167,6 +167,36 @@ describe("startMonitor", () => {
     expect(lines).toHaveLength(1);
   });
 
+  test("does not re-report an already reported change on later syncs", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
+  test("the interval alone detects changes when no watcher can (pollOnly)", async () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { intervalMs: 100, pollOnly: true });
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+    expect(lines).toHaveLength(0);
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    const deadline = Date.now() + 5000;
+    while (lines.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
   test("the entry point process stays alive when no config exists", async () => {
     const script = join(import.meta.dir, "..", "scripts", "watch-corpus.ts");
     const proc = Bun.spawn(["bun", script], {

@@ -6,6 +6,11 @@
 // delivers as a notification. Removing the config mid-session returns the
 // monitor to the waiting state. It never exits on its own, so the host never
 // reports it as an ended task.
+//
+// The engagement is driven by the config, not by watcher handles: the scan
+// runs on every sync while a valid config and corpus exist, whether or not
+// the OS watcher survives. Watchers only make reporting faster; the interval
+// bounds the delay when they fail.
 
 import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { join, relative } from "node:path";
@@ -15,14 +20,21 @@ export interface MonitorConfig {
   corpusDir: string;
 }
 
+export interface MonitorOptions {
+  intervalMs?: number;
+  // Polling-only mode: no OS watchers, the interval does all detection.
+  // Useful where fs.watch is unreliable, and for pinning the interval in tests.
+  pollOnly?: boolean;
+}
+
 export interface Monitor {
   sync(): void;
   watchedCorpus(): string | null;
   stop(): void;
 }
 
-// Safety net for missed or errored watch events; also keeps the event loop
-// alive even if every watcher has been torn down.
+// Bounds the reporting delay when watch events are missed, errored, or
+// filename-less; also keeps the event loop alive when no watcher is open.
 const SYNC_INTERVAL_MS = 30_000;
 
 export function loadMonitorConfig(cwd: string): MonitorConfig | null {
@@ -63,14 +75,18 @@ function totalsFor(path: string): Record<string, number> {
 export function startMonitor(
   cwd: string,
   emit: (line: string) => void = console.log,
+  options: MonitorOptions = {},
 ): Monitor {
+  const intervalMs = options.intervalMs ?? SYNC_INTERVAL_MS;
+  const pollOnly = options.pollOnly ?? false;
   const configDir = join(cwd, ".iso-24495-4");
   const baselines = new Map<string, Record<string, number>>();
   const stamps = new Map<string, { mtimeMs: number; size: number }>();
   let cwdWatcher: FSWatcher | null = null;
   let configWatcher: FSWatcher | null = null;
   let corpusWatcher: FSWatcher | null = null;
-  let corpusPath: string | null = null;
+  let engagedCorpus: string | null = null;
+  let primed = false;
 
   function closeQuietly(watcher: FSWatcher): void {
     try {
@@ -81,14 +97,14 @@ export function startMonitor(
   }
 
   // Audits every corpus file whose mtime or size moved since the last scan,
-  // and reports deletions. Watch events and the interval both funnel here, so
-  // a missed or filename-less event only delays a report, never loses it.
-  // The first scan after a corpus watch starts runs with emitDeltas false: it
-  // primes baselines so pre-existing violations are not reported as changes.
-  function scanCorpus(emitDeltas: boolean): void {
-    if (!corpusPath) return;
+  // and reports deletions. Returns false when enumeration itself failed, so
+  // a failed priming pass is retried instead of being marked done. The first
+  // scan of an engagement runs with emitDeltas false: it primes baselines so
+  // pre-existing violations are not reported as changes.
+  function scanCorpus(emitDeltas: boolean): boolean {
+    if (!engagedCorpus) return false;
     try {
-      const files = listTextFiles(corpusPath);
+      const files = listTextFiles(engagedCorpus);
       const present = new Set(files);
       for (const full of files) {
         try {
@@ -100,7 +116,7 @@ export function startMonitor(
           stamps.set(full, { mtimeMs: stat.mtimeMs, size: stat.size });
           baselines.set(full, after);
           if (emitDeltas) {
-            const line = formatDelta(relative(corpusPath, full).replaceAll("\\", "/"), before, after);
+            const line = formatDelta(relative(engagedCorpus, full).replaceAll("\\", "/"), before, after);
             if (line) emit(line);
           }
         } catch {
@@ -109,19 +125,20 @@ export function startMonitor(
       }
       for (const known of [...baselines.keys()]) {
         if (present.has(known)) continue;
-        const line = formatDelta(relative(corpusPath, known).replaceAll("\\", "/"), baselines.get(known)!, {});
+        const line = formatDelta(relative(engagedCorpus, known).replaceAll("\\", "/"), baselines.get(known)!, {});
         baselines.delete(known);
         stamps.delete(known);
         if (emitDeltas && line) emit(line);
       }
+      return true;
     } catch {
-      // The corpus directory vanished mid-scan; the next sync tears the
-      // watcher down and returns to waiting.
+      // The corpus directory vanished mid-scan; the next sync disengages.
+      return false;
     }
   }
 
   function sync(): void {
-    if (!cwdWatcher) {
+    if (!pollOnly && !cwdWatcher) {
       try {
         cwdWatcher = watch(cwd, (_event, filename) => {
           if (!filename || filename.toString() === ".iso-24495-4") sync();
@@ -134,7 +151,7 @@ export function startMonitor(
       }
     }
 
-    if (existsSync(configDir)) {
+    if (!pollOnly && existsSync(configDir)) {
       if (!configWatcher) {
         try {
           configWatcher = watch(configDir, () => sync());
@@ -154,38 +171,44 @@ export function startMonitor(
     let desired = config ? join(cwd, config.corpusDir) : null;
     if (desired && !existsSync(desired)) desired = null;
 
-    if (corpusWatcher && corpusPath !== desired) {
-      closeQuietly(corpusWatcher);
-      corpusWatcher = null;
-      corpusPath = null;
+    if (desired !== engagedCorpus) {
+      if (corpusWatcher) {
+        closeQuietly(corpusWatcher);
+        corpusWatcher = null;
+      }
       baselines.clear();
       stamps.clear();
+      engagedCorpus = desired;
+      primed = false;
     }
-    let primed = false;
-    if (desired && !corpusWatcher) {
-      try {
-        corpusWatcher = watch(desired, { recursive: true }, () => sync());
-        corpusWatcher.on("error", () => {
+
+    if (engagedCorpus) {
+      // Prime before installing the watcher: an edit landing between the two
+      // then shows as a stamp change on the next scan instead of being
+      // silently absorbed into the baseline.
+      if (!primed) primed = scanCorpus(false);
+      else scanCorpus(true);
+      if (!pollOnly && !corpusWatcher) {
+        try {
+          corpusWatcher = watch(engagedCorpus, { recursive: true }, () => sync());
+          corpusWatcher.on("error", () => {
+            // Scanning continues without the watcher; the interval bounds the
+            // reporting delay and the next sync reinstalls it.
+            corpusWatcher = null;
+          });
+        } catch {
           corpusWatcher = null;
-          corpusPath = null;
-        });
-        corpusPath = desired;
-        scanCorpus(false);
-        primed = true;
-      } catch {
-        corpusWatcher = null;
-        corpusPath = null;
+        }
       }
     }
-    if (!primed) scanCorpus(true);
   }
 
-  const timer = setInterval(sync, SYNC_INTERVAL_MS);
+  const timer = setInterval(sync, intervalMs);
   sync();
 
   return {
     sync,
-    watchedCorpus: () => corpusPath,
+    watchedCorpus: () => engagedCorpus,
     stop() {
       clearInterval(timer);
       for (const watcher of [cwdWatcher, configWatcher, corpusWatcher]) {
@@ -194,7 +217,7 @@ export function startMonitor(
       cwdWatcher = null;
       configWatcher = null;
       corpusWatcher = null;
-      corpusPath = null;
+      engagedCorpus = null;
       baselines.clear();
       stamps.clear();
     },

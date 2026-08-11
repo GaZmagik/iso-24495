@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditCorpus, listTextFiles } from "../scripts/audit-corpus.ts";
 
@@ -11,6 +13,20 @@ describe("listTextFiles", () => {
     expect(files).toHaveLength(4);
     expect(files).toContain(join(root, "docs", "plain-language-policy.md"));
     expect(files.some((f) => f.endsWith(".yml"))).toBe(false);
+  });
+
+  test("skips entries that cannot be inspected instead of aborting the walk", () => {
+    const root = mkdtempSync(join(tmpdir(), "iso-24495-4-walk-"));
+    try {
+      writeFileSync(join(root, "good.md"), "A short sentence.\n");
+      const target = join(root, "target-dir");
+      mkdirSync(target);
+      symlinkSync(target, join(root, "dangling"), "junction");
+      rmSync(target, { recursive: true, force: true });
+      expect(listTextFiles(root)).toEqual([join(root, "good.md")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

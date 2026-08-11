@@ -61,10 +61,24 @@ export function auditText(text: string): Violation[] {
 }
 
 function walk(dir: string, root: string, out: string[]): void {
-  for (const entry of readdirSync(dir)) {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    // An unreadable directory yields nothing rather than aborting the walk.
+    return;
+  }
+  for (const entry of entries) {
     if (entry === "node_modules" || entry === ".git") continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+    let isDirectory: boolean;
+    try {
+      isDirectory = statSync(full).isDirectory();
+    } catch {
+      // Dangling links and permission failures skip the entry, not the walk.
+      continue;
+    }
+    if (isDirectory) {
       walk(full, root, out);
     } else if (TEXT_EXTENSIONS.some((ext) => entry.toLowerCase().endsWith(ext))) {
       out.push(full);
