@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { adviseOnFile } from "../audit-markdown.ts";
@@ -25,7 +25,7 @@ describe("adviseOnFile", () => {
     }
   });
 
-  test("stays quiet for a compliant file", () => {
+  test("stays quiet for a clean file", () => {
     const cwd = makeProject();
     try {
       const file = join(cwd, "notes.md");
@@ -84,6 +84,51 @@ describe("adviseOnFile", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test("skips files under node_modules and .git even when they violate", () => {
+    const cwd = makeProject();
+    try {
+      for (const dir of ["node_modules", ".git"]) {
+        mkdirSync(join(cwd, dir), { recursive: true });
+        const file = join(cwd, dir, "readme.md");
+        writeFileSync(file, "The supplier shall hereby comply.\n");
+        expect(adviseOnFile(file, cwd)).toBeNull();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("covers every violated rule across the whole file in one line", () => {
+    const cwd = makeProject();
+    try {
+      const file = join(cwd, "policy.md");
+      writeFileSync(
+        file,
+        "A short opening sentence.\n\n##### Far Too Deep A Heading\n\nThe supplier shall comply.\n",
+      );
+      const advice = adviseOnFile(file, cwd);
+      expect(advice).not.toBeNull();
+      expect(advice).toContain("heading-depth 1");
+      expect(advice).toContain("legalese 1");
+      expect(advice).not.toContain("\n");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hooks.json contract", () => {
+  test("registers the audit script for Write and Edit under the plugin root", () => {
+    const config = JSON.parse(
+      readFileSync(join(import.meta.dir, "..", "hooks.json"), "utf8"),
+    );
+    const entry = config.hooks.PostToolUse[0];
+    expect(entry.matcher).toBe("Write|Edit");
+    expect(entry.hooks[0].type).toBe("command");
+    expect(entry.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown.ts");
+    expect(entry.hooks[0].command).toStartWith("bun ");
+  });
 });
 
 describe("hook entry point", () => {
@@ -133,6 +178,38 @@ describe("hook entry point", () => {
       expect(stdout.trim()).toBe("");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("anchors the off switch to CLAUDE_PROJECT_DIR, not the mutable cwd", async () => {
+    const project = makeProject();
+    try {
+      mkdirSync(join(project, ".iso-24495-4"));
+      writeFileSync(
+        join(project, ".iso-24495-4", "hooks.json"),
+        JSON.stringify({ markdownAudit: false }),
+      );
+      mkdirSync(join(project, "src"));
+      const file = join(project, "src", "policy.md");
+      writeFileSync(file, "The supplier shall hereby comply.\n");
+      const proc = Bun.spawn(["bun", script], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+        env: { ...process.env, CLAUDE_PROJECT_DIR: project },
+      });
+      proc.stdin.write(JSON.stringify({
+        hook_event_name: "PostToolUse",
+        tool_name: "Write",
+        cwd: join(project, "src"),
+        tool_input: { file_path: file },
+      }));
+      proc.stdin.end();
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      expect(stdout.trim()).toBe("");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
     }
   });
 

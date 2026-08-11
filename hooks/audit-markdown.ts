@@ -46,18 +46,22 @@ export function adviseOnFile(filePath: string, cwd: string): string | null {
   if (parts.length === 0) return null;
   return (
     `iso-24495 plain-language advisory for ${basename(filePath)}: ` +
-    `${parts.join(", ")}. Consider revising towards shorter sentences and ` +
-    `plainer words; this is advisory only.`
+    `${parts.join(", ")} (whole-file counts). This is advisory only.`
   );
 }
 
 if (import.meta.main) {
-  // Advisory contract: exit 0 always, stdout only when there is something to
-  // say. A hook failure must never become tool-call noise.
+  // Advisory contract: the script itself always exits 0 and prints only when
+  // there is something to say. (Environmental failures — bun missing, the
+  // command not starting — are outside this script's control and surface as
+  // a hook-error notice, which is accepted.)
   try {
     const input = JSON.parse(readFileSync(0, "utf8")) as HookInput;
     const filePath = input?.tool_input?.file_path;
-    const cwd = input?.cwd ?? process.cwd();
+    // The off switch anchors to the stable project root, not the session's
+    // mutable cwd — `cd src` must not disable a project's configuration.
+    // Writes outside the project consult the session project's switch.
+    const cwd = process.env.CLAUDE_PROJECT_DIR ?? input?.cwd ?? process.cwd();
     const advice = filePath ? adviseOnFile(filePath, cwd) : null;
     if (advice) {
       console.log(JSON.stringify({

@@ -5,7 +5,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ## [0.4.0] — 2026-08-11
 
 ### Added
-- Advisory markdown audit hook (`hooks/`): after Claude writes or edits a `.md` file, a `PostToolUse` hook audits it with the Part 4 rule engine and feeds one terse per-rule line back as context. It never blocks a write, stays silent when the file is clean, and skips non-markdown files, `node_modules`, and `.git`. Per-project off switch: `.iso-24495-4/hooks.json` with `{"markdownAudit": false}`; an unreadable switch file leaves the hook on. Plain-language checks for script comments are deferred to 0.5.0.
+- Advisory markdown audit hook (`hooks/`): after Claude writes or edits a `.md` file, a `PostToolUse` hook audits it with the Part 4 rule engine and feeds one terse per-rule line back as context. It never blocks a write, stays silent when the file is clean, and skips non-markdown files, `node_modules`, and `.git`. Per-project off switch: `.iso-24495-4/hooks.json` with `{"markdownAudit": false}`, anchored to the stable project root (`CLAUDE_PROJECT_DIR`) so changing directory mid-session cannot disable it; an unreadable switch file leaves the hook on. Plain-language checks for script comments are deferred to 0.5.0.
 
 ### Changed
 - Conformance language tightened across the plugin: example labels renamed from "Compliant" to "Aligned", the core skill and output style now state that their quantitative rules are this project's own proxies for the standard's public principles, and the README carries an explicit conformance disclaimer. The licensed ISO texts have not been consulted; nothing the plugin produces claims ISO conformance.
