@@ -2,7 +2,7 @@
 name: iso-24495-4
 description: Provisional task skill for organisational plain language implementation (based on ISO/CD 24495-4, committee draft). Activates for plain language gap analysis, policy drafting, review workflow design, and certification readiness in organisations. Does not activate for ordinary writing, rewriting, or reviewing of individual documents.
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
   iso-standard: "ISO/CD 24495-4"
   iso-status: "committee-draft"
 ---
