@@ -1,8 +1,8 @@
 ---
 name: iso-24495-4
-description: Provisional task skill for organisational plain language implementation (based on ISO/CD 24495-4, committee draft). Activates for plain language gap analysis, policy drafting, review workflow design, and certification readiness in organisations. Does not activate for ordinary writing, rewriting, or reviewing of individual documents.
+description: Provisional task skill for organisational plain language implementation (based on ISO/CD 24495-4, committee draft). Activates for plain language gap analysis, policy drafting, review workflow design, and organisational readiness for the future published standard. Does not activate for ordinary writing, rewriting, or reviewing of individual documents.
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
   iso-standard: "ISO/CD 24495-4"
   iso-status: "committee-draft"
 ---
@@ -16,7 +16,7 @@ Turns the agent from a copy editor into an implementation consultant. It assesse
 ## Scope & Execution Boundaries
 
 1. **Activation Rules:**
-   - **Activate for:** plain language gap analysis, maturity assessment, policy or style guide drafting, review workflow design, training planning, certification readiness.
+   - **Activate for:** plain language gap analysis, maturity assessment, policy or style guide drafting, review workflow design, training planning, readiness for the future published standard.
    - **Never activate for:** writing, rewriting, summarising, or reviewing an individual document. Those tasks belong to `iso-24495-1`, `-2`, `-3`, and `-5`.
 
 2. **Confirmation Before Sweeps:**
@@ -52,9 +52,9 @@ Run the four steps in order. Each feeds the next.
 ## Contrastive Examples
 
 ### Example 1: Reporting a Gap
-* ❌ **Non-compliant (Vague, Unevidenced):**
+* ❌ **Not aligned (Vague, Unevidenced):**
   > "The organisation's culture around plain language seems weak and should be improved."
-* ✅ **ISO/CD 24495-4 (Draft) Compliant:**
+* ✅ **ISO/CD 24495-4 (Draft) Aligned:**
   > **Culture: Level 1.** Leadership is aware of the policy (confirmed in interview) but does not champion it: no leader has communicated it in the last year and no feedback loop exists. **Action (unblocks `leadership-champions`):** the policy owner asks one executive sponsor to open the next all-hands with a plain language example.
 
 ## Pre-Output Self-Audit Checklist

@@ -52,6 +52,8 @@ This is an unofficial project. It is not affiliated with, endorsed by, or approv
 
 Publication status of the underlying standards: Part 1 published 2023, Part 2 published August 2025, Part 3 published May 2026. Part 5 (document design) is an unpublished working draft (ISO/WD 24495-5); the `iso-24495-5` skill is provisional guidance based on its public scope and will be revised when the standard is published.
 
+**Conformance disclaimer.** The full ISO 24495 texts are licensed and have not been consulted. These skills are built from the standards' public principles (which derive from the International Plain Language Federation's freely published framework), their published scopes and abstracts, and common plain-language practice. Every quantitative rule in this plugin (sentence length, paragraph length, legalese terms, heading depth) is this project's own proxy, not a clause of any standard. Nothing this plugin produces is a statement of ISO conformance, and no certification scheme exists for ISO 24495 in any case. "Aligned" in the skills means aligned with this plugin's interpretation of the principles, nothing more.
+
 ## Background monitor (Claude Code)
 
 The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-4` engagements. It stays silent unless the working directory contains `.iso-24495-4/monitor.json` naming a corpus directory:
@@ -61,6 +63,18 @@ The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-
 ```
 
 When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. Without a config it waits, watching for one to appear; it never exits on its own, so the host never raises a "task ended" notification. Removing the config mid-session returns it to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
+
+## Advisory markdown hook (Claude Code)
+
+The plugin ships a `PostToolUse` hook (`hooks/`) that audits every markdown file Claude writes or edits, using the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts; a clean file produces nothing. The hook never blocks a write.
+
+To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
+
+```json
+{ "markdownAudit": false }
+```
+
+It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
 ## Releasing a new version
 

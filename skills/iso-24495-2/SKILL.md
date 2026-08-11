@@ -2,7 +2,7 @@
 name: iso-24495-2
 description: Sector-specific Plain Language standard for legal communication (ISO 24495-2:2025). Applied during contract drafting, license review, and legal/compliance writing.
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
   iso-standard: "ISO 24495-2:2025"
   iso-status: "published"
 ---
@@ -44,9 +44,9 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 ## Contrastive Examples
 
 ### Example 1: Contractual Obligation
-* ❌ **Non-compliant (Archaic Legalese):**
+* ❌ **Not aligned (Archaic Legalese):**
   > "The Licensee shall hereinafter hold harmless and indemnify the Licensor from and against any and all claims wherefore notice has not been provided within thirty (30) days."
-* ✅ **ISO 24495-2 Compliant:**
+* ✅ **ISO 24495-2 Aligned:**
   > **Indemnification Notice Requirement:**
   > 1. **Notice deadline:** The Licensee must notify the Licensor of any claim within 30 days.
   > 2. **Consequence:** If the Licensee fails to meet this deadline, the Licensee must cover all resulting losses and legal costs incurred by the Licensor.

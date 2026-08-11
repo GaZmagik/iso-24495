@@ -2,7 +2,7 @@
 name: iso-24495-3
 description: Sector-specific Plain Language standard for science and technical writing (ISO 24495-3:2026). Applied during software documentation, architecture specs, and technical analysis.
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
   iso-standard: "ISO 24495-3:2026"
   iso-status: "published"
 ---
@@ -43,9 +43,9 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
 ## Contrastive Examples
 
 ### Example 1: Concurrency Control Explanation
-* ❌ **Non-compliant (Dense & Abstract):**
+* ❌ **Not aligned (Dense & Abstract):**
   > "In order to prevent race conditions during concurrent state mutations within the execution pipeline, a mutex lock mechanism is introduced prior to updating the shared buffer allocation in memory."
-* ✅ **ISO 24495-3 Compliant:**
+* ✅ **ISO 24495-3 Aligned:**
   > **Concurrency Control:**
   > Acquire a Mutex Lock to prevent data corruption during concurrent writes.
   > 

@@ -65,7 +65,7 @@ describe("auditCorpus", () => {
     expect(findings.totals["heading-depth"]).toBe(2);
   });
 
-  test("a compliant file has zero violations", () => {
+  test("a proxy-clean file has zero violations", () => {
     expect(findings.files["good-policy.md"].violations).toHaveLength(0);
   });
 
