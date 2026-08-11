@@ -2,7 +2,7 @@
 
 Four [Agent Skills](https://code.claude.com/docs/en/skills) that make an AI agent write in plain language. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
 
-The skills are plain `SKILL.md` files with agent-neutral wording, so any tool that reads the Agent Skills format can use them. This repository also packages them as a Claude Code plugin.
+The skills are plain `SKILL.md` files with agent-neutral wording, so any tool that reads the Agent Skills format can use them. This repository also packages them as a Claude Code plugin, which additionally ships an **ISO 24495 output style** (`output-styles/iso-24495.md`): select it with `/output-style` to hold every response to the core plain language rules without relying on skill activation.
 
 ## Skills
 
