@@ -60,23 +60,53 @@ export function auditText(text: string): Violation[] {
   return violations;
 }
 
-function walk(dir: string, root: string, out: string[]): void {
-  for (const entry of readdirSync(dir)) {
+function walk(
+  dir: string,
+  out: string[],
+  onSkip: ((path: string) => void) | undefined,
+  isRoot: boolean,
+): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (error) {
+    // An unreadable root is an error the caller must see — a mistyped corpus
+    // path must not read as a clean empty corpus. Below the root, the skip is
+    // reported and the walk continues.
+    if (isRoot) throw error;
+    onSkip?.(dir);
+    return;
+  }
+  for (const entry of entries) {
     if (entry === "node_modules" || entry === ".git") continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      walk(full, root, out);
+    let isDirectory: boolean;
+    try {
+      isDirectory = statSync(full).isDirectory();
+    } catch {
+      // Dangling links and permission failures skip the entry, not the walk —
+      // but the caller is told, so it can distinguish "skipped" from "gone".
+      onSkip?.(full);
+      continue;
+    }
+    if (isDirectory) {
+      walk(full, out, onSkip, false);
     } else if (TEXT_EXTENSIONS.some((ext) => entry.toLowerCase().endsWith(ext))) {
       out.push(full);
     }
   }
 }
 
-export function auditCorpus(dir: string): Findings {
+export function listTextFiles(dir: string, onSkip?: (path: string) => void): string[] {
   const paths: string[] = [];
-  walk(dir, dir, paths);
+  walk(dir, paths, onSkip, true);
+  return paths.sort();
+}
+
+export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findings {
+  const paths = listTextFiles(dir, onSkip);
   const findings: Findings = { files: {}, totals: {} };
-  for (const path of paths.sort()) {
+  for (const path of paths) {
     const key = relative(dir, path).replaceAll("\\", "/");
     const violations = auditText(readFileSync(path, "utf8"));
     findings.files[key] = { violations };
@@ -93,7 +123,11 @@ if (import.meta.main) {
     console.error("Usage: bun audit-corpus.ts <corpus-dir> [--json <out-file>]");
     process.exit(2);
   }
-  const findings = auditCorpus(dir);
+  const skipped: string[] = [];
+  const findings = auditCorpus(dir, (path) => skipped.push(path));
+  for (const path of skipped) {
+    console.error(`warning: skipped unreadable entry: ${path}`);
+  }
   const jsonFlag = process.argv.indexOf("--json");
   if (jsonFlag !== -1 && process.argv[jsonFlag + 1]) {
     await Bun.write(process.argv[jsonFlag + 1], JSON.stringify(findings, null, 2));

@@ -2,6 +2,6 @@
   {
     "name": "iso-24495-4-corpus",
     "command": "bun \"${CLAUDE_PLUGIN_ROOT}/skills/iso-24495-4/scripts/watch-corpus.ts\"",
-    "description": "During a plain language engagement (when .iso-24495-4/monitor.json names a corpus directory), re-audits changed documents and reports rule-count deltas. Exits silently when no engagement is configured."
+    "description": "During a plain language engagement (when .iso-24495-4/monitor.json names a corpus directory), re-audits changed documents and reports rule-count deltas. Waits silently, without exiting, until an engagement is configured."
   }
 ]

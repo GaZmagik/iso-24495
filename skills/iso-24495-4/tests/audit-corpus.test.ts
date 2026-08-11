@@ -1,8 +1,59 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditCorpus } from "../scripts/audit-corpus.ts";
+import { auditCorpus, listTextFiles } from "../scripts/audit-corpus.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
+
+describe("listTextFiles", () => {
+  test("returns absolute paths of text files, including nested ones, excluding other types", () => {
+    const root = join(import.meta.dir, "fixtures", "repo-level2");
+    const files = listTextFiles(root);
+    expect(files).toHaveLength(4);
+    expect(files).toContain(join(root, "docs", "plain-language-policy.md"));
+    expect(files.some((f) => f.endsWith(".yml"))).toBe(false);
+  });
+
+  test("skips entries that cannot be inspected and reports each skip", () => {
+    const root = mkdtempSync(join(tmpdir(), "iso-24495-4-walk-"));
+    try {
+      writeFileSync(join(root, "good.md"), "A short sentence.\n");
+      const target = join(root, "target-dir");
+      mkdirSync(target);
+      symlinkSync(target, join(root, "dangling"), "junction");
+      rmSync(target, { recursive: true, force: true });
+      const skipped: string[] = [];
+      expect(listTextFiles(root, (path) => skipped.push(path))).toEqual([join(root, "good.md")]);
+      expect(skipped).toEqual([join(root, "dangling")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("throws on a missing or unreadable root instead of reporting an empty corpus", () => {
+    expect(() => listTextFiles(join(tmpdir(), "iso-24495-4-no-such-root"))).toThrow();
+  });
+});
+
+describe("auditCorpus skip reporting", () => {
+  test("forwards walk skips to the caller so partial audits are visible", () => {
+    const root = mkdtempSync(join(tmpdir(), "iso-24495-4-audit-skip-"));
+    try {
+      writeFileSync(join(root, "good.md"), "A short sentence.\n");
+      const target = join(root, "target-dir");
+      mkdirSync(target);
+      symlinkSync(target, join(root, "dangling"), "junction");
+      rmSync(target, { recursive: true, force: true });
+      const skipped: string[] = [];
+      const findings = auditCorpus(root, (path) => skipped.push(path));
+      expect(Object.keys(findings.files)).toEqual(["good.md"]);
+      expect(skipped).toEqual([join(root, "dangling")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("auditCorpus", () => {
   const findings = auditCorpus(CORPUS);
