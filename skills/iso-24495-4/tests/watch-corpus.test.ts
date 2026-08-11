@@ -301,6 +301,25 @@ describe("startMonitor", () => {
     expect(lines).toEqual(["iso-24495-4 corpus change: sub/old.md legalese 2 -> 0"]);
   });
 
+  test("reports additions in a restored subtree once it has been scanned", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "A short sentence.\n");
+    symlinkSync(join(cwd, "missing-target"), join(cwd, "docs", "sub"), "junction");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    rmdirSync(join(cwd, "docs", "sub"));
+    mkdirSync(join(cwd, "docs", "sub"));
+    writeFileSync(join(cwd, "docs", "sub", "old.md"), "A compliant sentence.\n");
+    monitor.sync();
+    expect(lines).toHaveLength(0);
+    writeFileSync(join(cwd, "docs", "sub", "new.md"), "The supplier shall hereby comply.\n");
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: sub/new.md legalese 0 -> 2"]);
+  });
+
   test("holds an active engagement while the config file is momentarily invalid", () => {
     makeCwd();
     writeConfig("docs");

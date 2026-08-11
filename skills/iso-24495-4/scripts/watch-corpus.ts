@@ -98,7 +98,6 @@ export function startMonitor(
   let configWatcher: FSWatcher | null = null;
   let corpusWatcher: FSWatcher | null = null;
   let engagedCorpus: string | null = null;
-  let primed = false;
 
   function closeQuietly(watcher: FSWatcher): void {
     try {
@@ -152,6 +151,13 @@ export function startMonitor(
           // A file known at engagement start stays marked, so its eventual
           // first read still primes silently.
         }
+      }
+      // A start-time skip that this scan no longer reports has been restored
+      // (its contents primed above) or is truly gone: retire it, so later
+      // additions beneath it report instead of priming silently.
+      const skippedNowSet = new Set(skippedNow);
+      for (const prefix of [...skippedAtStart]) {
+        if (!skippedNowSet.has(prefix)) skippedAtStart.delete(prefix);
       }
       for (const known of [...baselines.keys()]) {
         if (present.has(known)) continue;
