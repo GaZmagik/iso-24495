@@ -1,0 +1,9 @@
+name: text-lint
+on: [pull_request]
+jobs:
+  vale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run vale prose lint
+        run: vale docs/
