@@ -1,6 +1,10 @@
 ---
 name: iso-24495-3
 description: Sector-specific Plain Language standard for science and technical writing (ISO 24495-3:2026). Applied during software documentation, architecture specs, and technical analysis.
+metadata:
+  version: "0.3.0"
+  iso-standard: "ISO 24495-3:2026"
+  iso-status: "published"
 ---
 
 # ISO 24495-3:2026 — Plain Language (Science and Technical Communication)

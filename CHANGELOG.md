@@ -1,0 +1,31 @@
+# Changelog
+
+All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
+
+## [0.3.0] — 2026-08-11
+
+### Added
+- `iso-24495-4` (provisional, ISO/CD 24495-4): organisational implementation task skill. Process-artefact sweep (primary evidence), corpus proxy audit (secondary, Measurement dimension only), deterministic 5×5 maturity scoring, append-only audit state with trend reporting. TypeScript on Bun, zero dependencies, 22 pinned tests.
+- Background monitor (`monitors/monitors.json`): re-audits a configured corpus on change during an engagement; silent when unconfigured.
+- ISO 24495 output style (`output-styles/iso-24495.md`).
+- Release-gated distribution: the marketplace source pins a tagged release.
+
+### Changed
+- Core skill and output style now reference all five skills, with a negative guard so Part 4 never activates on ordinary writing tasks.
+- All skills carry the plugin version in `metadata.version`.
+
+## [0.2.0] — 2026-08-11
+
+### Added
+- `iso-24495-5` (provisional, ISO/WD 24495-5): document design extension.
+- Spec-compliant `metadata` blocks (version, iso-standard, iso-status) on every skill.
+
+### Changed
+- Agent-neutral wording throughout; any Agent Skills-compatible tool can use the skills.
+- Core skill auto-triggers `iso-24495-5` for complex multi-section documents.
+- README corrected: Parts 2 and 3 are published (August 2025 and May 2026).
+
+## [0.1.0] — 2026-08-11
+
+### Added
+- Initial plugin: `iso-24495-1` (core), `iso-24495-2` (legal), `iso-24495-3` (science and technical), marketplace manifest, MIT licence.

@@ -1,6 +1,10 @@
 ---
 name: iso-24495-2
 description: Sector-specific Plain Language standard for legal communication (ISO 24495-2:2025). Applied during contract drafting, license review, and legal/compliance writing.
+metadata:
+  version: "0.3.0"
+  iso-standard: "ISO 24495-2:2025"
+  iso-status: "published"
 ---
 
 # ISO 24495-2:2025 — Plain Language (Legal Communication)

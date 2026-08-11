@@ -1,0 +1,35 @@
+{
+  "organisation": "Example Ltd",
+  "dimensions": {
+    "governance": {
+      "policy-documented": true,
+      "owner-accountable": true,
+      "resourced-mandated": false,
+      "executive-review-cycle": false
+    },
+    "capability": {
+      "style-guide-available": true,
+      "training-delivered": false,
+      "competence-maintained": false,
+      "roles-embedded": false
+    },
+    "process": {
+      "review-step-exists": true,
+      "checks-in-workflow": true,
+      "signoff-gates": false,
+      "all-document-types-covered": false
+    },
+    "measurement": {
+      "corpus-baseline-taken": false,
+      "regular-sampling": false,
+      "user-testing": false,
+      "metrics-drive-decisions": false
+    },
+    "culture": {
+      "leadership-aware": true,
+      "leadership-champions": false,
+      "feedback-loops": false,
+      "improvement-cycles": false
+    }
+  }
+}
