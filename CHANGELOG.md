@@ -5,6 +5,9 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ## [0.3.1] — 2026-08-11
 
 ### Fixed
+- Background monitor primes baselines from existing corpus files when the watch starts, so pre-existing violations are no longer misreported as new changes and first-edit improvements are reported correctly (present since 0.3.0).
+- Background monitor reports decreases when a corpus file is deleted, and prunes its per-file state.
+- The 30-second interval now re-scans corpus content (by modification time and size), so changes hidden by a missed or filename-less watch event are reported within 30 seconds instead of lost.
 - Background monitor no longer exits when no engagement is configured. It now waits for `.iso-24495-4/monitor.json` to appear, starts watching the corpus when it does, and returns to waiting if the config is removed. This stops the host from raising a "task ended" notification at the start of every session without an engagement. A half-written or invalid config no longer kills the process.
 
 ## [0.3.0] — 2026-08-11

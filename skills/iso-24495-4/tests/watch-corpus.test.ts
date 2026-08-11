@@ -100,14 +100,14 @@ describe("startMonitor", () => {
     expect(monitor.watchedCorpus()).toBeNull();
   });
 
-  test("emits a delta line when a corpus file changes", async () => {
+  test("emits a delta line when a nested corpus file appears", async () => {
     makeCwd();
     writeConfig("docs");
-    mkdirSync(join(cwd, "docs"));
+    mkdirSync(join(cwd, "docs", "sub"), { recursive: true });
     const lines: string[] = [];
     monitor = startMonitor(cwd, (line) => lines.push(line));
     writeFileSync(
-      join(cwd, "docs", "policy.md"),
+      join(cwd, "docs", "sub", "policy.md"),
       "The party of the first part shall hereinafter effectuate the aforementioned provisions notwithstanding anything herein.\n",
     );
     const deadline = Date.now() + 5000;
@@ -115,6 +115,68 @@ describe("startMonitor", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(lines.length).toBeGreaterThan(0);
-    expect(lines[0]).toStartWith("iso-24495-4 corpus change: policy.md");
+    expect(lines[0]).toStartWith("iso-24495-4 corpus change: sub/policy.md");
+  });
+
+  test("does not report pre-existing violations when the watch starts", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    monitor.sync();
+    expect(lines).toHaveLength(0);
+  });
+
+  test("reports a delta against the primed baseline when a file changes", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    expect(lines).toContain("iso-24495-4 corpus change: policy.md legalese 2 -> 0");
+  });
+
+  test("does not re-report an unchanged file on later syncs", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    monitor.sync();
+    monitor.sync();
+    expect(lines).toHaveLength(0);
+  });
+
+  test("reports decreases and prunes state when a corpus file is deleted", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    rmSync(join(cwd, "docs", "policy.md"));
+    monitor.sync();
+    expect(lines).toContain("iso-24495-4 corpus change: policy.md legalese 2 -> 0");
+    monitor.sync();
+    expect(lines).toHaveLength(1);
+  });
+
+  test("the entry point process stays alive when no config exists", async () => {
+    const script = join(import.meta.dir, "..", "scripts", "watch-corpus.ts");
+    const proc = Bun.spawn(["bun", script], {
+      cwd: makeCwd(),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(proc.exitCode).toBeNull();
+    proc.kill();
+    await proc.exited;
   });
 });

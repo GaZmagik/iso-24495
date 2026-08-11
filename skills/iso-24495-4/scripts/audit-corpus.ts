@@ -72,11 +72,16 @@ function walk(dir: string, root: string, out: string[]): void {
   }
 }
 
-export function auditCorpus(dir: string): Findings {
+export function listTextFiles(dir: string): string[] {
   const paths: string[] = [];
   walk(dir, dir, paths);
+  return paths.sort();
+}
+
+export function auditCorpus(dir: string): Findings {
+  const paths = listTextFiles(dir);
   const findings: Findings = { files: {}, totals: {} };
-  for (const path of paths.sort()) {
+  for (const path of paths) {
     const key = relative(dir, path).replaceAll("\\", "/");
     const violations = auditText(readFileSync(path, "utf8"));
     findings.files[key] = { violations };

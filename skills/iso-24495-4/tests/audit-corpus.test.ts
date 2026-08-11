@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { auditCorpus } from "../scripts/audit-corpus.ts";
+import { auditCorpus, listTextFiles } from "../scripts/audit-corpus.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
+
+describe("listTextFiles", () => {
+  test("returns absolute paths of text files, including nested ones, excluding other types", () => {
+    const root = join(import.meta.dir, "fixtures", "repo-level2");
+    const files = listTextFiles(root);
+    expect(files).toHaveLength(4);
+    expect(files).toContain(join(root, "docs", "plain-language-policy.md"));
+    expect(files.some((f) => f.endsWith(".yml"))).toBe(false);
+  });
+});
 
 describe("auditCorpus", () => {
   const findings = auditCorpus(CORPUS);
