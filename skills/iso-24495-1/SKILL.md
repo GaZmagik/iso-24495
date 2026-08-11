@@ -1,6 +1,10 @@
 ---
 name: iso-24495-1
 description: Core Plain Language standard (ISO 24495-1:2023). Governs all user-facing responses to ensure clear, structured, findable, understandable, and actionable output.
+metadata:
+  version: "0.2.0"
+  iso-standard: "ISO 24495-1:2023"
+  iso-status: "published"
 ---
 
 # ISO 24495-1:2023 — Plain Language (Governing Principles)
@@ -70,3 +74,4 @@ Before outputting user-facing text, audit against these checks:
 Automatically activate and combine the appropriate domain extension alongside ISO 24495-1:
 - **`iso-24495-2` (Legal & Compliance):** Activate when handling contracts, licenses, terms of service, privacy policies, or statutory rules.
 - **`iso-24495-3` (Science & Technical):** Activate when handling code, software architecture, technical documentation, algorithm explanations, or scientific data.
+- **`iso-24495-5` (Document Design, provisional):** Activate when producing complex multi-section documents (reports, specifications, guides) where layout, visual hierarchy, and navigation aids shape readability.

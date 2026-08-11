@@ -1,6 +1,8 @@
-# ISO 24495 Plain Language — Claude Code Plugin
+# ISO 24495 Plain Language Skills
 
-Four [Agent Skills](https://code.claude.com/docs/en/skills) that make Claude write in plain language. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
+Four [Agent Skills](https://code.claude.com/docs/en/skills) that make an AI agent write in plain language. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
+
+The skills are plain `SKILL.md` files with agent-neutral wording, so any tool that reads the Agent Skills format can use them. This repository also packages them as a Claude Code plugin.
 
 ## Skills
 
@@ -15,7 +17,7 @@ The core skill activates the legal and technical extensions automatically. It tr
 
 All skills exempt internal reasoning and preserve code blocks, commands, and logs untouched. Technical and legal accuracy always supersede formatting rules.
 
-## Installation
+## Installation (Claude Code)
 
 Add this repository as a plugin marketplace, then install the plugin:
 
@@ -33,13 +35,15 @@ Or from a local clone:
 
 ## Usage
 
-Once installed, Claude loads the skills when their descriptions match the task. To apply one explicitly, ask Claude to use it by name, for example: "Apply `iso-24495-2` to this licence text."
+Once installed, the agent loads the skills when their descriptions match the task. To apply one explicitly, ask for it by name, for example: "Apply `iso-24495-2` to this licence text."
 
-To enforce the core skill on every response, add a line to your `CLAUDE.md`:
+To enforce the core skill on every response, add a line to your agent's instruction file (`CLAUDE.md`, `AGENTS.md`, or equivalent):
 
 ```markdown
 - ALWAYS activate and adhere to the `iso-24495-1` Plain Language skill across all responses
 ```
+
+For agents without a plugin system, copy the `skills/` subdirectories into wherever the tool discovers skills.
 
 ## Disclaimer
 
