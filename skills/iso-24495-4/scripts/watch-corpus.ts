@@ -25,6 +25,8 @@ export interface MonitorOptions {
   // Polling-only mode: no OS watchers, the interval does all detection.
   // Useful where fs.watch is unreliable, and for pinning the interval in tests.
   pollOnly?: boolean;
+  // Watcher factory seam so tests can inject failing or scripted watchers.
+  watchFn?: (path: string, arg2?: unknown, arg3?: unknown) => FSWatcher;
 }
 
 export interface Monitor {
@@ -79,9 +81,15 @@ export function startMonitor(
 ): Monitor {
   const intervalMs = options.intervalMs ?? SYNC_INTERVAL_MS;
   const pollOnly = options.pollOnly ?? false;
+  const watchFn = options.watchFn ?? (watch as NonNullable<MonitorOptions["watchFn"]>);
   const configDir = join(cwd, ".iso-24495-4");
+  const configFile = join(configDir, "monitor.json");
   const baselines = new Map<string, Record<string, number>>();
   const stamps = new Map<string, { mtimeMs: number; size: number }>();
+  // Files that were present but unreadable when first seen: their first
+  // successful read primes silently, so pre-existing violations behind a
+  // transient read failure are not reported as new.
+  const pendingBaseline = new Set<string>();
   let cwdWatcher: FSWatcher | null = null;
   let configWatcher: FSWatcher | null = null;
   let corpusWatcher: FSWatcher | null = null;
@@ -104,7 +112,10 @@ export function startMonitor(
   function scanCorpus(emitDeltas: boolean): boolean {
     if (!engagedCorpus) return false;
     try {
-      const files = listTextFiles(engagedCorpus);
+      let walkSkips = 0;
+      const files = listTextFiles(engagedCorpus, () => {
+        walkSkips += 1;
+      });
       const present = new Set(files);
       for (const full of files) {
         try {
@@ -115,24 +126,35 @@ export function startMonitor(
           const after = totalsFor(full);
           stamps.set(full, { mtimeMs: stat.mtimeMs, size: stat.size });
           baselines.set(full, after);
-          if (emitDeltas) {
+          const wasPending = pendingBaseline.delete(full);
+          if (emitDeltas && !wasPending) {
             const line = formatDelta(relative(engagedCorpus, full).replaceAll("\\", "/"), before, after);
             if (line) emit(line);
           }
         } catch {
-          // The file vanished or was mid-write; the next scan settles it.
+          // Unreadable right now (mid-write, locked). If it has no baseline
+          // yet, its first successful read must prime, not report additions.
+          if (!baselines.has(full)) pendingBaseline.add(full);
         }
       }
-      for (const known of [...baselines.keys()]) {
-        if (present.has(known)) continue;
-        const line = formatDelta(relative(engagedCorpus, known).replaceAll("\\", "/"), baselines.get(known)!, {});
-        baselines.delete(known);
-        stamps.delete(known);
-        if (emitDeltas && line) emit(line);
+      if (walkSkips === 0) {
+        // Only trust "absent from the enumeration" as deletion when nothing
+        // was skipped — an unreadable subtree is not a deletion.
+        for (const known of [...baselines.keys()]) {
+          if (present.has(known)) continue;
+          const line = formatDelta(relative(engagedCorpus, known).replaceAll("\\", "/"), baselines.get(known)!, {});
+          baselines.delete(known);
+          stamps.delete(known);
+          pendingBaseline.delete(known);
+          if (emitDeltas && line) emit(line);
+        }
       }
-      return true;
+      // A scan that skipped anything is not a complete picture; a priming
+      // pass reporting it as success would leave silent blind spots.
+      return walkSkips === 0;
     } catch {
-      // The corpus directory vanished mid-scan; the next sync disengages.
+      // The corpus root is unreadable or vanished mid-scan; the next sync
+      // disengages or retries.
       return false;
     }
   }
@@ -140,7 +162,7 @@ export function startMonitor(
   function sync(): void {
     if (!pollOnly && !cwdWatcher) {
       try {
-        cwdWatcher = watch(cwd, (_event, filename) => {
+        cwdWatcher = watchFn(cwd, (_event: string, filename: string | Buffer | null) => {
           if (!filename || filename.toString() === ".iso-24495-4") sync();
         });
         cwdWatcher.on("error", () => {
@@ -154,7 +176,7 @@ export function startMonitor(
     if (!pollOnly && existsSync(configDir)) {
       if (!configWatcher) {
         try {
-          configWatcher = watch(configDir, () => sync());
+          configWatcher = watchFn(configDir, () => sync());
           configWatcher.on("error", () => {
             configWatcher = null;
           });
@@ -170,6 +192,12 @@ export function startMonitor(
     const config = loadMonitorConfig(cwd);
     let desired = config ? join(cwd, config.corpusDir) : null;
     if (desired && !existsSync(desired)) desired = null;
+    if (!config && engagedCorpus && existsSync(configFile)) {
+      // The config file is present but unreadable or half-written: hold the
+      // engagement rather than disengaging and later re-priming, which would
+      // silently absorb changes made during the window.
+      desired = engagedCorpus;
+    }
 
     if (desired !== engagedCorpus) {
       if (corpusWatcher) {
@@ -178,6 +206,7 @@ export function startMonitor(
       }
       baselines.clear();
       stamps.clear();
+      pendingBaseline.clear();
       engagedCorpus = desired;
       primed = false;
     }
@@ -190,7 +219,7 @@ export function startMonitor(
       else scanCorpus(true);
       if (!pollOnly && !corpusWatcher) {
         try {
-          corpusWatcher = watch(engagedCorpus, { recursive: true }, () => sync());
+          corpusWatcher = watchFn(engagedCorpus, { recursive: true }, () => sync());
           corpusWatcher.on("error", () => {
             // Scanning continues without the watcher; the interval bounds the
             // reporting delay and the next sync reinstalls it.
@@ -220,6 +249,7 @@ export function startMonitor(
       engagedCorpus = null;
       baselines.clear();
       stamps.clear();
+      pendingBaseline.clear();
     },
   };
 }

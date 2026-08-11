@@ -1,8 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, writeFileSync, type FSWatcher } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatDelta, loadMonitorConfig, startMonitor, type Monitor } from "../scripts/watch-corpus.ts";
+
+class FakeWatcher extends EventEmitter {
+  close(): void {}
+}
+
+function fakeWatchFactory() {
+  const watchers: Array<{ path: string; watcher: FakeWatcher }> = [];
+  const watchFn = (path: string): FSWatcher => {
+    const watcher = new FakeWatcher();
+    watchers.push({ path, watcher });
+    return watcher as unknown as FSWatcher;
+  };
+  return { watchers, watchFn };
+}
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 
@@ -165,6 +180,76 @@ describe("startMonitor", () => {
     expect(lines).toContain("iso-24495-4 corpus change: policy.md legalese 2 -> 0");
     monitor.sync();
     expect(lines).toHaveLength(1);
+  });
+
+  test("keeps the engagement and keeps detecting when the corpus watcher errors", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const { watchers, watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    const corpusWatcher = watchers.find((w) => w.path === join(cwd, "docs"));
+    expect(corpusWatcher).toBeDefined();
+    corpusWatcher!.watcher.emit("error", new Error("EPERM"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
+  test("reports an edit that lands between priming and watcher installation", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const { watchFn } = fakeWatchFactory();
+    const racingWatchFn = (path: string, ...rest: unknown[]) => {
+      if (path === join(cwd, "docs")) {
+        writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+      }
+      return (watchFn as (...args: unknown[]) => ReturnType<typeof watchFn>)(path, ...rest);
+    };
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn: racingWatchFn });
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
+  test("retries priming until the corpus is enumerable", () => {
+    makeCwd();
+    writeConfig("docs");
+    writeFileSync(join(cwd, "docs"), "a file where the corpus directory should be");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    expect(lines).toHaveLength(0);
+    rmSync(join(cwd, "docs"));
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    monitor.sync();
+    expect(lines).toHaveLength(0);
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
+  test("suppresses deletion reports while part of the corpus is unreadable", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs", "sub"), { recursive: true });
+    writeFileSync(join(cwd, "docs", "sub", "policy.md"), "The supplier shall hereby comply.\n");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    rmSync(join(cwd, "docs", "sub"), { recursive: true, force: true });
+    symlinkSync(join(cwd, "missing-target"), join(cwd, "docs", "sub"), "junction");
+    monitor.sync();
+    expect(lines).toHaveLength(0);
+    rmdirSync(join(cwd, "docs", "sub"));
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: sub/policy.md legalese 2 -> 0"]);
   });
 
   test("does not re-report an already reported change on later syncs", () => {

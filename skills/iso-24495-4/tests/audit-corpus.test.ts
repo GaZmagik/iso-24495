@@ -15,7 +15,7 @@ describe("listTextFiles", () => {
     expect(files.some((f) => f.endsWith(".yml"))).toBe(false);
   });
 
-  test("skips entries that cannot be inspected instead of aborting the walk", () => {
+  test("skips entries that cannot be inspected and reports each skip", () => {
     const root = mkdtempSync(join(tmpdir(), "iso-24495-4-walk-"));
     try {
       writeFileSync(join(root, "good.md"), "A short sentence.\n");
@@ -23,10 +23,16 @@ describe("listTextFiles", () => {
       mkdirSync(target);
       symlinkSync(target, join(root, "dangling"), "junction");
       rmSync(target, { recursive: true, force: true });
-      expect(listTextFiles(root)).toEqual([join(root, "good.md")]);
+      const skipped: string[] = [];
+      expect(listTextFiles(root, (path) => skipped.push(path))).toEqual([join(root, "good.md")]);
+      expect(skipped).toEqual([join(root, "dangling")]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("throws on a missing or unreadable root instead of reporting an empty corpus", () => {
+    expect(() => listTextFiles(join(tmpdir(), "iso-24495-4-no-such-root"))).toThrow();
   });
 });
 

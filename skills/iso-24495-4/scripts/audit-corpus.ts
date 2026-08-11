@@ -60,12 +60,21 @@ export function auditText(text: string): Violation[] {
   return violations;
 }
 
-function walk(dir: string, root: string, out: string[]): void {
+function walk(
+  dir: string,
+  out: string[],
+  onSkip: ((path: string) => void) | undefined,
+  isRoot: boolean,
+): void {
   let entries: string[];
   try {
     entries = readdirSync(dir);
-  } catch {
-    // An unreadable directory yields nothing rather than aborting the walk.
+  } catch (error) {
+    // An unreadable root is an error the caller must see — a mistyped corpus
+    // path must not read as a clean empty corpus. Below the root, the skip is
+    // reported and the walk continues.
+    if (isRoot) throw error;
+    onSkip?.(dir);
     return;
   }
   for (const entry of entries) {
@@ -75,20 +84,22 @@ function walk(dir: string, root: string, out: string[]): void {
     try {
       isDirectory = statSync(full).isDirectory();
     } catch {
-      // Dangling links and permission failures skip the entry, not the walk.
+      // Dangling links and permission failures skip the entry, not the walk —
+      // but the caller is told, so it can distinguish "skipped" from "gone".
+      onSkip?.(full);
       continue;
     }
     if (isDirectory) {
-      walk(full, root, out);
+      walk(full, out, onSkip, false);
     } else if (TEXT_EXTENSIONS.some((ext) => entry.toLowerCase().endsWith(ext))) {
       out.push(full);
     }
   }
 }
 
-export function listTextFiles(dir: string): string[] {
+export function listTextFiles(dir: string, onSkip?: (path: string) => void): string[] {
   const paths: string[] = [];
-  walk(dir, dir, paths);
+  walk(dir, paths, onSkip, true);
   return paths.sort();
 }
 
