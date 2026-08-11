@@ -252,6 +252,70 @@ describe("startMonitor", () => {
     expect(lines).toEqual(["iso-24495-4 corpus change: sub/policy.md legalese 2 -> 0"]);
   });
 
+  test("reports changes to readable files even while part of the corpus is unreadable", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    symlinkSync(join(cwd, "missing-target"), join(cwd, "docs", "broken"), "junction");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    expect(lines).toHaveLength(0);
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
+  test("reports an unrelated deletion while a skip persists elsewhere", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    writeFileSync(join(cwd, "docs", "other.md"), "The vendor shall comply.\n");
+    symlinkSync(join(cwd, "missing-target"), join(cwd, "docs", "broken"), "junction");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    rmSync(join(cwd, "docs", "other.md"));
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: other.md legalese 1 -> 0"]);
+  });
+
+  test("primes silently when a subtree skipped at engagement start becomes readable", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "A short sentence.\n");
+    symlinkSync(join(cwd, "missing-target"), join(cwd, "docs", "sub"), "junction");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    rmdirSync(join(cwd, "docs", "sub"));
+    mkdirSync(join(cwd, "docs", "sub"));
+    writeFileSync(join(cwd, "docs", "sub", "old.md"), "The supplier shall hereby comply.\n");
+    monitor.sync();
+    expect(lines).toHaveLength(0);
+    writeFileSync(join(cwd, "docs", "sub", "old.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: sub/old.md legalese 2 -> 0"]);
+  });
+
+  test("holds an active engagement while the config file is momentarily invalid", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall hereby comply.\n");
+    const { watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    writeFileSync(join(cwd, ".iso-24495-4", "monitor.json"), "{half-written");
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply with this policy.\n");
+    monitor.sync();
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
   test("does not re-report an already reported change on later syncs", () => {
     makeCwd();
     writeConfig("docs");

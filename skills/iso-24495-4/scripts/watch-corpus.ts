@@ -13,7 +13,7 @@
 // bounds the delay when they fail.
 
 import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { auditText, listTextFiles } from "./audit-corpus.ts";
 
 export interface MonitorConfig {
@@ -86,10 +86,14 @@ export function startMonitor(
   const configFile = join(configDir, "monitor.json");
   const baselines = new Map<string, Record<string, number>>();
   const stamps = new Map<string, { mtimeMs: number; size: number }>();
-  // Files that were present but unreadable when first seen: their first
-  // successful read primes silently, so pre-existing violations behind a
-  // transient read failure are not reported as new.
-  const pendingBaseline = new Set<string>();
+  // Priming is per file, not per engagement: every file present at the first
+  // successful enumeration (and everything under a subtree skipped during it)
+  // primes silently on its first successful read. Files appearing later are
+  // genuine additions and report. A persistent unreadable entry therefore
+  // never holds the whole monitor in a silent mode.
+  let enumeratedOnce = false;
+  const silentPrime = new Set<string>();
+  const skippedAtStart = new Set<string>();
   let cwdWatcher: FSWatcher | null = null;
   let configWatcher: FSWatcher | null = null;
   let corpusWatcher: FSWatcher | null = null;
@@ -104,58 +108,63 @@ export function startMonitor(
     }
   }
 
+  function underAny(prefixes: Iterable<string>, path: string): boolean {
+    for (const prefix of prefixes) {
+      if (path === prefix || path.startsWith(prefix + sep)) return true;
+    }
+    return false;
+  }
+
   // Audits every corpus file whose mtime or size moved since the last scan,
-  // and reports deletions. Returns false when enumeration itself failed, so
-  // a failed priming pass is retried instead of being marked done. The first
-  // scan of an engagement runs with emitDeltas false: it primes baselines so
-  // pre-existing violations are not reported as changes.
-  function scanCorpus(emitDeltas: boolean): boolean {
-    if (!engagedCorpus) return false;
+  // and reports deletions. The first successful enumeration of an engagement
+  // marks everything then present for silent priming; afterwards, a file
+  // with a baseline reports deltas and a file without one reports as an
+  // addition unless it was marked. Deletion reporting is suppressed only
+  // beneath paths skipped in this scan — unreadable is not deleted.
+  function scanCorpus(): void {
+    if (!engagedCorpus) return;
     try {
-      let walkSkips = 0;
-      const files = listTextFiles(engagedCorpus, () => {
-        walkSkips += 1;
-      });
+      const skippedNow: string[] = [];
+      const files = listTextFiles(engagedCorpus, (path) => skippedNow.push(path));
+      if (!enumeratedOnce) {
+        for (const full of files) silentPrime.add(full);
+        for (const skip of skippedNow) skippedAtStart.add(skip);
+        enumeratedOnce = true;
+      }
       const present = new Set(files);
       for (const full of files) {
         try {
           const stat = statSync(full);
           const prev = stamps.get(full);
           if (prev && prev.mtimeMs === stat.mtimeMs && prev.size === stat.size) continue;
-          const before = baselines.get(full) ?? {};
+          const before = baselines.get(full);
           const after = totalsFor(full);
           stamps.set(full, { mtimeMs: stat.mtimeMs, size: stat.size });
           baselines.set(full, after);
-          const wasPending = pendingBaseline.delete(full);
-          if (emitDeltas && !wasPending) {
-            const line = formatDelta(relative(engagedCorpus, full).replaceAll("\\", "/"), before, after);
+          const primeSilently =
+            before === undefined && (silentPrime.delete(full) || underAny(skippedAtStart, full));
+          if (!primeSilently) {
+            const line = formatDelta(relative(engagedCorpus, full).replaceAll("\\", "/"), before ?? {}, after);
             if (line) emit(line);
           }
         } catch {
-          // Unreadable right now (mid-write, locked). If it has no baseline
-          // yet, its first successful read must prime, not report additions.
-          if (!baselines.has(full)) pendingBaseline.add(full);
+          // Unreadable right now (mid-write, locked); the next scan retries.
+          // A file known at engagement start stays marked, so its eventual
+          // first read still primes silently.
         }
       }
-      if (walkSkips === 0) {
-        // Only trust "absent from the enumeration" as deletion when nothing
-        // was skipped — an unreadable subtree is not a deletion.
-        for (const known of [...baselines.keys()]) {
-          if (present.has(known)) continue;
-          const line = formatDelta(relative(engagedCorpus, known).replaceAll("\\", "/"), baselines.get(known)!, {});
-          baselines.delete(known);
-          stamps.delete(known);
-          pendingBaseline.delete(known);
-          if (emitDeltas && line) emit(line);
-        }
+      for (const known of [...baselines.keys()]) {
+        if (present.has(known)) continue;
+        if (underAny(skippedNow, known)) continue;
+        const line = formatDelta(relative(engagedCorpus, known).replaceAll("\\", "/"), baselines.get(known)!, {});
+        baselines.delete(known);
+        stamps.delete(known);
+        silentPrime.delete(known);
+        if (line) emit(line);
       }
-      // A scan that skipped anything is not a complete picture; a priming
-      // pass reporting it as success would leave silent blind spots.
-      return walkSkips === 0;
     } catch {
-      // The corpus root is unreadable or vanished mid-scan; the next sync
-      // disengages or retries.
-      return false;
+      // The corpus root is unreadable or vanished mid-scan. If this was the
+      // first enumeration, nothing was recorded and the next sync retries.
     }
   }
 
@@ -206,17 +215,17 @@ export function startMonitor(
       }
       baselines.clear();
       stamps.clear();
-      pendingBaseline.clear();
+      silentPrime.clear();
+      skippedAtStart.clear();
+      enumeratedOnce = false;
       engagedCorpus = desired;
-      primed = false;
     }
 
     if (engagedCorpus) {
-      // Prime before installing the watcher: an edit landing between the two
+      // Scan before installing the watcher: an edit landing between the two
       // then shows as a stamp change on the next scan instead of being
       // silently absorbed into the baseline.
-      if (!primed) primed = scanCorpus(false);
-      else scanCorpus(true);
+      scanCorpus();
       if (!pollOnly && !corpusWatcher) {
         try {
           corpusWatcher = watchFn(engagedCorpus, { recursive: true }, () => sync());
@@ -249,7 +258,9 @@ export function startMonitor(
       engagedCorpus = null;
       baselines.clear();
       stamps.clear();
-      pendingBaseline.clear();
+      silentPrime.clear();
+      skippedAtStart.clear();
+      enumeratedOnce = false;
     },
   };
 }

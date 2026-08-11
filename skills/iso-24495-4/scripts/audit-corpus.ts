@@ -103,8 +103,8 @@ export function listTextFiles(dir: string, onSkip?: (path: string) => void): str
   return paths.sort();
 }
 
-export function auditCorpus(dir: string): Findings {
-  const paths = listTextFiles(dir);
+export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findings {
+  const paths = listTextFiles(dir, onSkip);
   const findings: Findings = { files: {}, totals: {} };
   for (const path of paths) {
     const key = relative(dir, path).replaceAll("\\", "/");
@@ -123,7 +123,11 @@ if (import.meta.main) {
     console.error("Usage: bun audit-corpus.ts <corpus-dir> [--json <out-file>]");
     process.exit(2);
   }
-  const findings = auditCorpus(dir);
+  const skipped: string[] = [];
+  const findings = auditCorpus(dir, (path) => skipped.push(path));
+  for (const path of skipped) {
+    console.error(`warning: skipped unreadable entry: ${path}`);
+  }
   const jsonFlag = process.argv.indexOf("--json");
   if (jsonFlag !== -1 && process.argv[jsonFlag + 1]) {
     await Bun.write(process.argv[jsonFlag + 1], JSON.stringify(findings, null, 2));

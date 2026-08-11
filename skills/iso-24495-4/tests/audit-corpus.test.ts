@@ -36,6 +36,25 @@ describe("listTextFiles", () => {
   });
 });
 
+describe("auditCorpus skip reporting", () => {
+  test("forwards walk skips to the caller so partial audits are visible", () => {
+    const root = mkdtempSync(join(tmpdir(), "iso-24495-4-audit-skip-"));
+    try {
+      writeFileSync(join(root, "good.md"), "A short sentence.\n");
+      const target = join(root, "target-dir");
+      mkdirSync(target);
+      symlinkSync(target, join(root, "dangling"), "junction");
+      rmSync(target, { recursive: true, force: true });
+      const skipped: string[] = [];
+      const findings = auditCorpus(root, (path) => skipped.push(path));
+      expect(Object.keys(findings.files)).toEqual(["good.md"]);
+      expect(skipped).toEqual([join(root, "dangling")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("auditCorpus", () => {
   const findings = auditCorpus(CORPUS);
 
