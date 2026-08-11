@@ -8,6 +8,9 @@
   },
   "license": "MIT",
   "outputStyles": "./output-styles/",
+  "experimental": {
+    "monitors": "./monitors/monitors.json"
+  },
   "keywords": [
     "plain-language",
     "iso-24495",
