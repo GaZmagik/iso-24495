@@ -60,7 +60,7 @@ The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-
 { "corpusDir": "docs" }
 ```
 
-When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. It requires Bun and is Claude Code-specific; the skills themselves work without it.
+When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. Without a config it waits, watching for one to appear; it never exits on its own, so the host never raises a "task ended" notification. Removing the config mid-session returns it to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
 ## Releasing a new version
 

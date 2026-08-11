@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatDelta, loadMonitorConfig } from "../scripts/watch-corpus.ts";
+import { formatDelta, loadMonitorConfig, startMonitor, type Monitor } from "../scripts/watch-corpus.ts";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 
@@ -14,6 +16,10 @@ describe("loadMonitorConfig", () => {
     expect(config).not.toBeNull();
     expect(config!.corpusDir).toBe("docs");
   });
+
+  test("returns null when the config file is not valid JSON", () => {
+    expect(loadMonitorConfig(join(FIXTURES, "invalid-config"))).toBeNull();
+  });
 });
 
 describe("formatDelta", () => {
@@ -25,5 +31,90 @@ describe("formatDelta", () => {
 
   test("returns null when nothing changed", () => {
     expect(formatDelta("docs/a.md", { legalese: 1 }, { legalese: 1 })).toBeNull();
+  });
+});
+
+describe("startMonitor", () => {
+  let cwd: string;
+  let monitor: Monitor | null = null;
+
+  function makeCwd(): string {
+    cwd = mkdtempSync(join(tmpdir(), "iso-24495-4-monitor-"));
+    return cwd;
+  }
+
+  function writeConfig(corpusDir: string): void {
+    mkdirSync(join(cwd, ".iso-24495-4"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".iso-24495-4", "monitor.json"),
+      JSON.stringify({ corpusDir }),
+    );
+  }
+
+  afterEach(() => {
+    monitor?.stop();
+    monitor = null;
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("watches nothing while no engagement config exists", () => {
+    monitor = startMonitor(makeCwd(), () => {});
+    expect(monitor.watchedCorpus()).toBeNull();
+  });
+
+  test("starts watching the corpus when the config and corpus directory exist", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    monitor = startMonitor(cwd, () => {});
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+  });
+
+  test("picks up a config that appears after start, on the next sync", () => {
+    monitor = startMonitor(makeCwd(), () => {});
+    expect(monitor.watchedCorpus()).toBeNull();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    monitor.sync();
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+  });
+
+  test("stops watching the corpus when the config is removed", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    monitor = startMonitor(cwd, () => {});
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+    rmSync(join(cwd, ".iso-24495-4"), { recursive: true, force: true });
+    monitor.sync();
+    expect(monitor.watchedCorpus()).toBeNull();
+  });
+
+  test("does not watch a corpus whose directory is missing, and does not throw on invalid JSON", () => {
+    makeCwd();
+    writeConfig("docs");
+    monitor = startMonitor(cwd, () => {});
+    expect(monitor.watchedCorpus()).toBeNull();
+    writeFileSync(join(cwd, ".iso-24495-4", "monitor.json"), "{not valid json");
+    expect(() => monitor!.sync()).not.toThrow();
+    expect(monitor.watchedCorpus()).toBeNull();
+  });
+
+  test("emits a delta line when a corpus file changes", async () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    writeFileSync(
+      join(cwd, "docs", "policy.md"),
+      "The party of the first part shall hereinafter effectuate the aforementioned provisions notwithstanding anything herein.\n",
+    );
+    const deadline = Date.now() + 5000;
+    while (lines.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toStartWith("iso-24495-4 corpus change: policy.md");
   });
 });
