@@ -51,10 +51,11 @@ export function adviseOnFile(filePath: string, cwd: string): string | null {
 }
 
 if (import.meta.main) {
-  // Advisory contract: the script itself always exits 0 and prints only when
-  // there is something to say. (Environmental failures — bun missing, the
-  // command not starting — are outside this script's control and surface as
-  // a hook-error notice, which is accepted.)
+  // Advisory contract: once the module has loaded, the script always exits 0
+  // and prints only when there is something to say. (Environmental failures —
+  // bun missing, the command not starting, an import failing to parse — are
+  // outside this block's control and surface as a hook-error notice, which is
+  // accepted.)
   try {
     const input = JSON.parse(readFileSync(0, "utf8")) as HookInput;
     const filePath = input?.tool_input?.file_path;

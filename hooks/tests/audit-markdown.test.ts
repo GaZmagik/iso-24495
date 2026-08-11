@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { adviseOnFile } from "../audit-markdown.ts";
@@ -111,6 +111,7 @@ describe("adviseOnFile", () => {
       expect(advice).not.toBeNull();
       expect(advice).toContain("heading-depth 1");
       expect(advice).toContain("legalese 1");
+      expect(advice).toContain("(whole-file counts)");
       expect(advice).not.toContain("\n");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -126,8 +127,8 @@ describe("hooks.json contract", () => {
     const entry = config.hooks.PostToolUse[0];
     expect(entry.matcher).toBe("Write|Edit");
     expect(entry.hooks[0].type).toBe("command");
-    expect(entry.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown.ts");
-    expect(entry.hooks[0].command).toStartWith("bun ");
+    expect(entry.hooks[0].command).toBe('bun "${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown.ts"');
+    expect(existsSync(join(import.meta.dir, "..", "audit-markdown.ts"))).toBe(true);
   });
 });
 
