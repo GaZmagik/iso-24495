@@ -56,9 +56,9 @@ Extends ISO 24495-1:2023 for the visual and structural design of complex documen
 ## Contrastive Examples
 
 ### Example 1: Structuring Comparative Information
-* ❌ **Non-compliant (Buried in Prose):**
+* ❌ **Not aligned (Buried in Prose):**
   > "The Basic plan costs £5 per month and includes 10 GB of storage but no priority support, whereas the Pro plan is £15 per month with 100 GB and priority support, and the Team plan, at £40 per month, offers 1 TB, priority support, and audit logs."
-* ✅ **ISO 24495-5 (Draft) Compliant:**
+* ✅ **ISO 24495-5 (Draft) Aligned:**
   > Choose a plan based on storage and support needs:
   >
   > | Plan | Price / month | Storage | Priority support | Audit logs |

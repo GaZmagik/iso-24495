@@ -52,6 +52,8 @@ This is an unofficial project. It is not affiliated with, endorsed by, or approv
 
 Publication status of the underlying standards: Part 1 published 2023, Part 2 published August 2025, Part 3 published May 2026. Part 5 (document design) is an unpublished working draft (ISO/WD 24495-5); the `iso-24495-5` skill is provisional guidance based on its public scope and will be revised when the standard is published.
 
+**Conformance disclaimer.** The full ISO 24495 texts are licensed and have not been consulted. These skills are built from the standards' public principles (which derive from the International Plain Language Federation's freely published framework), their published scopes and abstracts, and common plain-language practice. Every quantitative rule in this plugin (sentence length, paragraph length, legalese terms, heading depth) is this project's own proxy, not a clause of any standard. Nothing this plugin produces is a statement of ISO conformance, and no certification scheme exists for ISO 24495 in any case. "Aligned" in the skills means aligned with this plugin's interpretation of the principles, nothing more.
+
 ## Background monitor (Claude Code)
 
 The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-4` engagements. It stays silent unless the working directory contains `.iso-24495-4/monitor.json` naming a corpus directory:

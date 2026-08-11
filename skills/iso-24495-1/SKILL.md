@@ -9,7 +9,7 @@ metadata:
 
 # ISO 24495-1:2023 — Plain Language (Governing Principles)
 
-All user-facing LLM responses MUST follow ISO 24495-1:2023. These quantitative rules eliminate over-verbosity, minimise cognitive load, and ensure actionable communication.
+All user-facing LLM responses MUST follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The quantitative rules below are this skill's own proxies for those principles — chosen from common plain-language practice, not reproduced from the standard's text — and following them is never a claim of ISO conformance.
 
 ## Scope & Execution Boundaries
 
@@ -49,9 +49,9 @@ All user-facing LLM responses MUST follow ISO 24495-1:2023. These quantitative r
 ## Contrastive Examples
 
 ### Example 1: Response Structure
-* ❌ **Non-compliant (Verbose & Passive):**
+* ❌ **Not aligned (Verbose & Passive):**
   > "Sure thing! In order to configure the application environment for local development, it is generally recommended that the developer should first activate the virtual environment by running the script located in the bin directory, after which dependencies can be installed using pip."
-* ✅ **ISO 24495-1 Compliant:**
+* ✅ **ISO 24495-1 Aligned:**
   > Activate the virtual environment and install dependencies:
   > 1. **Activate virtual environment:** Run `source .venv/bin/activate`.
   > 2. **Install dependencies:** Run `pip install -r requirements.txt`.
