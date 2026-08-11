@@ -1,8 +1,8 @@
 {
   "name": "iso-24495-plain-language",
   "displayName": "ISO 24495 Plain Language",
-  "version": "0.1.0",
-  "description": "Three skills that apply plain language principles inspired by the ISO 24495 series: a core standard for all responses, a legal writing extension, and a science and technical writing extension.",
+  "version": "0.2.0",
+  "description": "Four skills that apply plain language principles inspired by the ISO 24495 series: a core standard for all responses, a legal writing extension, a science and technical writing extension, and a provisional document design extension.",
   "author": {
     "name": "Gareth Williams"
   },
