@@ -1,0 +1,13 @@
+{
+  "snapshots": [
+    {
+      "timestamp": "2026-08-12T02:10:17.992Z",
+      "totals": {
+        "sentence-length": 17,
+        "paragraph-length": 8,
+        "legalese": 7
+      },
+      "overall": 1
+    }
+  ]
+}
