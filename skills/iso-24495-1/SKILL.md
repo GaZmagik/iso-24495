@@ -2,14 +2,14 @@
 name: iso-24495-1
 description: Core Plain Language standard (ISO 24495-1:2023). Governs all user-facing responses to ensure clear, structured, findable, understandable, and actionable output.
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   iso-standard: "ISO 24495-1:2023"
   iso-status: "published"
 ---
 
-# ISO 24495-1:2023 — Plain Language (Governing Principles)
+# ISO 24495-1:2023 - Plain Language (Governing Principles)
 
-All user-facing LLM responses MUST follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The quantitative rules below are this skill's own proxies for those principles — chosen from common plain-language practice, not reproduced from the standard's text — and following them is never a claim of ISO conformance.
+All user-facing LLM responses MUST follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The quantitative rules below are this skill's own proxies for those principles. They come from common plain-language practice, not the standard's text. Following them is never a claim of ISO conformance.
 
 ## Scope & Execution Boundaries
 
@@ -37,7 +37,7 @@ All user-facing LLM responses MUST follow the plain-language principles of ISO 2
    - **Voice:** Active voice mandatory (*"Run the test suite"* instead of *"The test suite should be executed"*).
 
 3. **Scannability & Layout:**
-   - **Bullet Lead-ins:** Bold the first 2–4 words of every bullet point.
+   - **Bullet Lead-ins:** Bold the first 2 to 4 words of every bullet point.
    - **Headings:** Use single-topic Markdown headings (`##`, `###`).
    - **Lists:** Convert any series of 3 or more items into a bulleted list.
 

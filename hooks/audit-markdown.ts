@@ -52,15 +52,15 @@ export function adviseOnFile(filePath: string, cwd: string): string | null {
 
 if (import.meta.main) {
   // Advisory contract: once the module has loaded, the script always exits 0
-  // and prints only when there is something to say. (Environmental failures —
-  // bun missing, the command not starting, an import failing to parse — are
+  // and prints only when there is something to say. Environmental failures,
+  // such as Bun missing, command startup failure, or an import parse failure,
   // outside this block's control and surface as a hook-error notice, which is
   // accepted.)
   try {
     const input = JSON.parse(readFileSync(0, "utf8")) as HookInput;
     const filePath = input?.tool_input?.file_path;
     // The off switch anchors to the stable project root, not the session's
-    // mutable cwd — `cd src` must not disable a project's configuration.
+    // mutable cwd: `cd src` must not disable a project's configuration.
     // Writes outside the project consult the session project's switch.
     const cwd = process.env.CLAUDE_PROJECT_DIR ?? input?.cwd ?? process.cwd();
     const advice = filePath ? adviseOnFile(filePath, cwd) : null;

@@ -1,5 +1,5 @@
 // Markdown text extraction shared by the audit scripts. Regex heuristics
-// only — anything smarter belongs to the agent, not to deterministic tooling.
+// only. Anything smarter belongs to the agent, not to deterministic tooling.
 
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */

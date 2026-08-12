@@ -1,5 +1,5 @@
 // Shared types and the maturity criteria catalogue. The catalogue mirrors
-// references/maturity-model.md — change both together.
+// references/maturity-model.md. Change both together.
 
 export interface Violation {
   rule: string;

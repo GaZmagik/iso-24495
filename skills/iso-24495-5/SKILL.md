@@ -2,12 +2,12 @@
 name: iso-24495-5
 description: Provisional sector-specific Plain Language standard for document design (based on ISO/WD 24495-5, under development). Applied when structuring complex documents so readers can find and navigate content through layout, visual hierarchy, and navigation aids.
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   iso-standard: "ISO/WD 24495-5"
   iso-status: "working-draft"
 ---
 
-# ISO/WD 24495-5 — Plain Language (Document Design) [PROVISIONAL DRAFT]
+# ISO/WD 24495-5 - Plain Language (Document Design) [PROVISIONAL DRAFT]
 
 > **Provisional status:** ISO 24495-5 is a Working Draft (ISO/WD 24495-5) and is not yet published. This skill is original guidance based on the draft's public scope and established information design practice. It does not reproduce ISO text. Expect revision when the standard is published.
 
@@ -24,6 +24,27 @@ Extends ISO 24495-1:2023 for the visual and structural design of complex documen
 
 3. **Content Primacy:**
    - Document design must **never** cut or distort content to fit a layout. Accuracy and completeness supersede visual tidiness.
+
+---
+
+## Required Templates
+
+Read the matching template before writing any of these document types:
+
+- **Architecture decision record (ADR):** Read the template file at `assets/adr-template.md`.
+- **Runbook:** Read the template file at `assets/runbook-template.md`.
+- **Design document:** Read the template file at `assets/design-doc-template.md`.
+
+## Restructure an Existing Document
+
+When asked to restructure an existing document:
+
+1. Identify the reader tasks, current hierarchy, and navigation needs.
+2. Preserve every prose passage and content item.
+3. Change only headings, list types, table structure, and visual formatting.
+4. Check the result against the hierarchy, navigation, structure, and signalling rules below.
+
+Do not rewrite prose, change tone, or remove content. Those changes belong to Parts 1 to 3.
 
 ---
 

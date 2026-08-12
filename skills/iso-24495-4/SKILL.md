@@ -2,16 +2,16 @@
 name: iso-24495-4
 description: Provisional task skill for organisational plain language implementation (based on ISO/CD 24495-4, committee draft). Activates for plain language gap analysis, policy drafting, review workflow design, and organisational readiness for the future published standard. Does not activate for ordinary writing, rewriting, or reviewing of individual documents.
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   iso-standard: "ISO/CD 24495-4"
   iso-status: "committee-draft"
 ---
 
-# ISO/CD 24495-4 — Plain Language (Organisational Implementation) [PROVISIONAL DRAFT]
+# ISO/CD 24495-4 - Plain Language (Organisational Implementation) [PROVISIONAL DRAFT]
 
 > **Provisional status:** ISO 24495-4 is a Committee Draft (ISO/CD 24495-4) and is not yet published; its text is not public. This skill is original guidance based on the draft's public scope. It does not reproduce ISO text and its output is never a compliance statement. Expect revision when the standard is published.
 
-Turns the agent from a copy editor into an implementation consultant. It assesses an organisation's *capacity to produce* plain language — governance, capability, process, measurement, and culture — rather than the quality of any single text.
+Turns the agent from a copy editor into an implementation consultant. It assesses an organisation's *capacity to produce* plain language across governance, capability, process, measurement, and culture, rather than the quality of any single text.
 
 ## Scope & Execution Boundaries
 

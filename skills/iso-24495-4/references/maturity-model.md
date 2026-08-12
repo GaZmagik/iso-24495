@@ -1,4 +1,4 @@
-# Maturity Model — Organisational Plain Language
+# Maturity Model - Organisational Plain Language
 
 Five dimensions, levels 0 to 4. A dimension holds a level only when every criterion at that level and below is met. Overall maturity is the weakest dimension. This table mirrors `scripts/lib/types.ts`; change both together.
 

@@ -1,4 +1,4 @@
-# Plain Language Gap Analysis — {{organisation}}
+# Plain Language Gap Analysis - {{organisation}}
 
 > Provisional: this analysis is based on the public scope of ISO/CD 24495-4 (committee draft, unpublished). It is not a compliance statement and confers no certification. Audit date: {{date}}.
 

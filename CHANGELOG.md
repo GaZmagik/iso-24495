@@ -2,12 +2,20 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
-## [0.4.1] — 2026-08-12
+## [0.5.0] - 2026-08-12
+
+### Added
+
+- Part 5 now provides templates for architecture decision records, runbooks, and design documents.
+- Part 5 requires the matching template before writing and defines a content-preserving restructuring workflow.
+- Plain-language checks for script comments remain deferred to a later release.
+
+## [0.4.1] - 2026-08-12
 
 ### Fixed
 - Plugin installation no longer requires GitHub SSH keys. The marketplace source is now an explicit HTTPS git URL (`"source": "url"`), which keeps the release tag pin while bypassing the Claude Code installer's SSH default for `github`-type sources (reported in #9 by ArchitektApx; upstream: anthropics/claude-code#18001, #26588, #31930). Users on other affected marketplaces can set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
 
-## [0.4.0] — 2026-08-11
+## [0.4.0] - 2026-08-11
 
 ### Added
 - Advisory markdown audit hook (`hooks/`): after Claude writes or edits a `.md` file, a `PostToolUse` hook audits it with the Part 4 rule engine and feeds one terse per-rule line back as context. It never blocks a write, stays silent when the file is clean, and skips non-markdown files, `node_modules`, and `.git`. Per-project off switch: `.iso-24495-4/hooks.json` with `{"markdownAudit": false}`, anchored to the stable project root (`CLAUDE_PROJECT_DIR`) so changing directory mid-session cannot disable it; an unreadable switch file leaves the hook on. Plain-language checks for script comments are deferred to 0.5.0.
@@ -15,7 +23,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Changed
 - Conformance language tightened across the plugin: example labels renamed from "Compliant" to "Aligned", the core skill and output style now state that their quantitative rules are this project's own proxies for the standard's public principles, and the README carries an explicit conformance disclaimer. The licensed ISO texts have not been consulted; nothing the plugin produces claims ISO conformance.
 
-## [0.3.1] — 2026-08-11
+## [0.3.1] - 2026-08-11
 
 ### Fixed
 - Background monitor primes baselines from existing corpus files when the watch starts, so pre-existing violations are no longer misreported as new changes and first-edit improvements are reported correctly (present since 0.3.0).
@@ -25,7 +33,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Priming is per file: everything present at the first enumeration of an engagement (including subtrees that were unreadable at that moment) primes silently on first successful read, while files appearing later report as additions. A persistent unreadable entry can no longer hold the monitor in a silent mode, an unreadable subtree is never reported as deletions (suppression is scoped to the skipped paths only), and the engagement holds when the config file is present but momentarily unparseable. The audit CLI warns on stderr for each entry it had to skip.
 - Background monitor no longer exits when no engagement is configured. It now waits for `.iso-24495-4/monitor.json` to appear, starts watching the corpus when it does, and returns to waiting if the config is removed. This stops the host from raising a "task ended" notification at the start of every session without an engagement. A half-written or invalid config no longer kills the process.
 
-## [0.3.0] — 2026-08-11
+## [0.3.0] - 2026-08-11
 
 ### Added
 - `iso-24495-4` (provisional, ISO/CD 24495-4): organisational implementation task skill. Process-artefact sweep (primary evidence), corpus proxy audit (secondary, Measurement dimension only), deterministic 5×5 maturity scoring, append-only audit state with trend reporting. TypeScript on Bun, zero dependencies, 22 pinned tests.
@@ -37,7 +45,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Core skill and output style now reference all five skills, with a negative guard so Part 4 never activates on ordinary writing tasks.
 - All skills carry the plugin version in `metadata.version`.
 
-## [0.2.0] — 2026-08-11
+## [0.2.0] - 2026-08-11
 
 ### Added
 - `iso-24495-5` (provisional, ISO/WD 24495-5): document design extension.
@@ -48,7 +56,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Core skill auto-triggers `iso-24495-5` for complex multi-section documents.
 - README corrected: Parts 2 and 3 are published (August 2025 and May 2026).
 
-## [0.1.0] — 2026-08-11
+## [0.1.0] - 2026-08-11
 
 ### Added
 - Initial plugin: `iso-24495-1` (core), `iso-24495-2` (legal), `iso-24495-3` (science and technical), marketplace manifest, MIT licence.

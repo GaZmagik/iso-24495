@@ -1,6 +1,6 @@
 // Process-artefact sweep: the PRIMARY audit for Part 4. Detects the presence
 // of organisational plain language systems. It records presence and paths
-// only — evaluating artefact quality is the agent's job, with the human.
+// only. Evaluating artefact quality is the agent's job, with the human.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";

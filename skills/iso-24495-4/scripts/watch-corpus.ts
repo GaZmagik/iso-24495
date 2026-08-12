@@ -119,7 +119,7 @@ export function startMonitor(
   // marks everything then present for silent priming; afterwards, a file
   // with a baseline reports deltas and a file without one reports as an
   // addition unless it was marked. Deletion reporting is suppressed only
-  // beneath paths skipped in this scan — unreadable is not deleted.
+  // beneath paths skipped in this scan because unreadable is not deleted.
   function scanCorpus(): void {
     if (!engagedCorpus) return;
     try {

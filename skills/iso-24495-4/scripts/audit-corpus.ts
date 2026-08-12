@@ -70,7 +70,7 @@ function walk(
   try {
     entries = readdirSync(dir);
   } catch (error) {
-    // An unreadable root is an error the caller must see — a mistyped corpus
+    // An unreadable root is an error the caller must see: a mistyped corpus
     // path must not read as a clean empty corpus. Below the root, the skip is
     // reported and the walk continues.
     if (isRoot) throw error;
@@ -84,8 +84,8 @@ function walk(
     try {
       isDirectory = statSync(full).isDirectory();
     } catch {
-      // Dangling links and permission failures skip the entry, not the walk —
-      // but the caller is told, so it can distinguish "skipped" from "gone".
+      // Dangling links and permission failures skip the entry, not the walk.
+      // The caller is told, so it can distinguish "skipped" from "gone".
       onSkip?.(full);
       continue;
     }
