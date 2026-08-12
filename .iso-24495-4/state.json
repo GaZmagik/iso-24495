@@ -8,6 +8,15 @@
         "legalese": 7
       },
       "overall": 1
+    },
+    {
+      "timestamp": "2026-08-12T02:20:16.199Z",
+      "totals": {
+        "sentence-length": 17,
+        "paragraph-length": 8,
+        "legalese": 7
+      },
+      "overall": 1
     }
   ]
 }
