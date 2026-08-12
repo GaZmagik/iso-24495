@@ -86,18 +86,6 @@ To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
 
 It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
-## Releasing a new version
-
-Installs are pinned to tagged releases. The marketplace manifest points at a `vX.Y.Z` tag, so `main` can move without affecting users. To ship a release:
-
-1. **Bump versions together:** `plugin.json`, the plugin entry in `marketplace.json` (both `version` and the source `ref`), and every skill's `metadata.version`.
-2. **Update `CHANGELOG.md`** with the changes.
-3. **Merge to `main`** via pull request, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4. **Create the GitHub release** from the tag: `gh release create vX.Y.Z --notes-from-tag` (or paste the changelog entry).
-5. **Verify** a fresh `/plugin install` pulls the tag, not `main`.
-
-Forgetting the `ref` bump in step 1 leaves users silently on the previous release.
-
 ## Roadmap
 
 All five skills, the output style, the background monitor, and the advisory markdown hook have shipped. What remains:
