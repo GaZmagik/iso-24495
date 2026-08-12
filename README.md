@@ -1,6 +1,6 @@
 # ISO 24495 Plain Language Skills
 
-Five [Agent Skills](https://code.claude.com/docs/en/skills) that make an AI agent write in plain language — and help organisations implement it. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
+Five [Agent Skills](https://code.claude.com/docs/en/skills) that make an AI agent write in plain language, and help organisations implement it. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
 
 The skills are plain `SKILL.md` files with agent-neutral wording, so any tool that reads the Agent Skills format can use them. This repository also packages them as a Claude Code plugin, which additionally ships an **ISO 24495 output style** (`output-styles/iso-24495.md`): select it with `/output-style` to hold every response to the core plain language rules without relying on skill activation.
 
@@ -23,7 +23,7 @@ All skills exempt internal reasoning and preserve code blocks, commands, and log
 Add this repository as a plugin marketplace, then install the plugin:
 
 ```
-/plugin marketplace add <owner>/<repo>
+/plugin marketplace add GaZmagik/iso-24495
 /plugin install iso-24495-plain-language@iso-24495
 ```
 
@@ -90,8 +90,11 @@ Forgetting the `ref` bump in step 1 leaves users silently on the previous releas
 
 ## Roadmap
 
-- **`iso-24495-4`:** Revise the provisional implementation skill against the published standard when ISO releases it; its committee-draft text is not public, so the maturity model is original guidance.
-- **`iso-24495-5`:** Revise the provisional document design skill against the published standard when ISO releases it.
+All five skills, the output style, the background monitor, and the advisory markdown hook have shipped. What remains:
+
+- **0.5.0:** extend the advisory hook to plain-language checks on script comments (doc comments and docstrings, advisory only).
+- **When ISO publishes Part 4:** revise the provisional `iso-24495-4` skill against the published text. Its committee-draft text is not public, so the current maturity model is original guidance.
+- **When ISO publishes Part 5:** revise the provisional `iso-24495-5` skill against the published text.
 
 ## Licence
 
