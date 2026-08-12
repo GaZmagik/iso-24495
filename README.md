@@ -86,6 +86,12 @@ To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
 
 It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
+## Why this project holds itself to these rules
+
+This repository is both the tool and a user of the tool. Its hook audits every markdown edit, including this README. Its own audits have failed and forced rewrites; the changelog records them.
+
+That is deliberate. A plain language project that exempts itself has no claim on anyone else. The Part 4 maturity audit runs against this repository first, and its findings are acted on here first.
+
 ## Roadmap
 
 All five skills, the output style, the background monitor, and the advisory markdown hook have shipped. What remains:
