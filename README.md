@@ -2,7 +2,9 @@
 
 Five [Agent Skills](https://code.claude.com/docs/en/skills) that make an AI agent write in plain language, and help organisations implement it. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
 
-The skills are plain `SKILL.md` files with agent-neutral wording, so any tool that reads the Agent Skills format can use them. This repository also packages them as a Claude Code plugin, which additionally ships an **ISO 24495 output style** (`output-styles/iso-24495.md`): select it with `/output-style` to hold every response to the core plain language rules without relying on skill activation.
+The skills are plain `SKILL.md` files with agent-neutral wording. Any tool that reads the Agent Skills format can use them.
+
+This repository also packages them as a Claude Code plugin with an **ISO 24495 output style** (`output-styles/iso-24495.md`). Select the style with `/output-style` to hold every response to the core rules without relying on skill activation.
 
 ## Skills
 
@@ -48,11 +50,15 @@ For agents without a plugin system, copy the `skills/` subdirectories into where
 
 ## Disclaimer
 
-This is an unofficial project. It is not affiliated with, endorsed by, or approved by the International Organization for Standardization (ISO). The skills contain original guidance inspired by the ISO 24495 series; they do not reproduce the text of any ISO standard.
+This unofficial project is not affiliated with, endorsed by, or approved by the International Organization for Standardization (ISO). The skills contain original guidance inspired by the ISO 24495 series. They do not reproduce the text of any ISO standard.
 
-Publication status of the underlying standards: Part 1 published 2023, Part 2 published August 2025, Part 3 published May 2026. Part 5 (document design) is an unpublished working draft (ISO/WD 24495-5); the `iso-24495-5` skill is provisional guidance based on its public scope and will be revised when the standard is published.
+Publication status: Part 1 published 2023, Part 2 August 2025, Part 3 May 2026. Parts 4 and 5 remain unpublished drafts (ISO/CD 24495-4 and ISO/WD 24495-5). Their skills are provisional guidance from public scope statements, to be revised when ISO publishes.
 
-**Conformance disclaimer.** The full ISO 24495 texts are licensed and have not been consulted. These skills are built from the standards' public principles (which derive from the International Plain Language Federation's freely published framework), their published scopes and abstracts, and common plain-language practice. Every quantitative rule in this plugin (sentence length, paragraph length, legalese terms, heading depth) is this project's own proxy, not a clause of any standard. Nothing this plugin produces is a statement of ISO conformance, and no certification scheme exists for ISO 24495 in any case. "Aligned" in the skills means aligned with this plugin's interpretation of the principles, nothing more.
+**Conformance disclaimer.** The full ISO 24495 texts are licensed and have not been consulted. These skills are built from public principles, published scopes, and common plain-language practice.
+
+The principles derive from the International Plain Language Federation's freely published framework. Every quantitative rule here (sentence length, paragraph density, legalese, heading depth) is this project's own proxy. No rule is a clause of any standard.
+
+Nothing this plugin produces is a statement of ISO conformance. No certification scheme exists for ISO 24495. "Aligned" in the skills means aligned with this project's interpretation, nothing more.
 
 ## Background monitor (Claude Code)
 
@@ -62,11 +68,15 @@ The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-
 { "corpusDir": "docs" }
 ```
 
-When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. Without a config it waits, watching for one to appear; it never exits on its own, so the host never raises a "task ended" notification. Removing the config mid-session returns it to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
+When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. Without a config it waits for one to appear and never exits on its own. The host therefore never raises a "task ended" notification.
+
+Removing the config mid-session returns the monitor to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
 ## Advisory markdown hook (Claude Code)
 
-The plugin ships a `PostToolUse` hook (`hooks/`) that audits every markdown file Claude writes or edits, using the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts; a clean file produces nothing. The hook never blocks a write.
+The plugin ships a `PostToolUse` hook (`hooks/`) that audits every markdown file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts.
+
+A clean file produces nothing, and the hook never blocks a write.
 
 To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
 
@@ -78,7 +88,7 @@ It requires Bun and is Claude Code-specific; the skills themselves work without 
 
 ## Releasing a new version
 
-Installs are pinned to tagged releases: the marketplace manifest points at a `vX.Y.Z` tag, so `main` can move without affecting users. To ship a release:
+Installs are pinned to tagged releases. The marketplace manifest points at a `vX.Y.Z` tag, so `main` can move without affecting users. To ship a release:
 
 1. **Bump versions together:** `plugin.json`, the plugin entry in `marketplace.json` (both `version` and the source `ref`), and every skill's `metadata.version`.
 2. **Update `CHANGELOG.md`** with the changes.
