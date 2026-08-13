@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, writeFileSync, type FSWatcher } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, type FSWatcher } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatDelta, loadMonitorConfig, startMonitor, type Monitor } from "../scripts/watch-corpus.ts";
+
+// A junction is a Windows concept. The same call on other platforms makes a
+// plain symbolic link, which rmdir refuses with ENOTDIR, so these tests passed
+// on Windows and failed on the build runner. rmSync removes either one, and
+// both describe the same unreadable subtree.
+function removeLink(path: string): void {
+  rmSync(path, { recursive: true, force: true });
+}
 
 class FakeWatcher extends EventEmitter {
   close(): void {}
@@ -307,7 +315,7 @@ describe("startMonitor", () => {
     symlinkSync(join(cwd, "missing-target"), join(cwd, "docs", "sub"), "junction");
     monitor.sync();
     expect(lines).toHaveLength(0);
-    rmdirSync(join(cwd, "docs", "sub"));
+    removeLink(join(cwd, "docs", "sub"));
     monitor.sync();
     expect(lines).toEqual(["iso-24495-4 corpus change: sub/policy.md legalese 2 -> 0"]);
   });
@@ -351,7 +359,7 @@ describe("startMonitor", () => {
     const { watchFn } = fakeWatchFactory();
     const lines: string[] = [];
     monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
-    rmdirSync(join(cwd, "docs", "sub"));
+    removeLink(join(cwd, "docs", "sub"));
     mkdirSync(join(cwd, "docs", "sub"));
     writeFileSync(join(cwd, "docs", "sub", "old.md"), "The supplier shall hereby comply.\n");
     monitor.sync();
@@ -370,7 +378,7 @@ describe("startMonitor", () => {
     const { watchFn } = fakeWatchFactory();
     const lines: string[] = [];
     monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
-    rmdirSync(join(cwd, "docs", "sub"));
+    removeLink(join(cwd, "docs", "sub"));
     mkdirSync(join(cwd, "docs", "sub"));
     writeFileSync(join(cwd, "docs", "sub", "old.md"), "A compliant sentence.\n");
     monitor.sync();
