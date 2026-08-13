@@ -59,8 +59,9 @@ describe("auditCorpus", () => {
   const findings = auditCorpus(CORPUS);
 
   test("pins per-rule totals across the fixture corpus", () => {
-    expect(findings.totals["sentence-length"]).toBe(3);
-    expect(findings.totals["paragraph-length"]).toBe(2);
+    expect(findings.totals["sentence-length"]).toBe(2);
+    expect(findings.totals["sentence-average"]).toBe(1);
+    expect(findings.totals["paragraph-length"]).toBe(1);
     expect(findings.totals["legalese"]).toBe(5);
     expect(findings.totals["heading-depth"]).toBe(2);
   });
@@ -69,10 +70,24 @@ describe("auditCorpus", () => {
     expect(findings.files["good-policy.md"].violations).toHaveLength(0);
   });
 
-  test("long-sentences.md carries exactly the sentence-length violations", () => {
+  test("long-sentences.md flags only sentences over the 30-word cap", () => {
     const v = findings.files["long-sentences.md"].violations;
-    expect(v.filter((x) => x.rule === "sentence-length")).toHaveLength(3);
+    expect(v.filter((x) => x.rule === "sentence-length")).toHaveLength(2);
     expect(v.filter((x) => x.rule !== "sentence-length")).toHaveLength(0);
+  });
+
+  test("a sustained high average is caught even with no single offender", () => {
+    const v = findings.files["average-heavy.md"].violations;
+    expect(v.filter((x) => x.rule === "sentence-average")).toHaveLength(1);
+    expect(v.filter((x) => x.rule === "sentence-length")).toHaveLength(0);
+    expect(v.filter((x) => x.rule === "paragraph-length")).toHaveLength(0);
+    expect(v[0].detail).toContain("limit 20");
+  });
+
+  test("short documents are exempt from the average rule", () => {
+    // good-policy.md is clean and has fewer than ten sentences; the average
+    // rule must not fire on samples too small to judge fairly.
+    expect(findings.files["good-policy.md"].violations).toHaveLength(0);
   });
 
   test("fenced code is immune to every rule", () => {

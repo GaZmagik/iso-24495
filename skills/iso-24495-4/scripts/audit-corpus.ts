@@ -7,19 +7,27 @@ import { join, relative } from "node:path";
 import { headings, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 
-const SENTENCE_WORD_LIMIT = 20;
-const PARAGRAPH_SENTENCE_LIMIT = 3;
+// Thresholds recalibrated 2026-08-13 against public guidance (Cutts, Crystal
+// Mark, Clear English Standard: an AVERAGE of 15 to 20 words, not a cap) and
+// against measured data: 60% of flags under the old 20-word cap were sentences
+// of 21 to 29 words in documents whose averages were already compliant.
+const SENTENCE_WORD_LIMIT = 30;
+const SENTENCE_AVERAGE_LIMIT = 20;
+const AVERAGE_MIN_SENTENCES = 10;
+const PARAGRAPH_SENTENCE_LIMIT = 5;
 const MAX_HEADING_LEVEL = 4;
 const TEXT_EXTENSIONS = [".md", ".txt"];
 const LEGALESE = ["shall", "hereby", "hereinafter", "wherefore", "heretofore", "aforesaid"];
 
 export function auditText(text: string): Violation[] {
   const violations: Violation[] = [];
+  const sentenceLengths: number[] = [];
   for (const block of proseBlocks(text)) {
     const paragraph = block.lines.join(" ");
     const sentences = splitSentences(paragraph);
     for (const sentence of sentences) {
       const words = wordCount(sentence);
+      if (words > 0) sentenceLengths.push(words);
       if (words > SENTENCE_WORD_LIMIT) {
         violations.push({
           rule: "sentence-length",
@@ -46,6 +54,20 @@ export function auditText(text: string): Violation[] {
           });
         }
       }
+    }
+  }
+  // The standards specify an average across the document, not a cap; the cap
+  // above only catches genuine sprawl. Small samples are exempt because an
+  // average over a handful of sentences is noise, not judgement.
+  if (sentenceLengths.length >= AVERAGE_MIN_SENTENCES) {
+    const total = sentenceLengths.reduce((a, b) => a + b, 0);
+    const average = total / sentenceLengths.length;
+    if (average > SENTENCE_AVERAGE_LIMIT) {
+      violations.push({
+        rule: "sentence-average",
+        line: 1,
+        detail: `average ${average.toFixed(1)} words across ${sentenceLengths.length} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
+      });
     }
   }
   for (const heading of headings(text)) {

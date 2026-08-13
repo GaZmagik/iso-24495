@@ -9,7 +9,11 @@ metadata:
 
 # ISO 24495-1:2023 - Plain Language (Governing Principles)
 
-All user-facing LLM responses MUST follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The quantitative rules below are this skill's own proxies for those principles. They come from common plain-language practice, not the standard's text. Following them is never a claim of ISO conformance.
+All user-facing LLM responses MUST follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The standard's four governing principles: readers get the information they need (relevant), can find it (findable), can understand it (understandable), and can act on it (usable).
+
+Before writing, know the reader: who they are, what they already know, and what they must do after reading. Content that serves none of those belongs elsewhere.
+
+The quantitative rules below are this skill's own proxies for those principles. They come from public plain-language practice, not the standard's text. Following them is never a claim of ISO conformance.
 
 ## Scope & Execution Boundaries
 
@@ -32,16 +36,26 @@ All user-facing LLM responses MUST follow the plain-language principles of ISO 2
    - Never use pleasantries or conversational intros (e.g. *"Certainly!"*, *"Sure, I can help with that"*, *"Here is the summary"*).
 
 2. **Sentence & Paragraph Limits:**
-   - **Sentence Length:** Maximum 20 words per sentence in prose text. Split multi-clause sentences.
-   - **Paragraph Length:** Maximum 3 sentences per paragraph.
-   - **Voice:** Active voice mandatory (*"Run the test suite"* instead of *"The test suite should be executed"*).
+   - **Sentence Length:** Aim for a document average of 15 to 20 words, one main idea per sentence. Never exceed 30 words in a single sentence. Vary length; short sentences give relief.
+   - **Paragraph Length:** 3 to 5 sentences per paragraph, one topic each. A single-sentence paragraph is fine for emphasis.
+   - **Voice:** Default to the active voice (*"Run the test suite"*, not *"The test suite should be executed"*). Passive is acceptable when the actor is unknown, irrelevant, or deliberately secondary.
+   - **Proximity:** Keep the subject and its verb close together. Never bury the action under an inserted clause.
 
-3. **Scannability & Layout:**
+3. **Wording:**
+   - **Familiar words:** Prefer the everyday word (*use*, *start*, *before*) over the formal one (*utilise*, *commence*, *prior to*), unless the reader's field makes the technical term clearer.
+   - **Trim filler:** *to*, not *in order to*; *because*, not *due to the fact that*; *if*, not *in the event that*; *now*, not *at this point in time*.
+   - **One term per concept:** Repeat the term rather than switching to a synonym. Elegant variation makes readers check whether two words mean two things.
+   - **Direct address:** Use *you* for the reader and *we* or *I* for the writer.
+   - **Positive framing:** Say what to do (*"Keep your details safe"*), not what to avoid (*"Do not reveal your details"*), unless the warning itself is the point.
+   - **Explicit connections:** Use *because*, *therefore*, *if*, *before*, and *after* to state relationships rather than leaving readers to infer them.
+
+4. **Scannability & Layout** (house conventions, not standard-derived):
    - **Bullet Lead-ins:** Bold the first 2 to 4 words of every bullet point.
    - **Headings:** Use single-topic Markdown headings (`##`, `###`).
    - **Lists:** Convert any series of 3 or more items into a bulleted list.
+   - **Front-loading:** Open each paragraph with its main point, then support it.
 
-4. **Actionable Outcomes:**
+5. **Actionable Outcomes:**
    - State concrete solutions and instructions directly. Specify exact commands, file paths, or parameters.
 
 ---
@@ -62,8 +76,9 @@ All user-facing LLM responses MUST follow the plain-language principles of ISO 2
 
 Before outputting user-facing text, audit against these checks:
 - [ ] **No preamble:** Is conversational filler eliminated from line 1 of final output?
-- [ ] **Sentence length:** Is every prose sentence 20 words or fewer?
-- [ ] **Paragraph length:** Is every prose paragraph 3 sentences or fewer?
+- [ ] **Sentence length:** Does the response average 15 to 20 words per sentence, with none over 30?
+- [ ] **Paragraph length:** Is every prose paragraph 5 sentences or fewer, one topic each?
+- [ ] **Reader service:** Is it clear who this is for and what they can do next?
 - [ ] **Code preservation:** Are code snippets and commands untouched by simplification rules?
 - [ ] **Scannability:** Are bullet points led by bold key phrases?
 
