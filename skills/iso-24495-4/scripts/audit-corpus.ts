@@ -7,10 +7,11 @@ import { join, relative } from "node:path";
 import { headings, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 
-// Thresholds recalibrated 2026-08-13 against public guidance (Cutts, Crystal
-// Mark, Clear English Standard: an AVERAGE of 15 to 20 words, not a cap) and
-// against measured data: 60% of flags under the old 20-word cap were sentences
-// of 21 to 29 words in documents whose averages were already compliant.
+// Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
+// English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
+// 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
+// minimum sample are this project's own proxy choices, informed by local
+// session measurements that are not part of this repository.
 const SENTENCE_WORD_LIMIT = 30;
 const SENTENCE_AVERAGE_LIMIT = 20;
 const AVERAGE_MIN_SENTENCES = 10;

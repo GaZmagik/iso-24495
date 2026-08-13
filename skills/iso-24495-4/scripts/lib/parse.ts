@@ -23,7 +23,10 @@ export function proseBlocks(text: string): ProseBlock[] {
       current = null;
       continue;
     }
-    if (inFence || line.trim() === "" || NON_PROSE_PREFIX.test(line)) {
+    // Test the trimmed line: list markers and quotes are structure at ANY
+    // indentation. Testing the raw line made nested bullets count as prose,
+    // which merged them into giant fake sentences and biased the average.
+    if (inFence || line.trim() === "" || NON_PROSE_PREFIX.test(line.trimStart())) {
       current = null;
       continue;
     }

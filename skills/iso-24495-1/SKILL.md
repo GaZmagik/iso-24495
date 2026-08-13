@@ -37,7 +37,7 @@ The quantitative rules below are this skill's own proxies for those principles. 
 
 2. **Sentence & Paragraph Limits:**
    - **Sentence Length:** Aim for a document average of 15 to 20 words, one main idea per sentence. Never exceed 30 words in a single sentence. Vary length; short sentences give relief.
-   - **Paragraph Length:** 3 to 5 sentences per paragraph, one topic each. A single-sentence paragraph is fine for emphasis.
+   - **Paragraph Length:** Prefer 3 to 5 sentences per paragraph, one topic each. Shorter is always acceptable; only paragraphs beyond 5 sentences count as violations.
    - **Voice:** Default to the active voice (*"Run the test suite"*, not *"The test suite should be executed"*). Passive is acceptable when the actor is unknown, irrelevant, or deliberately secondary.
    - **Proximity:** Keep the subject and its verb close together. Never bury the action under an inserted clause.
 

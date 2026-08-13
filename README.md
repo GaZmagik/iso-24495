@@ -16,7 +16,7 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-4` | **Organisational implementation (provisional).** A task skill for plain language gap analysis in organisations: a process-artefact sweep, a corpus audit, a five-dimension maturity model with deterministic scoring, and an append-only audit trend. Ships TypeScript tooling run with [Bun](https://bun.sh) (`bun test` covered). Based on the unpublished ISO/CD 24495-4 committee draft. |
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: visual hierarchy, navigation aids, tables for comparisons, consistent visual signalling. Based on the unpublished ISO/WD 24495-5 working draft. |
 
-The core skill activates the legal and technical extensions automatically. It triggers `iso-24495-2` for legal content and `iso-24495-3` for technical content. The document design skill activates through its own description, or on request by name.
+The core skill activates the other skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex multi-section documents. Each also activates on request by name.
 
 All skills exempt internal reasoning and preserve code blocks, commands, and logs untouched. Technical and legal accuracy always supersede formatting rules.
 
@@ -25,9 +25,11 @@ All skills exempt internal reasoning and preserve code blocks, commands, and log
 Add this repository as a plugin marketplace, then install the plugin:
 
 ```
-/plugin marketplace add GaZmagik/iso-24495
+/plugin marketplace add https://github.com/GaZmagik/iso-24495
 /plugin install iso-24495-plain-language@iso-24495
 ```
+
+Use the full HTTPS address as shown. The short `owner/repo` form makes some Claude Code versions clone over SSH, which fails without GitHub SSH keys.
 
 Or from a local clone:
 

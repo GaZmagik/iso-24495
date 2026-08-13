@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditCorpus, listTextFiles } from "../scripts/audit-corpus.ts";
+import { auditCorpus, auditText, listTextFiles } from "../scripts/audit-corpus.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
 
@@ -78,10 +78,48 @@ describe("auditCorpus", () => {
 
   test("a sustained high average is caught even with no single offender", () => {
     const v = findings.files["average-heavy.md"].violations;
-    expect(v.filter((x) => x.rule === "sentence-average")).toHaveLength(1);
-    expect(v.filter((x) => x.rule === "sentence-length")).toHaveLength(0);
-    expect(v.filter((x) => x.rule === "paragraph-length")).toHaveLength(0);
+    expect(v).toHaveLength(1);
+    expect(v[0].rule).toBe("sentence-average");
+    expect(v[0].detail).toContain("average 22.0");
+    expect(v[0].detail).toContain("12 sentences");
     expect(v[0].detail).toContain("limit 20");
+  });
+
+  test("indented list items are structure, not prose", () => {
+    // Regression for the column-zero bug: list markers must be recognised
+    // at any indentation, or nested bullets merge into giant fake sentences.
+    const nested = [
+      "1. **Top item:**",
+      "   - **First nested point:** some words that continue along here",
+      "   - **Second nested point:** more words that continue along here",
+      "   * another marker style, indented",
+      "     2) a doubly indented numbered item with several words in it",
+    ].join("\n");
+    expect(auditText(nested)).toEqual([]);
+  });
+
+  // A synthetic sentence of exactly n words; programmatic, so the count
+  // cannot be wrong by hand.
+  const sentenceOf = (n: number) =>
+    Array.from({ length: n }, (_, i) => `word${i}`).join(" ") + ".";
+
+  test("the average fires at exactly ten sentences and not at 20.0 exactly", () => {
+    const tenAt21 = Array(10).fill(sentenceOf(21)).join(" ");
+    const fired = auditText(tenAt21).filter((x) => x.rule === "sentence-average");
+    expect(fired).toHaveLength(1);
+    expect(fired[0].detail).toContain("21.0");
+    expect(fired[0].detail).toContain("10 sentences");
+
+    const nineAt21 = Array(9).fill(sentenceOf(21)).join(" ");
+    expect(auditText(nineAt21).filter((x) => x.rule === "sentence-average")).toHaveLength(0);
+
+    const tenAt20 = Array(10).fill(sentenceOf(20)).join(" ");
+    expect(auditText(tenAt20).filter((x) => x.rule === "sentence-average")).toHaveLength(0);
+  });
+
+  test("the average accumulates across separate prose blocks", () => {
+    const spread = Array(10).fill(sentenceOf(21)).join("\n\n");
+    expect(auditText(spread).filter((x) => x.rule === "sentence-average")).toHaveLength(1);
   });
 
   test("short documents are exempt from the average rule", () => {
