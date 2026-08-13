@@ -11,8 +11,10 @@ class FakeWatcher extends EventEmitter {
 
 function fakeWatchFactory() {
   const watchers: Array<{ path: string; watcher: FakeWatcher }> = [];
-  const watchFn = (path: string): FSWatcher => {
+  const watchFn = (path: string, arg2?: unknown, arg3?: unknown): FSWatcher => {
     const watcher = new FakeWatcher();
+    const listener = typeof arg2 === "function" ? arg2 : arg3;
+    if (typeof listener === "function") watcher.on("change", listener as (...args: unknown[]) => void);
     watchers.push({ path, watcher });
     return watcher as unknown as FSWatcher;
   };
@@ -197,6 +199,64 @@ describe("startMonitor", () => {
     monitor.sync();
     expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
     expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
+  test("recovers when directory watchers emit errors or change events", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall comply.\n");
+    const { watchers, watchFn } = fakeWatchFactory();
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line), { watchFn });
+    const cwdWatcher = watchers.find((entry) => entry.path === cwd)!.watcher;
+    const configWatcher = watchers.find((entry) => entry.path === join(cwd, ".iso-24495-4"))!.watcher;
+    const corpusWatcher = watchers.find((entry) => entry.path === join(cwd, "docs"))!.watcher;
+
+    cwdWatcher.emit("change", "unrelated.txt");
+    cwdWatcher.emit("change", null);
+    configWatcher.emit("change", "monitor.json");
+    writeFileSync(join(cwd, "docs", "policy.md"), "You must comply.\n");
+    corpusWatcher.emit("change", "policy.md");
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 1 -> 0"]);
+    cwdWatcher.emit("error", new Error("cwd unavailable"));
+    configWatcher.emit("error", new Error("config unavailable"));
+    corpusWatcher.emit("error", new Error("corpus unavailable"));
+    expect(() => monitor!.sync()).not.toThrow();
+    expect(monitor.watchedCorpus()).toBe(join(cwd, "docs"));
+    expect(watchers).toHaveLength(6);
+  });
+
+  test("continues by polling when every watcher installation throws", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    const throwingWatch = (): FSWatcher => {
+      throw new Error("watch unavailable");
+    };
+    expect(() => {
+      monitor = startMonitor(cwd, () => {}, { watchFn: throwingWatch });
+    }).not.toThrow();
+    expect(monitor!.watchedCorpus()).toBe(join(cwd, "docs"));
+    expect(() => monitor!.sync()).not.toThrow();
+  });
+
+  test("uses console output when no emitter is supplied", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    writeFileSync(join(cwd, "docs", "policy.md"), "The supplier shall comply.\n");
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (line?: unknown) => lines.push(String(line));
+    try {
+      monitor = startMonitor(cwd, undefined, { pollOnly: true });
+      writeFileSync(join(cwd, "docs", "policy.md"), "You must comply.\n");
+      monitor.sync();
+      expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 1 -> 0"]);
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   test("reports an edit that lands between priming and watcher installation", () => {

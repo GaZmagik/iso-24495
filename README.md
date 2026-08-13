@@ -90,6 +90,22 @@ To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
 
 It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
+## Testing policy
+
+`bun test` always measures coverage. Every source file must cover at least 95.8% of lines and 100% of functions. Test files are excluded from those totals.
+
+The current suite covers 98.28% of source lines and 100% of source functions overall.
+
+Bun reports line and function coverage only in this toolchain. We make no branch-coverage claim.
+
+Logic-free entry shims are exempt because child-process execution does not enter the parent test process's coverage. End-to-end tests still exercise those shims.
+
+Every new test receives a mutation check. The implementation is deliberately broken, the test must fail, and the correct behaviour is then restored.
+
+## TypeScript style
+
+This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem, and the repository conventions test enforces the mechanically checkable rules.
+
 ## Why this project holds itself to these rules
 
 This repository is both the tool and a user of the tool. Its hook audits every markdown edit, including this file. Its own audits have failed and forced rewrites; the changelog records them.

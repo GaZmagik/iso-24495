@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { adviseOnFile } from "../audit-markdown.ts";
+import { adviseOnFile, handlePayload } from "../audit-markdown.ts";
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), "iso-24495-hook-"));
@@ -148,9 +148,56 @@ describe("hooks.json contract", () => {
   });
 });
 
+describe("handlePayload", () => {
+  test("returns hook JSON for a violating file", () => {
+    const cwd = makeProject();
+    try {
+      const file = join(cwd, "policy.md");
+      writeFileSync(file, "The supplier shall comply.\n");
+      const result = handlePayload(JSON.stringify({ cwd, tool_input: { file_path: file } }));
+      expect(result).not.toBeNull();
+      expect(JSON.parse(result!).hookSpecificOutput).toEqual({
+        hookEventName: "PostToolUse",
+        additionalContext:
+          "iso-24495 plain-language advisory for policy.md: legalese 1 (whole-file counts). This is advisory only.",
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("returns null for clean, unsupported, and disabled files", () => {
+    const cwd = makeProject();
+    try {
+      const clean = join(cwd, "clean.md");
+      writeFileSync(clean, "A short sentence.\n");
+      expect(handlePayload(JSON.stringify({ cwd, tool_input: { file_path: clean } }))).toBeNull();
+
+      const unsupported = join(cwd, "policy.rst");
+      writeFileSync(unsupported, "The supplier shall comply.\n");
+      expect(handlePayload(JSON.stringify({ cwd, tool_input: { file_path: unsupported } }))).toBeNull();
+
+      mkdirSync(join(cwd, ".iso-24495-4"));
+      writeFileSync(join(cwd, ".iso-24495-4", "hooks.json"), JSON.stringify({ markdownAudit: false }));
+      const violating = join(cwd, "policy.md");
+      writeFileSync(violating, "The supplier shall comply.\n");
+      expect(handlePayload(JSON.stringify({ cwd, tool_input: { file_path: violating } }))).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("returns null for malformed JSON and a missing file path", () => {
+    expect(handlePayload("{not json")).toBeNull();
+    expect(handlePayload(JSON.stringify({ cwd: ".", tool_input: {} }))).toBeNull();
+  });
+});
+
 describe("hook entry point", () => {
   const script = join(import.meta.dir, "..", "audit-markdown.ts");
 
+  // These child-process checks remain end-to-end proof. Bun does not add a
+  // child process's execution to the parent test process's coverage data.
   async function runHook(input: unknown): Promise<{ stdout: string; exitCode: number }> {
     const proc = Bun.spawn(["bun", script], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
     proc.stdin.write(JSON.stringify(input));

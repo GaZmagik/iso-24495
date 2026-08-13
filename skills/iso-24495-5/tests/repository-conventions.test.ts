@@ -15,6 +15,26 @@ const AGENT_SPECIFIC_PATTERNS = [
   },
   { name: "tool label", pattern: /\b(?:Read|Write|Edit|Bash|Grep|Glob) tool\b/i },
 ];
+const REFERENCE_DIRECTIVE_PATTERN = /^\s*\/\/\/\s*<reference\b/;
+const SUPPRESSION_DIRECTIVE_PATTERN = /@ts-(?:ignore|nocheck|expect-error)\b/;
+const VAR_DECLARATION_PATTERN = new RegExp("\\bvar\\s+");
+const EXPLICIT_ANY_PATTERN = new RegExp("(?::\\s*any\\b|\\bas\\s+any\\b)");
+const LOOSE_EQUALITY_PATTERN = new RegExp("(?<![=!])(?:==|!=)(?!=)", "g");
+const NULL_PATTERN = new RegExp("^null\\b");
+const DEFAULT_EXPORT_PATTERN = new RegExp("\\bexport\\s+default\\b");
+const NAMESPACE_PATTERN = new RegExp("\\bnamespace\\s+[A-Za-z_$]");
+const DECLARATION_PATTERN = new RegExp("\\b(?:let|const)\\b", "g");
+const PRIVATE_FIELD_PATTERN = new RegExp("#[A-Za-z_$][\\w$]*");
+
+interface LexicalState {
+  blockComment: boolean;
+  quote: "\"" | "'" | "`" | null;
+}
+
+interface StyleViolation {
+  line: number;
+  rule: string;
+}
 
 function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
   const files: string[] = [];
@@ -28,6 +48,127 @@ function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
     }
   }
   return files.sort();
+}
+
+function maskCommentsAndStrings(line: string, state: LexicalState): string {
+  let result = "";
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const next = line[index + 1];
+
+    if (state.blockComment) {
+      result += " ";
+      if (character === "*" && next === "/") {
+        result += " ";
+        index += 1;
+        state.blockComment = false;
+      }
+      continue;
+    }
+
+    if (state.quote !== null) {
+      result += " ";
+      if (character === "\\") {
+        if (next !== undefined) {
+          result += " ";
+          index += 1;
+        }
+      } else if (character === state.quote) {
+        state.quote = null;
+      }
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      return result.padEnd(line.length, " ");
+    }
+    if (character === "/" && next === "*") {
+      result += "  ";
+      index += 1;
+      state.blockComment = true;
+      continue;
+    }
+    if (character === "\"" || character === "'" || character === "`") {
+      result += " ";
+      state.quote = character;
+      continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+function hasLooseEquality(code: string): boolean {
+  for (const match of code.matchAll(LOOSE_EQUALITY_PATTERN)) {
+    const rightOperand = code.slice((match.index ?? 0) + match[0].length).trimStart();
+    if (!NULL_PATTERN.test(rightOperand)) return true;
+  }
+  return false;
+}
+
+function hasMultipleDeclarations(code: string): boolean {
+  DECLARATION_PATTERN.lastIndex = 0;
+  for (const match of code.matchAll(DECLARATION_PATTERN)) {
+    let roundDepth = 0;
+    let squareDepth = 0;
+    let braceDepth = 0;
+    let angleDepth = 0;
+    const start = (match.index ?? 0) + match[0].length;
+    for (let index = start; index < code.length; index += 1) {
+      const character = code[index];
+      if (character === "(") roundDepth += 1;
+      if (character === ")") roundDepth -= 1;
+      if (character === "[") squareDepth += 1;
+      if (character === "]") squareDepth -= 1;
+      if (character === "{") braceDepth += 1;
+      if (character === "}") braceDepth -= 1;
+      if (character === "<") angleDepth += 1;
+      if (character === ">" && angleDepth > 0) angleDepth -= 1;
+      const topLevel =
+        roundDepth === 0 && squareDepth === 0 && braceDepth === 0 && angleDepth === 0;
+      if (topLevel && character === ",") return true;
+      if (topLevel && character === ";") break;
+    }
+  }
+  return false;
+}
+
+function typescriptStyleViolations(path: string): StyleViolation[] {
+  const state: LexicalState = { blockComment: false, quote: null };
+  return readFileSync(path, "utf8").split(/\r\n?|\n/).flatMap((line, index) => {
+    const violations: StyleViolation[] = [];
+    const lineNumber = index + 1;
+    if (REFERENCE_DIRECTIVE_PATTERN.test(line)) {
+      violations.push({ line: lineNumber, rule: "namespace or triple-slash reference" });
+    }
+    if (SUPPRESSION_DIRECTIVE_PATTERN.test(line)) {
+      violations.push({ line: lineNumber, rule: "TypeScript suppression directive" });
+    }
+
+    const code = maskCommentsAndStrings(line, state);
+    if (VAR_DECLARATION_PATTERN.test(code)) {
+      violations.push({ line: lineNumber, rule: "var declaration" });
+    }
+    if (EXPLICIT_ANY_PATTERN.test(code)) {
+      violations.push({ line: lineNumber, rule: "explicit any" });
+    }
+    if (hasLooseEquality(code)) {
+      violations.push({ line: lineNumber, rule: "loose equality" });
+    }
+    if (DEFAULT_EXPORT_PATTERN.test(code)) {
+      violations.push({ line: lineNumber, rule: "default export" });
+    }
+    if (NAMESPACE_PATTERN.test(code)) {
+      violations.push({ line: lineNumber, rule: "namespace or triple-slash reference" });
+    }
+    if (hasMultipleDeclarations(code)) {
+      violations.push({ line: lineNumber, rule: "multiple declarations" });
+    }
+    if (PRIVATE_FIELD_PATTERN.test(code)) {
+      violations.push({ line: lineNumber, rule: "private field syntax" });
+    }
+    return violations;
+  });
 }
 
 describe("repository writing conventions", () => {
@@ -74,6 +215,25 @@ describe("repository writing conventions", () => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
       return auditText(readFileSync(path, "utf8")).map(
         (violation) => `${relativePath}:${violation.line}: ${violation.rule}: ${violation.detail}`,
+      );
+    });
+    expect(violations).toEqual([]);
+  });
+
+  test("TypeScript follows the mechanically checkable style rules", () => {
+    const typescriptFiles = repositoryTextFiles().filter((path) => {
+      const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
+      return path.endsWith(".ts") && !relativePath.includes("/tests/fixtures/");
+    });
+    expect(typescriptFiles.length).toBeGreaterThanOrEqual(10);
+    expect(typescriptFiles).toContain(
+      join(REPOSITORY_ROOT, "skills", "iso-24495-4", "scripts", "audit-corpus.ts"),
+    );
+
+    const violations = typescriptFiles.flatMap((path) => {
+      const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
+      return typescriptStyleViolations(path).map(
+        (violation) => `${relativePath}:${violation.line}: ${violation.rule}`,
       );
     });
     expect(violations).toEqual([]);

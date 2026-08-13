@@ -50,27 +50,29 @@ export function adviseOnFile(filePath: string, cwd: string): string | null {
   );
 }
 
-if (import.meta.main) {
-  // Advisory contract: once the module has loaded, the script always exits 0
-  // and prints only when there is something to say. Environmental failures,
-  // such as Bun missing, command startup failure, or an import parse failure,
-  // outside this block's control and surface as a hook-error notice, which is
-  // accepted.)
+export function handlePayload(raw: string): string | null {
   try {
-    const input = JSON.parse(readFileSync(0, "utf8")) as HookInput;
+    const input = JSON.parse(raw) as HookInput;
     const filePath = input?.tool_input?.file_path;
+    if (!filePath) return null;
     // The off switch anchors to the stable project root, not the session's
     // mutable cwd: `cd src` must not disable a project's configuration.
     // Writes outside the project consult the session project's switch.
     const cwd = process.env.CLAUDE_PROJECT_DIR ?? input?.cwd ?? process.cwd();
-    const advice = filePath ? adviseOnFile(filePath, cwd) : null;
-    if (advice) {
-      console.log(JSON.stringify({
+    const advice = adviseOnFile(filePath, cwd);
+    return advice
+      ? JSON.stringify({
         hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: advice },
-      }));
-    }
+      })
+      : null;
   } catch {
     // Malformed stdin or an unreadable file: stay silent.
+    return null;
   }
-  process.exit(0);
+}
+
+// Coverage exemption: logic-free process entry shim.
+if (import.meta.main) {
+  const output = handlePayload(readFileSync(0, "utf8"));
+  if (output) console.log(output);
 }

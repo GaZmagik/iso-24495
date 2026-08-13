@@ -271,6 +271,7 @@ export function startMonitor(
   };
 }
 
+// Coverage exemption: logic-free process entry shim.
 if (import.meta.main) {
   startMonitor(process.cwd());
 }

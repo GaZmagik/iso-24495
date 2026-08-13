@@ -2,7 +2,7 @@
 // Emits counts and locations only. It never judges clarity and its output
 // must never be presented as ISO compliance.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { headings, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
 import type { Findings, Violation } from "./lib/types.ts";
@@ -362,26 +362,46 @@ export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findi
   return findings;
 }
 
-if (import.meta.main) {
-  const dir = process.argv[2];
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
   if (!dir) {
-    console.error("Usage: bun audit-corpus.ts <corpus-dir> [--json <out-file>]");
-    process.exit(2);
+    stderr("Usage: bun audit-corpus.ts <corpus-dir> [--json <out-file>]");
+    return 2;
   }
-  const skipped: string[] = [];
-  const findings = auditCorpus(dir, (path) => skipped.push(path));
-  for (const path of skipped) {
-    console.error(`warning: skipped unreadable entry: ${path}`);
+  const jsonFlag = argv.indexOf("--json");
+  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+    stderr("audit-corpus: --json requires an output file");
+    return 2;
   }
-  const jsonFlag = process.argv.indexOf("--json");
-  if (jsonFlag !== -1 && process.argv[jsonFlag + 1]) {
-    await Bun.write(process.argv[jsonFlag + 1], JSON.stringify(findings, null, 2));
+  try {
+    const skipped: string[] = [];
+    const findings = auditCorpus(dir, (path) => skipped.push(path));
+    for (const path of skipped) {
+      stderr(`warning: skipped unreadable entry: ${path}`);
+    }
+    if (jsonFlag !== -1) {
+      writeFileSync(argv[jsonFlag + 1], JSON.stringify(findings, null, 2));
+    }
+    stdout("| Rule | Violations |");
+    stdout("|------|------------|");
+    for (const [rule, count] of Object.entries(findings.totals)) {
+      stdout(`| ${rule} | ${count} |`);
+    }
+    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
+    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
+    return 0;
+  } catch (error) {
+    stderr(`audit-corpus: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
   }
-  console.log("| Rule | Violations |");
-  console.log("|------|------------|");
-  for (const [rule, count] of Object.entries(findings.totals)) {
-    console.log(`| ${rule} | ${count} |`);
-  }
-  const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
-  console.log(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
+}
+
+// Coverage exemption: logic-free process entry shim.
+if (import.meta.main) {
+  const exitCode = runCli(process.argv, console.log, console.error);
+  process.exit(exitCode);
 }

@@ -4,6 +4,7 @@
 
 import { MATURITY_MODEL } from "./lib/types.ts";
 import type { Maturity } from "./lib/types.ts";
+import { readFileSync, writeFileSync } from "node:fs";
 
 export interface Answers {
   organisation?: string;
@@ -29,21 +30,41 @@ export function scoreMaturity(answers: Answers): Maturity {
   return maturity;
 }
 
-if (import.meta.main) {
-  const path = process.argv[2];
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const path = argv[2];
   if (!path) {
-    console.error("Usage: bun score-maturity.ts <answers.json> [--json <out-file>]");
-    process.exit(2);
+    stderr("Usage: bun score-maturity.ts <answers.json> [--json <out-file>]");
+    return 2;
   }
-  const maturity = scoreMaturity(await Bun.file(path).json());
-  const jsonFlag = process.argv.indexOf("--json");
-  if (jsonFlag !== -1 && process.argv[jsonFlag + 1]) {
-    await Bun.write(process.argv[jsonFlag + 1], JSON.stringify(maturity, null, 2));
+  const jsonFlag = argv.indexOf("--json");
+  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+    stderr("score-maturity: --json requires an output file");
+    return 2;
   }
-  console.log("| Dimension | Level | Blocking criteria |");
-  console.log("|-----------|-------|-------------------|");
-  for (const [dimension, result] of Object.entries(maturity.dimensions)) {
-    console.log(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
+  try {
+    const maturity = scoreMaturity(JSON.parse(readFileSync(path, "utf8")));
+    if (jsonFlag !== -1) {
+      writeFileSync(argv[jsonFlag + 1], JSON.stringify(maturity, null, 2));
+    }
+    stdout("| Dimension | Level | Blocking criteria |");
+    stdout("|-----------|-------|-------------------|");
+    for (const [dimension, result] of Object.entries(maturity.dimensions)) {
+      stdout(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
+    }
+    stdout(`\nOverall (weakest dimension): ${maturity.overall}`);
+    return 0;
+  } catch (error) {
+    stderr(`score-maturity: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
   }
-  console.log(`\nOverall (weakest dimension): ${maturity.overall}`);
+}
+
+// Coverage exemption: logic-free process entry shim.
+if (import.meta.main) {
+  const exitCode = runCli(process.argv, console.log, console.error);
+  process.exit(exitCode);
 }
