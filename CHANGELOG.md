@@ -8,6 +8,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 - Part 5 now provides templates for architecture decision records, runbooks, and design documents.
 - Part 5 requires the matching template before writing and defines a content-preserving restructuring workflow.
+- Five shared advisory rules add `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, and `prose-enumeration`. Their concepts were studied in [lucid](https://github.com/maricastroc/lucid), but no code was copied and this implementation is independent. The rules remain project proxies rather than standard clauses.
+- Corpus JSON output now carries a deterministic configuration hash covering every engine threshold.
 - Plain-language checks for script comments remain deferred to a later release.
 
 ### Changed
@@ -16,6 +18,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Paragraph limit relaxed from 3 sentences to 5, matching public guidance (3 to 5, with single-sentence paragraphs fine for emphasis).
 - The core skill's voice rule is no longer absolute: active is the default, and passive is accepted where the actor is unknown, irrelevant, or secondary.
 - The core skill and output style gain guidance the standards emphasise and the plugin lacked: the four governing principles named (relevant, findable, understandable, usable), audience-first framing, positive framing, direct address, subject-verb proximity, explicit connective words, wordy-phrase replacements, and repetition over elegant variation. Layout rules are now labelled house conventions.
+- The advisory hook now audits `.md`, `.markdown`, and `.txt` files.
 
 ## [0.4.1] - 2026-08-12
 

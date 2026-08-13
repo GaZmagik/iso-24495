@@ -47,6 +47,22 @@ describe("adviseOnFile", () => {
     }
   });
 
+  test("audits markdown and text extensions but still excludes rst", () => {
+    const cwd = makeProject();
+    try {
+      for (const name of ["policy.markdown", "policy.txt"]) {
+        const file = join(cwd, name);
+        writeFileSync(file, "The supplier shall comply.\n");
+        expect(adviseOnFile(file, cwd)).toContain("legalese 1");
+      }
+      const excluded = join(cwd, "policy.rst");
+      writeFileSync(excluded, "The supplier shall comply.\n");
+      expect(adviseOnFile(excluded, cwd)).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("respects the per-project off switch", () => {
     const cwd = makeProject();
     try {

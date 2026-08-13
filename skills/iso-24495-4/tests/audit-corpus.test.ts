@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditCorpus, auditText, listTextFiles } from "../scripts/audit-corpus.ts";
+import {
+  auditCorpus,
+  auditText,
+  configHash,
+  ENGINE_THRESHOLDS,
+  listTextFiles,
+} from "../scripts/audit-corpus.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
 
@@ -147,5 +153,123 @@ describe("auditCorpus", () => {
         expect(v.line).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+function violationsFor(text: string, rule: string) {
+  return auditText(text).filter((violation) => violation.rule === rule);
+}
+
+describe("lucid-inspired advisory rules", () => {
+  test("heading-skip checks adjacent structural levels", () => {
+    expect(violationsFor("### Initial heading\n", "heading-skip")).toEqual([]);
+
+    const skipped = violationsFor("# First\nContent does not matter.\n### Third\n#### Fourth\n", "heading-skip");
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0].line).toBe(3);
+    expect(skipped[0].detail).toContain("level 1 to level 3");
+
+    expect(violationsFor("# First\n## Second\n### Third\n", "heading-skip")).toEqual([]);
+    expect(violationsFor("### Third\n# First\n", "heading-skip")).toEqual([]);
+    expect(violationsFor("# First\n```md\n### Code sample\n```\n## Second\n", "heading-skip")).toEqual([]);
+  });
+
+  test("heading-style checks length and sentence form with defined priorities", () => {
+    const twelve = "# One two three four five six seven eight nine ten eleven twelve";
+    const thirteen = `${twelve} thirteen`;
+    expect(violationsFor(twelve, "heading-style")).toEqual([]);
+
+    const long = violationsFor(thirteen, "heading-style");
+    expect(long).toHaveLength(1);
+    expect(long[0].detail).toContain("13 words");
+
+    expect(violationsFor("# Is this a question?", "heading-style")).toEqual([]);
+    expect(violationsFor("# This is exciting!", "heading-style")).toEqual([]);
+    expect(violationsFor("# Wait...", "heading-style")).toEqual([]);
+    expect(violationsFor("# Wait…", "heading-style")).toEqual([]);
+    expect(violationsFor("## 2.1. Component Diagram", "heading-style")).toEqual([]);
+
+    const fullStop = violationsFor("# This is a statement.", "heading-style");
+    expect(fullStop).toHaveLength(1);
+    expect(fullStop[0].detail).toContain("full stop");
+
+    const multiple = violationsFor("# First statement. Second statement", "heading-style");
+    expect(multiple).toHaveLength(1);
+    expect(multiple[0].detail).toContain("2 sentences");
+
+    const priority = violationsFor(`${thirteen}.`, "heading-style");
+    expect(priority).toHaveLength(1);
+    expect(priority[0].detail).toContain("13 words");
+    expect(priority[0].detail).not.toContain("full stop");
+    expect(violationsFor("This paragraph ends with a full stop.", "heading-style")).toEqual([]);
+  });
+
+  test("acronym-undefined applies definitions and false-positive guards", () => {
+    const first = violationsFor("The ABC controls access. ABC appears again.", "acronym-undefined");
+    expect(first).toHaveLength(1);
+    expect(first[0].detail).toContain('"ABC"');
+
+    expect(violationsFor("Application Binary Code (ABC) controls access. ABC continues.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("ABC (Application Binary Code) controls access.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("Section II precedes section IV. MP3 and A4 remain common.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("KG KM CM MM MB GB KB TB PDF URL HTML TV PIN UN USA U.S.A.", "acronym-undefined")).toEqual([]);
+    for (const acronym of ["ISO", "AI", "API", "CLI", "JSON", "HTTP", "HTTPS", "SSH", "MIT"]) {
+      expect(violationsFor(`The ${acronym} guidance applies.`, "acronym-undefined")).toEqual([]);
+    }
+    expect(violationsFor("THIS IS IMPORTANT prose.", "acronym-undefined")).toEqual([]);
+
+    expect(violationsFor("The ADR records the choice.", "acronym-undefined")).toHaveLength(1);
+
+    const dotted = violationsFor("The U.A.E. appears here.", "acronym-undefined");
+    expect(dotted).toHaveLength(1);
+    expect(dotted[0].detail).toContain('"U.A.E."');
+  });
+
+  test("doublet matches exact case-folded phrases without overlaps", () => {
+    const findings = violationsFor(
+      "The clause is NULL AND VOID, and the end result is clear. We also revert back once.",
+      "doublet",
+    );
+    expect(findings).toHaveLength(3);
+    expect(findings[0].detail).toContain('consider "void"');
+    expect(findings[1].detail).toContain('consider "result"');
+    expect(findings[2].detail).toContain('consider "revert"');
+
+    expect(violationsFor("This is null, and void.", "doublet")).toEqual([]);
+    expect(violationsFor("This is null. And void remains.", "doublet")).toEqual([]);
+    expect(violationsFor("Each and every result is final.", "doublet")).toHaveLength(1);
+
+    for (const phrase of ["cease and desist", "terms and conditions"]) {
+      const legal = violationsFor(`These ${phrase} remain.`, "doublet");
+      expect(legal).toHaveLength(1);
+      expect(legal[0].detail).toContain("legal-register phrase");
+      expect(legal[0].detail).not.toContain("consider");
+    }
+  });
+
+  test("prose-enumeration requires three distinct ranks including rank one", () => {
+    expect(violationsFor("First gather input, secondly compare it, and third report it.", "prose-enumeration")).toHaveLength(1);
+    expect(violationsFor("First gather input and second compare it.", "prose-enumeration")).toEqual([]);
+    expect(violationsFor("Second gather input, third compare it, and fourth report it.", "prose-enumeration")).toEqual([]);
+    expect(violationsFor("The process is 1. gather input 2. compare it 3. report it", "prose-enumeration")).toHaveLength(1);
+    expect(violationsFor("The process is (1) gather input (2) compare it (3) report it", "prose-enumeration")).toHaveLength(1);
+    expect(violationsFor("The process is 1) gather input 2) compare it 3) report it", "prose-enumeration")).toHaveLength(1);
+    expect(violationsFor("1. Gather input\n2. Compare it\n3. Report it\n", "prose-enumeration")).toEqual([]);
+    expect(violationsFor("The years 1999, 2000, and 2001 matter.", "prose-enumeration")).toEqual([]);
+    expect(violationsFor("The first example stands alone.", "prose-enumeration")).toEqual([]);
+    expect(violationsFor("Firstly gather input, secondly compare it, and thirdly report it.", "prose-enumeration")).toHaveLength(1);
+  });
+});
+
+describe("audit configuration identity", () => {
+  test("configHash is stable and changes with any threshold", () => {
+    const current = configHash();
+    expect(current).toMatch(/^[0-9a-f]{8}$/);
+    expect(configHash()).toBe(current);
+    expect(auditCorpus(CORPUS).configHash).toBe(current);
+    expect(configHash({
+      ...ENGINE_THRESHOLDS,
+      sentenceWordLimit: ENGINE_THRESHOLDS.sentenceWordLimit + 1,
+    })).not.toBe(current);
   });
 });

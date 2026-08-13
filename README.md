@@ -25,7 +25,7 @@ All skills exempt internal reasoning and preserve code blocks, commands, and log
 Add this repository as a plugin marketplace, then install the plugin:
 
 ```
-/plugin marketplace add https://github.com/GaZmagik/iso-24495
+/plugin marketplace add https://github.com/GaZmagik/iso-24495.git
 /plugin install iso-24495-plain-language@iso-24495
 ```
 
@@ -76,7 +76,9 @@ Removing the config mid-session returns the monitor to the waiting state. It req
 
 ## Advisory markdown hook (Claude Code)
 
-The plugin ships a `PostToolUse` hook (`hooks/`) that audits every markdown file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts.
+The plugin ships a `PostToolUse` hook (`hooks/`) that audits every `.md`, `.markdown`, or `.txt` file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts.
+
+The rules cover sentence length, sentence averages, paragraph length, legalese, heading depth, `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, and `prose-enumeration`.
 
 A clean file produces nothing, and the hook never blocks a write.
 
@@ -90,7 +92,7 @@ It requires Bun and is Claude Code-specific; the skills themselves work without 
 
 ## Why this project holds itself to these rules
 
-This repository is both the tool and a user of the tool. Its hook audits every markdown edit, including this README. Its own audits have failed and forced rewrites; the changelog records them.
+This repository is both the tool and a user of the tool. Its hook audits every markdown edit, including this file. Its own audits have failed and forced rewrites; the changelog records them.
 
 That is deliberate. A plain language project that exempts itself has no claim on anyone else. The Part 4 maturity audit runs against this repository first, and its findings are acted on here first.
 

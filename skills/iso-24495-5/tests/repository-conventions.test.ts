@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { auditText } from "../../iso-24495-4/scripts/audit-corpus.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -57,6 +58,23 @@ describe("repository writing conventions", () => {
     const violations = files.flatMap((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
       return /[\u2013\u2014]/.test(readFileSync(path, "utf8")) ? [relativePath] : [];
+    });
+    expect(violations).toEqual([]);
+  });
+
+  test("all repository markdown passes the shared audit", () => {
+    const markdownFiles = repositoryTextFiles().filter((path) => {
+      const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
+      return path.endsWith(".md") && !relativePath.includes("/tests/fixtures/");
+    });
+    expect(markdownFiles.length).toBeGreaterThanOrEqual(15);
+    expect(markdownFiles).toContain(join(REPOSITORY_ROOT, "README.md"));
+
+    const violations = markdownFiles.flatMap((path) => {
+      const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
+      return auditText(readFileSync(path, "utf8")).map(
+        (violation) => `${relativePath}:${violation.line}: ${violation.rule}: ${violation.detail}`,
+      );
     });
     expect(violations).toEqual([]);
   });

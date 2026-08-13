@@ -1,5 +1,5 @@
-// Advisory plain-language hook. After Claude writes or edits a markdown
-// file, this audits it with the Part 4 rule engine and feeds one terse line
+// Advisory plain-language hook. After Claude writes or edits a supported
+// text file, this audits it with the Part 4 rule engine and feeds one terse line
 // back as context. It never blocks a write: plain-language pressure belongs
 // in the agent's next edit, not in a refusal. Per-project off switch:
 // .iso-24495-4/hooks.json with {"markdownAudit": false}.
@@ -27,7 +27,7 @@ export function hookEnabled(cwd: string): boolean {
 }
 
 export function adviseOnFile(filePath: string, cwd: string): string | null {
-  if (!/\.md$/i.test(filePath)) return null;
+  if (!/\.(?:md|markdown|txt)$/i.test(filePath)) return null;
   if (/[\\/](node_modules|\.git)[\\/]/.test(filePath)) return null;
   if (!hookEnabled(cwd)) return null;
   let text: string;

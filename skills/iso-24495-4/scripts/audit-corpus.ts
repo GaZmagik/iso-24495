@@ -12,13 +12,190 @@ import type { Findings, Violation } from "./lib/types.ts";
 // 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
 // minimum sample are this project's own proxy choices, informed by local
 // session measurements that are not part of this repository.
-const SENTENCE_WORD_LIMIT = 30;
-const SENTENCE_AVERAGE_LIMIT = 20;
-const AVERAGE_MIN_SENTENCES = 10;
-const PARAGRAPH_SENTENCE_LIMIT = 5;
-const MAX_HEADING_LEVEL = 4;
-const TEXT_EXTENSIONS = [".md", ".txt"];
+export const ENGINE_THRESHOLDS = Object.freeze({
+  sentenceWordLimit: 30,
+  sentenceAverageLimit: 20,
+  averageMinimumSentences: 10,
+  paragraphSentenceLimit: 5,
+  maximumHeadingLevel: 4,
+  headingWordLimit: 12,
+  acronymMinimumLetters: 2,
+  acronymMaximumLetters: 6,
+  acronymDefinitionWindow: 3,
+  enumerationMinimumRanks: 3,
+});
+
+const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
+const SENTENCE_AVERAGE_LIMIT = ENGINE_THRESHOLDS.sentenceAverageLimit;
+const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
+const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
+const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
+const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
+const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
 const LEGALESE = ["shall", "hereby", "hereinafter", "wherefore", "heretofore", "aforesaid"];
+
+const ACRONYM_ALLOWLIST = new Set([
+  "KG", "KM", "CM", "MM", "MB", "GB", "KB", "TB", "PDF", "URL", "HTML", "TV", "PIN",
+  "UN", "USA", "ISO", "AI", "API", "CLI", "JSON", "HTTP", "HTTPS", "SSH", "MIT",
+]);
+const ACRONYM_SHAPE = new RegExp(
+  `^(?:[A-Z]{${ENGINE_THRESHOLDS.acronymMinimumLetters},${ENGINE_THRESHOLDS.acronymMaximumLetters}}|[A-Z]\\.(?:[A-Z]\\.)+)$`,
+);
+const ROMAN_NUMERAL = /^[IVXLCDM]+$/;
+
+interface DoubletEntry {
+  phrase: string;
+  lean?: string;
+  legalRegister?: boolean;
+}
+
+// Keep every doublet phrase out of LEGALESE so each phrase has one rule owner.
+const DOUBLETS: DoubletEntry[] = [
+  { phrase: "null and void", lean: "void" },
+  { phrase: "cease and desist", legalRegister: true },
+  { phrase: "terms and conditions", legalRegister: true },
+  { phrase: "each and every", lean: "each" },
+  { phrase: "first and foremost", lean: "first" },
+  { phrase: "true and correct", lean: "true" },
+  { phrase: "full and complete", lean: "complete" },
+  { phrase: "revert back", lean: "revert" },
+  { phrase: "repeat again", lean: "repeat" },
+  { phrase: "free gift", lean: "gift" },
+  { phrase: "past history", lean: "history" },
+  { phrase: "future plans", lean: "plans" },
+  { phrase: "end result", lean: "result" },
+  { phrase: "unexpected surprise", lean: "surprise" },
+  { phrase: "advance planning", lean: "planning" },
+  { phrase: "close proximity", lean: "close" },
+  { phrase: "general consensus", lean: "consensus" },
+].sort((a, b) => b.phrase.split(" ").length - a.phrase.split(" ").length);
+
+const ORDINAL_RANKS = new Map([
+  ["first", 1], ["firstly", 1],
+  ["second", 2], ["secondly", 2],
+  ["third", 3], ["thirdly", 3],
+  ["fourth", 4], ["fourthly", 4],
+  ["fifth", 5], ["fifthly", 5],
+  ["sixth", 6], ["sixthly", 6],
+]);
+
+export function configHash(
+  thresholds: Readonly<Record<string, number>> = ENGINE_THRESHOLDS,
+): string {
+  const stable = Object.entries(thresholds)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, value]) => `${name}=${value}`)
+    .join("|");
+  let hash = 5381;
+  for (let i = 0; i < stable.length; i++) {
+    hash = ((hash * 33) ^ stable.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function lineAtOffset(blockLine: number, text: string, offset: number): number {
+  return blockLine + (text.slice(0, offset).match(/\n/g)?.length ?? 0);
+}
+
+function acronymFromToken(raw: string): { display: string; key: string } | null {
+  let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’\)\]}>,:;!?]+$/, "");
+  if (!ACRONYM_SHAPE.test(token) && token.endsWith(".")) token = token.slice(0, -1);
+  if (!ACRONYM_SHAPE.test(token)) return null;
+  const key = token.replaceAll(".", "");
+  if (ROMAN_NUMERAL.test(key) || /\d/.test(token)) return null;
+  return { display: token, key };
+}
+
+function isAllCapsNeighbor(raw: string): boolean {
+  const stripped = raw.replace(/^[^A-Za-z]+|[^A-Za-z.]+$/g, "");
+  return ACRONYM_SHAPE.test(stripped) || /^[A-Z]{2,}$/.test(stripped);
+}
+
+function acronymViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  const defined = new Set<string>();
+  const seen = new Set<string>();
+  for (const block of proseBlocks(text)) {
+    const tokens = block.lines.flatMap((line, lineIndex) =>
+      line.split(/\s+/).filter(Boolean).map((raw) => ({ raw, line: block.line + lineIndex })),
+    );
+    for (let i = 0; i < tokens.length; i++) {
+      const acronym = acronymFromToken(tokens[i].raw);
+      if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key)) continue;
+      const inParentheses = tokens[i].raw.includes("(");
+      const parenthesisFollows = tokens
+        .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)
+        .some((token) => token.raw.includes("("));
+      if (inParentheses || parenthesisFollows) {
+        defined.add(acronym.key);
+        continue;
+      }
+      if (isAllCapsNeighbor(tokens[i - 1]?.raw ?? "") || isAllCapsNeighbor(tokens[i + 1]?.raw ?? "")) {
+        continue;
+      }
+      if (defined.has(acronym.key) || seen.has(acronym.key)) continue;
+      seen.add(acronym.key);
+      violations.push({
+        rule: "acronym-undefined",
+        line: tokens[i].line,
+        detail: `define acronym "${acronym.display}" on first use`,
+      });
+    }
+  }
+  return violations;
+}
+
+function doubletViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  for (const block of proseBlocks(text)) {
+    const paragraph = block.lines.join("\n");
+    const occupied: Array<{ start: number; end: number }> = [];
+    const matches: Array<{ start: number; end: number; entry: DoubletEntry }> = [];
+    for (const entry of DOUBLETS) {
+      const pattern = new RegExp(`\\b${entry.phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
+      for (const match of paragraph.matchAll(pattern)) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (occupied.some((range) => start < range.end && end > range.start)) continue;
+        occupied.push({ start, end });
+        matches.push({ start, end, entry });
+      }
+    }
+    matches.sort((a, b) => a.start - b.start);
+    for (const match of matches) {
+      violations.push({
+        rule: "doublet",
+        line: lineAtOffset(block.line, paragraph, match.start),
+        detail: match.entry.legalRegister
+          ? `legal-register phrase "${match.entry.phrase}"; review for audience fit`
+          : `redundant phrase "${match.entry.phrase}"; consider "${match.entry.lean}"`,
+      });
+    }
+  }
+  return violations;
+}
+
+function proseEnumerationViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  for (const block of proseBlocks(text)) {
+    const paragraph = block.lines.join(" ");
+    const ranks = new Set<number>();
+    for (const match of paragraph.matchAll(/\b(first|firstly|second|secondly|third|thirdly|fourth|fourthly|fifth|fifthly|sixth|sixthly)\b/gi)) {
+      ranks.add(ORDINAL_RANKS.get(match[1].toLowerCase())!);
+    }
+    for (const match of paragraph.matchAll(/(?:^|\s)(?:\(([1-6])\)|([1-6])[.)])(?=\s|$)/g)) {
+      ranks.add(Number(match[1] ?? match[2]));
+    }
+    if (ranks.has(1) && ranks.size >= ENGINE_THRESHOLDS.enumerationMinimumRanks) {
+      violations.push({
+        rule: "prose-enumeration",
+        line: block.line,
+        detail: `enumeration ranks ${[...ranks].sort((a, b) => a - b).join(", ")} in prose; consider a list`,
+      });
+    }
+  }
+  return violations;
+}
 
 export function auditText(text: string): Violation[] {
   const violations: Violation[] = [];
@@ -71,7 +248,9 @@ export function auditText(text: string): Violation[] {
       });
     }
   }
-  for (const heading of headings(text)) {
+  const documentHeadings = headings(text);
+  for (let i = 0; i < documentHeadings.length; i++) {
+    const heading = documentHeadings[i];
     if (heading.level > MAX_HEADING_LEVEL) {
       violations.push({
         rule: "heading-depth",
@@ -79,7 +258,50 @@ export function auditText(text: string): Violation[] {
         detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
       });
     }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const previous = documentHeadings[i - 1];
+    if (previous && heading.level > previous.level + 1) {
+      violations.push({
+        rule: "heading-skip",
+        line: heading.line,
+        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
+    const headingWords = wordCount(headingText);
+    const headingSentences = splitSentences(headingText);
+    if (headingWords > HEADING_WORD_LIMIT) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
+      });
+    } else if (headingSentences.length >= 2) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingSentences.length} sentences in heading`,
+      });
+    } else if (headingText.endsWith(".") && !headingText.endsWith("...")) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: "heading ends with a full stop",
+      });
+    }
   }
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...acronymViolations(text));
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...doubletViolations(text));
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...proseEnumerationViolations(text));
   return violations;
 }
 
@@ -128,7 +350,7 @@ export function listTextFiles(dir: string, onSkip?: (path: string) => void): str
 
 export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findings {
   const paths = listTextFiles(dir, onSkip);
-  const findings: Findings = { files: {}, totals: {} };
+  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
   for (const path of paths) {
     const key = relative(dir, path).replaceAll("\\", "/");
     const violations = auditText(readFileSync(path, "utf8"));

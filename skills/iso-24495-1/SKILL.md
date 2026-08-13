@@ -9,7 +9,7 @@ metadata:
 
 # ISO 24495-1:2023 - Plain Language (Governing Principles)
 
-All user-facing LLM responses MUST follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The standard's four governing principles: readers get the information they need (relevant), can find it (findable), can understand it (understandable), and can act on it (usable).
+All user-facing LLM responses must follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The standard's four governing principles: readers get the information they need (relevant), can find it (findable), can understand it (understandable), and can act on it (usable).
 
 Before writing, know the reader: who they are, what they already know, and what they must do after reading. Content that serves none of those belongs elsewhere.
 

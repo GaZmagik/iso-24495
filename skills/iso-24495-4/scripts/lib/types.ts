@@ -8,6 +8,7 @@ export interface Violation {
 }
 
 export interface Findings {
+  configHash: string;
   files: Record<string, { violations: Violation[] }>;
   totals: Record<string, number>;
 }

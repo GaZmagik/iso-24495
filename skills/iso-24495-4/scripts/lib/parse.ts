@@ -8,6 +8,12 @@ export interface ProseBlock {
   lines: string[];
 }
 
+export interface Heading {
+  level: number;
+  line: number;
+  text: string;
+}
+
 const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/;
 
 /** Collect prose paragraphs, skipping headings, lists, tables, quotes, and fenced code. */
@@ -40,8 +46,8 @@ export function proseBlocks(text: string): ProseBlock[] {
 }
 
 /** Heading levels with their 1-indexed line numbers, ignoring fenced code. */
-export function headings(text: string): { level: number; line: number }[] {
-  const found: { level: number; line: number }[] = [];
+export function headings(text: string): Heading[] {
+  const found: Heading[] = [];
   let inFence = false;
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -50,8 +56,14 @@ export function headings(text: string): { level: number; line: number }[] {
       continue;
     }
     if (inFence) continue;
-    const match = /^(#{1,6})\s/.exec(lines[i]);
-    if (match) found.push({ level: match[1].length, line: i + 1 });
+    const match = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+    if (match) {
+      found.push({
+        level: match[1].length,
+        line: i + 1,
+        text: match[2].replace(/\s+#+\s*$/, "").trim(),
+      });
+    }
   }
   return found;
 }
