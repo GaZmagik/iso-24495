@@ -10,6 +10,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Part 5 requires the matching template before writing and defines a content-preserving restructuring workflow.
 - Five shared advisory rules add `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, and `prose-enumeration`. Their concepts were studied in [lucid](https://github.com/maricastroc/lucid), but no code was copied and this implementation is independent. The rules remain project proxies rather than standard clauses.
 - Corpus JSON output now carries a deterministic configuration hash covering every engine threshold.
+- A GitHub Actions workflow runs the suite on every pull request. It calls `scripts/check.sh`, the same single gate a contributor runs locally, so a failed build reproduces with one command.
 - Plain-language checks for script comments remain deferred to a later release.
 
 ### Changed
@@ -24,6 +25,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Fixed
 
+- The end-to-end entry file tests no longer fail at random. Each spawns a cold Bun process, which can take longer than the default five second limit on a loaded machine, and the process was then killed mid-run. Two of five suite runs failed before the fix and six of six passed after it.
 - The background monitor now detects a change by content digest rather than by modification time and size. A correction that preserved byte length within one filesystem timestamp tick, two seconds on some filesystems, went unreported (present since 0.3.1).
 
 ## [0.4.1] - 2026-08-12

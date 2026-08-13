@@ -308,4 +308,39 @@ describe("repository writing conventions", () => {
       );
     }
   });
+
+  // A check that only runs on a maintainer's machine is not enforcement, and a
+  // check that only runs on a server cannot be reproduced before pushing. Both
+  // routes must therefore call one script, so neither can drift from the other.
+  describe("the continuous integration check", () => {
+    const scriptPath = join(REPOSITORY_ROOT, "scripts", "check.sh");
+    const workflowPath = join(REPOSITORY_ROOT, ".github", "workflows", "tests.yml");
+
+    test("a single checked-in script holds every gate", () => {
+      expect(existsSync(scriptPath), "scripts/check.sh must exist").toBe(true);
+      const script = readFileSync(scriptPath, "utf8");
+      expect(script, "the script must fail on the first error").toMatch(/^set -euo pipefail$/m);
+      expect(script, "the script must run the test suite").toMatch(/\bbun test\b/);
+      expect(script, "the script must audit the repository's own documents").toMatch(
+        /audit-corpus-cli\.ts/,
+      );
+    });
+
+    test("the workflow runs that script rather than its own commands", () => {
+      expect(existsSync(workflowPath), ".github/workflows/tests.yml must exist").toBe(true);
+      const workflow = readFileSync(workflowPath, "utf8");
+      expect(workflow, "the workflow must run on pull requests").toMatch(/^\s*pull_request:/m);
+      expect(workflow, "the workflow must install Bun").toMatch(/oven-sh\/setup-bun/);
+      expect(workflow, "the workflow must call the shared script").toMatch(
+        /bash\s+scripts\/check\.sh/,
+      );
+      const inlineBunCalls = workflow.match(/^\s*run:\s*bun\b/gm) ?? [];
+      expect(inlineBunCalls, "the workflow must not run its own bun commands").toEqual([]);
+    });
+
+    test("the README tells a contributor to run the same script", () => {
+      const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
+      expect(readme).toMatch(/scripts\/check\.sh/);
+    });
+  });
 });

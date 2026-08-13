@@ -92,6 +92,8 @@ It requires Bun and is Claude Code-specific; the skills themselves work without 
 
 ## Testing policy
 
+Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
+
 `bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.
 
 The current suite covers 100% of measured source lines and functions.

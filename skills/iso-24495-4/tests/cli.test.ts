@@ -247,6 +247,13 @@ describe("generate-report runCli", () => {
 // Bun does not add a child process's execution to the parent's coverage data,
 // so these earn no coverage and exist purely as end-to-end proof.
 describe("command line entry files", () => {
+  // Every test here pays for at least one cold Bun start, which takes seconds on
+  // a loaded machine and longer on a shared build runner. The default five
+  // second limit turns that cost into a random failure, so each test states its
+  // own budget: a timeout here means the entry file hung, not that the box was
+  // busy.
+  const ENTRY_TIMEOUT_MS = 20_000;
+
   async function run(entry: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
     const proc = Bun.spawn(["bun", join(SCRIPTS, entry), ...args], {
       stdout: "pipe",
@@ -260,13 +267,13 @@ describe("command line entry files", () => {
     const { stdout, exitCode } = await run("audit-corpus-cli.ts", [CORPUS]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Total: 11 across 7 files.");
-  });
+  }, ENTRY_TIMEOUT_MS);
 
   test("audit-evidence-cli reports the fixture repository", async () => {
     const { stdout, exitCode } = await run("audit-evidence-cli.ts", [REPOSITORY]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("| policy | yes | docs/plain-language-policy.md |");
-  });
+  }, ENTRY_TIMEOUT_MS);
 
   test("score-maturity-cli reports the sample answers", async () => {
     const { stdout, exitCode } = await run("score-maturity-cli.ts", [ANSWERS]);
@@ -289,7 +296,7 @@ describe("command line entry files", () => {
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
-  });
+  }, ENTRY_TIMEOUT_MS);
 
   // Spawned concurrently: four cold Bun starts in sequence outrun the default
   // per-test timeout on a loaded machine.
@@ -302,5 +309,5 @@ describe("command line entry files", () => {
     ];
     const results = await Promise.all(entries.map((entry) => run(entry, [])));
     expect(results.map((result) => result.exitCode)).toEqual(entries.map(() => 2));
-  }, 20_000);
+  }, ENTRY_TIMEOUT_MS);
 });
