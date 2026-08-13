@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { auditText } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { auditText, ENGINE_THRESHOLDS } from "../../iso-24495-4/scripts/audit-corpus.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -245,6 +245,44 @@ describe("repository writing conventions", () => {
       );
     });
     expect(violations).toEqual([]);
+  });
+
+  // Recalibration has to move the engine, the output style, and the core
+  // skill together. This catches the half-finished version, where the engine
+  // measures one limit and the guidance still quotes the old one.
+  test("the output style and core skill quote the engine's current limits", () => {
+    const guidance = [
+      join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"),
+      join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"),
+    ];
+    // Anchored to the sentence making each claim. Testing only that the number
+    // appears somewhere in the file passes even when the claim itself is wrong,
+    // because the same number occurs elsewhere.
+    const limits = [
+      { name: "sentence cap", anchor: /ceiling|exceed|none over/i, value: ENGINE_THRESHOLDS.sentenceWordLimit },
+      { name: "average limit", anchor: /average/i, value: ENGINE_THRESHOLDS.sentenceAverageLimit },
+      { name: "paragraph limit", anchor: /paragraph/i, value: ENGINE_THRESHOLDS.paragraphSentenceLimit },
+    ];
+
+    const wrong = guidance.flatMap((path) => {
+      const sentences = readFileSync(path, "utf8").split(/(?<=[.!?])\s+|\n/);
+      return limits.flatMap(({ name, anchor, value }) => {
+        const claims = sentences.filter((sentence) => anchor.test(sentence) && /\d/.test(sentence));
+        const stated = claims.some((sentence) => new RegExp(`\\b${value}\\b`).test(sentence));
+        return claims.length > 0 && stated
+          ? []
+          : [`${relative(REPOSITORY_ROOT, path)}: ${name} must state ${value}`];
+      });
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  // The style states measurable limits, which are worth nothing if nothing
+  // tells the model to read its own draft back against them.
+  test("the output style keeps a send-time check", () => {
+    const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
+    expect(style).toMatch(/^## Check before you send$/m);
+    expect(style).toMatch(/^## Applying this to a reply$/m);
   });
 
   test("entry files remain logic-free composition roots", () => {

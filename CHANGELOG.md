@@ -19,6 +19,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - The core skill's voice rule is no longer absolute: active is the default, and passive is accepted where the actor is unknown, irrelevant, or secondary.
 - The core skill and output style gain guidance the standards emphasise and the plugin lacked: the four governing principles named (relevant, findable, understandable, usable), audience-first framing, positive framing, direct address, subject-verb proximity, explicit connective words, wordy-phrase replacements, and repetition over elegant variation. Layout rules are now labelled house conventions.
 - The advisory hook now audits `.md`, `.markdown`, and `.txt` files.
+- The output style now covers reply layout and carries a send-time check. It states the limits apply to replies as well as documents, holds a reply paragraph to 4 sentences, and asks for the draft to be read back against four measures before sending. Measured on one long reply, the revision cut violations from 10 to 1, the average sentence from 23.1 words to 14.8, and the length from 463 words to 266 with no loss of content. Tests pin that the style and core skill quote the engine's current limits, and that the check survives edits.
 - Each script is now a library module with a separate logic-free entry file (`audit-corpus-cli.ts`, `watch-corpus-main.ts`, and so on). Hook and monitor commands point at the new entries. Every measured file covers 100% of lines and functions, and end-to-end tests run each entry.
 
 ### Fixed

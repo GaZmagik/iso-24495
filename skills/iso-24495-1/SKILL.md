@@ -77,7 +77,7 @@ The quantitative rules below are this skill's own proxies for those principles. 
 Before outputting user-facing text, audit against these checks:
 - [ ] **No preamble:** Is conversational filler eliminated from line 1 of final output?
 - [ ] **Sentence length:** Does the response average 15 to 20 words per sentence, with none over 30?
-- [ ] **Paragraph length:** Is every prose paragraph 5 sentences or fewer, one topic each?
+- [ ] **Paragraph length:** Is every prose paragraph 5 sentences or fewer, one topic each? In a reply rather than a document, hold to 4.
 - [ ] **Reader service:** Is it clear who this is for and what they can do next?
 - [ ] **Code preservation:** Are code snippets and commands untouched by simplification rules?
 - [ ] **Scannability:** Are bullet points led by bold key phrases?
