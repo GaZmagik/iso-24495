@@ -8,15 +8,15 @@
 
 ## Maturity
 
-{{Table from scripts/score-maturity.ts: dimension, level, blocking criteria.}}
+{{Table from scripts/score-maturity-cli.ts: dimension, level, blocking criteria.}}
 
 ## Evidence
 
-{{Table from scripts/audit-evidence.ts: category, found, paths. Note quality observations per artefact below the table.}}
+{{Table from scripts/audit-evidence-cli.ts: category, found, paths. Note quality observations per artefact below the table.}}
 
 ## Corpus findings
 
-{{Table from scripts/audit-corpus.ts. State the corpus scope (directories, file count) and that these metrics are proxies feeding the Measurement dimension only.}}
+{{Table from scripts/audit-corpus-cli.ts. State the corpus scope (directories, file count) and that these metrics are proxies feeding the Measurement dimension only.}}
 
 ## Trend
 

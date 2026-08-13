@@ -17,4 +17,4 @@ Pick 3 to 5. One question per line; ask them plainly.
 
 - Record each answer as `true` only with evidence: a named artefact, date, person, or example.
 - An enthusiastic "yes" without evidence records as `false` with a note.
-- Write results into the `answers.json` structure (see `tests/fixtures/answers.sample.json` for the shape) and score with `scripts/score-maturity.ts`.
+- Write results into the `answers.json` structure (see `tests/fixtures/answers.sample.json` for the shape) and score with `scripts/score-maturity-cli.ts`.

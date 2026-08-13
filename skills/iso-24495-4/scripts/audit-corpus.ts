@@ -310,10 +310,11 @@ function walk(
   out: string[],
   onSkip: ((path: string) => void) | undefined,
   isRoot: boolean,
+  readDirectory: typeof readdirSync,
 ): void {
   let entries: string[];
   try {
-    entries = readdirSync(dir);
+    entries = readDirectory(dir);
   } catch (error) {
     // An unreadable root is an error the caller must see: a mistyped corpus
     // path must not read as a clean empty corpus. Below the root, the skip is
@@ -335,16 +336,20 @@ function walk(
       continue;
     }
     if (isDirectory) {
-      walk(full, out, onSkip, false);
+      walk(full, out, onSkip, false, readDirectory);
     } else if (TEXT_EXTENSIONS.some((ext) => entry.toLowerCase().endsWith(ext))) {
       out.push(full);
     }
   }
 }
 
-export function listTextFiles(dir: string, onSkip?: (path: string) => void): string[] {
+export function listTextFiles(
+  dir: string,
+  onSkip?: (path: string) => void,
+  readDirectory: typeof readdirSync = readdirSync,
+): string[] {
   const paths: string[] = [];
-  walk(dir, paths, onSkip, true);
+  walk(dir, paths, onSkip, true, readDirectory);
   return paths.sort();
 }
 
@@ -369,7 +374,7 @@ export function runCli(
 ): number {
   const dir = argv[2];
   if (!dir) {
-    stderr("Usage: bun audit-corpus.ts <corpus-dir> [--json <out-file>]");
+    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
     return 2;
   }
   const jsonFlag = argv.indexOf("--json");
@@ -398,10 +403,4 @@ export function runCli(
     stderr(`audit-corpus: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-}
-
-// Coverage exemption: logic-free process entry shim.
-if (import.meta.main) {
-  const exitCode = runCli(process.argv, console.log, console.error);
-  process.exit(exitCode);
 }

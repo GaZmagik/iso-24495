@@ -92,13 +92,13 @@ It requires Bun and is Claude Code-specific; the skills themselves work without 
 
 ## Testing policy
 
-`bun test` always measures coverage. Every source file must cover at least 95.8% of lines and 100% of functions. Test files are excluded from those totals.
+`bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.
 
-The current suite covers 98.28% of source lines and 100% of source functions overall.
+The current suite covers 100% of measured source lines and functions.
 
 Bun reports line and function coverage only in this toolchain. We make no branch-coverage claim.
 
-Logic-free entry shims are exempt because child-process execution does not enter the parent test process's coverage. End-to-end tests still exercise those shims.
+Logic-free composition roots are separate entry files. Tests never import them, so Bun excludes them from the coverage report. End-to-end tests still exercise those entries.
 
 Every new test receives a mutation check. The implementation is deliberately broken, the test must fail, and the correct behaviour is then restored.
 

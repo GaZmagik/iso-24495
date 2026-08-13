@@ -1,4 +1,4 @@
-// Background monitor entry point. Runs for the whole session and stays silent
+// Background monitor. Runs for the whole session and stays silent
 // unless the working directory contains an engagement config
 // (.iso-24495-4/monitor.json naming a corpus directory). While no config
 // exists it waits for one to appear; when configured, it re-audits changed
@@ -12,7 +12,7 @@
 // the OS watcher survives. Watchers only make reporting faster; the interval
 // bounds the delay when they fail.
 
-import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { auditText, listTextFiles } from "./audit-corpus.ts";
 
@@ -66,9 +66,9 @@ export function formatDelta(
   return `iso-24495-4 corpus change: ${file} ${changes.join(", ")}`;
 }
 
-function totalsFor(path: string): Record<string, number> {
+function totalsFor(text: string): Record<string, number> {
   const totals: Record<string, number> = {};
-  for (const violation of auditText(readFileSync(path, "utf8"))) {
+  for (const violation of auditText(text)) {
     totals[violation.rule] = (totals[violation.rule] ?? 0) + 1;
   }
   return totals;
@@ -85,7 +85,10 @@ export function startMonitor(
   const configDir = join(cwd, ".iso-24495-4");
   const configFile = join(configDir, "monitor.json");
   const baselines = new Map<string, Record<string, number>>();
-  const stamps = new Map<string, { mtimeMs: number; size: number }>();
+  // Content digests, not file stamps. An mtime and size pair misses an edit
+  // that preserves byte length within one filesystem timestamp tick, which is
+  // two seconds on some filesystems and a plausible quick correction.
+  const stamps = new Map<string, string>();
   // Priming is per file, not per engagement: every file present at the first
   // successful enumeration (and everything under a subtree skipped during it)
   // primes silently on its first successful read. Files appearing later are
@@ -114,7 +117,7 @@ export function startMonitor(
     return false;
   }
 
-  // Audits every corpus file whose mtime or size moved since the last scan,
+  // Audits every corpus file whose content changed since the last scan,
   // and reports deletions. The first successful enumeration of an engagement
   // marks everything then present for silent priming; afterwards, a file
   // with a baseline reports deltas and a file without one reports as an
@@ -133,12 +136,12 @@ export function startMonitor(
       const present = new Set(files);
       for (const full of files) {
         try {
-          const stat = statSync(full);
-          const prev = stamps.get(full);
-          if (prev && prev.mtimeMs === stat.mtimeMs && prev.size === stat.size) continue;
+          const text = readFileSync(full, "utf8");
+          const digest = Bun.hash(text).toString(16);
+          if (stamps.get(full) === digest) continue;
           const before = baselines.get(full);
-          const after = totalsFor(full);
-          stamps.set(full, { mtimeMs: stat.mtimeMs, size: stat.size });
+          const after = totalsFor(text);
+          stamps.set(full, digest);
           baselines.set(full, after);
           const primeSilently =
             before === undefined && (silentPrime.delete(full) || underAny(skippedAtStart, full));
@@ -269,9 +272,4 @@ export function startMonitor(
       enumeratedOnce = false;
     },
   };
-}
-
-// Coverage exemption: logic-free process entry shim.
-if (import.meta.main) {
-  startMonitor(process.cwd());
 }

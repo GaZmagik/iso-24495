@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown.ts\"",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown-main.ts\"",
             "timeout": 30
           }
         ]

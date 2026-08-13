@@ -37,7 +37,7 @@ export function runCli(
 ): number {
   const path = argv[2];
   if (!path) {
-    stderr("Usage: bun score-maturity.ts <answers.json> [--json <out-file>]");
+    stderr("Usage: bun score-maturity-cli.ts <answers.json> [--json <out-file>]");
     return 2;
   }
   const jsonFlag = argv.indexOf("--json");
@@ -61,10 +61,4 @@ export function runCli(
     stderr(`score-maturity: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-}
-
-// Coverage exemption: logic-free process entry shim.
-if (import.meta.main) {
-  const exitCode = runCli(process.argv, console.log, console.error);
-  process.exit(exitCode);
 }

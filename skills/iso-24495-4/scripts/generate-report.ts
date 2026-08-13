@@ -94,7 +94,7 @@ export function runCli(
   const [findingsPath, evidencePath, maturityPath] = argv.slice(2);
   if (!findingsPath || !evidencePath || !maturityPath) {
     stderr(
-      "Usage: bun generate-report.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]",
+      "Usage: bun generate-report-cli.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]",
     );
     return 2;
   }
@@ -131,10 +131,4 @@ export function runCli(
     stderr(`generate-report: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-}
-
-// Coverage exemption: logic-free process entry shim.
-if (import.meta.main) {
-  const exitCode = runCli(process.argv, console.log, console.error);
-  process.exit(exitCode);
 }

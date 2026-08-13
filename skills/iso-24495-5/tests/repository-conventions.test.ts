@@ -6,6 +6,14 @@ import { auditText } from "../../iso-24495-4/scripts/audit-corpus.ts";
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
 const SKIPPED_DIRECTORIES = new Set([".git", ".iso-24495-4", "node_modules"]);
+const ENTRY_FILES = [
+  "hooks/audit-markdown-main.ts",
+  "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
+  "skills/iso-24495-4/scripts/audit-evidence-cli.ts",
+  "skills/iso-24495-4/scripts/generate-report-cli.ts",
+  "skills/iso-24495-4/scripts/score-maturity-cli.ts",
+  "skills/iso-24495-4/scripts/watch-corpus-main.ts",
+];
 const AGENT_SPECIFIC_PATTERNS = [
   { name: "agent name", pattern: /\b(?:Claude Code|Codex|agy|muse)\b/i },
   {
@@ -237,5 +245,29 @@ describe("repository writing conventions", () => {
       );
     });
     expect(violations).toEqual([]);
+  });
+
+  test("entry files remain logic-free composition roots", () => {
+    for (const relativePath of ENTRY_FILES) {
+      const path = join(REPOSITORY_ROOT, relativePath);
+      expect(existsSync(path), `${relativePath} must exist`).toBe(true);
+      const codeLines = readFileSync(path, "utf8")
+        .split(/\r\n?|\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      expect(codeLines.length, `${relativePath} must contain at most five lines`).toBeLessThanOrEqual(5);
+      expect(codeLines.length, `${relativePath} must contain imports and one call`).toBeGreaterThanOrEqual(2);
+      for (const importLine of codeLines.slice(0, -1)) {
+        expect(importLine, `${relativePath} may contain only imports before its call`).toMatch(
+          /^import\s+(?:\{[^}]+\}|[^;]+)\s+from\s+"[^"]+";$/,
+        );
+      }
+      expect(codeLines.at(-1), `${relativePath} must end with one invocation`).toMatch(
+        /^[A-Za-z_$][\w$.]*\(.*\);$/,
+      );
+      expect(codeLines.at(-1), `${relativePath} invocation must not contain control flow`).not.toMatch(
+        /\b(?:if|for|while|switch|try|catch|function|class)\b|=>|\?|&&|\|\|/,
+      );
+    }
   });
 });

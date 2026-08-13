@@ -11,6 +11,7 @@ const FIXTURES = join(import.meta.dir, "fixtures");
 const CORPUS = join(FIXTURES, "corpus");
 const REPOSITORY = join(FIXTURES, "repo-level2");
 const ANSWERS = join(FIXTURES, "answers.sample.json");
+const SCRIPTS = join(import.meta.dir, "..", "scripts");
 
 function capture() {
   const stdout: string[] = [];
@@ -29,7 +30,7 @@ describe("audit-corpus runCli", () => {
     const temp = mkdtempSync(join(tmpdir(), "iso-corpus-cli-"));
     try {
       const jsonPath = join(temp, "findings.json");
-      expect(runCorpusCli(["bun", "audit-corpus.ts", CORPUS, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
+      expect(runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stderr).toEqual([]);
       expect(output.stdout.join("\n")).toBe(
         "| Rule | Violations |\n" +
@@ -51,15 +52,15 @@ describe("audit-corpus runCli", () => {
 
   test("reports usage and filesystem errors", () => {
     const missing = capture();
-    expect(runCorpusCli(["bun", "audit-corpus.ts"], missing.writeOut, missing.writeErr)).toBe(2);
-    expect(missing.stderr).toEqual(["Usage: bun audit-corpus.ts <corpus-dir> [--json <out-file>]"]);
+    expect(runCorpusCli(["bun", "audit-corpus-cli.ts"], missing.writeOut, missing.writeErr)).toBe(2);
+    expect(missing.stderr).toEqual(["Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]"]);
 
     const malformed = capture();
-    expect(runCorpusCli(["bun", "audit-corpus.ts", CORPUS, "--json"], malformed.writeOut, malformed.writeErr)).toBe(2);
+    expect(runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json"], malformed.writeOut, malformed.writeErr)).toBe(2);
     expect(malformed.stderr[0]).toContain("--json requires");
 
     const absent = capture();
-    expect(runCorpusCli(["bun", "audit-corpus.ts", join(CORPUS, "missing")], absent.writeOut, absent.writeErr)).toBe(1);
+    expect(runCorpusCli(["bun", "audit-corpus-cli.ts", join(CORPUS, "missing")], absent.writeOut, absent.writeErr)).toBe(1);
     expect(absent.stderr[0]).toStartWith("audit-corpus:");
   });
 
@@ -72,7 +73,7 @@ describe("audit-corpus runCli", () => {
       symlinkSync(target, join(temp, "dangling"), "junction");
       rmSync(target, { recursive: true, force: true });
       const output = capture();
-      expect(runCorpusCli(["bun", "audit-corpus.ts", temp], output.writeOut, output.writeErr)).toBe(0);
+      expect(runCorpusCli(["bun", "audit-corpus-cli.ts", temp], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(temp, "dangling")}`]);
       expect(output.stdout.at(-1)).toBe("\nTotal: 0 across 1 files.");
     } finally {
@@ -87,7 +88,7 @@ describe("audit-evidence runCli", () => {
     const temp = mkdtempSync(join(tmpdir(), "iso-evidence-cli-"));
     try {
       const jsonPath = join(temp, "evidence.json");
-      expect(runEvidenceCli(["bun", "audit-evidence.ts", REPOSITORY, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
+      expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stderr).toEqual([]);
       expect(output.stdout.join("\n")).toBe(
         "| Artefact category | Found | Paths |\n" +
@@ -106,12 +107,12 @@ describe("audit-evidence runCli", () => {
 
   test("reports usage, malformed flags, and missing directories", () => {
     const missing = capture();
-    expect(runEvidenceCli(["bun", "audit-evidence.ts"], missing.writeOut, missing.writeErr)).toBe(2);
+    expect(runEvidenceCli(["bun", "audit-evidence-cli.ts"], missing.writeOut, missing.writeErr)).toBe(2);
     expect(missing.stderr[0]).toStartWith("Usage:");
     const flag = capture();
-    expect(runEvidenceCli(["bun", "audit-evidence.ts", REPOSITORY, "--json"], flag.writeOut, flag.writeErr)).toBe(2);
+    expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json"], flag.writeOut, flag.writeErr)).toBe(2);
     const absent = capture();
-    expect(runEvidenceCli(["bun", "audit-evidence.ts", join(REPOSITORY, "missing")], absent.writeOut, absent.writeErr)).toBe(1);
+    expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", join(REPOSITORY, "missing")], absent.writeOut, absent.writeErr)).toBe(1);
     expect(absent.stderr[0]).toStartWith("audit-evidence:");
   });
 });
@@ -122,7 +123,7 @@ describe("score-maturity runCli", () => {
     const temp = mkdtempSync(join(tmpdir(), "iso-maturity-cli-"));
     try {
       const jsonPath = join(temp, "maturity.json");
-      expect(runMaturityCli(["bun", "score-maturity.ts", ANSWERS, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
+      expect(runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stderr).toEqual([]);
       expect(output.stdout.join("\n")).toBe(
         "| Dimension | Level | Blocking criteria |\n" +
@@ -142,17 +143,17 @@ describe("score-maturity runCli", () => {
 
   test("reports usage, malformed flags, missing files, and invalid JSON", () => {
     const missing = capture();
-    expect(runMaturityCli(["bun", "score-maturity.ts"], missing.writeOut, missing.writeErr)).toBe(2);
+    expect(runMaturityCli(["bun", "score-maturity-cli.ts"], missing.writeOut, missing.writeErr)).toBe(2);
     const flag = capture();
-    expect(runMaturityCli(["bun", "score-maturity.ts", ANSWERS, "--json"], flag.writeOut, flag.writeErr)).toBe(2);
+    expect(runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json"], flag.writeOut, flag.writeErr)).toBe(2);
     const absent = capture();
-    expect(runMaturityCli(["bun", "score-maturity.ts", join(FIXTURES, "missing.json")], absent.writeOut, absent.writeErr)).toBe(1);
+    expect(runMaturityCli(["bun", "score-maturity-cli.ts", join(FIXTURES, "missing.json")], absent.writeOut, absent.writeErr)).toBe(1);
     const temp = mkdtempSync(join(tmpdir(), "iso-maturity-bad-"));
     try {
       const bad = join(temp, "bad.json");
       writeFileSync(bad, "{not json");
       const malformed = capture();
-      expect(runMaturityCli(["bun", "score-maturity.ts", bad], malformed.writeOut, malformed.writeErr)).toBe(1);
+      expect(runMaturityCli(["bun", "score-maturity-cli.ts", bad], malformed.writeOut, malformed.writeErr)).toBe(1);
       expect(malformed.stderr[0]).toStartWith("score-maturity:");
     } finally {
       rmSync(temp, { recursive: true, force: true });
@@ -169,12 +170,12 @@ describe("generate-report runCli", () => {
       const maturityPath = join(temp, "maturity.json");
       const statePath = join(temp, "state.json");
       const reportPath = join(temp, "report.md");
-      runCorpusCli(["bun", "audit-corpus.ts", CORPUS, "--json", findingsPath], () => {}, () => {});
-      runEvidenceCli(["bun", "audit-evidence.ts", REPOSITORY, "--json", evidencePath], () => {}, () => {});
-      runMaturityCli(["bun", "score-maturity.ts", ANSWERS, "--json", maturityPath], () => {}, () => {});
+      runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findingsPath], () => {}, () => {});
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidencePath], () => {}, () => {});
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", maturityPath], () => {}, () => {});
       const output = capture();
       expect(runReportCli(
-        ["bun", "generate-report.ts", findingsPath, evidencePath, maturityPath, "--state", statePath, "--out", reportPath],
+        ["bun", "generate-report-cli.ts", findingsPath, evidencePath, maturityPath, "--state", statePath, "--out", reportPath],
         output.writeOut,
         output.writeErr,
         () => "2026-08-13T12:00:00.000Z",
@@ -185,7 +186,7 @@ describe("generate-report runCli", () => {
 
       const printed = capture();
       expect(runReportCli(
-        ["bun", "generate-report.ts", findingsPath, evidencePath, maturityPath, "--state", statePath],
+        ["bun", "generate-report-cli.ts", findingsPath, evidencePath, maturityPath, "--state", statePath],
         printed.writeOut,
         printed.writeErr,
         () => "2026-08-14T12:00:00.000Z",
@@ -200,20 +201,20 @@ describe("generate-report runCli", () => {
 
   test("reports usage, malformed flags, missing files, and invalid JSON", () => {
     const missing = capture();
-    expect(runReportCli(["bun", "generate-report.ts"], missing.writeOut, missing.writeErr)).toBe(2);
+    expect(runReportCli(["bun", "generate-report-cli.ts"], missing.writeOut, missing.writeErr)).toBe(2);
     const flag = capture();
-    expect(runReportCli(["bun", "generate-report.ts", "a", "b", "c", "--out"], flag.writeOut, flag.writeErr)).toBe(2);
+    expect(runReportCli(["bun", "generate-report-cli.ts", "a", "b", "c", "--out"], flag.writeOut, flag.writeErr)).toBe(2);
     const stateFlag = capture();
-    expect(runReportCli(["bun", "generate-report.ts", "a", "b", "c", "--state"], stateFlag.writeOut, stateFlag.writeErr)).toBe(2);
+    expect(runReportCli(["bun", "generate-report-cli.ts", "a", "b", "c", "--state"], stateFlag.writeOut, stateFlag.writeErr)).toBe(2);
     const absent = capture();
-    expect(runReportCli(["bun", "generate-report.ts", "missing-a", "missing-b", "missing-c"], absent.writeOut, absent.writeErr)).toBe(1);
+    expect(runReportCli(["bun", "generate-report-cli.ts", "missing-a", "missing-b", "missing-c"], absent.writeOut, absent.writeErr)).toBe(1);
     expect(absent.stderr[0]).toStartWith("generate-report:");
     const temp = mkdtempSync(join(tmpdir(), "iso-report-bad-"));
     try {
       const bad = join(temp, "bad.json");
       writeFileSync(bad, "{not json");
       const malformed = capture();
-      expect(runReportCli(["bun", "generate-report.ts", bad, bad, bad], malformed.writeOut, malformed.writeErr)).toBe(1);
+      expect(runReportCli(["bun", "generate-report-cli.ts", bad, bad, bad], malformed.writeOut, malformed.writeErr)).toBe(1);
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
@@ -225,12 +226,12 @@ describe("generate-report runCli", () => {
       const findingsPath = join(temp, "findings.json");
       const evidencePath = join(temp, "evidence.json");
       const maturityPath = join(temp, "maturity.json");
-      runCorpusCli(["bun", "audit-corpus.ts", CORPUS, "--json", findingsPath], () => {}, () => {});
-      runEvidenceCli(["bun", "audit-evidence.ts", REPOSITORY, "--json", evidencePath], () => {}, () => {});
-      runMaturityCli(["bun", "score-maturity.ts", ANSWERS, "--json", maturityPath], () => {}, () => {});
+      runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findingsPath], () => {}, () => {});
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidencePath], () => {}, () => {});
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", maturityPath], () => {}, () => {});
       const output = capture();
       expect(runReportCli(
-        ["bun", "generate-report.ts", findingsPath, evidencePath, maturityPath],
+        ["bun", "generate-report-cli.ts", findingsPath, evidencePath, maturityPath],
         output.writeOut,
         output.writeErr,
       )).toBe(0);
@@ -239,4 +240,67 @@ describe("generate-report runCli", () => {
       rmSync(temp, { recursive: true, force: true });
     }
   });
+});
+
+// The conventions test proves each entry file is logic-free, which a mistyped
+// import path would also satisfy. Only running them proves they still work.
+// Bun does not add a child process's execution to the parent's coverage data,
+// so these earn no coverage and exist purely as end-to-end proof.
+describe("command line entry files", () => {
+  async function run(entry: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+    const proc = Bun.spawn(["bun", join(SCRIPTS, entry), ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    return { stdout, exitCode: await proc.exited };
+  }
+
+  test("audit-corpus-cli reports the fixture corpus", async () => {
+    const { stdout, exitCode } = await run("audit-corpus-cli.ts", [CORPUS]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Total: 11 across 7 files.");
+  });
+
+  test("audit-evidence-cli reports the fixture repository", async () => {
+    const { stdout, exitCode } = await run("audit-evidence-cli.ts", [REPOSITORY]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("| policy | yes | docs/plain-language-policy.md |");
+  });
+
+  test("score-maturity-cli reports the sample answers", async () => {
+    const { stdout, exitCode } = await run("score-maturity-cli.ts", [ANSWERS]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Overall (weakest dimension): 0");
+  });
+
+  test("generate-report-cli writes a report from the three inputs", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "iso-entry-report-"));
+    try {
+      const findings = join(temp, "findings.json");
+      const evidence = join(temp, "evidence.json");
+      const maturity = join(temp, "maturity.json");
+      await run("audit-corpus-cli.ts", [CORPUS, "--json", findings]);
+      await run("audit-evidence-cli.ts", [REPOSITORY, "--json", evidence]);
+      await run("score-maturity-cli.ts", [ANSWERS, "--json", maturity]);
+      const { stdout, exitCode } = await run("generate-report-cli.ts", [findings, evidence, maturity]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("# Plain Language Gap Analysis");
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  // Spawned concurrently: four cold Bun starts in sequence outrun the default
+  // per-test timeout on a loaded machine.
+  test("each entry file propagates the failure exit code", async () => {
+    const entries = [
+      "audit-corpus-cli.ts",
+      "audit-evidence-cli.ts",
+      "score-maturity-cli.ts",
+      "generate-report-cli.ts",
+    ];
+    const results = await Promise.all(entries.map((entry) => run(entry, [])));
+    expect(results.map((result) => result.exitCode)).toEqual(entries.map(() => 2));
+  }, 20_000);
 });

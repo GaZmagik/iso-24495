@@ -30,16 +30,16 @@ Turns the agent from a copy editor into an implementation consultant. It assesse
 Run the four steps in order. Each feeds the next.
 
 1. **Sweep for process artefacts (primary):**
-   - Run `bun scripts/audit-evidence.ts <workspace-dir> --json evidence.json`.
+   - Run `bun scripts/audit-evidence-cli.ts <workspace-dir> --json evidence.json`.
    - This detects the *system*: policy, review workflow, automated checks, training, glossary. It reads presence only; you evaluate the quality of what it finds.
 2. **Audit the document corpus (secondary):**
-   - Run `bun scripts/audit-corpus.ts <corpus-dir> --json findings.json`.
+   - Run `bun scripts/audit-corpus-cli.ts <corpus-dir> --json findings.json`.
    - Output feeds the **Measurement dimension only**, as evidence of what the system produces. Text quality alone never raises a maturity level: excellent text can come from one unsupported expert, and flawed text can coexist with a strong process that is catching it.
 3. **Interview the human (3 to 5 questions maximum):**
    - Use `references/interview-guide.md`. Ask only what the file system cannot show (leadership, culture, training delivery). Record answers in the `answers.json` structure and cite evidence for each `true`.
-   - Score with `bun scripts/score-maturity.ts answers.json --json maturity.json`. Scoring is deterministic so levels cannot drift between sessions.
+   - Score with `bun scripts/score-maturity-cli.ts answers.json --json maturity.json`. Scoring is deterministic so levels cannot drift between sessions.
 4. **Generate the gap report:**
-   - Run `bun scripts/generate-report.ts findings.json evidence.json maturity.json --state <dir>/state.json --out gap-report.md`.
+   - Run `bun scripts/generate-report-cli.ts findings.json evidence.json maturity.json --state <dir>/state.json --out gap-report.md`.
    - State is append-only; successive audits produce a trend table that proves or disproves progress. Store `state.json` in the organisation's repository, not in the skill directory (installed skills may be read-only).
 
 ## Quantitative Rules & Hard Constraints

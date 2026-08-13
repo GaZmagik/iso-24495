@@ -1,6 +1,6 @@
 # Evidence Map
 
-What `scripts/audit-evidence.ts` detects, and what its findings can and cannot support. The sweep records presence and paths only; judging artefact quality is the agent's job, with the human.
+What `scripts/audit-evidence-cli.ts` detects, and what its findings can and cannot support. The sweep records presence and paths only; judging artefact quality is the agent's job, with the human.
 
 | Category | Detected by | Supports criteria | Does not prove |
 |----------|-------------|-------------------|----------------|

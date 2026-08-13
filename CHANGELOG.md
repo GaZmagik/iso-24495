@@ -19,6 +19,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - The core skill's voice rule is no longer absolute: active is the default, and passive is accepted where the actor is unknown, irrelevant, or secondary.
 - The core skill and output style gain guidance the standards emphasise and the plugin lacked: the four governing principles named (relevant, findable, understandable, usable), audience-first framing, positive framing, direct address, subject-verb proximity, explicit connective words, wordy-phrase replacements, and repetition over elegant variation. Layout rules are now labelled house conventions.
 - The advisory hook now audits `.md`, `.markdown`, and `.txt` files.
+- Each script is now a library module with a separate logic-free entry file (`audit-corpus-cli.ts`, `watch-corpus-main.ts`, and so on). Hook and monitor commands point at the new entries. Every measured file covers 100% of lines and functions, and end-to-end tests run each entry.
+
+### Fixed
+
+- The background monitor now detects a change by content digest rather than by modification time and size. A correction that preserved byte length within one filesystem timestamp tick, two seconds on some filesystems, went unreported (present since 0.3.1).
 
 ## [0.4.1] - 2026-08-12
 

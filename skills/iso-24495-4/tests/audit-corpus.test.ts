@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,6 +39,23 @@ describe("listTextFiles", () => {
 
   test("throws on a missing or unreadable root instead of reporting an empty corpus", () => {
     expect(() => listTextFiles(join(tmpdir(), "iso-24495-4-no-such-root"))).toThrow();
+  });
+
+  test("reports a nested directory that becomes unreadable", () => {
+    const root = mkdtempSync(join(tmpdir(), "iso-24495-4-nested-read-"));
+    try {
+      const nested = join(root, "nested");
+      mkdirSync(nested);
+      const skipped: string[] = [];
+      const readDirectory: typeof readdirSync = (path) => {
+        if (path === nested) throw new Error("directory vanished");
+        return readdirSync(path);
+      };
+      expect(listTextFiles(root, (path) => skipped.push(path), readDirectory)).toEqual([]);
+      expect(skipped).toEqual([nested]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

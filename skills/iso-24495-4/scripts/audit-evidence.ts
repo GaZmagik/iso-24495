@@ -67,7 +67,7 @@ export function runCli(
 ): number {
   const dir = argv[2];
   if (!dir) {
-    stderr("Usage: bun audit-evidence.ts <workspace-dir> [--json <out-file>]");
+    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
     return 2;
   }
   const jsonFlag = argv.indexOf("--json");
@@ -91,10 +91,4 @@ export function runCli(
     stderr(`audit-evidence: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-}
-
-// Coverage exemption: logic-free process entry shim.
-if (import.meta.main) {
-  const exitCode = runCli(process.argv, console.log, console.error);
-  process.exit(exitCode);
 }

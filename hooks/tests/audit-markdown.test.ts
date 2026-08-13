@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { adviseOnFile, handlePayload } from "../audit-markdown.ts";
+import { adviseOnFile, handlePayload, runHook } from "../audit-markdown.ts";
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), "iso-24495-hook-"));
@@ -143,8 +143,8 @@ describe("hooks.json contract", () => {
     const entry = config.hooks.PostToolUse[0];
     expect(entry.matcher).toBe("Write|Edit");
     expect(entry.hooks[0].type).toBe("command");
-    expect(entry.hooks[0].command).toBe('bun "${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown.ts"');
-    expect(existsSync(join(import.meta.dir, "..", "audit-markdown.ts"))).toBe(true);
+    expect(entry.hooks[0].command).toBe('bun "${CLAUDE_PLUGIN_ROOT}/hooks/audit-markdown-main.ts"');
+    expect(existsSync(join(import.meta.dir, "..", "audit-markdown-main.ts"))).toBe(true);
   });
 });
 
@@ -193,12 +193,29 @@ describe("handlePayload", () => {
   });
 });
 
+describe("runHook", () => {
+  test("prints only non-null hook output", () => {
+    const cwd = makeProject();
+    try {
+      const file = join(cwd, "policy.md");
+      writeFileSync(file, "The supplier shall comply.\n");
+      const lines: string[] = [];
+      runHook(JSON.stringify({ cwd, tool_input: { file_path: file } }), (line) => lines.push(line));
+      runHook("{not json", (line) => lines.push(line));
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]).hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("hook entry point", () => {
-  const script = join(import.meta.dir, "..", "audit-markdown.ts");
+  const script = join(import.meta.dir, "..", "audit-markdown-main.ts");
 
   // These child-process checks remain end-to-end proof. Bun does not add a
   // child process's execution to the parent test process's coverage data.
-  async function runHook(input: unknown): Promise<{ stdout: string; exitCode: number }> {
+  async function runHookProcess(input: unknown): Promise<{ stdout: string; exitCode: number }> {
     const proc = Bun.spawn(["bun", script], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
     proc.stdin.write(JSON.stringify(input));
     proc.stdin.end();
@@ -212,7 +229,7 @@ describe("hook entry point", () => {
     try {
       const file = join(cwd, "policy.md");
       writeFileSync(file, "The supplier shall hereby comply.\n");
-      const { stdout, exitCode } = await runHook({
+      const { stdout, exitCode } = await runHookProcess({
         hook_event_name: "PostToolUse",
         tool_name: "Write",
         cwd,
@@ -232,7 +249,7 @@ describe("hook entry point", () => {
     try {
       const file = join(cwd, "notes.md");
       writeFileSync(file, "A short, clear sentence.\n");
-      const { stdout, exitCode } = await runHook({
+      const { stdout, exitCode } = await runHookProcess({
         hook_event_name: "PostToolUse",
         tool_name: "Edit",
         cwd,

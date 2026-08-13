@@ -71,8 +71,7 @@ export function handlePayload(raw: string): string | null {
   }
 }
 
-// Coverage exemption: logic-free process entry shim.
-if (import.meta.main) {
-  const output = handlePayload(readFileSync(0, "utf8"));
-  if (output) console.log(output);
+export function runHook(raw: string, stdout: (text: string) => void): void {
+  const output = handlePayload(raw);
+  if (output) stdout(output);
 }

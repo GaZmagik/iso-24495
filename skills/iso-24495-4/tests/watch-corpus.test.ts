@@ -395,6 +395,22 @@ describe("startMonitor", () => {
     expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
   });
 
+  // Regression: detection compared mtime and size, so an edit preserving byte
+  // length inside one filesystem timestamp tick was invisible. Both strings
+  // below are 34 bytes and are written back to back.
+  test("detects a same-length rewrite within one timestamp tick", () => {
+    makeCwd();
+    writeConfig("docs");
+    mkdirSync(join(cwd, "docs"));
+    const file = join(cwd, "docs", "policy.md");
+    writeFileSync(file, "The supplier shall hereby comply.\n");
+    const lines: string[] = [];
+    monitor = startMonitor(cwd, (line) => lines.push(line));
+    writeFileSync(file, "You must comply with this policy.\n");
+    monitor.sync();
+    expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
+  });
+
   test("does not re-report an already reported change on later syncs", () => {
     makeCwd();
     writeConfig("docs");
@@ -425,16 +441,38 @@ describe("startMonitor", () => {
     expect(lines).toEqual(["iso-24495-4 corpus change: policy.md legalese 2 -> 0"]);
   });
 
+});
+
+// Kept out of the startMonitor block: the child process holds its working
+// directory open on Windows, so that block's shared cleanup would race the
+// exiting process and fail with EBUSY.
+describe("watch-corpus entry file", () => {
+  async function removeWithRetries(path: string): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        rmSync(path, { recursive: true, force: true });
+        return;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+
   test("the entry point process stays alive when no config exists", async () => {
-    const script = join(import.meta.dir, "..", "scripts", "watch-corpus.ts");
+    const script = join(import.meta.dir, "..", "scripts", "watch-corpus-main.ts");
+    const directory = mkdtempSync(join(tmpdir(), "iso-24495-4-monitor-entry-"));
     const proc = Bun.spawn(["bun", script], {
-      cwd: makeCwd(),
+      cwd: directory,
       stdout: "ignore",
       stderr: "ignore",
     });
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    expect(proc.exitCode).toBeNull();
-    proc.kill();
-    await proc.exited;
-  });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      expect(proc.exitCode).toBeNull();
+    } finally {
+      proc.kill();
+      await proc.exited;
+      await removeWithRetries(directory);
+    }
+  }, 20_000);
 });
