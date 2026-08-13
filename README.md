@@ -25,7 +25,7 @@ All skills exempt internal reasoning and preserve code blocks, commands, and log
 Add this repository as a plugin marketplace, then install the plugin:
 
 ```
-/plugin marketplace add https://github.com/GaZmagik/iso-24495
+/plugin marketplace add https://github.com/GaZmagik/iso-24495.git
 /plugin install iso-24495-plain-language@iso-24495
 ```
 
