@@ -317,23 +317,41 @@ describe("repository writing conventions", () => {
   // These rules came from two external reviews of the plugin author's own
   // replies. Each names a failure the sentence and paragraph limits cannot
   // see, so a shortened style would lose exactly what measurement misses.
+  //
+  // The first version of this test searched the whole file for five phrases.
+  // Inverting three rules into their opposites still passed it. Each rule is
+  // now anchored to the start of its own bullet, inside the section, so a
+  // negation breaks the anchor rather than satisfying it.
   test("the output style keeps the reporting rules", () => {
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
     expect(style).toMatch(/^## Reporting work$/m);
+    const section = style.split("## Reporting work")[1]?.split("\n## ")[0] ?? "";
     const rules = [
-      /finding, not the verdict alone/i,
-      /built from what is checked/i,
-      /[Dd]escribe choices evenly/i,
-      /contradict a rule you have just given/i,
-      /[Kk]eep the grammar/i,
+      "- **Show material findings.**",
+      "- **Report status precisely.**",
+      "- **Compare options consistently.**",
+      "- **Stay consistent.**",
+      "- **Use grammatical prose.**",
     ];
     for (const rule of rules) {
-      expect(style, `the reporting rules must keep ${rule}`).toMatch(rule);
+      expect(section, `${rule} must open its own bullet`).toContain(rule);
     }
-    // The send-time check has to cover them, or the rules are advice nobody reads back.
+
+    // Every rule needs a send-time item, or the file's own warning applies:
+    // a rule stated once loses to habit.
     const check = style.split("## Check before you send")[1] ?? "";
-    expect(check).toMatch(/still unverified/i);
-    expect(check).toMatch(/same terms as the others/i);
+    const checks = [
+      /evidence and effect/i,
+      /[Bb]uilt and verified/i,
+      /same criteria, evidence, detail and tone/i,
+      /contradicts a rule or fact stated earlier/i,
+      /fragments confined to headings/i,
+    ];
+    for (const item of checks) {
+      expect(check, `the send-time check must cover ${item}`).toMatch(item);
+    }
+    // The reporting items are conditional, so a one-line answer stays one line.
+    expect(check).toMatch(/when the reply reports work/i);
   });
 
   test("the output style keeps a send-time check", () => {
