@@ -351,12 +351,11 @@ describe("repository writing conventions", () => {
       expect(section, `the rule body "${body}" must survive`).toContain(body);
     }
     const inversions = [
-      "Never state",
-      "Do not separate built",
-      "need not",
-      "You may contradict",
-      "Do not keep",
-      "only when convenient",
+      "Never state the defect or its effect",
+      "Built and verified need not be distinguished",
+      "Use different evidence for the preferred option",
+      "Contradictions need no explanation",
+      "Use fragments throughout prose",
     ];
     for (const inversion of inversions) {
       expect(section, `the section must not contain "${inversion}"`).not.toContain(inversion);
@@ -366,19 +365,20 @@ describe("repository writing conventions", () => {
     // a rule stated once loses to habit.
     const check = style.split("## Check before you send")[1] ?? "";
     const checks = [
-      /evidence and effect/i,
-      /[Bb]uilt and verified/i,
-      /same criteria, evidence, detail and tone/i,
-      /contradicts a rule or fact stated earlier/i,
-      /fragments confined to headings/i,
+      "Every defect named carries its evidence and effect, not only a count.",
+      "Built and verified are distinguished, and any check still open is named.",
+      "Options are compared on the same criteria, evidence, detail and tone.",
+      "Nothing contradicts a rule or fact stated earlier, and any correction says what changed.",
+      "Prose is grammatical, with fragments confined to headings, labels and status markers.",
     ];
     for (const item of checks) {
-      expect(check, `the send-time check must cover ${item}`).toMatch(item);
+      expect(check, `the send-time check must cover ${item}`).toContain(item);
     }
     // The reporting items are conditional, so a one-line answer stays one line.
-    expect(check).toMatch(/whenever the reply reports work/i);
+    expect(check).toContain("These five apply whenever the reply reports work, however short it is.");
     // The exception must not swallow short answers that report work.
-    expect(check).toMatch(/reports no work/i);
+    expect(check).toContain("Only a reply that reports no work skips them:");
+    expect(check).toContain('"Did the gate pass?" is a simple question, and "Done." is not an acceptable answer to it.');
   });
 
   test("the output style keeps a send-time check", () => {

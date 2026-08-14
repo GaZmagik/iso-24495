@@ -17,6 +17,74 @@ export interface Heading {
 }
 
 const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/;
+const ATX_HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
+
+interface HeadingScan {
+  found: Heading[];
+  structuralLines: Set<number>;
+}
+
+function visibleHeadingText(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+}
+
+function scanHeadings(lines: string[]): HeadingScan {
+  const found: Heading[] = [];
+  const structuralLines = new Set<number>();
+  let inFence = false;
+  let inFrontMatter = false;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (i === 0 && trimmed === "---") {
+      inFrontMatter = true;
+      continue;
+    }
+    if (inFrontMatter) {
+      if (trimmed === "---") inFrontMatter = false;
+      continue;
+    }
+    if (/^(```|~~~)/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+
+    const atx = ATX_HEADING.exec(lines[i]);
+    if (atx) {
+      found.push({
+        level: atx[1].length,
+        line: i + 1,
+        text: atx[2].replace(/\s+#+\s*$/, "").trim(),
+      });
+      structuralLines.add(i);
+      continue;
+    }
+
+    const underline = SETEXT_UNDERLINE.exec(lines[i]);
+    if (!underline || i === 0) continue;
+    const previous = lines[i - 1];
+    const previousTrimmed = previous.trimStart();
+    // Setext text must be the immediately preceding ordinary line. These
+    // guards keep list content and indented code in their existing categories.
+    if (previous.trim() === ""
+      || /^ {4}/.test(previous)
+      || NON_PROSE_PREFIX.test(previousTrimmed)
+      || /^(```|~~~)/.test(previousTrimmed)) {
+      continue;
+    }
+    found.push({
+      level: underline[1][0] === "=" ? 1 : 2,
+      line: i,
+      text: visibleHeadingText(previous.trim()),
+    });
+    structuralLines.add(i - 1);
+    structuralLines.add(i);
+  }
+  return { found, structuralLines };
+}
 
 /** Collect prose paragraphs, skipping headings, lists, tables, quotes, and fenced code. */
 export function proseBlocks(text: string): ProseBlock[] {
@@ -24,6 +92,7 @@ export function proseBlocks(text: string): ProseBlock[] {
   let current: ProseBlock | null = null;
   let inFence = false;
   const lines = text.split(/\r?\n/);
+  const headingLines = scanHeadings(lines).structuralLines;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^(```|~~~)/.test(line.trim())) {
@@ -34,7 +103,10 @@ export function proseBlocks(text: string): ProseBlock[] {
     // Test the trimmed line: list markers and quotes are structure at ANY
     // indentation. Testing the raw line made nested bullets count as prose,
     // which merged them into giant fake sentences and biased the average.
-    if (inFence || line.trim() === "" || NON_PROSE_PREFIX.test(line.trimStart())) {
+    if (inFence
+      || headingLines.has(i)
+      || line.trim() === ""
+      || NON_PROSE_PREFIX.test(line.trimStart())) {
       current = null;
       continue;
     }
@@ -49,29 +121,8 @@ export function proseBlocks(text: string): ProseBlock[] {
 
 /** Heading levels with their 1-indexed line numbers, ignoring fenced code. */
 export function headings(text: string): Heading[] {
-  const found: Heading[] = [];
-  let inFence = false;
   const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    if (/^(```|~~~)/.test(lines[i].trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    // CommonMark allows up to three spaces before the hashes. Requiring column
-    // one meant an indented heading was invisible to every heading rule, so a
-    // skipped level inside an indented block passed unnoticed. A fourth space
-    // makes it an indented code block, which is not a heading.
-    const match = /^ {0,3}(#{1,6})\s+(.*)$/.exec(lines[i]);
-    if (match) {
-      found.push({
-        level: match[1].length,
-        line: i + 1,
-        text: match[2].replace(/\s+#+\s*$/, "").trim(),
-      });
-    }
-  }
-  return found;
+  return scanHeadings(lines).found;
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and
