@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { auditCorpus, auditText } from "../scripts/audit-corpus.ts";
+import { auditCorpus, auditText, ENGINE_THRESHOLDS } from "../scripts/audit-corpus.ts";
 import {
   classifyBoundary,
   headings,
@@ -99,14 +99,42 @@ describe("reader-facing behaviour contracts", () => {
     }
   });
 
-  test("a hand-written plain-language corpus has no false advisories", () => {
+  // SOURCES.md documents where the corpus came from; it is not a corpus
+  // document, so it is not measured as one.
+  test("the plain-language corpus produces no false advisories", () => {
     const findings = auditCorpus(KNOWN_GOOD);
-    expect(Object.keys(findings.files)).toHaveLength(6);
-    const advised = Object.values(findings.files)
-      .filter((file) => file.violations.length > 0)
-      .map((file) => file.path);
+    const documents = Object.entries(findings.files).filter(([path]) => path !== "SOURCES.md");
+    expect(documents).toHaveLength(7);
+    const advised = documents.filter(([, file]) => file.violations.length > 0).map(([path]) => path);
     expect(advised).toEqual([]);
-    expect(findings.totals).toEqual({});
+  });
+
+  // The corpus was worthless as a measurement while every document sat below
+  // the ten-sentence floor, because the average rule was never even evaluated.
+  // This document is external prose under the Open Government Licence, and its
+  // expected numbers were written down before the engine first read it.
+  test("external published prose is measured at the average rule's sample floor", () => {
+    const path = join(KNOWN_GOOD, "govuk-universal-credit.md");
+    const text = readFileSync(path, "utf8");
+    let sentences = 0;
+    let words = 0;
+    let longest = 0;
+    for (const block of proseBlocks(text)) {
+      for (const sentence of splitSentences(block.lines.join(" "))) {
+        const count = wordCount(sentence);
+        if (count === 0) continue;
+        sentences += 1;
+        words += count;
+        longest = Math.max(longest, count);
+      }
+    }
+    // The adjudication, frozen before the first run: ten sentences, an average
+    // of 18.0 words, a longest sentence of 26, and nothing to report.
+    expect(sentences).toBe(10);
+    expect(sentences).toBeGreaterThanOrEqual(ENGINE_THRESHOLDS.averageMinimumSentences);
+    expect(Number((words / sentences).toFixed(1))).toBe(18.0);
+    expect(longest).toBe(26);
+    expect(auditText(text)).toEqual([]);
   });
 
   test("ATX and Setext headings share the complete heading contract", () => {
