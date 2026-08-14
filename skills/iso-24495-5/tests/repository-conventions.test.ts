@@ -314,6 +314,28 @@ describe("repository writing conventions", () => {
 
   // The style states measurable limits, which are worth nothing if nothing
   // tells the model to read its own draft back against them.
+  // These rules came from two external reviews of the plugin author's own
+  // replies. Each names a failure the sentence and paragraph limits cannot
+  // see, so a shortened style would lose exactly what measurement misses.
+  test("the output style keeps the reporting rules", () => {
+    const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
+    expect(style).toMatch(/^## Reporting work$/m);
+    const rules = [
+      /finding, not the verdict alone/i,
+      /built from what is checked/i,
+      /[Dd]escribe choices evenly/i,
+      /contradict a rule you have just given/i,
+      /[Kk]eep the grammar/i,
+    ];
+    for (const rule of rules) {
+      expect(style, `the reporting rules must keep ${rule}`).toMatch(rule);
+    }
+    // The send-time check has to cover them, or the rules are advice nobody reads back.
+    const check = style.split("## Check before you send")[1] ?? "";
+    expect(check).toMatch(/still unverified/i);
+    expect(check).toMatch(/same terms as the others/i);
+  });
+
   test("the output style keeps a send-time check", () => {
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
     expect(style).toMatch(/^## Check before you send$/m);
