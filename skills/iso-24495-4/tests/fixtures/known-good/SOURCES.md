@@ -19,8 +19,9 @@ v3.0. The text is reproduced unchanged; only the heading and paragraph breaks
 are ours, to make a valid markdown document.
 
 **The adjudication came first.** Every expected result was written down before
-the auditor saw the text: 10 sentences, an average of 18.0 words, a longest
-sentence of 26 words, and no findings. The engine then agreed on every number. Had it disagreed, the disagreement would have been recorded as a false
+the auditor saw the text. That adjudication said 10 sentences, an average of
+18.0 words, a longest sentence of 26 words, and no findings. The engine then
+agreed on every number. Had it disagreed, the disagreement would have been recorded as a false
 positive rather than explained away by editing the expectation.
 
 That document sits at exactly the ten-sentence sample floor, so it is the only
