@@ -57,7 +57,7 @@ export const COMMON_WORDS: ReadonlySet<string> = new Set([
   "request", "require", "reset", "restart", "restore", "result", "retry",
   "return", "review", "right", "risk", "room", "run", "safe", "safety", "same",
   "save", "say", "search", "second", "section", "see", "select", "send",
-  "server", "service", "set", "settings", "several", "share", "she", "short",
+  "server", "service", "settings", "several", "share", "she", "short",
   "should", "show", "shut", "side", "sign", "since", "single", "site", "size",
   "skip", "slow", "small", "so", "some", "someone", "something", "soon",
   "sorry", "sound", "space", "speak", "special", "speed", "spend", "stand",
@@ -73,6 +73,14 @@ export const COMMON_WORDS: ReadonlySet<string> = new Set([
   "which", "while", "who", "whole", "why", "will", "wipe", "wish", "with",
   "within", "without", "work", "world", "would", "write", "wrong", "year",
   "yes", "yet", "you", "your",
+  // Safety and warning vocabulary. Notices are shouted more than any other
+  // kind of text, and "AVOID OPEN FLAME" was being read as three acronyms.
+  "alarm", "avoid", "beware", "burn", "caution", "chemical", "cover", "dry",
+  "ear", "electric", "emergency", "equipment", "exposure", "eye", "face",
+  "fire", "flame", "gas", "glove", "gloves", "hand", "hands", "hazard",
+  "head", "hear", "heat", "helmet", "hot", "injury", "keep", "mask",
+  "open", "protection", "shock", "smoke", "spill", "toxic", "unplug",
+  "voltage", "wash", "water", "wear", "wet",
 ]);
 
 /**

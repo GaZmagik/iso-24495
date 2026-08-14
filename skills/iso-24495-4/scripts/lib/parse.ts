@@ -116,16 +116,21 @@ export function classifyBoundary(previous: string, next: string): Boundary {
   // A title is followed by a name, never by a new sentence.
   if (TITLES.has(word)) return "merge";
 
-  // "J. Smith": an initial followed by a capitalised name.
-  if (SINGLE_INITIAL.test(token) && nextIsCapitalised && !EXCLUSIVE_STARTERS.has(nextWord)) {
-    return "merge";
+  // "J. Smith": an initial followed by a capitalised name. A lower-case word
+  // after an initial is undecided, because "J. de Vries" is one name and
+  // "See J. the results follow" is not something anyone writes.
+  if (SINGLE_INITIAL.test(token)) {
+    if (nextIsCapitalised && !EXCLUSIVE_STARTERS.has(nextWord)) return "merge";
+    return "ambiguous";
   }
 
   if (INLINE_ABBREVIATIONS.has(word)) {
     // "Fig. A", "No. 3": a label, not a new sentence.
     if (/^[^A-Za-z0-9]*[A-Z0-9][^A-Za-z]*$/.test(nextToken)) return "merge";
-    if (nextIsLowercaseName) return "split";
     if (nextIsCapitalised && EXCLUSIVE_STARTERS.has(nextWord)) return "split";
+    // "e.g. iOS and Android" continues the list; "etc. iOS clients failed"
+    // starts a sentence. Nothing here tells the two apart.
+    if (nextIsLowercaseName) return "ambiguous";
     return "merge";
   }
 
@@ -133,10 +138,13 @@ export function classifyBoundary(previous: string, next: string): Boundary {
     // A lower-case word continues the phrase: "U.S. policy applies".
     if (nextIsLowercase) return "merge";
     if (nextIsCapitalised && EXCLUSIVE_STARTERS.has(nextWord)) return "split";
-    if (nextIsLowercaseName) return "split";
-    if (/^\d{4}\b/.test(nextToken)) return "split";
-    // A capitalised ordinary noun after "U.S." usually continues the phrase.
-    if (/^[A-Z][a-z]+/.test(nextToken)) return "merge";
+    if (nextIsLowercaseName) return "ambiguous";
+    // "e.g. 2025 and 2026" lists years; "U.S. 2025 brought change" starts a
+    // sentence. A number decides nothing on its own.
+    if (/^\d/.test(nextToken)) return "ambiguous";
+    // "U.S. Department" continues the phrase, "U.S. Customers receive support"
+    // starts a sentence, and a capitalised noun cannot tell them apart.
+    if (/^[A-Z][a-z]+/.test(nextToken)) return "ambiguous";
     return "ambiguous";
   }
 

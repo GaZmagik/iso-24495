@@ -350,18 +350,38 @@ describe("sentence boundaries around abbreviations", () => {
   // The matrix that two review rounds produced. Each row broke a previous
   // version of this rule, in one direction or the other.
   test("the review matrix segments correctly", () => {
-    const cases: Array<[string, number]> = [
-      ["U.S. Department of State guidance", 1],
-      ["See Fig. A for the layout", 1],
-      ["J. Smith release notes", 1],
-      ["It happened in the U.S. iOS users were unaffected.", 2],
-      ["It happened in the U.S. 2025 brought major changes.", 2],
-      ["He works in the U.S. The weather is fine.", 2],
-      ["Dr. Smith explains the release.", 1],
+    // Each row states the fewest and the most sentences the text can hold.
+    // Where the two differ, the evidence did not settle it, and the rules take
+    // whichever reading cannot invent a violation.
+    const cases: Array<[string, number, number]> = [
+      ["U.S. Department of State guidance", 1, 2],
+      ["See Fig. A for the layout", 1, 1],
+      ["J. Smith release notes", 1, 1],
+      ["J. de Vries release notes", 1, 2],
+      ["Platforms, e.g. iOS and Android", 1, 2],
+      ["Years, e.g. 2025 and 2026", 1, 2],
+      ["It happened in the U.S. iOS users were unaffected.", 1, 2],
+      ["It happened in the U.S. 2025 brought major changes.", 1, 2],
+      ["U.S. Customers receive support.", 1, 2],
+      ["He works in the U.S. The weather is fine.", 2, 2],
+      ["Dr. Smith explains the release.", 1, 1],
+      ["Ship it. Then tell the team.", 2, 2],
     ];
-    for (const [text, expected] of cases) {
-      expect(splitSentences(text).length, `${text} (most)`).toBe(expected);
+    for (const [text, fewest, most] of cases) {
+      expect(mergedSentences(text).length, `${text} (fewest)`).toBe(fewest);
+      expect(splitSentences(text).length, `${text} (most)`).toBe(most);
     }
+  });
+
+  // The guarantee the changelog makes: an undecided stop can never be the
+  // reason a document is reported.
+  test("an undecided boundary never creates a violation", () => {
+    const heading = "# U.S. Customers receive support";
+    expect(violationsFor(heading, "heading-style")).toEqual([]);
+
+    // Ten sentences only when the ambiguous stop is counted as a boundary.
+    const body = `${"Each sentence here carries a deliberately generous number of words for the average. ".repeat(9)}Formats, e.g. JSON output is supported.`;
+    expect(auditText(body).filter((v) => v.rule === "sentence-average")).toEqual([]);
   });
 
   test("a following capital ends the sentence unless the short form is a title", () => {

@@ -67,17 +67,21 @@ const NUMBERING_WORDS = new Set([
   "volumes", "appendix", "appendices", "annex", "figure", "figures", "table",
   "tables", "phase", "step", "tier", "page", "article", "articles", "title",
   "titles", "schedule", "schedules", "clause", "clauses", "edition", "act",
+  "level", "grade", "stage", "mark", "series", "round", "form", "group",
 ]);
 
-// Titles and events numbered with Roman numerals by convention.
+// Titles and events numbered with Roman numerals by convention. Searched a few
+// tokens back, because the numeral follows the given name: "Pope Paul VI".
 const NAMED_BY_NUMERAL = new Set([
-  "King", "Queen", "Pope", "Emperor", "Tsar", "Louis", "Henry", "George",
-  "Elizabeth", "Charles", "William", "Bowl", "War", "Olympiad",
+  "King", "Queen", "Pope", "Emperor", "Empress", "Tsar", "Prince", "Princess",
+  "Duke", "Earl", "Bowl", "War", "Olympiad", "Cup", "Festival",
 ]);
 
-// Valid numerals that are far more often acronyms. Everything else valid is
-// treated as a numeral, so "VIII" and "LVIII" never reach the acronym rule.
-const NUMERAL_COLLISIONS = new Set(["CI", "CD", "DC", "MD", "DI", "MI", "VI", "MIX", "CM", "DIM"]);
+// A short numeral is ambiguous by nature: two and three letter numerals are
+// also common acronyms, and listing them one by one was a list that kept
+// growing (DVI, MCC, MMC, DCL, MMI all slipped through). Length decides
+// instead. Four letters or more, such as VIII or LVIII, is a numeral.
+const NUMERAL_UNAMBIGUOUS_LENGTH = 4;
 const ACRONYM_SHAPE = new RegExp(
   `^(?:[A-Z]{${ENGINE_THRESHOLDS.acronymMinimumLetters},${ENGINE_THRESHOLDS.acronymMaximumLetters}}|[A-Z]\\.(?:[A-Z]\\.)+)$`,
 );
@@ -157,20 +161,36 @@ function isAllCaps(raw: string): boolean {
 // immediately before it, coordination with an unambiguous numeral, or a name
 // pattern counts as evidence. Words that double as verbs ("book a room",
 // "type the command") are deliberately absent from the numbering list.
+function isUnambiguousNumeral(word: string): boolean {
+  return word.length >= NUMERAL_UNAMBIGUOUS_LENGTH && ROMAN_NUMERAL.test(word);
+}
+
 function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): boolean {
   const bare = (raw: string | undefined): string => (raw ?? "").replace(/[^A-Za-z]/g, "");
   const previous = bare(tokens[index - 1]?.raw);
-  if (NUMBERING_WORDS.has(previous.toLowerCase())) return true;
-  if (NAMED_BY_NUMERAL.has(previous)) return true;
-  // "Sections II and IV": the neighbour is a numeral no acronym collides with.
-  for (const neighbour of [bare(tokens[index - 1]?.raw), bare(tokens[index + 1]?.raw)]) {
-    if (neighbour && ROMAN_NUMERAL.test(neighbour) && !NUMERAL_COLLISIONS.has(neighbour)) return true;
+  // "Chapters II, III and IV": the numbering word governs the whole list, not
+  // just the numeral touching it, so look back a short way.
+  for (let back = index - 1; back >= 0 && back >= index - 3; back--) {
+    if (NUMBERING_WORDS.has(bare(tokens[back]?.raw).toLowerCase())) return true;
   }
-  // A coordinator between two numerals: "II, III and IV".
+  // "Pope Paul VI": the title sits before the given name, not before the
+  // numeral, so look back a few tokens rather than one.
+  for (let back = index - 1; back >= 0 && back >= index - 3; back--) {
+    if (NAMED_BY_NUMERAL.has(bare(tokens[back]?.raw))) return true;
+  }
+  // "Sections II and IV": the neighbour is a numeral no acronym collides with.
+  // A short numeral is no evidence, or "CI and CD" would excuse itself.
+  for (const neighbour of [previous, bare(tokens[index + 1]?.raw)]) {
+    if (isUnambiguousNumeral(neighbour)) return true;
+  }
   if (/^(?:and|or|to|through)$/i.test(previous)) {
     for (let back = index - 2; back >= 0 && back >= index - 4; back--) {
       const candidate = bare(tokens[back]?.raw);
-      if (candidate && ROMAN_NUMERAL.test(candidate)) return true;
+      if (candidate && NUMBERING_WORDS.has(bare(tokens[back - 1]?.raw).toLowerCase())
+        && ROMAN_NUMERAL.test(candidate)) {
+        return true;
+      }
+      if (isUnambiguousNumeral(candidate)) return true;
     }
   }
   return false;
@@ -211,7 +231,7 @@ function acronymViolations(text: string): Violation[] {
       const acronym = acronymFromToken(tokens[i].raw);
       if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key)) continue;
       if (ROMAN_NUMERAL.test(acronym.key)
-        && (!NUMERAL_COLLISIONS.has(acronym.key) || hasNumberingEvidence(tokens, i))) {
+        && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
         continue;
       }
       const inParentheses = tokens[i].raw.includes("(");
@@ -292,6 +312,7 @@ function proseEnumerationViolations(text: string): Violation[] {
 export function auditText(text: string): Violation[] {
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
+  const mergedLengths: number[] = [];
   for (const block of proseBlocks(text)) {
     const paragraph = block.lines.join(" ");
     const sentences = splitSentences(paragraph);
@@ -309,6 +330,10 @@ export function auditText(text: string): Violation[] {
     // Counted from the fewest sentences the paragraph can hold. An unresolved
     // full stop must never manufacture the sentence that breaks the limit.
     const fewest = mergedSentences(paragraph).length;
+    for (const sentence of mergedSentences(paragraph)) {
+      const words = wordCount(sentence);
+      if (words > 0) mergedLengths.push(words);
+    }
     if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
       violations.push({
         rule: "paragraph-length",
@@ -332,16 +357,22 @@ export function auditText(text: string): Violation[] {
   // The standards specify an average across the document, not a cap; the cap
   // above only catches genuine sprawl. Small samples are exempt because an
   // average over a handful of sentences is noise, not judgement.
-  if (sentenceLengths.length >= AVERAGE_MIN_SENTENCES) {
-    const total = sentenceLengths.reduce((a, b) => a + b, 0);
-    const average = total / sentenceLengths.length;
-    if (average > SENTENCE_AVERAGE_LIMIT) {
-      violations.push({
-        rule: "sentence-average",
-        line: 1,
-        detail: `average ${average.toFixed(1)} words across ${sentenceLengths.length} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
-      });
-    }
+  //
+  // Both readings must agree. Taking the longer reading alone let an undecided
+  // full stop lift a document over the ten-sentence sample floor and produce a
+  // finding the joined-up reading could not, which is the opposite of what
+  // abstention is for.
+  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
+    count: lengths.length,
+    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
+  }));
+  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
+    const reported = readings[0];
+    violations.push({
+      rule: "sentence-average",
+      line: 1,
+      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
+    });
   }
   const documentHeadings = headings(text);
   for (let i = 0; i < documentHeadings.length; i++) {
