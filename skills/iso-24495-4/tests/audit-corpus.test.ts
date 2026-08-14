@@ -7,8 +7,10 @@ import {
   auditText,
   configHash,
   ENGINE_THRESHOLDS,
+  isAuditedDocument,
   listTextFiles,
 } from "../scripts/audit-corpus.ts";
+import { splitSentences } from "../scripts/lib/parse.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
 
@@ -227,6 +229,7 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("# U.S. policy overview", "heading-style")).toEqual([]);
     expect(violationsFor("# Release notes, e.g. the summary", "heading-style")).toEqual([]);
     expect(violationsFor("# Ship it. Then tell the team", "heading-style")).toHaveLength(1);
+    expect(violationsFor("# See Fig. 3 for the layout", "heading-style")).toEqual([]);
   });
 
   test("acronym-undefined applies definitions and false-positive guards", () => {
@@ -257,6 +260,24 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("THIS IS IMPORTANT prose.", "acronym-undefined")).toEqual([]);
     for (const word of ["OK", "ID", "AM", "PM"]) {
       expect(violationsFor(`Press ${word} to continue.`, "acronym-undefined")).toEqual([]);
+    }
+
+    // A run of initialisms is terminology; a shouted warning is ordinary words
+    // in capitals. Counting tokens alone confused the two in both directions.
+    expect(violationsFor("DO NOT continue until the backup finishes.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("WARNING: BACKUP FIRST before you upgrade.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("The AWS IAM SSO policy controls access.", "acronym-undefined")).toHaveLength(3);
+    expect(violationsFor("Compare the CPU RAM SSD limits before purchase.", "acronym-undefined")).toHaveLength(3);
+
+    // A Roman numeral is a numeral because of where it sits, not because of
+    // which letters it uses. Shape alone exempted CI, MD, MIX and CD.
+    expect(violationsFor("Section II precedes section IV.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("Chapter XI follows part IX.", "acronym-undefined")).toEqual([]);
+    for (const acronym of ["CI", "MD", "MIX", "CD", "DC"]) {
+      expect(
+        violationsFor(`The ${acronym} record matters.`, "acronym-undefined"),
+        `${acronym} must not be exempt outside a numbering context`,
+      ).toHaveLength(1);
     }
   });
 
@@ -301,6 +322,34 @@ describe("lucid-inspired advisory rules", () => {
       "prose-enumeration",
     )).toEqual([]);
     expect(violationsFor("The second-best option is a first-class fix.", "prose-enumeration")).toEqual([]);
+  });
+});
+
+describe("sentence boundaries around abbreviations", () => {
+  // Whether a full stop ends a sentence depends on what follows it. A title is
+  // always followed by a name, so it never ends one; every other short form
+  // ends a sentence when a new one starts with a capital.
+  test("a following capital ends the sentence unless the short form is a title", () => {
+    expect(splitSentences("He works in the U.S. The weather is fine.")).toHaveLength(2);
+    expect(splitSentences("We ship on Monday, e.g. the first release. Then we stop.")).toHaveLength(2);
+    expect(splitSentences("Dr. Smith explains the release.")).toHaveLength(1);
+    expect(splitSentences("U.S. policy applies here.")).toHaveLength(1);
+    expect(splitSentences("Release notes, e.g. the summary.")).toHaveLength(1);
+    expect(splitSentences("See Fig. 3 for the layout.")).toHaveLength(1);
+    expect(splitSentences("Ship it. Then tell the team.")).toHaveLength(2);
+  });
+});
+
+describe("the audited document list", () => {
+  // The hook lower-cased the extension and the repository walker did not, so a
+  // file named in capitals was audited in one place and skipped in the other.
+  test("extension matching ignores case everywhere", () => {
+    for (const name of ["notes.txt", "notes.TXT", "notes.Markdown", "README.MD"]) {
+      expect(isAuditedDocument(name), `${name} must be audited`).toBe(true);
+    }
+    for (const name of ["script.ts", "notes.txtx", "archive.md.zip", "plain"]) {
+      expect(isAuditedDocument(name), `${name} must not be audited`).toBe(false);
+    }
   });
 });
 

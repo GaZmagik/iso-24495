@@ -25,13 +25,13 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Fixed
 
-- The sentence splitter no longer treats an abbreviation as a sentence end. `Dr.`, `U.S.` and `e.g.` used to split a line in two, which inflated sentence counts, deflated the document average, and reported ordinary titles such as `# Dr. Smith explains the release` as malformed headings.
-- `acronym-undefined` now suppresses only a run of three or more capitalised words, rather than any single capitalised neighbour. The old guard hid the commonest real case, `The DNS TTL controls caching`, while everyday words were still reported. Shouted prose stays exempt.
-- `acronym-undefined` no longer treats every string of numeral letters as a Roman numeral. `XML`, `MIX` and `CIVIC` were silently exempt; only canonical numerals such as `II` and `IV` are now.
-- `OK`, `ID`, `AM` and `PM` join the allowlist. Asking a writer to expand them is advice nobody can act on.
+- The sentence splitter now decides a full stop by what follows it. `Dr.` never ends a sentence, because a title is always followed by a name. Every other short form, including `U.S.` and `e.g.`, ends one only when the next word starts with a capital. Splitting on every full stop inflated sentence counts and reported ordinary titles such as `# Dr. Smith explains the release` as malformed.
+- `acronym-undefined` no longer treats a capitalised neighbour as shouting. Suppression now needs evidence: a run of at least three capitalised words containing one too long to be an acronym, or a run of four. `The AWS IAM SSO policy` is reported, `WARNING: BACKUP FIRST` is not, and `The DNS TTL controls caching` no longer hides behind its neighbour.
+- `acronym-undefined` treats a Roman numeral as a numeral only where one belongs, after a word such as `section`, `chapter` or `part`. Shape alone exempted `CI`, `MD`, `MIX`, `CD` and `XML`.
+- Everyday capitalised words join the allowlist, including `OK`, `ID`, `DO` and `NOT`. Asking a writer to expand them is advice nobody can act on.
 - `prose-enumeration` no longer counts an ordinal inside a hyphenated compound. `third-party service` was read as a third item and turned ordinary prose into a finding.
 - The output style no longer presents 15 words as a minimum average. The engine sets an upper limit and no lower one, so a concise reply was failing a check whose only remedy was padding.
-- The repository's own audit guard now covers every extension the hook audits, not only `.md`. A violating `.txt` or `.markdown` file could previously ship with every gate green. The hook now derives its list from the engine rather than restating it.
+- The repository's own audit guard now covers every extension the hook audits, not only `.md`. A violating `.txt` or `.markdown` file could previously ship with every gate green. Both the hook and the guard now call one exported predicate, `isAuditedDocument`, which ignores letter case, so a file named `NOTES.TXT` can no longer be audited in one place and skipped in the other.
 - The end-to-end entry file tests no longer fail at random. Each spawns a cold Bun process, which can take longer than the default five second limit on a loaded machine, and the process was then killed mid-run. Two of five suite runs failed before the fix and six of six passed after it.
 - The background monitor now detects a change by content digest rather than by modification time and size. A correction that preserved byte length within one filesystem timestamp tick, two seconds on some filesystems, went unreported (present since 0.3.1).
 

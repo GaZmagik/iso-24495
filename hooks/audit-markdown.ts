@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { auditText, TEXT_EXTENSIONS } from "../skills/iso-24495-4/scripts/audit-corpus.ts";
+import { auditText, isAuditedDocument } from "../skills/iso-24495-4/scripts/audit-corpus.ts";
 
 interface HookInput {
   cwd?: string;
@@ -27,10 +27,9 @@ export function hookEnabled(cwd: string): boolean {
 }
 
 export function adviseOnFile(filePath: string, cwd: string): string | null {
-  // Derived from the engine's own list, never restated here: a second copy is
-  // a second thing to forget when a format is added.
-  const extension = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
-  if (!TEXT_EXTENSIONS.includes(extension)) return null;
+  // The engine decides what it audits. A second copy of the rule here is a
+  // second thing to forget, and the copies disagreed on letter case.
+  if (!isAuditedDocument(filePath)) return null;
   if (/[\\/](node_modules|\.git)[\\/]/.test(filePath)) return null;
   if (!hookEnabled(cwd)) return null;
   let text: string;

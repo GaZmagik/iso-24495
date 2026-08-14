@@ -73,19 +73,24 @@ export function headings(text: string): Heading[] {
 // inflated the sentence count, deflated the average, and made ordinary titles
 // look malformed. Anything that ends in a dotted form or a known short form
 // therefore joins the fragment that follows it.
+// A title is always followed by a name, so it never ends a sentence. Every
+// other short form can: "in the U.S. The weather" is two sentences, while
+// "U.S. policy" is one. What follows decides, so the capital after the stop is
+// the evidence.
+const TITLES = new Set(["dr", "mr", "mrs", "ms", "messrs", "prof", "rev", "fr", "sr", "jr", "st"]);
 const ABBREVIATIONS = new Set([
-  "dr", "mr", "mrs", "ms", "prof", "rev", "st", "jr", "sr", "inc", "ltd", "co",
-  "vs", "etc", "fig", "no", "al", "approx", "cf", "dept", "est", "vol", "ed",
-  "eds", "pp", "ca", "min", "max", "ext", "ref",
+  "inc", "ltd", "co", "vs", "etc", "fig", "no", "al", "approx", "cf", "dept",
+  "est", "vol", "ed", "eds", "pp", "ca", "min", "max", "ext", "ref",
 ]);
 
-function endsWithAbbreviation(fragment: string): boolean {
+function abbreviationKind(fragment: string): "title" | "short" | null {
   const token = fragment.trimEnd().split(/\s+/).at(-1) ?? "";
-  if (!token.endsWith(".")) return false;
-  // "U.S.", "e.g." and a lone initial such as "J." are dotted forms, not ends.
-  if (/^[^A-Za-z]*(?:[A-Za-z]\.)+$/.test(token)) return true;
+  if (!token.endsWith(".")) return null;
   const word = token.slice(0, -1).replace(/^[^A-Za-z]+/, "").toLowerCase();
-  return ABBREVIATIONS.has(word);
+  if (TITLES.has(word)) return "title";
+  // "U.S.", "e.g." and a lone initial such as "J." are dotted forms.
+  if (/^[^A-Za-z]*(?:[A-Za-z]\.)+$/.test(token)) return "short";
+  return ABBREVIATIONS.has(word) ? "short" : null;
 }
 
 /** Split a paragraph into sentences on terminal punctuation. */
@@ -93,7 +98,9 @@ export function splitSentences(text: string): string[] {
   const sentences: string[] = [];
   for (const fragment of text.split(/(?<=[.!?])\s+/)) {
     const previous = sentences.at(-1);
-    if (previous !== undefined && endsWithAbbreviation(previous)) {
+    const kind = previous === undefined ? null : abbreviationKind(previous);
+    const startsNewSentence = /^[^A-Za-z]*[A-Z]/.test(fragment);
+    if (kind === "title" || (kind === "short" && !startsNewSentence)) {
       sentences[sentences.length - 1] = `${previous} ${fragment}`;
       continue;
     }

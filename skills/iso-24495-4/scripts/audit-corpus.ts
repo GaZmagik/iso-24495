@@ -24,6 +24,7 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
   shoutedRunLength: 3,
+  shoutedRunCertain: 4,
 });
 
 const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
@@ -35,14 +36,37 @@ const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
 // Exported so the hook and the repository's own dogfood guard read the same
 // list. While each kept its own copy, a .txt file could ship unaudited.
 export const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
+
+/**
+ * Whether this path is a document the engine audits. Every caller must use
+ * this rather than its own test: comparing extension lists proved nothing,
+ * because one caller lower-cased the extension and another did not, so
+ * `notes.TXT` was audited by the hook and skipped by the repository guard.
+ */
+export function isAuditedDocument(path: string): boolean {
+  const lower = path.toLowerCase();
+  return TEXT_EXTENSIONS.some((extension) => lower.endsWith(extension));
+}
 const LEGALESE = ["shall", "hereby", "hereinafter", "wherefore", "heretofore", "aforesaid"];
 
 const ACRONYM_ALLOWLIST = new Set([
   "KG", "KM", "CM", "MM", "MB", "GB", "KB", "TB", "PDF", "URL", "HTML", "TV", "PIN",
   "UN", "USA", "ISO", "AI", "API", "CLI", "JSON", "HTTP", "HTTPS", "SSH", "MIT",
   // Everyday words that happen to be capitals. Asking a writer to expand "OK"
-  // is advice nobody can act on.
+  // is advice nobody can act on, and a shouted "DO NOT" is not an initialism.
   "OK", "ID", "AM", "PM",
+  "DO", "NOT", "NO", "YES", "AND", "OR", "THE", "ALL", "ANY", "YOU", "WE",
+  "IS", "ARE", "BE", "NOW", "NEW", "OLD", "OFF", "ON", "IN", "OUT", "UP",
+  "END", "TOP", "SEE", "USE", "ADD", "RUN", "STOP", "NOTE", "PLEASE", "MUST",
+  "CAN", "WILL", "MAY", "HOW", "WHY", "WHO", "WHAT", "WHEN",
+]);
+
+// Numbering words that make a Roman numeral a numeral. Shape alone exempted
+// "CI", "MD", "MIX" and "CD", which are ordinary acronyms in ordinary prose.
+const NUMBERING_WORDS = new Set([
+  "section", "sections", "chapter", "chapters", "part", "parts", "volume",
+  "book", "appendix", "annex", "figure", "table", "act", "phase", "step",
+  "level", "tier", "page", "article", "class", "type", "war", "edition",
 ]);
 const ACRONYM_SHAPE = new RegExp(
   `^(?:[A-Z]{${ENGINE_THRESHOLDS.acronymMinimumLetters},${ENGINE_THRESHOLDS.acronymMaximumLetters}}|[A-Z]\\.(?:[A-Z]\\.)+)$`,
@@ -110,7 +134,7 @@ function acronymFromToken(raw: string): { display: string; key: string } | null 
   if (!ACRONYM_SHAPE.test(token) && token.endsWith(".")) token = token.slice(0, -1);
   if (!ACRONYM_SHAPE.test(token)) return null;
   const key = token.replaceAll(".", "");
-  if (ROMAN_NUMERAL.test(key) || /\d/.test(token)) return null;
+  if (/\d/.test(token)) return null;
   return { display: token, key };
 }
 
@@ -119,18 +143,31 @@ function isAllCaps(raw: string): boolean {
   return ACRONYM_SHAPE.test(stripped) || /^[A-Z]{2,}$/.test(stripped);
 }
 
-// Shouted text is a run of capitals, not a pair. Suppressing on a single
-// capitalised neighbour hid the commonest real case, "The DNS TTL controls
-// caching", while everyday words were still reported. A run of three or more
-// is the shortest span that reads as shouting rather than as terminology.
+function isNumberingContext(previous: string | undefined): boolean {
+  const word = (previous ?? "").replace(/[^A-Za-z]/g, "").toLowerCase();
+  return NUMBERING_WORDS.has(word);
+}
+
+// Length alone cannot tell "AWS IAM SSO" from "BACKUP FIRST NOW", so the run
+// needs evidence. A word too long to be an acronym is the giveaway that a run
+// is shouted prose, and a run of four or more is treated as shouting on its
+// own. Runs of two or three initialisms stay in scope, which is where the real
+// undefined acronyms live.
 function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   const shouted = new Set<number>();
+  const markRun = (start: number, end: number): void => {
+    const length = end - start;
+    if (length < ENGINE_THRESHOLDS.shoutedRunLength) return;
+    const hasLongWord = tokens
+      .slice(start, end)
+      .some((token) => token.raw.replace(/[^A-Za-z]/g, "").length > ENGINE_THRESHOLDS.acronymMaximumLetters);
+    if (!hasLongWord && length < ENGINE_THRESHOLDS.shoutedRunCertain) return;
+    for (let j = start; j < end; j++) shouted.add(j);
+  };
   let runStart = 0;
   for (let i = 0; i <= tokens.length; i++) {
     if (i < tokens.length && isAllCaps(tokens[i].raw)) continue;
-    if (i - runStart >= ENGINE_THRESHOLDS.shoutedRunLength) {
-      for (let j = runStart; j < i; j++) shouted.add(j);
-    }
+    markRun(runStart, i);
     runStart = i + 1;
   }
   return shouted;
@@ -148,6 +185,7 @@ function acronymViolations(text: string): Violation[] {
     for (let i = 0; i < tokens.length; i++) {
       const acronym = acronymFromToken(tokens[i].raw);
       if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key)) continue;
+      if (ROMAN_NUMERAL.test(acronym.key) && isNumberingContext(tokens[i - 1]?.raw)) continue;
       const inParentheses = tokens[i].raw.includes("(");
       const parenthesisFollows = tokens
         .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)

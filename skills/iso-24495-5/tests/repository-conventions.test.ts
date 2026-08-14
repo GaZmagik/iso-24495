@@ -1,14 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { adviseOnFile } from "../../../hooks/audit-markdown.ts";
 import { join, relative } from "node:path";
-import { auditText, ENGINE_THRESHOLDS, TEXT_EXTENSIONS } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { auditText, ENGINE_THRESHOLDS, isAuditedDocument } from "../../iso-24495-4/scripts/audit-corpus.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
 const SKIPPED_DIRECTORIES = new Set([".git", ".iso-24495-4", "node_modules"]);
-const DOCUMENT_EXTENSIONS = [".md", ".markdown", ".txt"];
-const SENTENCE_OR_LINE = new RegExp("(?<=[.!?])\s+|\n");
+const SENTENCE_OR_LINE = /(?<=[.!?])[ \t]+|\r?\n/;
+// A floor can be worded as a range as easily as as a minimum. "Average 15 to
+// 20 words" is an instruction to reach 15, so any sentence about the average
+// that names the lower number must also mark it as a target.
 const FLOOR_WORDING = /between|at least|no fewer|minimum/i;
+const RANGE_WORDING = /(?<![0-9])15(?![0-9])/;
+const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
 const ENTRY_FILES = [
   "hooks/audit-markdown-main.ts",
   "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
@@ -54,7 +60,7 @@ function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) {
       files.push(...repositoryTextFiles(path));
-    } else if (DOCUMENT_EXTENSIONS.some((ext) => entry.endsWith(ext)) || entry.endsWith(".ts")) {
+    } else if (isAuditedDocument(entry) || entry.toLowerCase().endsWith(".ts")) {
       files.push(path);
     }
   }
@@ -214,18 +220,36 @@ describe("repository writing conventions", () => {
     expect(violations).toEqual([]);
   });
 
-  // The dogfood guard has to cover every extension the shipped hook audits.
-  // While it read only .md, a violating .txt or .markdown file would ship with
-  // both the local gate and the build green.
-  test("the dogfood guard covers every extension the hook audits", () => {
-    expect([...DOCUMENT_EXTENSIONS].sort()).toEqual([...TEXT_EXTENSIONS].sort());
+  // The guard has to accept every document the shipped hook accepts. Comparing
+  // two extension lists proved nothing: one caller lower-cased the extension
+  // and the other did not, so a file named in capitals slipped between them.
+  // Both now call the engine's own predicate, which this pins by behaviour.
+  test("the dogfood guard audits exactly what the hook audits", () => {
+    const temp = mkdtempSync(join(tmpdir(), "iso-extension-"));
+    try {
+      // Distinct stems: this filesystem is case-insensitive, so "a.txt" and
+      // "a.TXT" would be one file and the case test would prove nothing.
+      for (const name of ["lower.txt", "upper.TXT", "readme.MD", "guide.Markdown"]) {
+        const path = join(temp, name);
+        writeFileSync(path, "The supplier shall comply.");
+        expect(isAuditedDocument(path), `${name} must be audited`).toBe(true);
+        expect(adviseOnFile(path, temp), `${name} must reach the hook`).toContain("legalese");
+        expect(repositoryTextFiles(temp), `${name} must reach the guard`).toContain(path);
+      }
+      const ignored = join(temp, "notes.txtx");
+      writeFileSync(ignored, "The supplier shall comply.");
+      expect(isAuditedDocument(ignored)).toBe(false);
+      expect(adviseOnFile(ignored, temp)).toBeNull();
+      expect(repositoryTextFiles(temp)).not.toContain(ignored);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   test("all repository documents pass the shared audit", () => {
     const markdownFiles = repositoryTextFiles().filter((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
-      return DOCUMENT_EXTENSIONS.some((extension) => path.endsWith(extension))
-        && !relativePath.includes("/tests/fixtures/");
+      return isAuditedDocument(path) && !relativePath.includes("/tests/fixtures/");
     });
     expect(markdownFiles.length).toBeGreaterThanOrEqual(15);
     expect(markdownFiles).toContain(join(REPOSITORY_ROOT, "README.md"));
@@ -308,7 +332,8 @@ describe("repository writing conventions", () => {
       const text = readFileSync(path, "utf8");
       const claims = text.split(SENTENCE_OR_LINE).filter((line) => /average/i.test(line));
       return claims
-        .filter((line) => FLOOR_WORDING.test(line))
+        .filter((line) => FLOOR_WORDING.test(line)
+          || (RANGE_WORDING.test(line) && !TARGET_WORDING.test(line)))
         .map((line) => `${relative(REPOSITORY_ROOT, path)}: ${line.trim()}`);
     });
     expect(floors).toEqual([]);
