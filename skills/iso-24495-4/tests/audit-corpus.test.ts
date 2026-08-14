@@ -219,6 +219,14 @@ describe("lucid-inspired advisory rules", () => {
     expect(priority[0].detail).toContain("13 words");
     expect(priority[0].detail).not.toContain("full stop");
     expect(violationsFor("This paragraph ends with a full stop.", "heading-style")).toEqual([]);
+
+    // An abbreviation is not a sentence end. Splitting on every full stop made
+    // ordinary titles look like two sentences, which is advice the reader
+    // cannot act on.
+    expect(violationsFor("# Dr. Smith explains the release", "heading-style")).toEqual([]);
+    expect(violationsFor("# U.S. policy overview", "heading-style")).toEqual([]);
+    expect(violationsFor("# Release notes, e.g. the summary", "heading-style")).toEqual([]);
+    expect(violationsFor("# Ship it. Then tell the team", "heading-style")).toHaveLength(1);
   });
 
   test("acronym-undefined applies definitions and false-positive guards", () => {
@@ -240,6 +248,16 @@ describe("lucid-inspired advisory rules", () => {
     const dotted = violationsFor("The U.A.E. appears here.", "acronym-undefined");
     expect(dotted).toHaveLength(1);
     expect(dotted[0].detail).toContain('"U.A.E."');
+
+    // Two capitalised terms side by side is ordinary technical prose, not
+    // shouting. Suppressing on a single neighbour hid the commonest real case
+    // while everyday words were still reported.
+    expect(violationsFor("The DNS TTL controls caching.", "acronym-undefined")).toHaveLength(2);
+    expect(violationsFor("The XML DOM represents the document.", "acronym-undefined")).toHaveLength(2);
+    expect(violationsFor("THIS IS IMPORTANT prose.", "acronym-undefined")).toEqual([]);
+    for (const word of ["OK", "ID", "AM", "PM"]) {
+      expect(violationsFor(`Press ${word} to continue.`, "acronym-undefined")).toEqual([]);
+    }
   });
 
   test("doublet matches exact case-folded phrases without overlaps", () => {
@@ -275,6 +293,14 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("The years 1999, 2000, and 2001 matter.", "prose-enumeration")).toEqual([]);
     expect(violationsFor("The first example stands alone.", "prose-enumeration")).toEqual([]);
     expect(violationsFor("Firstly gather input, secondly compare it, and thirdly report it.", "prose-enumeration")).toHaveLength(1);
+
+    // A hyphenated compound is one word, not a rank. "third-party" counted as
+    // a third item and turned ordinary prose into a finding.
+    expect(violationsFor(
+      "We cache the first request, then the second cache layer, then a third-party service.",
+      "prose-enumeration",
+    )).toEqual([]);
+    expect(violationsFor("The second-best option is a first-class fix.", "prose-enumeration")).toEqual([]);
   });
 });
 

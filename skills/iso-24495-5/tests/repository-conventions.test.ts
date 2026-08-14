@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { auditText, ENGINE_THRESHOLDS } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { auditText, ENGINE_THRESHOLDS, TEXT_EXTENSIONS } from "../../iso-24495-4/scripts/audit-corpus.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
 const SKIPPED_DIRECTORIES = new Set([".git", ".iso-24495-4", "node_modules"]);
+const DOCUMENT_EXTENSIONS = [".md", ".markdown", ".txt"];
+const SENTENCE_OR_LINE = new RegExp("(?<=[.!?])\s+|\n");
+const FLOOR_WORDING = /between|at least|no fewer|minimum/i;
 const ENTRY_FILES = [
   "hooks/audit-markdown-main.ts",
   "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
@@ -51,7 +54,7 @@ function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) {
       files.push(...repositoryTextFiles(path));
-    } else if (/\.(?:md|ts)$/.test(entry)) {
+    } else if (DOCUMENT_EXTENSIONS.some((ext) => entry.endsWith(ext)) || entry.endsWith(".ts")) {
       files.push(path);
     }
   }
@@ -211,10 +214,18 @@ describe("repository writing conventions", () => {
     expect(violations).toEqual([]);
   });
 
-  test("all repository markdown passes the shared audit", () => {
+  // The dogfood guard has to cover every extension the shipped hook audits.
+  // While it read only .md, a violating .txt or .markdown file would ship with
+  // both the local gate and the build green.
+  test("the dogfood guard covers every extension the hook audits", () => {
+    expect([...DOCUMENT_EXTENSIONS].sort()).toEqual([...TEXT_EXTENSIONS].sort());
+  });
+
+  test("all repository documents pass the shared audit", () => {
     const markdownFiles = repositoryTextFiles().filter((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
-      return path.endsWith(".md") && !relativePath.includes("/tests/fixtures/");
+      return DOCUMENT_EXTENSIONS.some((extension) => path.endsWith(extension))
+        && !relativePath.includes("/tests/fixtures/");
     });
     expect(markdownFiles.length).toBeGreaterThanOrEqual(15);
     expect(markdownFiles).toContain(join(REPOSITORY_ROOT, "README.md"));
@@ -283,6 +294,29 @@ describe("repository writing conventions", () => {
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
     expect(style).toMatch(/^## Check before you send$/m);
     expect(style).toMatch(/^## Applying this to a reply$/m);
+  });
+
+  // The engine sets an upper limit on the average and no lower one. A check
+  // that reads as "between 15 and 20" makes a concise reply a failure, and the
+  // only way to pass is to pad it.
+  test("the average is stated as an aim, never as a floor", () => {
+    const guidance = [
+      join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"),
+      join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"),
+    ];
+    const floors = guidance.flatMap((path) => {
+      const text = readFileSync(path, "utf8");
+      const claims = text.split(SENTENCE_OR_LINE).filter((line) => /average/i.test(line));
+      return claims
+        .filter((line) => FLOOR_WORDING.test(line))
+        .map((line) => `${relative(REPOSITORY_ROOT, path)}: ${line.trim()}`);
+    });
+    expect(floors).toEqual([]);
+    const style = readFileSync(guidance[0], "utf8");
+    const average = ENGINE_THRESHOLDS.sentenceAverageLimit;
+    expect(style, "the send-time check must name the average as a target").toMatch(
+      new RegExp(`aim[^.]*${average}|${average}[^.]*aim`, "i"),
+    );
   });
 
   test("entry files remain logic-free composition roots", () => {

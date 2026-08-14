@@ -11,7 +11,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Five shared advisory rules add `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, and `prose-enumeration`. Their concepts were studied in [lucid](https://github.com/maricastroc/lucid), but no code was copied and this implementation is independent. The rules remain project proxies rather than standard clauses.
 - Corpus JSON output now carries a deterministic configuration hash covering every engine threshold.
 - A GitHub Actions workflow runs the suite on every pull request. It calls `scripts/check.sh`, the same single gate a contributor runs locally, so a failed build reproduces with one command.
-- Plain-language checks for script comments remain deferred to a later release.
+- Plain-language checks for script comments are cancelled, not deferred. Version 0.4.0 announced them for this release. Comments are fragments rather than documents, and checking them well would need a separate extractor for each language plus the docstring conventions layered on top. That machinery costs more than the advice it would produce, so the plan is withdrawn rather than postponed.
 
 ### Changed
 
@@ -25,6 +25,13 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Fixed
 
+- The sentence splitter no longer treats an abbreviation as a sentence end. `Dr.`, `U.S.` and `e.g.` used to split a line in two, which inflated sentence counts, deflated the document average, and reported ordinary titles such as `# Dr. Smith explains the release` as malformed headings.
+- `acronym-undefined` now suppresses only a run of three or more capitalised words, rather than any single capitalised neighbour. The old guard hid the commonest real case, `The DNS TTL controls caching`, while everyday words were still reported. Shouted prose stays exempt.
+- `acronym-undefined` no longer treats every string of numeral letters as a Roman numeral. `XML`, `MIX` and `CIVIC` were silently exempt; only canonical numerals such as `II` and `IV` are now.
+- `OK`, `ID`, `AM` and `PM` join the allowlist. Asking a writer to expand them is advice nobody can act on.
+- `prose-enumeration` no longer counts an ordinal inside a hyphenated compound. `third-party service` was read as a third item and turned ordinary prose into a finding.
+- The output style no longer presents 15 words as a minimum average. The engine sets an upper limit and no lower one, so a concise reply was failing a check whose only remedy was padding.
+- The repository's own audit guard now covers every extension the hook audits, not only `.md`. A violating `.txt` or `.markdown` file could previously ship with every gate green. The hook now derives its list from the engine rather than restating it.
 - The end-to-end entry file tests no longer fail at random. Each spawns a cold Bun process, which can take longer than the default five second limit on a loaded machine, and the process was then killed mid-run. Two of five suite runs failed before the fix and six of six passed after it.
 - The background monitor now detects a change by content digest rather than by modification time and size. A correction that preserved byte length within one filesystem timestamp tick, two seconds on some filesystems, went unreported (present since 0.3.1).
 

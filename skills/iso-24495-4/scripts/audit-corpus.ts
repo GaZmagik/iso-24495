@@ -23,6 +23,7 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymMaximumLetters: 6,
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
+  shoutedRunLength: 3,
 });
 
 const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
@@ -31,17 +32,24 @@ const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
 const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
 const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
 const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
-const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
+// Exported so the hook and the repository's own dogfood guard read the same
+// list. While each kept its own copy, a .txt file could ship unaudited.
+export const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
 const LEGALESE = ["shall", "hereby", "hereinafter", "wherefore", "heretofore", "aforesaid"];
 
 const ACRONYM_ALLOWLIST = new Set([
   "KG", "KM", "CM", "MM", "MB", "GB", "KB", "TB", "PDF", "URL", "HTML", "TV", "PIN",
   "UN", "USA", "ISO", "AI", "API", "CLI", "JSON", "HTTP", "HTTPS", "SSH", "MIT",
+  // Everyday words that happen to be capitals. Asking a writer to expand "OK"
+  // is advice nobody can act on.
+  "OK", "ID", "AM", "PM",
 ]);
 const ACRONYM_SHAPE = new RegExp(
   `^(?:[A-Z]{${ENGINE_THRESHOLDS.acronymMinimumLetters},${ENGINE_THRESHOLDS.acronymMaximumLetters}}|[A-Z]\\.(?:[A-Z]\\.)+)$`,
 );
-const ROMAN_NUMERAL = /^[IVXLCDM]+$/;
+// Canonical numerals only. Any string of numeral letters also matched "XML",
+// "MIX" and "CIVIC", so common acronyms were silently exempt from the rule.
+const ROMAN_NUMERAL = /^M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/;
 
 interface DoubletEntry {
   phrase: string;
@@ -106,9 +114,26 @@ function acronymFromToken(raw: string): { display: string; key: string } | null 
   return { display: token, key };
 }
 
-function isAllCapsNeighbor(raw: string): boolean {
+function isAllCaps(raw: string): boolean {
   const stripped = raw.replace(/^[^A-Za-z]+|[^A-Za-z.]+$/g, "");
   return ACRONYM_SHAPE.test(stripped) || /^[A-Z]{2,}$/.test(stripped);
+}
+
+// Shouted text is a run of capitals, not a pair. Suppressing on a single
+// capitalised neighbour hid the commonest real case, "The DNS TTL controls
+// caching", while everyday words were still reported. A run of three or more
+// is the shortest span that reads as shouting rather than as terminology.
+function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
+  const shouted = new Set<number>();
+  let runStart = 0;
+  for (let i = 0; i <= tokens.length; i++) {
+    if (i < tokens.length && isAllCaps(tokens[i].raw)) continue;
+    if (i - runStart >= ENGINE_THRESHOLDS.shoutedRunLength) {
+      for (let j = runStart; j < i; j++) shouted.add(j);
+    }
+    runStart = i + 1;
+  }
+  return shouted;
 }
 
 function acronymViolations(text: string): Violation[] {
@@ -119,6 +144,7 @@ function acronymViolations(text: string): Violation[] {
     const tokens = block.lines.flatMap((line, lineIndex) =>
       line.split(/\s+/).filter(Boolean).map((raw) => ({ raw, line: block.line + lineIndex })),
     );
+    const shouted = shoutedPositions(tokens);
     for (let i = 0; i < tokens.length; i++) {
       const acronym = acronymFromToken(tokens[i].raw);
       if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key)) continue;
@@ -130,9 +156,7 @@ function acronymViolations(text: string): Violation[] {
         defined.add(acronym.key);
         continue;
       }
-      if (isAllCapsNeighbor(tokens[i - 1]?.raw ?? "") || isAllCapsNeighbor(tokens[i + 1]?.raw ?? "")) {
-        continue;
-      }
+      if (shouted.has(i)) continue;
       if (defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);
       violations.push({
@@ -180,7 +204,9 @@ function proseEnumerationViolations(text: string): Violation[] {
   for (const block of proseBlocks(text)) {
     const paragraph = block.lines.join(" ");
     const ranks = new Set<number>();
-    for (const match of paragraph.matchAll(/\b(first|firstly|second|secondly|third|thirdly|fourth|fourthly|fifth|fifthly|sixth|sixthly)\b/gi)) {
+    // A hyphenated compound is one word, not a rank: "third-party service" is
+    // not a third item, and counting it turned ordinary prose into a finding.
+    for (const match of paragraph.matchAll(/\b(first|firstly|second|secondly|third|thirdly|fourth|fourthly|fifth|fifthly|sixth|sixthly)\b(?!-)/gi)) {
       ranks.add(ORDINAL_RANKS.get(match[1].toLowerCase())!);
     }
     for (const match of paragraph.matchAll(/(?:^|\s)(?:\(([1-6])\)|([1-6])[.)])(?=\s|$)/g)) {

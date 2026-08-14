@@ -118,9 +118,10 @@ That is deliberate. A plain language project that exempts itself has no claim on
 
 All five skills, the output style, the background monitor, and the advisory markdown hook have shipped. What remains:
 
-- **Future release:** extend the advisory hook to plain-language checks on script comments (doc comments and docstrings, advisory only).
 - **When ISO publishes Part 4:** revise the provisional `iso-24495-4` skill against the published text. Its committee-draft text is not public, so the current maturity model is original guidance.
 - **When ISO publishes Part 5:** revise the provisional `iso-24495-5` skill against the published text.
+
+Plain-language checks on script comments were once planned for this release. That plan is cancelled. Comments are fragments, and checking them well would cost more machinery than the advice is worth.
 
 ## Licence
 

@@ -9,7 +9,7 @@ metadata:
 
 # ISO 24495-1:2023 - Plain Language (Governing Principles)
 
-All user-facing LLM responses must follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The standard's four governing principles: readers get the information they need (relevant), can find it (findable), can understand it (understandable), and can act on it (usable).
+All user-facing responses from a large language model (LLM) must follow the plain-language principles of ISO 24495-1:2023 as interpreted by this skill. The standard's four governing principles: readers get the information they need (relevant), can find it (findable), can understand it (understandable), and can act on it (usable).
 
 Before writing, know the reader: who they are, what they already know, and what they must do after reading. Content that serves none of those belongs elsewhere.
 
@@ -76,7 +76,7 @@ The quantitative rules below are this skill's own proxies for those principles. 
 
 Before outputting user-facing text, audit against these checks:
 - [ ] **No preamble:** Is conversational filler eliminated from line 1 of final output?
-- [ ] **Sentence length:** Does the response average 15 to 20 words per sentence, with none over 30?
+- [ ] **Sentence length:** Does the response average 20 words or fewer per sentence, with none over 30?
 - [ ] **Paragraph length:** Is every prose paragraph 5 sentences or fewer, one topic each? In a reply rather than a document, hold to 4.
 - [ ] **Reader service:** Is it clear who this is for and what they can do next?
 - [ ] **Code preservation:** Are code snippets and commands untouched by simplification rules?
