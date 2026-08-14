@@ -4,7 +4,8 @@
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { headings, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
+import { headings, mergedSentences, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
+import { COMMON_WORDS } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 
 // Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
@@ -23,8 +24,6 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymMaximumLetters: 6,
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
-  shoutedRunLength: 3,
-  shoutedRunCertain: 4,
 });
 
 const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
@@ -54,20 +53,31 @@ const ACRONYM_ALLOWLIST = new Set([
   "UN", "USA", "ISO", "AI", "API", "CLI", "JSON", "HTTP", "HTTPS", "SSH", "MIT",
   // Everyday words that happen to be capitals. Asking a writer to expand "OK"
   // is advice nobody can act on, and a shouted "DO NOT" is not an initialism.
+  // A lone capitalised word is judged on its own. Runs of capitals are judged
+  // by lexicon density instead, so no list of shouted words is needed here.
   "OK", "ID", "AM", "PM",
-  "DO", "NOT", "NO", "YES", "AND", "OR", "THE", "ALL", "ANY", "YOU", "WE",
-  "IS", "ARE", "BE", "NOW", "NEW", "OLD", "OFF", "ON", "IN", "OUT", "UP",
-  "END", "TOP", "SEE", "USE", "ADD", "RUN", "STOP", "NOTE", "PLEASE", "MUST",
-  "CAN", "WILL", "MAY", "HOW", "WHY", "WHO", "WHAT", "WHEN",
 ]);
 
 // Numbering words that make a Roman numeral a numeral. Shape alone exempted
 // "CI", "MD", "MIX" and "CD", which are ordinary acronyms in ordinary prose.
+// "book", "type" and "class" are deliberately absent: they are verbs as often
+// as they are labels, and "Book MD appointments" must still report MD.
 const NUMBERING_WORDS = new Set([
   "section", "sections", "chapter", "chapters", "part", "parts", "volume",
-  "book", "appendix", "annex", "figure", "table", "act", "phase", "step",
-  "level", "tier", "page", "article", "class", "type", "war", "edition",
+  "volumes", "appendix", "appendices", "annex", "figure", "figures", "table",
+  "tables", "phase", "step", "tier", "page", "article", "articles", "title",
+  "titles", "schedule", "schedules", "clause", "clauses", "edition", "act",
 ]);
+
+// Titles and events numbered with Roman numerals by convention.
+const NAMED_BY_NUMERAL = new Set([
+  "King", "Queen", "Pope", "Emperor", "Tsar", "Louis", "Henry", "George",
+  "Elizabeth", "Charles", "William", "Bowl", "War", "Olympiad",
+]);
+
+// Valid numerals that are far more often acronyms. Everything else valid is
+// treated as a numeral, so "VIII" and "LVIII" never reach the acronym rule.
+const NUMERAL_COLLISIONS = new Set(["CI", "CD", "DC", "MD", "DI", "MI", "VI", "MIX", "CM", "DIM"]);
 const ACRONYM_SHAPE = new RegExp(
   `^(?:[A-Z]{${ENGINE_THRESHOLDS.acronymMinimumLetters},${ENGINE_THRESHOLDS.acronymMaximumLetters}}|[A-Z]\\.(?:[A-Z]\\.)+)$`,
 );
@@ -143,25 +153,40 @@ function isAllCaps(raw: string): boolean {
   return ACRONYM_SHAPE.test(stripped) || /^[A-Z]{2,}$/.test(stripped);
 }
 
-function isNumberingContext(previous: string | undefined): boolean {
-  const word = (previous ?? "").replace(/[^A-Za-z]/g, "").toLowerCase();
-  return NUMBERING_WORDS.has(word);
+// A numeral is a numeral because of where it sits. Only a numbering word
+// immediately before it, coordination with an unambiguous numeral, or a name
+// pattern counts as evidence. Words that double as verbs ("book a room",
+// "type the command") are deliberately absent from the numbering list.
+function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): boolean {
+  const bare = (raw: string | undefined): string => (raw ?? "").replace(/[^A-Za-z]/g, "");
+  const previous = bare(tokens[index - 1]?.raw);
+  if (NUMBERING_WORDS.has(previous.toLowerCase())) return true;
+  if (NAMED_BY_NUMERAL.has(previous)) return true;
+  // "Sections II and IV": the neighbour is a numeral no acronym collides with.
+  for (const neighbour of [bare(tokens[index - 1]?.raw), bare(tokens[index + 1]?.raw)]) {
+    if (neighbour && ROMAN_NUMERAL.test(neighbour) && !NUMERAL_COLLISIONS.has(neighbour)) return true;
+  }
+  // A coordinator between two numerals: "II, III and IV".
+  if (/^(?:and|or|to|through)$/i.test(previous)) {
+    for (let back = index - 2; back >= 0 && back >= index - 4; back--) {
+      const candidate = bare(tokens[back]?.raw);
+      if (candidate && ROMAN_NUMERAL.test(candidate)) return true;
+    }
+  }
+  return false;
 }
 
-// Length alone cannot tell "AWS IAM SSO" from "BACKUP FIRST NOW", so the run
-// needs evidence. A word too long to be an acronym is the giveaway that a run
-// is shouted prose, and a run of four or more is treated as shouting on its
-// own. Runs of two or three initialisms stay in scope, which is where the real
-// undefined acronyms live.
+// Shouted text and a chain of initialisms have the same shape: capitals, of
+// similar length, side by side. They differ in one measurable way, which is
+// how many of the words are ordinary English. Counting tokens could not tell
+// "SAVE DATA FIRST" from "AWS IAM SSO MFA"; asking the lexicon can.
 function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   const shouted = new Set<number>();
+  const bare = (raw: string): string => raw.replace(/[^A-Za-z]/g, "").toLowerCase();
   const markRun = (start: number, end: number): void => {
-    const length = end - start;
-    if (length < ENGINE_THRESHOLDS.shoutedRunLength) return;
-    const hasLongWord = tokens
-      .slice(start, end)
-      .some((token) => token.raw.replace(/[^A-Za-z]/g, "").length > ENGINE_THRESHOLDS.acronymMaximumLetters);
-    if (!hasLongWord && length < ENGINE_THRESHOLDS.shoutedRunCertain) return;
+    if (end - start < 2) return;
+    const words = tokens.slice(start, end).filter((token) => COMMON_WORDS.has(bare(token.raw)));
+    if (words.length * 2 < end - start) return;
     for (let j = start; j < end; j++) shouted.add(j);
   };
   let runStart = 0;
@@ -185,7 +210,10 @@ function acronymViolations(text: string): Violation[] {
     for (let i = 0; i < tokens.length; i++) {
       const acronym = acronymFromToken(tokens[i].raw);
       if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key)) continue;
-      if (ROMAN_NUMERAL.test(acronym.key) && isNumberingContext(tokens[i - 1]?.raw)) continue;
+      if (ROMAN_NUMERAL.test(acronym.key)
+        && (!NUMERAL_COLLISIONS.has(acronym.key) || hasNumberingEvidence(tokens, i))) {
+        continue;
+      }
       const inParentheses = tokens[i].raw.includes("(");
       const parenthesisFollows = tokens
         .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)
@@ -278,11 +306,14 @@ export function auditText(text: string): Violation[] {
         });
       }
     }
-    if (sentences.length > PARAGRAPH_SENTENCE_LIMIT) {
+    // Counted from the fewest sentences the paragraph can hold. An unresolved
+    // full stop must never manufacture the sentence that breaks the limit.
+    const fewest = mergedSentences(paragraph).length;
+    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
       violations.push({
         rule: "paragraph-length",
         line: block.line,
-        detail: `${sentences.length} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
+        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
       });
     }
     for (let i = 0; i < block.lines.length; i++) {
@@ -336,7 +367,9 @@ export function auditText(text: string): Violation[] {
     // lucid-inspired, reimplemented; proxy choice, not a standard clause.
     const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
     const headingWords = wordCount(headingText);
-    const headingSentences = splitSentences(headingText);
+    // Same abstention as the paragraph rule: a heading is only two sentences
+    // if it is two even when every doubtful stop is joined up.
+    const headingSentences = mergedSentences(headingText);
     if (headingWords > HEADING_WORD_LIMIT) {
       violations.push({
         rule: "heading-style",

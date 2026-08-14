@@ -1,6 +1,8 @@
 // Markdown text extraction shared by the audit scripts. Regex heuristics
 // only. Anything smarter belongs to the agent, not to deterministic tooling.
 
+import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
+
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
@@ -68,45 +70,112 @@ export function headings(text: string): Heading[] {
   return found;
 }
 
-// A full stop ends a sentence far less often than it ends an abbreviation.
-// Treating every one as a boundary counted "Dr. Smith" as two sentences, which
-// inflated the sentence count, deflated the average, and made ordinary titles
-// look malformed. Anything that ends in a dotted form or a known short form
-// therefore joins the fragment that follows it.
-// A title is always followed by a name, so it never ends a sentence. Every
-// other short form can: "in the U.S. The weather" is two sentences, while
-// "U.S. policy" is one. What follows decides, so the capital after the stop is
-// the evidence.
-const TITLES = new Set(["dr", "mr", "mrs", "ms", "messrs", "prof", "rev", "fr", "sr", "jr", "st"]);
-const ABBREVIATIONS = new Set([
-  "inc", "ltd", "co", "vs", "etc", "fig", "no", "al", "approx", "cf", "dept",
-  "est", "vol", "ed", "eds", "pp", "ca", "min", "max", "ext", "ref",
+// A full stop ends a sentence far less often than it ends an abbreviation, and
+// no single test settles which. Two rounds of review broke every binary rule
+// tried here, in both directions. So a boundary now has three verdicts, and
+// the rules that consume sentences decide what to do with the third.
+//
+// The evidence is what follows the stop. A capital proves nothing on its own,
+// because proper nouns are capitalised anywhere; a capitalised function word
+// such as "The" or "However" is strong evidence, because those are rarely
+// capitalised mid-sentence.
+const TITLES = new Set([
+  "dr", "mr", "mrs", "ms", "messrs", "prof", "rev", "fr", "sr", "jr", "st",
+  "gen", "gov", "sen", "rep", "capt", "col", "maj", "lt", "sgt",
 ]);
+const INLINE_ABBREVIATIONS = new Set([
+  "inc", "ltd", "co", "vs", "etc", "fig", "no", "al", "approx", "cf", "dept",
+  "est", "vol", "ed", "eds", "pp", "ca", "min", "max", "ext", "ref", "eq", "ver",
+]);
+const DOTTED_FORM = /^[^A-Za-z]*(?:[A-Za-z]\.){2,}$/;
+const SINGLE_INITIAL = /^[^A-Za-z]*[A-Z]\.$/;
 
-function abbreviationKind(fragment: string): "title" | "short" | null {
-  const token = fragment.trimEnd().split(/\s+/).at(-1) ?? "";
-  if (!token.endsWith(".")) return null;
-  const word = token.slice(0, -1).replace(/^[^A-Za-z]+/, "").toLowerCase();
-  if (TITLES.has(word)) return "title";
-  // "U.S.", "e.g." and a lone initial such as "J." are dotted forms.
-  if (/^[^A-Za-z]*(?:[A-Za-z]\.)+$/.test(token)) return "short";
-  return ABBREVIATIONS.has(word) ? "short" : null;
+export type Boundary = "merge" | "split" | "ambiguous";
+
+function lastToken(fragment: string): string {
+  return fragment.trimEnd().split(/\s+/).at(-1) ?? "";
 }
 
-/** Split a paragraph into sentences on terminal punctuation. */
-export function splitSentences(text: string): string[] {
+function bareWord(token: string): string {
+  return token.replace(/\./g, "").replace(/^[^A-Za-z]+/, "").toLowerCase();
+}
+
+/** Decide whether the stop between two fragments ends a sentence. */
+export function classifyBoundary(previous: string, next: string): Boundary {
+  const token = lastToken(previous);
+  if (!token.endsWith(".")) return "split";
+  const word = bareWord(token);
+  // Only the first word of the next fragment carries evidence. Reading the
+  // whole fragment made every test match something somewhere.
+  const nextToken = next.trimStart().split(/\s+/)[0] ?? "";
+  const nextWord = nextToken.replace(/[^A-Za-z]/g, "").toLowerCase();
+  const nextIsCapitalised = /^[^A-Za-z]*[A-Z]/.test(nextToken);
+  const nextIsLowercaseName = LOWERCASE_NAMES.has(nextToken.replace(/[^A-Za-z0-9]/g, ""));
+  const nextIsLowercase = /^[^A-Za-z]*[a-z]/.test(nextToken) && !nextIsLowercaseName;
+
+  // A title is followed by a name, never by a new sentence.
+  if (TITLES.has(word)) return "merge";
+
+  // "J. Smith": an initial followed by a capitalised name.
+  if (SINGLE_INITIAL.test(token) && nextIsCapitalised && !EXCLUSIVE_STARTERS.has(nextWord)) {
+    return "merge";
+  }
+
+  if (INLINE_ABBREVIATIONS.has(word)) {
+    // "Fig. A", "No. 3": a label, not a new sentence.
+    if (/^[^A-Za-z0-9]*[A-Z0-9][^A-Za-z]*$/.test(nextToken)) return "merge";
+    if (nextIsLowercaseName) return "split";
+    if (nextIsCapitalised && EXCLUSIVE_STARTERS.has(nextWord)) return "split";
+    return "merge";
+  }
+
+  if (DOTTED_FORM.test(token)) {
+    // A lower-case word continues the phrase: "U.S. policy applies".
+    if (nextIsLowercase) return "merge";
+    if (nextIsCapitalised && EXCLUSIVE_STARTERS.has(nextWord)) return "split";
+    if (nextIsLowercaseName) return "split";
+    if (/^\d{4}\b/.test(nextToken)) return "split";
+    // A capitalised ordinary noun after "U.S." usually continues the phrase.
+    if (/^[A-Z][a-z]+/.test(nextToken)) return "merge";
+    return "ambiguous";
+  }
+
+  return "split";
+}
+
+function segment(text: string, ambiguous: "merge" | "split"): string[] {
   const sentences: string[] = [];
   for (const fragment of text.split(/(?<=[.!?])\s+/)) {
     const previous = sentences.at(-1);
-    const kind = previous === undefined ? null : abbreviationKind(previous);
-    const startsNewSentence = /^[^A-Za-z]*[A-Z]/.test(fragment);
-    if (kind === "title" || (kind === "short" && !startsNewSentence)) {
-      sentences[sentences.length - 1] = `${previous} ${fragment}`;
-      continue;
+    if (previous !== undefined) {
+      const verdict = classifyBoundary(previous, fragment);
+      const decided = verdict === "ambiguous" ? ambiguous : verdict;
+      if (decided === "merge") {
+        sentences[sentences.length - 1] = `${previous} ${fragment}`;
+        continue;
+      }
     }
     sentences.push(fragment);
   }
   return sentences.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/**
+ * The most sentences the text can hold: every ambiguous stop is a boundary.
+ * Rules that punish length use this, so an unresolved stop can never inflate a
+ * sentence into a violation.
+ */
+export function splitSentences(text: string): string[] {
+  return segment(text, "split");
+}
+
+/**
+ * The fewest sentences the text can hold: every ambiguous stop is joined.
+ * Rules that punish sentence count use this, so an unresolved stop can never
+ * manufacture an extra sentence.
+ */
+export function mergedSentences(text: string): string[] {
+  return segment(text, "merge");
 }
 
 export function wordCount(sentence: string): number {

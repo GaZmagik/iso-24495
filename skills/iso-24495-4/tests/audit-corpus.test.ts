@@ -10,7 +10,7 @@ import {
   isAuditedDocument,
   listTextFiles,
 } from "../scripts/audit-corpus.ts";
-import { splitSentences } from "../scripts/lib/parse.ts";
+import { classifyBoundary, mergedSentences, splitSentences } from "../scripts/lib/parse.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
 
@@ -268,11 +268,29 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("WARNING: BACKUP FIRST before you upgrade.", "acronym-undefined")).toEqual([]);
     expect(violationsFor("The AWS IAM SSO policy controls access.", "acronym-undefined")).toHaveLength(3);
     expect(violationsFor("Compare the CPU RAM SSD limits before purchase.", "acronym-undefined")).toHaveLength(3);
+    expect(violationsFor("The AWS IAM SSO MFA configuration controls access.", "acronym-undefined")).toHaveLength(4);
+    expect(violationsFor("The MICROSOFT SQL ODBC configuration controls access.", "acronym-undefined")).toHaveLength(2);
+    expect(violationsFor("SAVE DATA FIRST before upgrading.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("BACK UP NOW before upgrading.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("The CAN bus carries each frame.", "acronym-undefined")).toHaveLength(1);
 
     // A Roman numeral is a numeral because of where it sits, not because of
     // which letters it uses. Shape alone exempted CI, MD, MIX and CD.
     expect(violationsFor("Section II precedes section IV.", "acronym-undefined")).toEqual([]);
     expect(violationsFor("Chapter XI follows part IX.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("See Sections II and IV.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("Chapters II, III and IV apply.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("King Henry VIII reigned.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("The Super Bowl LVIII drew a crowd.", "acronym-undefined")).toEqual([]);
+    for (const label of ["Title IV", "Schedule II", "Clause IV"]) {
+      expect(violationsFor(`${label} applies here.`, "acronym-undefined"), label).toEqual([]);
+    }
+    // A collision-set numeral coordinated with another numeral is a numeral.
+    expect(violationsFor("Sections IV and VI apply.", "acronym-undefined")).toEqual([]);
+    // "and" alone is not evidence; there must be a numeral behind it.
+    expect(violationsFor("Buy a drive and CD media online.", "acronym-undefined")).toHaveLength(1);
+    expect(violationsFor("Type CD at the prompt.", "acronym-undefined")).toHaveLength(1);
+    expect(violationsFor("Book MD appointments online.", "acronym-undefined")).toHaveLength(1);
     for (const acronym of ["CI", "MD", "MIX", "CD", "DC"]) {
       expect(
         violationsFor(`The ${acronym} record matters.`, "acronym-undefined"),
@@ -329,6 +347,23 @@ describe("sentence boundaries around abbreviations", () => {
   // Whether a full stop ends a sentence depends on what follows it. A title is
   // always followed by a name, so it never ends one; every other short form
   // ends a sentence when a new one starts with a capital.
+  // The matrix that two review rounds produced. Each row broke a previous
+  // version of this rule, in one direction or the other.
+  test("the review matrix segments correctly", () => {
+    const cases: Array<[string, number]> = [
+      ["U.S. Department of State guidance", 1],
+      ["See Fig. A for the layout", 1],
+      ["J. Smith release notes", 1],
+      ["It happened in the U.S. iOS users were unaffected.", 2],
+      ["It happened in the U.S. 2025 brought major changes.", 2],
+      ["He works in the U.S. The weather is fine.", 2],
+      ["Dr. Smith explains the release.", 1],
+    ];
+    for (const [text, expected] of cases) {
+      expect(splitSentences(text).length, `${text} (most)`).toBe(expected);
+    }
+  });
+
   test("a following capital ends the sentence unless the short form is a title", () => {
     expect(splitSentences("He works in the U.S. The weather is fine.")).toHaveLength(2);
     expect(splitSentences("We ship on Monday, e.g. the first release. Then we stop.")).toHaveLength(2);
@@ -337,6 +372,18 @@ describe("sentence boundaries around abbreviations", () => {
     expect(splitSentences("Release notes, e.g. the summary.")).toHaveLength(1);
     expect(splitSentences("See Fig. 3 for the layout.")).toHaveLength(1);
     expect(splitSentences("Ship it. Then tell the team.")).toHaveLength(2);
+
+    // The inline abbreviation branch, whichever way the next word points.
+    expect(splitSentences("Upgrade the server, etc. iOS clients are unaffected.")).toHaveLength(2);
+    expect(splitSentences("Compare the versions, etc. The result is the same.")).toHaveLength(2);
+    expect(splitSentences("Compare the versions, etc. before you upgrade.")).toHaveLength(1);
+
+    // Neither reading is safe here, so the two counts differ and each rule
+    // takes the one that cannot invent a violation.
+    const ambiguous = "Formats, e.g. JSON output is supported.";
+    expect(splitSentences(ambiguous)).toHaveLength(2);
+    expect(mergedSentences(ambiguous)).toHaveLength(1);
+    expect(classifyBoundary("Formats, e.g.", "JSON output is supported.")).toBe("ambiguous");
   });
 });
 
