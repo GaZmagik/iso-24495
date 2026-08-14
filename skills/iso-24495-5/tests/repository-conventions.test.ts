@@ -337,6 +337,31 @@ describe("repository writing conventions", () => {
       expect(section, `${rule} must open its own bullet`).toContain(rule);
     }
 
+    // The bodies carry the meaning, and inverting them left every label intact.
+    // Each rule therefore pins a phrase from its own sentence, and the section
+    // must contain no negation of a rule it states.
+    const bodies = [
+      "State the defect, its evidence and its effect before proposing a repair",
+      "Separate built from verified, and name each required check still open",
+      "Use the same criteria, evidence, detail and tone for every option",
+      "Do not contradict a rule or fact you have already stated",
+      "Keep fragments for headings, labels, table cells and deliberate status markers",
+    ];
+    for (const body of bodies) {
+      expect(section, `the rule body "${body}" must survive`).toContain(body);
+    }
+    const inversions = [
+      "Never state",
+      "Do not separate built",
+      "need not",
+      "You may contradict",
+      "Do not keep",
+      "only when convenient",
+    ];
+    for (const inversion of inversions) {
+      expect(section, `the section must not contain "${inversion}"`).not.toContain(inversion);
+    }
+
     // Every rule needs a send-time item, or the file's own warning applies:
     // a rule stated once loses to habit.
     const check = style.split("## Check before you send")[1] ?? "";
@@ -351,7 +376,9 @@ describe("repository writing conventions", () => {
       expect(check, `the send-time check must cover ${item}`).toMatch(item);
     }
     // The reporting items are conditional, so a one-line answer stays one line.
-    expect(check).toMatch(/when the reply reports work/i);
+    expect(check).toMatch(/whenever the reply reports work/i);
+    // The exception must not swallow short answers that report work.
+    expect(check).toMatch(/reports no work/i);
   });
 
   test("the output style keeps a send-time check", () => {

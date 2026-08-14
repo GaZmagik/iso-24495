@@ -67,7 +67,10 @@ const NUMBERING_WORDS = new Set([
   "volumes", "appendix", "appendices", "annex", "figure", "figures", "table",
   "tables", "phase", "step", "tier", "page", "article", "articles", "title",
   "titles", "schedule", "schedules", "clause", "clauses", "edition", "act",
-  "level", "grade", "stage", "mark", "series", "round", "form", "group",
+  // "form", "round", "group" and "mark" were here and are gone: each is an
+  // ordinary noun or verb, and "Open the form and review CI settings" then
+  // excused CI. A numbering word has to be one that only numbers things.
+  "level", "grade", "stage",
 ]);
 
 // Titles and events numbered with Roman numerals by convention. Searched a few
@@ -77,11 +80,24 @@ const NAMED_BY_NUMERAL = new Set([
   "Duke", "Earl", "Bowl", "War", "Olympiad", "Cup", "Festival",
 ]);
 
+// A numeral straight after a capitalised name is a regnal or sequel number:
+// "Elizabeth II", "Rocky IV". Requiring the title word meant "Elizabeth II"
+// asked for an expansion while "Queen Elizabeth II" did not.
+// Five letters or more, because the short capitalised words that open a
+// sentence are mostly verbs: "Type CD", "Open VI", "Book MD". A given name
+// long enough to carry a regnal number is longer than that.
+const CAPITALISED_NAME = /^[A-Z][a-z]{4,}$/;
+
 // A short numeral is ambiguous by nature: two and three letter numerals are
 // also common acronyms, and listing them one by one was a list that kept
 // growing (DVI, MCC, MMC, DCL, MMI all slipped through). Length decides
 // instead. Four letters or more, such as VIII or LVIII, is a numeral.
+//
+// Four letters is not proof, though: MMIX is Knuth's computer. A long numeral
+// still needs evidence when it sits in prose with no numbering context, so
+// this length only removes the requirement for repeated numerals in lists.
 const NUMERAL_UNAMBIGUOUS_LENGTH = 4;
+const NUMERAL_NAMED_EXCEPTIONS = new Set(["MMIX", "MMX", "MMXI", "MIX", "DIM"]);
 const ACRONYM_SHAPE = new RegExp(
   `^(?:[A-Z]{${ENGINE_THRESHOLDS.acronymMinimumLetters},${ENGINE_THRESHOLDS.acronymMaximumLetters}}|[A-Z]\\.(?:[A-Z]\\.)+)$`,
 );
@@ -162,6 +178,7 @@ function isAllCaps(raw: string): boolean {
 // pattern counts as evidence. Words that double as verbs ("book a room",
 // "type the command") are deliberately absent from the numbering list.
 function isUnambiguousNumeral(word: string): boolean {
+  if (NUMERAL_NAMED_EXCEPTIONS.has(word)) return false;
   return word.length >= NUMERAL_UNAMBIGUOUS_LENGTH && ROMAN_NUMERAL.test(word);
 }
 
@@ -180,6 +197,13 @@ function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): bo
   }
   // "Sections II and IV": the neighbour is a numeral no acronym collides with.
   // A short numeral is no evidence, or "CI and CD" would excuse itself.
+  // A name, not merely a capital: "The", "Type" and "Open" begin sentences and
+  // are ordinary words, so they cannot be evidence of a regnal number.
+  if (CAPITALISED_NAME.test(previous)
+    && !COMMON_WORDS.has(previous.toLowerCase())
+    && !NUMBERING_WORDS.has(previous.toLowerCase())) {
+    return true;
+  }
   for (const neighbour of [previous, bare(tokens[index + 1]?.raw)]) {
     if (isUnambiguousNumeral(neighbour)) return true;
   }
@@ -204,9 +228,15 @@ function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   const shouted = new Set<number>();
   const bare = (raw: string): string => raw.replace(/[^A-Za-z]/g, "").toLowerCase();
   const markRun = (start: number, end: number): void => {
-    if (end - start < 2) return;
-    const words = tokens.slice(start, end).filter((token) => COMMON_WORDS.has(bare(token.raw)));
-    if (words.length * 2 < end - start) return;
+    const length = end - start;
+    if (length < 2) return;
+    const known = tokens.slice(start, end).filter((token) => COMMON_WORDS.has(bare(token.raw))).length;
+    // A pair carries almost no evidence, so it must be entirely ordinary words
+    // to count as shouting. "ENABLE MFA" is one known word and one acronym, and
+    // half of two was enough to silence it. Longer runs can carry a minority of
+    // unknown words and still be a shout.
+    const enough = length === 2 ? known === 2 : known * 2 >= length;
+    if (!enough) return;
     for (let j = start; j < end; j++) shouted.add(j);
   };
   let runStart = 0;
@@ -243,6 +273,9 @@ function acronymViolations(text: string): Violation[] {
         continue;
       }
       if (shouted.has(i)) continue;
+      // An ordinary English word is never an undefined acronym, even when it
+      // sits in a run that is not shouting. "ENABLE MFA" reports MFA alone.
+      if (COMMON_WORDS.has(acronym.key.toLowerCase())) continue;
       if (defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);
       violations.push({

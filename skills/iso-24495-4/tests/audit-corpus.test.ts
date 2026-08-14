@@ -191,6 +191,12 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("# First\n## Second\n### Third\n", "heading-skip")).toEqual([]);
     expect(violationsFor("### Third\n# First\n", "heading-skip")).toEqual([]);
     expect(violationsFor("# First\n```md\n### Code sample\n```\n## Second\n", "heading-skip")).toEqual([]);
+
+    // Round 6. CommonMark allows up to three spaces before the hashes, so an
+    // indented heading was invisible to every heading rule. A fourth space
+    // makes it an indented code block, which is not a heading.
+    expect(violationsFor("# Title\n\n   ### Skipped\n", "heading-skip")).toHaveLength(1);
+    expect(violationsFor("# Title\n\n    ### Code block\n", "heading-skip")).toEqual([]);
   });
 
   test("heading-style checks length and sentence form with defined priorities", () => {
@@ -274,6 +280,15 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("BACK UP NOW before upgrading.", "acronym-undefined")).toEqual([]);
     expect(violationsFor("The CAN bus carries each frame.", "acronym-undefined")).toHaveLength(1);
 
+    // Round 6. A pair of capitals carries almost no evidence, so it must be
+    // entirely ordinary words to count as shouting, and an ordinary word is
+    // never reported as an acronym even inside a run that is not shouting.
+    expect(violationsFor("ENABLE MFA before you continue.", "acronym-undefined")).toHaveLength(1);
+    expect(violationsFor("VERIFY OTP at the prompt.", "acronym-undefined")).toHaveLength(1);
+    expect(violationsFor("ROTATE KEYS every quarter.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("DO NOT USE S3 DATA here.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("WASH HANDS FIRST here.", "acronym-undefined")).toEqual([]);
+
     // A Roman numeral is a numeral because of where it sits, not because of
     // which letters it uses. Shape alone exempted CI, MD, MIX and CD.
     expect(violationsFor("Section II precedes section IV.", "acronym-undefined")).toEqual([]);
@@ -291,6 +306,14 @@ describe("lucid-inspired advisory rules", () => {
     expect(violationsFor("Buy a drive and CD media online.", "acronym-undefined")).toHaveLength(1);
     expect(violationsFor("Type CD at the prompt.", "acronym-undefined")).toHaveLength(1);
     expect(violationsFor("Book MD appointments online.", "acronym-undefined")).toHaveLength(1);
+
+    // Round 6. A capitalised name carries a regnal number; a short capitalised
+    // word opening a sentence is usually a verb. Four letters or more is a
+    // numeral in a list, but not when it is a documented name such as MMIX.
+    expect(violationsFor("Elizabeth II reigned.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("Queen Elizabeth II reigned.", "acronym-undefined")).toEqual([]);
+    expect(violationsFor("The MMIX computer is documented.", "acronym-undefined")).toHaveLength(1);
+    expect(violationsFor("Open the form and review CI settings.", "acronym-undefined")).toHaveLength(1);
     for (const acronym of ["CI", "MD", "MIX", "CD", "DC"]) {
       expect(
         violationsFor(`The ${acronym} record matters.`, "acronym-undefined"),
@@ -397,6 +420,13 @@ describe("sentence boundaries around abbreviations", () => {
     expect(splitSentences("Upgrade the server, etc. iOS clients are unaffected.")).toHaveLength(2);
     expect(splitSentences("Compare the versions, etc. The result is the same.")).toHaveLength(2);
     expect(splitSentences("Compare the versions, etc. before you upgrade.")).toHaveLength(1);
+
+    // Round 6. An inline abbreviation followed by a capital used to merge, so
+    // two real sentences became one long one and a six-sentence paragraph
+    // became five. It abstains now, and the readings differ.
+    const joined = "We ship the packs, the tiers and the tables etc. Customers receive the update today.";
+    expect(mergedSentences(joined)).toHaveLength(1);
+    expect(splitSentences(joined)).toHaveLength(2);
 
     // Neither reading is safe here, so the two counts differ and each rule
     // takes the one that cannot invent a violation.

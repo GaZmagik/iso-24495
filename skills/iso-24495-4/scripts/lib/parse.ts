@@ -58,7 +58,11 @@ export function headings(text: string): Heading[] {
       continue;
     }
     if (inFence) continue;
-    const match = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+    // CommonMark allows up to three spaces before the hashes. Requiring column
+    // one meant an indented heading was invisible to every heading rule, so a
+    // skipped level inside an indented block passed unnoticed. A fourth space
+    // makes it an indented code block, which is not a heading.
+    const match = /^ {0,3}(#{1,6})\s+(.*)$/.exec(lines[i]);
     if (match) {
       found.push({
         level: match[1].length,
@@ -131,6 +135,10 @@ export function classifyBoundary(previous: string, next: string): Boundary {
     // "e.g. iOS and Android" continues the list; "etc. iOS clients failed"
     // starts a sentence. Nothing here tells the two apart.
     if (nextIsLowercaseName) return "ambiguous";
+    // "packs, tiers and tables etc. Customers receive it" is two sentences;
+    // "vs. Customers of the old plan" is one. Merging by default joined real
+    // sentences and hid a paragraph, so an unresolved capital abstains.
+    if (nextIsCapitalised) return "ambiguous";
     return "merge";
   }
 
