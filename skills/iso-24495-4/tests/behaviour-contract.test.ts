@@ -155,11 +155,10 @@ describe("reader-facing behaviour contracts", () => {
     expect(found.some((violation) => violation.rule === "sentence-average")).toBe(false);
   });
 
-  // A silent engine passed both corpus controls and every negative assertion,
-  // because absence proves nothing. Only three of seventeen rules had a
-  // positive control in a real document, so silence on the other fourteen was
-  // invisible. This fixture trips all seventeen at once.
-  test("every rule has a positive control, so a silent engine fails", () => {
+  // The isolated controls prove each rule can fire alone. This fixture adds
+  // the composition case: every rule must remain observable when all seventeen
+  // occur together in one realistic document.
+  test("every rule fires together in one integrated document", () => {
     const text = readFileSync(join(DIFFICULT, "every-rule.md"), "utf8");
     const fired = new Set(auditText(text).map((violation) => violation.rule));
     expect([...fired].sort()).toEqual([...RULES].sort());

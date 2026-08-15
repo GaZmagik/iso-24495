@@ -2,24 +2,84 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { adviseOnFile, handlePayload, runHook } from "../audit-markdown.ts";
+import { auditText } from "../../skills/iso-24495-4/scripts/audit-corpus.ts";
+import type { Violation } from "../../skills/iso-24495-4/scripts/lib/types.ts";
+import { adviseOnFile, formatAdvice, handlePayload, runHook } from "../audit-markdown.ts";
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), "iso-24495-hook-"));
 }
 
+function violation(rule: string, line: number): Violation {
+  return { rule, line, detail: "test finding" };
+}
+
+describe("formatAdvice", () => {
+  test("shows one finding with its line", () => {
+    expect(formatAdvice("policy.md", [violation("legalese", 7)])).toBe(
+      "iso-24495 advisory for policy.md: 1 finding across 1 rule. " +
+      "Start at line 7 (legalese). Advisory only.",
+    );
+  });
+
+  test("shows three findings in deterministic document order", () => {
+    const findings = [
+      violation("heading-depth", 9),
+      violation("legalese", 2),
+      violation("wordy-phrase", 5),
+    ];
+    const expected =
+      "iso-24495 advisory for policy.md: 3 findings across 3 rules. " +
+      "Start at line 2 (legalese), line 5 (wordy phrase), and line 9 (heading depth). " +
+      "Advisory only.";
+    expect(formatAdvice("policy.md", findings)).toBe(expected);
+    expect(formatAdvice("policy.md", [...findings].reverse())).toBe(expected);
+  });
+
+  test("truncates starting points and treats the average as a document summary", () => {
+    const findings = [
+      violation("sentence-average", 1),
+      violation("heading-depth", 9),
+      violation("legalese", 2),
+      violation("wordy-phrase", 5),
+      violation("doublet", 11),
+    ];
+    expect(formatAdvice("policy.md", findings)).toBe(
+      "iso-24495 advisory for policy.md: 5 findings across 5 rules. " +
+      "Start at line 2 (legalese), line 5 (wordy phrase), and line 9 (heading depth). " +
+      "Document average is high. 1 other finding remains. Advisory only.",
+    );
+  });
+
+  test("the full advisory passes the auditor that produced it", () => {
+    const root = join(import.meta.dir, "..", "..");
+    const file = join(
+      root,
+      "skills",
+      "iso-24495-4",
+      "tests",
+      "fixtures",
+      "difficult",
+      "every-rule.md",
+    );
+    const advice = adviseOnFile(file, root);
+    expect(advice).not.toBeNull();
+    expect(advice).toContain("18 other findings remain");
+    expect(auditText(advice!)).toEqual([]);
+  });
+});
+
 describe("adviseOnFile", () => {
-  test("returns one terse line with per-rule counts for a violating markdown file", () => {
+  test("returns one concise line with an actionable starting point", () => {
     const cwd = makeProject();
     try {
       const file = join(cwd, "policy.md");
       writeFileSync(file, "The supplier shall hereby comply, and shall do so promptly.\n");
       const advice = adviseOnFile(file, cwd);
-      expect(advice).not.toBeNull();
-      expect(advice).toContain("policy.md");
-      expect(advice).toContain("legalese 3");
-      expect(advice).not.toContain("\n");
-      expect(advice).toContain("advisory");
+      expect(advice).toBe(
+        "iso-24495 advisory for policy.md: 3 findings across 1 rule. " +
+        "Start at line 1 (legalese). Advisory only.",
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -53,7 +113,7 @@ describe("adviseOnFile", () => {
       for (const name of ["policy.markdown", "policy.txt"]) {
         const file = join(cwd, name);
         writeFileSync(file, "The supplier shall comply.\n");
-        expect(adviseOnFile(file, cwd)).toContain("legalese 1");
+        expect(adviseOnFile(file, cwd)).toContain("line 1 (legalese)");
       }
       const excluded = join(cwd, "policy.rst");
       writeFileSync(excluded, "The supplier shall comply.\n");
@@ -115,7 +175,7 @@ describe("adviseOnFile", () => {
     }
   });
 
-  test("covers every violated rule across the whole file in one line", () => {
+  test("shows every starting point when the file has no more than three", () => {
     const cwd = makeProject();
     try {
       const file = join(cwd, "policy.md");
@@ -124,11 +184,10 @@ describe("adviseOnFile", () => {
         "A short opening sentence.\n\n##### Far Too Deep A Heading\n\nThe supplier shall comply.\n",
       );
       const advice = adviseOnFile(file, cwd);
-      expect(advice).not.toBeNull();
-      expect(advice).toContain("heading-depth 1");
-      expect(advice).toContain("legalese 1");
-      expect(advice).toContain("(whole-file counts)");
-      expect(advice).not.toContain("\n");
+      expect(advice).toBe(
+        "iso-24495 advisory for policy.md: 2 findings across 2 rules. " +
+        "Start at line 3 (heading depth) and line 5 (legalese). Advisory only.",
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -159,7 +218,8 @@ describe("handlePayload", () => {
       expect(JSON.parse(result!).hookSpecificOutput).toEqual({
         hookEventName: "PostToolUse",
         additionalContext:
-          "iso-24495 plain-language advisory for policy.md: legalese 1 (whole-file counts). This is advisory only.",
+          "iso-24495 advisory for policy.md: 1 finding across 1 rule. " +
+          "Start at line 1 (legalese). Advisory only.",
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -238,7 +298,8 @@ describe("hook entry point", () => {
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout);
       expect(parsed.hookSpecificOutput.hookEventName).toBe("PostToolUse");
-      expect(parsed.hookSpecificOutput.additionalContext).toContain("legalese 2");
+      expect(parsed.hookSpecificOutput.additionalContext).toContain("2 findings across 1 rule");
+      expect(parsed.hookSpecificOutput.additionalContext).toContain("line 1 (legalese)");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

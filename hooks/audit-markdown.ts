@@ -11,6 +11,7 @@ import {
   isAuditedDocument,
   projectAcronyms,
 } from "../skills/iso-24495-4/scripts/audit-corpus.ts";
+import type { Violation } from "../skills/iso-24495-4/scripts/lib/types.ts";
 
 interface HookInput {
   cwd?: string;
@@ -30,6 +31,50 @@ export function hookEnabled(cwd: string): boolean {
   }
 }
 
+function joined(items: string[]): string {
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+export function formatAdvice(fileName: string, violations: readonly Violation[]): string | null {
+  if (violations.length === 0) return null;
+  const ruleCount = new Set(violations.map((violation) => violation.rule)).size;
+  const local = violations
+    .filter((violation) => violation.rule !== "sentence-average")
+    .sort((a, b) => a.line - b.line || a.rule.localeCompare(b.rule));
+  const grouped = new Map<string, { line: number; rule: string; count: number }>();
+  for (const violation of local) {
+    const key = `${violation.line}\0${violation.rule}`;
+    const point = grouped.get(key);
+    if (point) point.count += 1;
+    else grouped.set(key, { line: violation.line, rule: violation.rule, count: 1 });
+  }
+  const startingPoints = [...grouped.values()].slice(0, 3);
+  const shownFindings = startingPoints.reduce((total, point) => total + point.count, 0);
+  const remaining = local.length - shownFindings;
+  const findingLabel = violations.length === 1 ? "finding" : "findings";
+  const ruleLabel = ruleCount === 1 ? "rule" : "rules";
+  const sentences = [
+    `iso-24495 advisory for ${fileName}: ${violations.length} ${findingLabel} across ${ruleCount} ${ruleLabel}.`,
+  ];
+  if (startingPoints.length > 0) {
+    const points = startingPoints.map((point) =>
+      `line ${point.line} (${point.rule.replaceAll("-", " ")})`
+    );
+    sentences.push(`Start at ${joined(points)}.`);
+  }
+  if (violations.some((violation) => violation.rule === "sentence-average")) {
+    sentences.push("Document average is high.");
+  }
+  if (remaining > 0) {
+    const otherLabel = remaining === 1 ? "finding remains" : "findings remain";
+    sentences.push(`${remaining} other ${otherLabel}.`);
+  }
+  sentences.push("Advisory only.");
+  return sentences.join(" ");
+}
+
 export function adviseOnFile(filePath: string, cwd: string): string | null {
   // The engine decides what it audits. A second copy of the rule here is a
   // second thing to forget, and the copies disagreed on letter case.
@@ -42,20 +87,10 @@ export function adviseOnFile(filePath: string, cwd: string): string | null {
   } catch {
     return null;
   }
-  const totals: Record<string, number> = {};
   // The project's own acronyms come from the same directory as the off
   // switch, so a writer configures the plugin in one place.
-  for (const violation of auditText(text, { knownAcronyms: projectAcronyms(cwd) })) {
-    totals[violation.rule] = (totals[violation.rule] ?? 0) + 1;
-  }
-  const parts = Object.entries(totals)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([rule, count]) => `${rule} ${count}`);
-  if (parts.length === 0) return null;
-  return (
-    `iso-24495 plain-language advisory for ${basename(filePath)}: ` +
-    `${parts.join(", ")} (whole-file counts). This is advisory only.`
-  );
+  const violations = auditText(text, { knownAcronyms: projectAcronyms(cwd) });
+  return formatAdvice(basename(filePath), violations);
 }
 
 export function handlePayload(raw: string): string | null {

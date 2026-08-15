@@ -11,7 +11,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - `filler-opening` now requires a whole word and skips front matter. It reported "Surely the answer is correct" and "Let meadows grow naturally" as filler openings, which is wrong advice on ordinary sentences, and it missed a filler opening that followed front matter, which is how most templated documents begin.
 - `table-header` now recognises tables written without outer pipes, which GitHub renders and writers commonly use.
 - `complex-word` suggests only equivalents no longer than the word they replace, so its own advice cannot push a sentence past the 30-word cap. "ascertain" now suggests "check" rather than "find out".
-- A fixture that trips all seventeen rules at once now guards the suite. A silent engine previously passed both corpus controls and every negative assertion, because only three rules had a positive control in a real document.
+- One integrated fixture trips all seventeen rules in a realistic document. It complements the isolated positive controls by checking that rules remain observable when their findings occur together.
+- The advisory hook now reports totals and up to three starting lines in document order. It states how many findings remain and keeps document averages separate from line-specific repairs.
 - Front matter and tables are structure everywhere, not just in one rule. Metadata such as `title: Each and Every Shall Policy` was audited as a sentence and produced legalese and doublet findings, and a table written without leading pipes had its cells audited as prose.
 - A project can name the acronyms its readers know, in `.iso-24495-4/acronyms.json`. The shipped list stays universal, so CSS, SQL, SDK and a dozen more were reported as undefined to the writers most likely to use them.
 - An acronym defined in a heading, list or table now counts as defined. That is where people define terms, and the engine only looked at prose.

@@ -76,7 +76,7 @@ Removing the config mid-session returns the monitor to the waiting state. It req
 
 ## Advisory markdown hook (Claude Code)
 
-The plugin ships a `PostToolUse` hook (`hooks/`) that audits every `.md`, `.markdown`, or `.txt` file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one terse advisory line with per-rule counts.
+The plugin ships a `PostToolUse` hook (`hooks/`) that audits every `.md`, `.markdown`, or `.txt` file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one concise advisory line. It gives the total, orders up to three starting points by line, reports the remaining count, and never ranks rules by severity.
 
 The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
