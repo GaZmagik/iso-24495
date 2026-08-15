@@ -17,6 +17,10 @@ export interface Heading {
 }
 
 const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/;
+// A table row need not begin with a pipe: GitHub renders "Term | Meaning" with
+// a divider beneath it, and those cells were being audited as prose, so a
+// table's contents produced findings that belonged to no sentence.
+const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 const ATX_HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 
@@ -93,8 +97,29 @@ export function proseBlocks(text: string): ProseBlock[] {
   let inFence = false;
   const lines = text.split(/\r?\n/);
   const headingLines = scanHeadings(lines).structuralLines;
+  // Front matter is metadata, not prose. It was audited as ordinary text, so
+  // "title: Each and Every Shall Policy" produced legalese and doublet
+  // findings against a line no reader reads as a sentence.
+  let frontMatterEnd = -1;
+  if (lines[0]?.trim() === "---") {
+    const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+    if (closing !== -1) frontMatterEnd = closing;
+  }
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (i <= frontMatterEnd) {
+      current = null;
+      continue;
+    }
+    // A table row without a leading pipe is still a table row when a divider
+    // sits under it, or when it follows one.
+    const isTableRow = line.includes("|")
+      && (TABLE_DIVIDER.test(lines[i + 1]?.trim() ?? "") || TABLE_DIVIDER.test(lines[i - 1]?.trim() ?? "")
+        || (i > 0 && current === null && lines[i - 1]?.includes("|") === true));
+    if (!inFence && (TABLE_DIVIDER.test(line.trim()) && line.includes("-") || isTableRow)) {
+      current = null;
+      continue;
+    }
     if (/^(```|~~~)/.test(line.trim())) {
       inFence = !inFence;
       current = null;

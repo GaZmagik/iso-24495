@@ -1009,7 +1009,7 @@ export const COMPLEX_WORDS: ReadonlyMap<string, string> = new Map([
   ["commence", "start"],
   ["commences", "starts"],
   ["commenced", "started"],
-  ["ascertain", "check"],
+  ["ascertain", "find"],
   ["facilitate", "help"],
   ["facilitates", "helps"],
   ["endeavour", "try"],

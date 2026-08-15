@@ -485,16 +485,23 @@ function fillerOpeningViolations(text: string): Violation[] {
   // Front matter is metadata, not the opening sentence. It arrives as an
   // ordinary prose block, so without this the first real sentence of every
   // templated document escaped the rule entirely.
-  const blocks = proseBlocks(text).filter((block) => !isFrontMatter(text, block));
+  const blocks = proseBlocks(text);
   if (blocks.length === 0) return [];
-  const opening = withoutQuotedWords(blocks[0].lines[0] ?? "").trimStart().toLowerCase();
+  // Emphasis markers are stripped, not the words inside them: "**Certainly!**"
+  // is still a filler opening, and removing the emphasised text hid it. Smart
+  // apostrophes are normalised so "I'd" matches however it was typed.
+  const opening = (blocks[0].lines[0] ?? "")
+    .replace(/[*_`]/g, "")
+    .replace(/[‘’]/g, "'")
+    .trimStart()
+    .toLowerCase();
   for (const filler of FILLER_OPENINGS) {
     if (!opening.startsWith(filler)) continue;
     // The filler must be a whole word. "Surely the answer is correct" begins
-    // with the letters of "sure", and "Let meadows grow" with "let me", and
-    // both are ordinary sentences that the rule has no business touching.
+    // with the letters of "sure", "Sure-fire evidence" with the same, and
+    // "Let meadows grow" with "let me". All are ordinary sentences.
     const next = opening.charAt(filler.length);
-    if (next !== "" && /[a-z']/.test(next)) continue;
+    if (next !== "" && !/[\s.,;:!?)\]]/.test(next)) continue;
     return [{
       rule: "filler-opening",
       line: blocks[0].line,
@@ -504,15 +511,7 @@ function fillerOpeningViolations(text: string): Violation[] {
   return [];
 }
 
-// A block is front matter when it is the document's first block and sits
-// between the opening and closing marker lines.
-function isFrontMatter(text: string, block: ProseBlock): boolean {
-  const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return false;
-  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (closing === -1) return false;
-  return block.line <= closing + 1;
-}
+
 
 // A listener hears each cell announced against its column name, so a table
 // whose header cells are blank tells them nothing about what they are hearing.

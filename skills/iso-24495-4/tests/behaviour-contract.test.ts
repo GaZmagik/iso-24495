@@ -18,6 +18,7 @@ import {
   wordCount,
 } from "../scripts/lib/parse.ts";
 
+const BREAK = String.fromCharCode(10);
 const KNOWN_GOOD = join(import.meta.dir, "fixtures", "known-good");
 const DIFFICULT = join(import.meta.dir, "fixtures", "difficult");
 const RULES = [
@@ -162,6 +163,47 @@ describe("reader-facing behaviour contracts", () => {
     const text = readFileSync(join(DIFFICULT, "every-rule.md"), "utf8");
     const fired = new Set(auditText(text).map((violation) => violation.rule));
     expect([...fired].sort()).toEqual([...RULES].sort());
+  });
+
+  // Round 8, second pass. The first repairs fixed the symptom in one rule
+  // rather than the shared parser, so metadata and table cells were still
+  // audited as sentences by every other rule.
+  test("metadata and table cells are structure, not prose", () => {
+    const frontMatter = ["---", "title: Each and Every Shall Policy", "---", "", "Body text here."];
+    expect(rulesFor(frontMatter.join(BREAK))).toEqual([]);
+    expect(rulesFor(["---", "summary: We will utilise this", "---", "", "Body."].join(BREAK)))
+      .toEqual([]);
+    // No blank line after the closing marker must not merge metadata with body.
+    expect(rulesFor(["---", "title: x", "---", "Certainly! The answer is 42."].join(BREAK)))
+      .toContain("filler-opening");
+
+    const pipeless = ["Term | Meaning", "---|---", "Rule | The supplier shall hereby comply."];
+    expect(rulesFor(pipeless.join(BREAK))).toEqual([]);
+    const piped = ["| Term | Meaning |", "|---|---|", "| Rule | The supplier shall hereby comply. |"];
+    expect(rulesFor(piped.join(BREAK))).toEqual([]);
+  });
+
+  // A filler word must survive emphasis and typography, and must not match
+  // the start of an ordinary word.
+  test("filler openings are matched as words, however they are typed", () => {
+    for (const filler of [
+      "Certainly! The answer is 42.",
+      "**Certainly!** The answer is 42.",
+      "*Certainly!* The answer is 42.",
+      "I’d be happy to explain.",
+      "I'd be happy to explain.",
+    ]) {
+      expect(rulesFor(filler), filler).toContain("filler-opening");
+    }
+    for (const ordinary of [
+      "Surely the answer is correct.",
+      "Sure-fire evidence supports the answer.",
+      "Sure_footed evidence supports the answer.",
+      "Let meadows grow naturally.",
+      "The answer is 42.",
+    ]) {
+      expect(rulesFor(ordinary), ordinary).not.toContain("filler-opening");
+    }
   });
 
   // Round 8. A technical writer met a dozen findings for ordinary vocabulary,
