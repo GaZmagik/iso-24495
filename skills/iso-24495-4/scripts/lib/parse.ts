@@ -255,7 +255,7 @@ function structureOf(lines: string[]): Structure {
   };
 }
 
-const ATX_HEADING = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
+const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?[ \t]*$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 
 interface HeadingScan {
@@ -282,7 +282,7 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
       found.push({
         level: atx[1].length,
         line: i + 1,
-        text: atx[2].replace(/\s+#+\s*$/, "").trim(),
+        text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
       });
       structuralLines.add(i);
       continue;
@@ -361,6 +361,12 @@ export function proseBlocks(text: string): ProseBlock[] {
       || line.trim() === ""
       || startsStructure(line, current !== null)) {
       current = null;
+      continue;
+    }
+    // Four spaces is indented code, unless it continues a paragraph, which
+    // CommonMark does not allow code to interrupt. Inside a list item the
+    // same indentation is the item's own content.
+    if (current === null && /^(?: {4}|\t)/.test(line)) {
       continue;
     }
     if (current === null) {

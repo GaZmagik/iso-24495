@@ -472,6 +472,32 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(measurement.join(BREAK))).toEqual([]);
   });
 
+  // Two of the four limits the sweep listed as shippable. Both were closed
+  // because they misdirect a writer: one gives advice against code, the other
+  // reports a gap in the heading tree that is not there, and hides one that is.
+  test("indented code is code, and a bare heading holds its level", () => {
+    const legalese = "The supplier shall hereby comply.";
+    const TAB = String.fromCharCode(9);
+
+    // Four spaces, or a tab, after a blank line is a code block.
+    expect(rulesFor(["Intro paragraph.", "", `    ${legalese}`, "", "End."].join(BREAK)))
+      .toEqual([]);
+    expect(rulesFor(["Intro paragraph.", "", `${TAB}${legalese}`, "", "End."].join(BREAK)))
+      .toEqual([]);
+    // Code cannot interrupt a paragraph, so this is a wrapped line of prose.
+    expect(rulesFor(["Intro paragraph", `    ${legalese}`].join(BREAK)))
+      .toContain("legalese");
+
+    // A heading with no text still occupies its level, so it fills a gap.
+    expect(headings(["# Top", "", "##", "", "### Third"].join(BREAK)).map((h) => h.level))
+      .toEqual([1, 2, 3]);
+    expect(rulesFor(["# Top", "", "##", "", "### Third"].join(BREAK)))
+      .not.toContain("heading-skip");
+    // And it can open one.
+    expect(rulesFor(["# Top", "", "###", "", "Body."].join(BREAK)))
+      .toContain("heading-skip");
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
