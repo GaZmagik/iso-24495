@@ -94,11 +94,18 @@ function fencedLines(lines: string[], from: number): Set<number> {
       // marker earns more room than a bullet. A blank line does not end a list
       // item, but a non-blank line at the left margin does.
       if (item !== null) {
-        listIndent = item[1].length + item[2].length + item[3].length;
+        // Up to four spaces after a marker set the content column. Five or
+        // more make indented code inside the item, so a fence there is not
+        // a fence, and treating it as one hid the prose beneath it.
+        // Up to four spaces after a marker set the content column. Five or
+        // more make indented code inside the item, so a fence written there
+        // is not a fence at all.
+        const indented = item[3].length > 4;
+        listIndent = item[1].length + item[2].length + (indented ? 1 : item[3].length);
         // A fence may be the item's first content: "1. ```md" opens one. The
         // marker has to go, or the real closing fence becomes an opener and
         // everything after it disappears.
-        after = raw.slice(item[0].length);
+        if (!indented) after = raw.slice(item[0].length);
       }
       else if (raw.trim() !== "" && !/^ /.test(raw)) listIndent = 0;
     }
@@ -151,7 +158,7 @@ const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
  * code, and the sentence left the document with no finding against it.
  */
 function startsBlock(line: string): boolean {
-  return /^ {0,3}</.test(line)
+  return /^ {0,3}<[a-zA-Z/!?]/.test(line)
     || /^ {0,3}#{1,6}[ \t]/.test(line)
     || /^ {4}/.test(line)
     || THEMATIC_BREAK.test(line);
@@ -263,6 +270,7 @@ function visibleHeadingText(text: string): string {
 }
 
 function scanHeadings(lines: string[], structure: Structure): HeadingScan {
+  const { tables } = structure;
   const found: Heading[] = [];
   const structuralLines = new Set<number>();
   const { frontMatter, fenced } = structure;
@@ -282,6 +290,10 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
 
     const underline = SETEXT_UNDERLINE.exec(lines[i]);
     if (!underline || i === 0) continue;
+    // A table row is not a paragraph line, so it cannot be a heading's
+    // text. Reading one as a heading filled the gap between an h1 and an
+    // h3, and the real heading-skip was never reported.
+    if (tables.has(i - 1)) continue;
     const previous = lines[i - 1];
     const previousTrimmed = previous.trimStart();
     // Setext text must be the immediately preceding ordinary line. These
@@ -299,7 +311,8 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
     while (first > 0) {
       const above = lines[first - 1];
       const aboveTrimmed = above.trimStart();
-      if (above.trim() === ""
+      if (tables.has(first - 1)
+        || above.trim() === ""
         || /^ {4}/.test(above)
         || NON_PROSE_PREFIX.test(aboveTrimmed)
         || THEMATIC_BREAK.test(above)
@@ -313,7 +326,9 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
     const paragraph = lines.slice(first, i).map((line) => line.trim()).join(" ");
     found.push({
       level: underline[1][0] === "=" ? 1 : 2,
-      line: i,
+      // A heading starts where its text starts, which is where a reader
+      // looks when the advice names a line.
+      line: first + 1,
       text: visibleHeadingText(paragraph),
     });
     for (let line = first; line <= i; line++) structuralLines.add(line);

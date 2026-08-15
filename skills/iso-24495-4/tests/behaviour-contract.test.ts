@@ -445,6 +445,33 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(dots.join(BREAK))).toContain("legalese");
   });
 
+  // Round 15 re-swept the constructs and named what still blocked release.
+  // Two paths lost the reader something: a fence written in indented code
+  // inside a list item, and a table read as a heading, which filled a gap in
+  // the heading tree and suppressed the advice about it.
+  test("boundaries between constructs keep their own rules", () => {
+    const legalese = "The supplier shall hereby comply.";
+
+    // Up to four spaces after a marker set the content column, so a fence
+    // there is a fence. Five or more make indented code, and a fence written
+    // in indented code is text.
+    expect(rulesFor(["-     ```md", legalese].join(BREAK))).toContain("legalese");
+    expect(rulesFor(["-    ```md", legalese].join(BREAK))).toEqual([]);
+
+    // A table row cannot be a setext heading's text.
+    const crossing = ["# Top", "", "A | B", "--- | ---", "x | y", "---", "### Actual"];
+    expect(headings(crossing.join(BREAK)).map((h) => h.level)).toEqual([1, 3]);
+    expect(rulesFor(crossing.join(BREAK))).toContain("heading-skip");
+
+    // A heading is reported where its text starts, not where its underline is.
+    const multiline = ["First line of it", "second line of it", "---"];
+    expect(headings(multiline.join(BREAK))[0]?.line).toBe(1);
+
+    // Only an HTML tag ends a table. A cell reading "< 5" is a measurement.
+    const measurement = ["A | B", "--- | ---", `< 5 | ${legalese}`];
+    expect(rulesFor(measurement.join(BREAK))).toEqual([]);
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
