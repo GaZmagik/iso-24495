@@ -44,7 +44,11 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
 
 ### Example 1: Concurrency Control Explanation
 * ❌ **Not aligned (Dense & Abstract):**
-  > "In order to prevent race conditions during concurrent state mutations within the execution pipeline, a mutex lock mechanism is introduced prior to updating the shared buffer allocation in memory."
+  ```text
+  In order to prevent race conditions during concurrent state mutations
+  within the execution pipeline, a mutex lock mechanism is introduced prior
+  to updating the shared buffer allocation in memory.
+  ```
 * ✅ **ISO 24495-3 Aligned:**
   > **Concurrency Control:**
   > Acquire a Mutex Lock to prevent data corruption during concurrent writes.

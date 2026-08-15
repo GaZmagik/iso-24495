@@ -55,7 +55,11 @@ Run the four steps in order. Each feeds the next.
 * ❌ **Not aligned (Vague, Unevidenced):**
   > "The organisation's culture around plain language seems weak and should be improved."
 * ✅ **ISO/CD 24495-4 (Draft) Aligned:**
-  > **Culture: Level 1.** Leadership is aware of the policy (confirmed in interview) but does not champion it: no leader has communicated it in the last year and no feedback loop exists. **Action (unblocks `leadership-champions`):** the policy owner asks one executive sponsor to open the next all-hands with a plain language example.
+  > **Culture: Level 1.** Leadership is aware of the policy, confirmed in
+  > interview, but does not champion it. No leader has communicated it in the
+  > last year, and no feedback loop exists. **Action (unblocks
+  > `leadership-champions`):** the policy owner asks one executive sponsor to
+  > open the next all-hands with a plain language example.
 
 ## Pre-Output Self-Audit Checklist
 

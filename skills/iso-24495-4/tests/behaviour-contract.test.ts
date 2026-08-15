@@ -717,8 +717,28 @@ describe("reader-facing behaviour contracts", () => {
       "| --- | --- |",
       `| Record | The supplier shall ${Array(31).fill("word").join(" ")} |`,
     ].join("\n");
-    expect(auditText(quoted)).toEqual([]);
+    // A quotation is prose a reader reads, and Markdown cannot prove who wrote
+    // it. GitHub renders an alert with this syntax, and the plugin's own
+    // runbook template asks writers to use one, so silence there would hide
+    // the most important sentence in the document.
+    expect(auditText(quoted).map((violation) => violation.rule).sort())
+      .toEqual(["doublet", "legalese", "legalese"]);
+    expect(auditText("> [!WARNING]\n> The supplier shall respond.")
+      .map((violation) => violation.rule)).toEqual(["legalese"]);
+    // The alert label is not a sentence, and the quote markers are not words:
+    // a thirty-word quotation is thirty words, not thirty-two.
+    const thirtyWords = Array.from({ length: 30 }, (_u, index) => `word${index}`).join(" ");
+    expect(proseBlocks(`> [!WARNING]${BREAK}> ${thirtyWords}.`))
+      .toEqual([{ line: 2, lines: [`${thirtyWords}.`] }]);
+    expect(rulesFor(`> [!WARNING]${BREAK}> ${thirtyWords}.`)).toEqual([]);
+    // The alert label itself is not a sentence.
+    expect(auditText("> [!NOTE]\n> A short note.")).toEqual([]);
+    // A table stays a grid, quoted or not.
     expect(auditText(table)).toEqual([]);
+    expect(auditText(table.split("\n").map((row) => `> ${row}`).join("\n"))).toEqual([]);
+    // A heading is a heading, whatever container holds it.
+    expect(headings("# Top\n- ### Nested").map((h) => h.level)).toEqual([1, 3]);
+    expect(rulesFor("- ## Nested heading.")).toContain("heading-style");
     // A list item is the writer's own prose, so it is measured. A nested item
     // is its own block, which is why six bullets are not a six-sentence
     // paragraph.
@@ -726,6 +746,16 @@ describe("reader-facing behaviour contracts", () => {
       .map((violation) => violation.rule)).toEqual(["legalese"]);
     const sixItems = Array.from({ length: 6 }, (_unused, index) => `- Item ${index}.`);
     expect(auditText(sixItems.join("\n"))).toEqual([]);
+    // An item holds whole blocks, so a second paragraph inside one is measured
+    // rather than read as indented code.
+    const twoParagraphs = ["-   First paragraph.", "", "    The supplier shall respond.", "", "- Last."];
+    expect(rulesFor(twoParagraphs.join("\n"))).toContain("legalese");
+    // Unwinding to an outer item starts a new block, so the two are not joined.
+    const nested = ["- Parent.", "  - Child one. Child two. Child three.", "  Parent four. Parent five. Parent six."];
+    expect(rulesFor(nested.join("\n"))).not.toContain("paragraph-length");
+    // A task marker is a control, not two words.
+    const twentyNine = Array.from({ length: 29 }, (_unused, index) => `word${index}`).join(" ");
+    expect(rulesFor(`- [ ] ${twentyNine}.`)).toEqual([]);
 
     const separated = [
       quoted,
@@ -741,8 +771,9 @@ describe("reader-facing behaviour contracts", () => {
       "The supplier shall respond.",
     ].join("\n");
     const legalese = auditText(separated).filter((violation) => violation.rule === "legalese");
-    expect(legalese).toHaveLength(1);
-    expect(legalese[0].line).toBe(13);
+    // The quotation on line 1 and the paragraph on line 13 are prose. The
+    // table and the fenced block between them are not.
+    expect(legalese.map((violation) => violation.line)).toEqual([1, 1, 13]);
 
     expect(proseBlocks("A hard line break stays  \ninside its paragraph.")).toEqual([
       { line: 1, lines: ["A hard line break stays  ", "inside its paragraph."] },

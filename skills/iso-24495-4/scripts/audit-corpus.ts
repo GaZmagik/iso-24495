@@ -437,7 +437,11 @@ function withoutQuotedWords(line: string): string {
   // sentence from every rule that reads words.
   return line
     .replace(/`[^`]*`/g, " ")
-    .replace(/[“”"][^“”"]*[“”"]/g, " ");
+    // Only a short quoted span names something. A quoted sentence is prose
+    // the writer chose to include, and exempting it hid both findings in
+    // "staff shall submit requests in order to avoid delays".
+    .replace(/[“”"][^“”"]*[“”"]/g,
+      (span) => (span.trim().split(/\s+/).length <= 6 ? " " : span));
 }
 
 function complexWordViolations(text: string): Violation[] {

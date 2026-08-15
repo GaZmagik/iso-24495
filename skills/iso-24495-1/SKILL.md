@@ -70,7 +70,12 @@ The quantitative rules below are this skill's own proxies for those principles. 
 
 ### Example 1: Response Structure
 * ❌ **Not aligned (Verbose & Passive):**
-  > "Sure thing! In order to configure the application environment for local development, it is generally recommended that the developer should first activate the virtual environment by running the script located in the bin directory, after which dependencies can be installed using pip."
+  ```text
+  Sure thing! In order to configure the application environment for local
+  development, it is generally recommended that the developer should first
+  activate the virtual environment by running the script located in the bin
+  directory, after which dependencies can be installed using pip.
+  ```
 * ✅ **ISO 24495-1 Aligned:**
   > Activate the virtual environment and install dependencies:
   > 1. **Activate virtual environment:** Run `source .venv/bin/activate`.

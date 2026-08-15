@@ -196,10 +196,12 @@ function cellCount(row: string): number {
  */
 function tableLines(lines: string[], skip: (index: number) => boolean): Set<number> {
   const table = new Set<number>();
+  const unquote = (line: string): string =>
+    line.replace(/^(?: {0,3}>[ \t]?)+/, "");
   for (let i = 0; i < lines.length - 1; i++) {
     if (skip(i) || table.has(i)) continue;
-    const header = lines[i].trim();
-    const divider = lines[i + 1].trim();
+    const header = unquote(lines[i]).trim();
+    const divider = unquote(lines[i + 1]).trim();
     if (!header.includes("|") || !TABLE_DIVIDER.test(divider) || !divider.includes("-")) continue;
     // GitHub renders a table only when the two rows agree on the column count.
     // Without this, "A | B | C" above "---|---" claimed three lines of prose
@@ -210,7 +212,8 @@ function tableLines(lines: string[], skip: (index: number) => boolean): Set<numb
     for (let row = i + 2; row < lines.length; row++) {
       // A table ends where another block begins, HTML included, and not only
       // at a blank line. An HTML paragraph was being claimed as a row.
-      if (skip(row) || !lines[row].includes("|") || startsBlock(lines[row])) break;
+      const text = unquote(lines[row]);
+      if (skip(row) || !text.includes("|") || startsBlock(text)) break;
       table.add(row);
     }
   }
@@ -245,6 +248,10 @@ function structureOf(lines: string[]): Structure {
   };
 }
 
+// GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
+// sentence, so it is skipped while the warning beneath it is measured.
+const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+
 const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?[ \t]*$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 
@@ -267,7 +274,12 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
   for (let i = 0; i < lines.length; i++) {
     if ((frontMatter !== null && i <= frontMatter.end) || fenced.has(i)) continue;
 
-    const atx = ATX_HEADING.exec(lines[i]);
+    // A heading can be the content of a list item or a quotation, so the
+    // markers in front of it are removed before it is recognised.
+    const bare = lines[i]
+      .replace(/^(?: {0,3}>[ \t]?)+/, "")
+      .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
+    const atx = ATX_HEADING.exec(bare);
     if (atx) {
       found.push({
         level: atx[1].length,
@@ -335,60 +347,69 @@ export function proseBlocks(text: string): ProseBlock[] {
   // three is a sentence, and all three are decided once, before any rule runs.
   const structure = structureOf(lines);
   const headingLines = scanHeadings(lines, structure).structuralLines;
-  // A list item is the writer's own prose, read as a sentence, so it is
-  // measured as one. Excluding it left the longest text in many documents
-  // unadvised: a bullet can be a 40-word sentence, and a reader meets it as
-  // one. Each item is its own block, so a list of six does not read as a
-  // six-sentence paragraph, and the marker is removed so it is not a word.
+  // Prose the reader reads is measured, wherever it sits. A bullet is a
+  // sentence, a warning callout is a sentence, and both were unmeasured while
+  // the marker in front of them was treated as a reason to look away.
   //
-  // A quotation is not the writer's prose. It is someone else's words, or a
-  // demonstration of the writing the document is warning against, and neither
-  // can be repaired by the writer being advised.
-  let inList = false;
+  // Containers are tracked as a stack of content columns, because a list item
+  // holds whole blocks: a second paragraph, a fence, a table, then more prose.
+  // A flag could not survive those, so the paragraph after them was read as
+  // indented code and left the document in silence.
+  const items: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (structure.skip(i)) {
+    if (structure.skip(i) || headingLines.has(i)) {
       current = null;
-      inList = false;
       continue;
     }
-    // A setext underline is already a heading line, so anything left that looks
-    // like a break is one.
-    if (headingLines.has(i) || THEMATIC_BREAK.test(line) || line.trim() === "") {
+    const raw = lines[i];
+    // A quotation is prose too. GitHub renders an alert with this syntax, and
+    // the plugin's own runbook template asks writers to use one.
+    const quote = /^(?: {0,3}>[ \t]?)+/.exec(raw);
+    const line = quote === null ? raw : raw.slice(quote[0].length);
+    if (ALERT_MARKER.test(line.trim())) {
       current = null;
-      inList = false;
       continue;
     }
-    if (/^ {0,3}>/.test(line)) {
+    if (THEMATIC_BREAK.test(line) || line.trim() === "") {
       current = null;
-      inList = false;
+      // A blank line separates blocks inside an item; it does not end the item.
       continue;
     }
+    const indent = (/^[ \t]*/.exec(line)?.[0] ?? "").replace(/\t/g, "    ").length;
     // Only a marker that may begin a list here counts as one. An ordered
-    // marker interrupts a paragraph solely when it is 1, which is what keeps
-    // a hard-wrapped "2024." part of the sentence above it.
-    const candidate = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(line);
+    // marker interrupts a paragraph solely when it is 1, which keeps a
+    // hard-wrapped "2024." part of the sentence above it.
+    const candidate = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(line);
     const ordered = ORDERED_MARKER.exec(line.replace(/^[ \t]+/, ""));
-    const marker = candidate !== null
-      && (ordered === null || current === null || inList || ordered[1] === "1")
-      ? candidate
-      : null;
-    const content = marker === null ? line : line.slice(marker[0].length);
-    // Four spaces is indented code, unless it continues a paragraph or belongs
-    // to a list item. CommonMark does not let code interrupt a paragraph.
-    if (current === null && !inList && marker === null && /^(?: {4}|\t)/.test(line)) {
+    const allowed = candidate !== null
+      && indent <= (items.length === 0 ? 3 : items[items.length - 1] + 3)
+      && (ordered === null || current === null || items.length > 0 || ordered[1] === "1");
+    // Unwind to the container this line actually belongs to.
+    let unwound = false;
+    while (items.length > 0 && indent < items[items.length - 1] && !allowed) {
+      items.pop();
+      unwound = true;
+    }
+    if (allowed) {
+      while (items.length > 0 && indent < items[items.length - 1]) items.pop();
+      items.push(indent + candidate![0].trimStart().length);
+      // A task marker is a control, not a word: "- [ ] Do the thing" is three
+      // words, and counting the brackets made a 29-word item a 31-word one.
+      const content = line.slice(candidate![0].length)
+        .replace(/^\[[ xX]\][ \t]+/, "");
+      current = { line: i + 1, lines: [content] };
+      blocks.push(current);
       continue;
     }
-    // A marker starts an item, so it starts a block.
-    if (marker !== null) {
-      inList = true;
-      current = null;
-    }
-    if (current === null) {
+    const column = items.length === 0 ? 0 : items[items.length - 1];
+    // Four spaces past the container is indented code, and code cannot
+    // interrupt a paragraph.
+    if (current === null && indent >= column + 4) continue;
+    if (current === null || unwound || indent < column) {
       current = { line: i + 1, lines: [] };
       blocks.push(current);
     }
-    current.lines.push(content);
+    current.lines.push(line.trimStart());
   }
   return blocks;
 }

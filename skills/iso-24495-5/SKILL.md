@@ -87,7 +87,12 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 ### Example 1: Structuring Comparative Information
 * ❌ **Not aligned (Buried in Prose):**
-  > "The Basic plan costs £5 per month and includes 10 GB of storage but no priority support, whereas the Pro plan is £15 per month with 100 GB and priority support, and the Team plan, at £40 per month, offers 1 TB, priority support, and audit logs."
+  ```text
+  The Basic plan costs £5 per month and includes 10 GB of storage but no
+  priority support, whereas the Pro plan is £15 per month with 100 GB and
+  priority support, and the Team plan, at £40 per month, offers 1 TB,
+  priority support, and audit logs.
+  ```
 * ✅ **ISO 24495-5 (Draft) Aligned:**
   > Choose a plan based on storage and support needs:
   >

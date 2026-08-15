@@ -45,7 +45,11 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 
 ### Example 1: Contractual Obligation
 * ❌ **Not aligned (Archaic Legalese):**
-  > "The Licensee shall hereinafter hold harmless and indemnify the Licensor from and against any and all claims wherefore notice has not been provided within thirty (30) days."
+  ```text
+  The Licensee shall hereinafter hold harmless and indemnify the Licensor
+  from and against any and all claims wherefore notice has not been provided
+  within thirty (30) days.
+  ```
 * ✅ **ISO 24495-2 Aligned:**
   > **Indemnification Notice Requirement:**
   > 1. **Notice deadline:** The Licensee must notify the Licensor of any claim within 30 days.
