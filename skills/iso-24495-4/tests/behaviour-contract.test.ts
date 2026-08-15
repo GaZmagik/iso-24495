@@ -26,6 +26,7 @@ const RULES = [
   "prose-enumeration",
   "link-text",
   "image-alt",
+  "wordy-phrase",
 ] as const;
 
 function rulesFor(text: string): string[] {
@@ -317,11 +318,27 @@ describe("reader-facing behaviour contracts", () => {
       // An empty label is the worst case: the listener hears the link
       // announced and is told nothing whatsoever about it.
       "link-text-empty": ["See [](https://example.com/refunds).", "See [the refund policy](https://example.com/refunds)."],
+      // The core skill has listed these swaps since the first release and
+      // nothing checked them, so the guidance asked for something the engine
+      // never looked at.
+      "wordy-phrase": ["Restart the service in order to apply the change.", "Restart the service to apply the change."],
     };
     const empty = positiveAndNegative["link-text-empty"];
     expect(rulesFor(empty[0]), "an empty link label reports link-text").toContain("link-text");
     expect(rulesFor(empty[1]), "a described link stays clean").not.toContain("link-text");
     delete positiveAndNegative["link-text-empty"];
+
+    // Two phrases in one paragraph, and one nested inside a longer phrase. The
+    // longest wins, so "in spite of the fact that" is not also counted as the
+    // shorter phrase inside it.
+    const wordy = auditText(
+      "In spite of the fact that it failed, restart it in order to apply the change.")
+      .filter((violation) => violation.rule === "wordy-phrase");
+    expect(wordy).toHaveLength(2);
+    expect(wordy.map((violation) => violation.detail)).toEqual([
+      '"in spite of the fact that" says what "although" says',
+      '"in order to" says what "to" says',
+    ]);
 
     expect(Object.keys(positiveAndNegative).sort()).toEqual([...RULES].sort());
     for (const rule of RULES) {
@@ -331,7 +348,7 @@ describe("reader-facing behaviour contracts", () => {
     }
 
     const readme = readFileSync(join(import.meta.dir, "..", "..", "..", "README.md"), "utf8");
-    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, and `image-alt`.";
+    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, and `wordy-phrase`.";
     // The two rules for readers who cannot see the page must be explained, not
     // merely listed, or nobody knows why they exist.
     expect(readme).toContain("readers who hear or touch a document rather than look at it");

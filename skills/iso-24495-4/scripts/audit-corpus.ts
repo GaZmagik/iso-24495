@@ -132,6 +132,39 @@ const DOUBLETS: DoubletEntry[] = [
   { phrase: "general consensus", lean: "consensus" },
 ].sort((a, b) => b.phrase.split(" ").length - a.phrase.split(" ").length);
 
+// Wordy phrases with a shorter exact equivalent. The core skill has asked
+// writers to make these swaps since the first release, and nothing checked
+// them, so the guidance named a rule the engine never applied.
+//
+// Exact phrases only, like the doublets. Anything needing judgement about
+// whether a longer phrase is justified belongs to the writer, not here.
+const WORDY_PHRASES: Array<{ phrase: string; lean: string }> = [
+  { phrase: "in order to", lean: "to" },
+  { phrase: "due to the fact that", lean: "because" },
+  { phrase: "in the event that", lean: "if" },
+  { phrase: "at this point in time", lean: "now" },
+  { phrase: "at this moment in time", lean: "now" },
+  { phrase: "in the near future", lean: "soon" },
+  { phrase: "for the purpose of", lean: "to" },
+  { phrase: "with regard to", lean: "about" },
+  { phrase: "with reference to", lean: "about" },
+  { phrase: "in relation to", lean: "about" },
+  { phrase: "in the absence of", lean: "without" },
+  { phrase: "a large number of", lean: "many" },
+  { phrase: "a small number of", lean: "a few" },
+  { phrase: "the majority of", lean: "most" },
+  { phrase: "prior to", lean: "before" },
+  { phrase: "subsequent to", lean: "after" },
+  { phrase: "in spite of the fact that", lean: "although" },
+  { phrase: "notwithstanding the fact that", lean: "although" },
+  { phrase: "it is possible that", lean: "may" },
+  { phrase: "has the ability to", lean: "can" },
+  { phrase: "is able to", lean: "can" },
+  { phrase: "make a decision", lean: "decide" },
+  { phrase: "provide assistance", lean: "help" },
+  { phrase: "take into consideration", lean: "consider" },
+].sort((a, b) => b.phrase.split(" ").length - a.phrase.split(" ").length);
+
 const ORDINAL_RANKS = new Map([
   ["first", 1], ["firstly", 1],
   ["second", 2], ["secondly", 2],
@@ -385,6 +418,31 @@ function imageAltViolations(text: string): Violation[] {
   return violations;
 }
 
+function wordyPhraseViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  for (const block of proseBlocks(text)) {
+    const paragraph = block.lines.join("\n");
+    const occupied: Array<{ start: number; end: number }> = [];
+    for (const entry of WORDY_PHRASES) {
+      const pattern = new RegExp(`\\b${entry.phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
+      for (const match of paragraph.matchAll(pattern)) {
+        const start = match.index;
+        const end = start + match[0].length;
+        // The longest phrase wins, so "in spite of the fact that" is not also
+        // reported as the shorter phrase inside it.
+        if (occupied.some((range) => start < range.end && end > range.start)) continue;
+        occupied.push({ start, end });
+        violations.push({
+          rule: "wordy-phrase",
+          line: lineAtOffset(block.line, paragraph, start),
+          detail: `"${entry.phrase}" says what "${entry.lean}" says`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 function proseEnumerationViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
@@ -534,6 +592,7 @@ export function auditText(text: string): Violation[] {
   // The intended readers of a document include everyone who uses it, whether
   // they see it, hear it or touch it. These two rules are the only ones here
   // that serve a reader who is not looking at the page.
+  violations.push(...wordyPhraseViolations(text));
   violations.push(...linkTextViolations(text));
   violations.push(...imageAltViolations(text));
   return violations;
