@@ -11,7 +11,9 @@ metadata:
 
 > **Provisional status:** ISO 24495-5 is a Working Draft (ISO/WD 24495-5) and is not yet published. This skill is original guidance based on the draft's public scope and established information design practice. It does not reproduce ISO text. Expect revision when the standard is published.
 
-Extends ISO 24495-1:2023 for the visual and structural design of complex documents: reports, specifications, guides, contracts presented as documents, and long-form technical or health information. Visual design works together with linguistic cues to help readers find and navigate a document's structure and content.
+Extends ISO 24495-1:2023 for the structural design of complex documents: reports, specifications, guides, contracts presented as documents, and long-form technical or health information. Design works together with linguistic cues to help readers find and navigate a document's structure and content.
+
+**Design for readers who are not looking at the page.** The intended readers include everyone who uses the document. Some see it, some hear it through a screen reader, and some read it by touch. A listener has no visual hierarchy. Their structure is the heading tree, the link text and the reading order. Every rule below is written to hold when the document is heard.
 
 ## Scope & Execution Boundaries
 
@@ -71,6 +73,13 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 5. **Consistent Visual Signalling:**
    - Give each visual device (bold, italics, blockquotes, code formatting, icons) **one meaning** per document and apply it consistently.
    - Never use the same device for two different meanings, or two devices for the same meaning.
+   - **Never let a visual device carry meaning on its own.** Bold, colour, an icon and a position on the page are all silent to a listener, so state the meaning in words as well. "Required fields are marked in red" fails; "Required fields are marked with the word required" works.
+
+6. **Reaching Readers Who Cannot See the Page:**
+   - **Link text names its destination.** A screen reader can list every link in a document, read aloud without the sentence around it. "Click here" and a bare web address tell that reader nothing.
+   - **Every image that carries meaning has alternative text** describing what it shows, not what it is. An image that carries no meaning is decorative and may say so.
+   - **Tables carry a header row**, because a listener hears each cell announced against its column name.
+   - **The reading order is the document order.** Anything that only makes sense when read out of sequence, such as a sidebar or a floating callout, needs its own heading in the flow.
 
 ---
 

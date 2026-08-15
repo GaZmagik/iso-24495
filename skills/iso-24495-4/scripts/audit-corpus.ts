@@ -318,6 +318,73 @@ function doubletViolations(text: string): Violation[] {
   return violations;
 }
 
+// Link text a listener can act on. Someone using a screen reader often moves
+// through a document by its links, hearing the link text alone with no
+// surrounding sentence, so "click here" and a bare address both say nothing
+// about the destination.
+const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|more|more info|details|see more|learn more|go|page|website|download)$/i;
+
+function linkTextViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^(```|~~~)/.test(lines[i].trim())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    // Skip image syntax: the alt-text rule owns that.
+    for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\(([^)]+)\)/g)) {
+      const label = match[1].trim();
+      const target = match[2].trim();
+      const bare = /^<?(?:https?:\/\/|www\.)/i.test(label);
+      if (label.length === 0) {
+        violations.push({
+          rule: "link-text",
+          line: i + 1,
+          detail: "link has no text; say where it goes",
+        });
+      } else if (UNINFORMATIVE_LINK.test(label) || bare) {
+        violations.push({
+          rule: "link-text",
+          line: i + 1,
+          detail: `link text "${label}" describes no destination (${target.slice(0, 40)})`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+// An image with no alternative text is silence to a reader who cannot see it.
+// An empty alt is legitimate for a purely decorative image, so the writer can
+// mark that intent explicitly rather than leaving the alt blank by accident.
+function imageAltViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^(```|~~~)/.test(lines[i].trim())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    for (const match of lines[i].matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
+      const alt = match[1].trim();
+      if (alt.length > 0) continue;
+      // "decorative" as the title marks an image that carries no meaning.
+      if (/\bdecorative\b/i.test(match[2])) continue;
+      violations.push({
+        rule: "image-alt",
+        line: i + 1,
+        detail: `image has no alternative text (${match[2].slice(0, 40)})`,
+      });
+    }
+  }
+  return violations;
+}
+
 function proseEnumerationViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
@@ -463,6 +530,12 @@ export function auditText(text: string): Violation[] {
 
   // lucid-inspired, reimplemented; proxy choice, not a standard clause.
   violations.push(...proseEnumerationViolations(text));
+
+  // The intended readers of a document include everyone who uses it, whether
+  // they see it, hear it or touch it. These two rules are the only ones here
+  // that serve a reader who is not looking at the page.
+  violations.push(...linkTextViolations(text));
+  violations.push(...imageAltViolations(text));
   return violations;
 }
 

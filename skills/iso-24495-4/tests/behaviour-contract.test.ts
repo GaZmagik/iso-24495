@@ -24,6 +24,8 @@ const RULES = [
   "acronym-undefined",
   "doublet",
   "prose-enumeration",
+  "link-text",
+  "image-alt",
 ] as const;
 
 function rulesFor(text: string): string[] {
@@ -307,7 +309,20 @@ describe("reader-facing behaviour contracts", () => {
       "acronym-undefined": ["The XYZ service starts.", "Example Yield Zone (XYZ) starts."],
       doublet: ["Check each and every record.", "Check each record."],
       "prose-enumeration": ["First inspect it, second test it, and third report it.", "First inspect it and second test it."],
+      // A listener navigating by links hears only the link text, so "click
+      // here" tells them nothing about where it goes.
+      "link-text": ["See [click here](https://example.com/refunds).", "See [how to claim a refund](https://example.com/refunds)."],
+      // A reader who cannot see the image gets nothing at all from it.
+      "image-alt": ["![](diagram.png)", "![Order flow from basket to payment](diagram.png)"],
+      // An empty label is the worst case: the listener hears the link
+      // announced and is told nothing whatsoever about it.
+      "link-text-empty": ["See [](https://example.com/refunds).", "See [the refund policy](https://example.com/refunds)."],
     };
+    const empty = positiveAndNegative["link-text-empty"];
+    expect(rulesFor(empty[0]), "an empty link label reports link-text").toContain("link-text");
+    expect(rulesFor(empty[1]), "a described link stays clean").not.toContain("link-text");
+    delete positiveAndNegative["link-text-empty"];
+
     expect(Object.keys(positiveAndNegative).sort()).toEqual([...RULES].sort());
     for (const rule of RULES) {
       const [positive, negative] = positiveAndNegative[rule];
@@ -316,7 +331,10 @@ describe("reader-facing behaviour contracts", () => {
     }
 
     const readme = readFileSync(join(import.meta.dir, "..", "..", "..", "README.md"), "utf8");
-    const capability = "The rules cover sentence length, sentence averages, paragraph length, legalese, heading depth, `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, and `prose-enumeration`.";
+    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, and `image-alt`.";
+    // The two rules for readers who cannot see the page must be explained, not
+    // merely listed, or nobody knows why they exist.
+    expect(readme).toContain("readers who hear or touch a document rather than look at it");
     expect(readme).toContain(capability);
     expect(auditText("The form was approved by the manager.\n\nThe office opened, and the service changed.")).toEqual([]);
     expect(capability).not.toMatch(/active voice|main idea/i);

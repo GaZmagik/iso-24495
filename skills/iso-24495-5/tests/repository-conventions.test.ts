@@ -381,6 +381,31 @@ describe("repository writing conventions", () => {
     expect(check).toContain('"Did the gate pass?" is a simple question, and "Done." is not an acceptable answer to it.');
   });
 
+  // The standard counts everyone who uses a document as an intended reader,
+  // whether they see it, hear it or touch it. The guidance was written for a
+  // single sighted reader until this was pinned, and Part 5 described its own
+  // rules as visual, which is the assumption that excluded a listener.
+  test("the guidance addresses readers who do not look at the page", () => {
+    const core = readFileSync(join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"), "utf8");
+    expect(core, "the core skill must name the primary audience rule").toContain(
+      "name the primary audience");
+    expect(core, "the core skill must cover hearing and touch").toMatch(
+      /hear it through a screen reader/i);
+    expect(core, "skimming must be named as a high-literacy behaviour").toContain(
+      "Skimming is a high-literacy behaviour");
+
+    const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8");
+    for (const requirement of [
+      "Link text names its destination",
+      "alternative text",
+      "Tables carry a header row",
+      "The reading order is the document order",
+      "Never let a visual device carry meaning on its own",
+    ]) {
+      expect(design, `Part 5 must keep: ${requirement}`).toContain(requirement);
+    }
+  });
+
   test("the output style keeps a send-time check", () => {
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
     expect(style).toMatch(/^## Check before you send$/m);

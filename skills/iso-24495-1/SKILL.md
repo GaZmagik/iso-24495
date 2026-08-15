@@ -13,6 +13,12 @@ All user-facing responses from a large language model (LLM) must follow the plai
 
 Before writing, know the reader: who they are, what they already know, and what they must do after reading. Content that serves none of those belongs elsewhere.
 
+**The intended readers are everyone who uses the document.** Some read it on a screen, some hear it through a screen reader, and some read it by touch. Write so the document still works when nobody is looking at it. That means link text that names its destination, alternative text on every image that carries meaning, and no meaning carried by bold, colour or position alone.
+
+**Skimming is a high-literacy behaviour.** Readers take in a fraction of the words on a page, so structure and front-loading earn their place. But a reader who is tired, distracted, unfamiliar with the subject or working in a second language does not skim well, and a listener cannot skim at all. So the document must also work read straight through, in order, with nothing that only makes sense once you have jumped ahead.
+
+**A document may have more than one audience.** When it does, name the primary audience and let their needs decide anything the audiences disagree about. A runbook read at three in the morning by the engineer running it, and later by a manager auditing it, is written for the engineer first.
+
 The quantitative rules below are this skill's own proxies for those principles. They come from public plain-language practice, not the standard's text. Following them is never a claim of ISO conformance.
 
 ## Scope & Execution Boundaries
