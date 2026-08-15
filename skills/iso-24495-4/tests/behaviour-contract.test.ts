@@ -736,6 +736,18 @@ describe("reader-facing behaviour contracts", () => {
     // A table stays a grid, quoted or not.
     expect(auditText(table)).toEqual([]);
     expect(auditText(table.split("\n").map((row) => `> ${row}`).join("\n"))).toEqual([]);
+    // A nested quotation is its own block, not a continuation of the one
+    // around it, so two sentences are not joined into one.
+    expect(proseBlocks(["> Outer sentence here.", ">> A nested one."].join(BREAK)))
+      .toEqual([
+        { line: 1, lines: ["Outer sentence here."] },
+        { line: 2, lines: ["A nested one."] },
+      ]);
+    // Six words in quotation marks is a name; seven is prose.
+    expect(rulesFor('He wrote "the supplier shall comply at once" today.')).toEqual([]);
+    expect(rulesFor('He wrote "the supplier shall comply at once please" today.'))
+      .toContain("legalese");
+
     // A heading is a heading, whatever container holds it.
     expect(headings("# Top\n- ### Nested").map((h) => h.level)).toEqual([1, 3]);
     expect(rulesFor("- ## Nested heading.")).toContain("heading-style");

@@ -356,6 +356,7 @@ export function proseBlocks(text: string): ProseBlock[] {
   // A flag could not survive those, so the paragraph after them was read as
   // indented code and left the document in silence.
   const items: number[] = [];
+  let quoteDepth = 0;
   for (let i = 0; i < lines.length; i++) {
     if (structure.skip(i) || headingLines.has(i)) {
       current = null;
@@ -366,6 +367,13 @@ export function proseBlocks(text: string): ProseBlock[] {
     // the plugin's own runbook template asks writers to use one.
     const quote = /^(?: {0,3}>[ \t]?)+/.exec(raw);
     const line = quote === null ? raw : raw.slice(quote[0].length);
+    // A nested quotation is its own block. Joining it to the quotation
+    // around it made one sentence out of two, which nobody wrote.
+    const depth = (quote?.[0].match(/>/g) ?? []).length;
+    if (depth !== quoteDepth) {
+      current = null;
+      quoteDepth = depth;
+    }
     if (ALERT_MARKER.test(line.trim())) {
       current = null;
       continue;
