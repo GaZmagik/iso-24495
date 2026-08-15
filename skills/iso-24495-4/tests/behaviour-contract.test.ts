@@ -306,6 +306,40 @@ describe("reader-facing behaviour contracts", () => {
     expect(auditText(fenced.join(BREAK))).toEqual([]);
   });
 
+  // Round 12. Structure was still being inferred too eagerly in three places.
+  // A table claimed lines GitHub would not render as a table at all, a fence
+  // indented into a list item was read as text, and the rewired rules skipped
+  // only fences, so front matter reached them.
+  test("structure is claimed only where a reader would see it", () => {
+    const legalese = "The supplier shall hereby comply.";
+
+    // GitHub renders a table only when header and divider agree on columns.
+    const mismatched = ["A | B | C", "---|---", "The supplier shall respond | today | now."];
+    expect(rulesFor(mismatched.join(BREAK))).toContain("legalese");
+    const setext = ["Comparison A | B", "---", "The supplier shall respond | today."];
+    expect(rulesFor(setext.join(BREAK))).toContain("legalese");
+    // A table that does agree is still structure.
+    expect(rulesFor(["| A | B |", "|---|---|", `| x | ${legalese} |`].join(BREAK))).toEqual([]);
+    expect(rulesFor(["Term | Meaning", "---|---", `Rule | ${legalese}`].join(BREAK))).toEqual([]);
+
+    // A fence indented into a list item or a quote is still a fence, and its
+    // contents are examples rather than advice to give back to the writer.
+    const inList = ["1. Example:", "", "    ```md", `    ${legalese}`,
+      "    [click here](https://example.com)", "    ![](chart.png)", "    ```"];
+    expect(rulesFor(inList.join(BREAK))).toEqual([]);
+    const inBullet = ["- Example:", "", "  ```md", `  ${legalese}`, "  ```"];
+    expect(rulesFor(inBullet.join(BREAK))).toEqual([]);
+    const inQuote = ["> ```", `> ${legalese}`, "> [click here](https://example.com)", "> ```"];
+    expect(rulesFor(inQuote.join(BREAK))).toEqual([]);
+    // Four spaces at the left margin is indented code, not a fence.
+    expect(rulesFor(["    ```", "The supplier shall respond."].join(BREAK))).toContain("legalese");
+
+    // Metadata is metadata for every rule, not only the block scanners.
+    const metadata = ["---", "link: [click here](https://example.com)", "image: ![](chart.png)",
+      "head: | A |  |", "rule: | --- | --- |", "---", "", "Body text here."];
+    expect(rulesFor(metadata.join(BREAK))).toEqual([]);
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {

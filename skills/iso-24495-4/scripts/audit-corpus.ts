@@ -378,9 +378,9 @@ const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|mo
 
 function linkTextViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, fenced } = readDocument(text);
+  const { lines, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
-    if (fenced(i)) continue;
+    if (hidden(i)) continue;
     // Skip image syntax: the alt-text rule owns that.
     for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\(([^)]+)\)/g)) {
       const label = match[1].trim();
@@ -409,9 +409,9 @@ function linkTextViolations(text: string): Violation[] {
 // mark that intent explicitly rather than leaving the alt blank by accident.
 function imageAltViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, fenced } = readDocument(text);
+  const { lines, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
-    if (fenced(i)) continue;
+    if (hidden(i)) continue;
     for (const match of lines[i].matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
       const alt = match[1].trim();
       if (alt.length > 0) continue;
@@ -514,9 +514,9 @@ function fillerOpeningViolations(text: string): Violation[] {
 // whose header cells are blank tells them nothing about what they are hearing.
 function tableHeaderViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, fenced } = readDocument(text);
+  const { lines, hidden } = readDocument(text);
   for (let i = 0; i < lines.length - 1; i++) {
-    if (fenced(i)) continue;
+    if (hidden(i)) continue;
     const row = lines[i].trim();
     const divider = lines[i + 1].trim();
     // Outer pipes are optional in GitHub markdown, and the divider may carry

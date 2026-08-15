@@ -57,8 +57,25 @@ const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 function fencedLines(lines: string[], from: number): Set<number> {
   const fenced = new Set<number>();
   let open: { char: string; length: number } | null = null;
+  // A fence inside a list item is indented to the item's content, which is
+  // usually four spaces and always more than the three a top-level fence may
+  // have. Reading those as ordinary text produced findings against sample code:
+  // "shall" in an example, and a "click here" written to show what not to write.
+  let listIndent = 0;
   for (let i = from; i < lines.length; i++) {
-    const match = FENCE_OPEN.exec(lines[i]);
+    const raw = lines[i].replace(/^(?:[ \t]*>[ \t]?)+/, "");
+    if (open === null) {
+      const item = /^( *)([-*+]|\d+[.)])( +)/.exec(raw);
+      // The content column is where the item's text starts, so an ordered
+      // marker earns more room than a bullet. A blank line does not end a list
+      // item, but a non-blank line at the left margin does.
+      if (item !== null) listIndent = item[1].length + item[2].length + item[3].length;
+      else if (raw.trim() !== "" && !/^ /.test(raw)) listIndent = 0;
+    }
+    const indent = /^ */.exec(raw)?.[0].length ?? 0;
+    const match = FENCE_OPEN.exec(indent > 3 && indent <= listIndent + 3
+      ? raw.slice(indent - 3)
+      : raw);
     if (open === null) {
       // An info string on a backtick fence cannot itself contain a backtick.
       if (match === null || (match[2][0] === "`" && match[3].includes("`"))) continue;
@@ -92,6 +109,12 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
 // it and added a token, which turned a 30-word sentence into a false finding.
 const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
+/** The columns a table row declares, ignoring optional outer pipes. */
+function cellCount(row: string): number {
+  const inner = row.replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split("|").length;
+}
+
 /**
  * The lines a document devotes to tables.
  *
@@ -108,6 +131,10 @@ function tableLines(lines: string[], skip: (index: number) => boolean): Set<numb
     const header = lines[i].trim();
     const divider = lines[i + 1].trim();
     if (!header.includes("|") || !TABLE_DIVIDER.test(divider) || !divider.includes("-")) continue;
+    // GitHub renders a table only when the two rows agree on the column count.
+    // Without this, "A | B | C" above "---|---" claimed three lines of prose
+    // and the reader's sentence vanished with no finding against it.
+    if (cellCount(header) !== cellCount(divider)) continue;
     table.add(i);
     table.add(i + 1);
     for (let row = i + 2; row < lines.length; row++) {
@@ -245,10 +272,14 @@ export function headings(text: string): Heading[] {
 
 export interface Document {
   lines: string[];
-  /** True when the line is metadata, fenced code, or a table row. */
-  skip: (index: number) => boolean;
-  /** True when the line is fenced code. */
-  fenced: (index: number) => boolean;
+  /**
+   * True when the line is metadata or fenced code.
+   *
+   * Not tables: a rule about links, images or table headings has to look at a
+   * table to do its job, and `table-header` fell silent for every table on the
+   * day it was given the block scanners' predicate instead of this one.
+   */
+  hidden: (index: number) => boolean;
 }
 
 /**
@@ -264,8 +295,8 @@ export function readDocument(text: string): Document {
   const structure = structureOf(lines);
   return {
     lines,
-    skip: structure.skip,
-    fenced: (index) => structure.fenced.has(index),
+    hidden: (index) => (structure.frontMatter !== null && index <= structure.frontMatter.end)
+      || structure.fenced.has(index),
   };
 }
 
