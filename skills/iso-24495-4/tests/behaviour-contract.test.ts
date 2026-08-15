@@ -182,6 +182,37 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(piped.join(BREAK))).toEqual([]);
   });
 
+  // Round 9. Both exclusions above were inferred from a neighbouring line, so
+  // ordinary prose disappeared from the document with nothing to show for it.
+  // Silent removal is worse than a wrong finding, because a reader who sees a
+  // wrong finding can dismiss it, and a reader who sees nothing learns nothing.
+  test("structure inference never removes prose or headings", () => {
+    // A pipe in a heading, a quote or a list is punctuation, not a table.
+    const afterHeading = ["## Compare A | B", "The supplier shall respond | today."];
+    expect(rulesFor(afterHeading.join(BREAK))).toContain("legalese");
+    const afterQuote = ["> Compare A | B", "The supplier shall respond | today."];
+    expect(rulesFor(afterQuote.join(BREAK))).toContain("legalese");
+    const afterList = ["- Compare A | B", "The supplier shall respond | today."];
+    expect(rulesFor(afterList.join(BREAK))).toContain("legalese");
+
+    // Front matter needs a closing marker. Without one the scanners disagreed:
+    // prose kept the text while every heading below it vanished.
+    const unclosed = ["---", "title: Draft", "##### This heading ends with a full stop."];
+    const found = rulesFor(unclosed.join(BREAK));
+    expect(found).toContain("heading-depth");
+    expect(found).toContain("heading-style");
+
+    // A table still ends where the pipes end, and prose after it is audited.
+    const surrounded = [
+      "| Term | Meaning |",
+      "|---|---|",
+      "| Rule | Text. |",
+      "",
+      "The supplier shall comply.",
+    ];
+    expect(rulesFor(surrounded.join(BREAK))).toContain("legalese");
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {

@@ -21,6 +21,51 @@ const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/;
 // a divider beneath it, and those cells were being audited as prose, so a
 // table's contents produced findings that belonged to no sentence.
 const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
+
+/**
+ * The lines a document devotes to front matter, or none.
+ *
+ * Both scanners must agree on this. While the heading scanner entered front
+ * matter on the opening marker and the prose scanner required a closing one, an
+ * unclosed block hid every heading in the document while keeping its text as
+ * prose. A block with no closing marker is not front matter at all.
+ */
+export function frontMatterRange(lines: string[]): { start: number; end: number } | null {
+  if (lines[0]?.trim() !== "---") return null;
+  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  return closing === -1 ? null : { start: 0, end: closing };
+}
+
+/**
+ * The lines a document devotes to tables.
+ *
+ * A table begins where a header row sits directly above a divider, and runs
+ * until a line without a pipe. Inferring a row from a neighbouring pipe swallowed
+ * ordinary prose: "## Compare A | B" above "The supplier shall respond | today."
+ * removed the second line from the document entirely, and silent removal is
+ * worse than a wrong finding because nobody sees it happen.
+ */
+function tableLines(lines: string[]): Set<number> {
+  const table = new Set<number>();
+  let inFence = false;
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (/^(```|~~~)/.test(lines[i].trim())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || table.has(i)) continue;
+    const header = lines[i].trim();
+    const divider = lines[i + 1].trim();
+    if (!header.includes("|") || !TABLE_DIVIDER.test(divider) || !divider.includes("-")) continue;
+    table.add(i);
+    table.add(i + 1);
+    for (let row = i + 2; row < lines.length; row++) {
+      if (!lines[row].includes("|")) break;
+      table.add(row);
+    }
+  }
+  return table;
+}
 const ATX_HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 
@@ -38,18 +83,11 @@ function visibleHeadingText(text: string): string {
 function scanHeadings(lines: string[]): HeadingScan {
   const found: Heading[] = [];
   const structuralLines = new Set<number>();
+  const frontMatter = frontMatterRange(lines);
   let inFence = false;
-  let inFrontMatter = false;
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (i === 0 && trimmed === "---") {
-      inFrontMatter = true;
-      continue;
-    }
-    if (inFrontMatter) {
-      if (trimmed === "---") inFrontMatter = false;
-      continue;
-    }
+    if (frontMatter !== null && i <= frontMatter.end) continue;
     if (/^(```|~~~)/.test(trimmed)) {
       inFence = !inFence;
       continue;
@@ -100,23 +138,11 @@ export function proseBlocks(text: string): ProseBlock[] {
   // Front matter is metadata, not prose. It was audited as ordinary text, so
   // "title: Each and Every Shall Policy" produced legalese and doublet
   // findings against a line no reader reads as a sentence.
-  let frontMatterEnd = -1;
-  if (lines[0]?.trim() === "---") {
-    const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-    if (closing !== -1) frontMatterEnd = closing;
-  }
+  const frontMatter = frontMatterRange(lines);
+  const tables = tableLines(lines);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (i <= frontMatterEnd) {
-      current = null;
-      continue;
-    }
-    // A table row without a leading pipe is still a table row when a divider
-    // sits under it, or when it follows one.
-    const isTableRow = line.includes("|")
-      && (TABLE_DIVIDER.test(lines[i + 1]?.trim() ?? "") || TABLE_DIVIDER.test(lines[i - 1]?.trim() ?? "")
-        || (i > 0 && current === null && lines[i - 1]?.includes("|") === true));
-    if (!inFence && (TABLE_DIVIDER.test(line.trim()) && line.includes("-") || isTableRow)) {
+    if ((frontMatter !== null && i <= frontMatter.end) || tables.has(i)) {
       current = null;
       continue;
     }

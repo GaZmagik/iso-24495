@@ -67,6 +67,35 @@ describe("formatAdvice", () => {
     expect(advice).toContain("18 other findings remain");
     expect(auditText(advice!)).toEqual([]);
   });
+
+  // The test above uses one filename, so on its own it says nothing about the
+  // formatter's own words. A filename is user data: "AWS NDA guide.md" carries
+  // acronyms into the advisory that belong to the reader, not to us. So audit
+  // the wording across several filenames, and count only what we wrote.
+  test("the formatter's own words pass the audit, whatever the file is called", () => {
+    const names = [
+      "policy.md",
+      "AWS NDA migration guide.md",
+      "a.md",
+      "quarterly-review-of-the-supplier-onboarding-process-2026.md",
+    ];
+    const findings = [
+      violation("sentence-average", 1),
+      violation("heading-depth", 9),
+      violation("legalese", 2),
+      violation("wordy-phrase", 5),
+      violation("doublet", 11),
+    ];
+    for (const name of names) {
+      const advice = formatAdvice(name, findings);
+      // A finding is ours unless every word it quotes came out of the filename.
+      const ours = auditText(advice).filter((violation) => {
+        const quoted = [...(violation.detail ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+        return quoted.length === 0 || !quoted.every((word) => name.includes(word));
+      });
+      expect(ours, name).toEqual([]);
+    }
+  });
 });
 
 describe("adviseOnFile", () => {
