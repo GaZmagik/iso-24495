@@ -611,17 +611,31 @@ describe("reader-facing behaviour contracts", () => {
       expect(rulesFor(table).includes("table-header"), JSON.stringify(table)).toBe(expected);
     }
 
-    // A word being quoted is being discussed, not used. Deleting the exemption
-    // left every test green, because our own examples live in list items.
+    // A word being named is being discussed, not used. Quotation marks and
+    // backticks name it; emphasis does not, because a writer emphasises a word
+    // they are using. While emphasis counted as naming, a whole sentence in
+    // bold escaped every rule that reads words, and documents bold whole
+    // sentences constantly.
     expect(rulesFor("We will utilise the service.")).toContain("complex-word");
-    for (const quoted of [
-      "Prefer *use* over *utilise* in every case.",
+    for (const named of [
       "Prefer `use` over `utilise` in every case.",
-      "Prefer **use** over **utilise** in every case.",
       "The word \"utilise\" is the one to avoid.",
+      "The word \u201cutilise\u201d is the one to avoid.",
     ]) {
-      expect(rulesFor(quoted), quoted).not.toContain("complex-word");
+      expect(rulesFor(named), named).not.toContain("complex-word");
     }
+    for (const used of [
+      "Prefer use over *utilise* in every case.",
+      "Prefer use over **utilise** in every case.",
+      "**We will utilise the service.**",
+    ]) {
+      expect(rulesFor(used), used).toContain("complex-word");
+    }
+    // The same rule governs the three that learned it later.
+    expect(rulesFor("**The supplier shall hereby comply.**")).toContain("legalese");
+    expect(rulesFor("Never write `shall` in a contract.")).not.toContain("legalese");
+    expect(rulesFor("Write **in order to** as two words fewer.")).toContain("wordy-phrase");
+    expect(rulesFor("Write \"in order to\" as two words fewer.")).not.toContain("wordy-phrase");
 
     // The advice must not create the next violation. "ascertain" suggests
     // "find", which is shorter, so a sentence at the cap stays at the cap.

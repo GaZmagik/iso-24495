@@ -48,8 +48,8 @@ The quantitative rules below are this skill's own proxies for those principles. 
    - **Proximity:** Keep the subject and its verb close together. Never bury the action under an inserted clause.
 
 3. **Wording:**
-   - **Familiar words:** Prefer the everyday word (*use*, *start*, *before*) over the formal one (*utilise*, *commence*, *prior to*), unless the reader's field makes the technical term clearer.
-   - **Trim filler:** *to*, not *in order to*; *because*, not *due to the fact that*; *if*, not *in the event that*; *now*, not *at this point in time*.
+   - **Familiar words:** Prefer the everyday word (`use`, `start`, `before`) over the formal one (`utilise`, `commence`, `prior to`), unless the reader's field makes the technical term clearer.
+   - **Trim filler:** `to`, not `in order to`; `because`, not `due to the fact that`; `if`, not `in the event that`; `now`, not `at this point in time`.
    - **One term per concept:** Repeat the term rather than switching to a synonym. Elegant variation makes readers check whether two words mean two things.
    - **Direct address:** Use *you* for the reader and *we* or *I* for the writer.
    - **Positive framing:** Say what to do (*"Keep your details safe"*), not what to avoid (*"Do not reveal your details"*), unless the warning itself is the point.

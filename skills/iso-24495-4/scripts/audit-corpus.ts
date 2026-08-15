@@ -431,12 +431,13 @@ function imageAltViolations(text: string): Violation[] {
 // A word inside emphasis or code is being discussed, not used. Without this,
 // the core skill could not name "utilise" as the word to avoid.
 function withoutQuotedWords(line: string): string {
+  // Quotation marks and backticks name a word. Emphasis does not: a writer
+  // bolds a sentence to stress it, and "The supplier **shall** comply" is a
+  // use of the word. Treating emphasis as naming exempted every bolded
+  // sentence from every rule that reads words.
   return line
     .replace(/`[^`]*`/g, " ")
-    .replace(/\*\*[^*]+\*\*/g, " ")
-    .replace(/\*[^*]+\*/g, " ")
-    .replace(/_[^_]+_/g, " ")
-    .replace(/"[^"]*"/g, " ");
+    .replace(/[“”"][^“”"]*[“”"]/g, " ");
 }
 
 function complexWordViolations(text: string): Violation[] {
