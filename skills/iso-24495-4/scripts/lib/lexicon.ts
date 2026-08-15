@@ -994,6 +994,68 @@ export const EXCLUSIVE_STARTERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Formal words with an everyday equivalent. The core skill has always told
+ * writers to prefer the plain word, and nothing checked it.
+ *
+ * Exact words only. A word is reported where it is used, never where it is
+ * being discussed, so the skill can name "utilise" as an example without the
+ * engine treating that as a lapse.
+ */
+export const COMPLEX_WORDS: ReadonlyMap<string, string> = new Map([
+  ["utilise", "use"],
+  ["utilize", "use"],
+  ["utilising", "using"],
+  ["utilizing", "using"],
+  ["commence", "start"],
+  ["commences", "starts"],
+  ["commenced", "started"],
+  ["ascertain", "find out"],
+  ["facilitate", "help"],
+  ["facilitates", "helps"],
+  ["endeavour", "try"],
+  ["endeavor", "try"],
+  ["terminate", "end"],
+  ["terminates", "ends"],
+  ["aforementioned", "this"],
+  ["notwithstanding", "despite"],
+  ["henceforth", "from now on"],
+  ["thereafter", "after that"],
+  ["whereby", "by which"],
+  ["herein", "here"],
+  ["thereof", "of it"],
+  ["therein", "in it"],
+  ["expedite", "speed up"],
+  ["disseminate", "share"],
+  ["remuneration", "pay"],
+]);
+
+/**
+ * Openings that say nothing. The core skill's first rule is to begin with the
+ * answer, and a filler opening delays it by a whole sentence.
+ */
+export const FILLER_OPENINGS: readonly string[] = [
+  "certainly", "sure", "of course", "absolutely", "great question",
+  "good question", "happy to help", "i'd be happy to", "i would be happy to",
+  "let me", "as an ai", "here is the summary", "here's the summary",
+  "in this document we will", "this document will",
+];
+
+/**
+ * Double negatives. A reader has to unpick two negations to reach one meaning,
+ * which is the part of positive framing a deterministic rule can judge.
+ *
+ * A blanket check for "do not" and "never" was measured and rejected: it found
+ * 58 constructions in this repository's own documents, of which only three
+ * were warnings, so the rule would have been noise.
+ */
+export const DOUBLE_NEGATIVES: readonly string[] = [
+  "not unlike", "not uncommon", "not unusual", "not unreasonable",
+  "not unimportant", "not insignificant", "not inconsiderable", "not without",
+  "never without", "cannot fail to", "not impossible", "not unknown",
+  "no fewer than no", "not unhelpful", "not unclear",
+];
+
+/**
  * Product names written in lower case. A lower-case word after a full stop
  * usually continues a sentence, and these are the everyday exceptions.
  */

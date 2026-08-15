@@ -5,7 +5,12 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { headings, mergedSentences, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
-import { COMMON_WORDS } from "./lib/lexicon.ts";
+import {
+  COMMON_WORDS,
+  COMPLEX_WORDS,
+  DOUBLE_NEGATIVES,
+  FILLER_OPENINGS,
+} from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 
 // Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
@@ -418,6 +423,98 @@ function imageAltViolations(text: string): Violation[] {
   return violations;
 }
 
+// A word inside emphasis or code is being discussed, not used. Without this,
+// the core skill could not name "utilise" as the word to avoid.
+function withoutQuotedWords(line: string): string {
+  return line
+    .replace(/`[^`]*`/g, " ")
+    .replace(/\*\*[^*]+\*\*/g, " ")
+    .replace(/\*[^*]+\*/g, " ")
+    .replace(/_[^_]+_/g, " ")
+    .replace(/"[^"]*"/g, " ");
+}
+
+function complexWordViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  for (const block of proseBlocks(text)) {
+    for (let i = 0; i < block.lines.length; i++) {
+      const line = withoutQuotedWords(block.lines[i]);
+      for (const match of line.matchAll(/[A-Za-z']+/g)) {
+        const plain = COMPLEX_WORDS.get(match[0].toLowerCase());
+        if (!plain) continue;
+        violations.push({
+          rule: "complex-word",
+          line: block.line + i,
+          detail: `"${match[0]}" where "${plain}" would do`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+function doubleNegativeViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  for (const block of proseBlocks(text)) {
+    const paragraph = block.lines.join("\n");
+    for (const phrase of DOUBLE_NEGATIVES) {
+      const pattern = new RegExp(`\\b${phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
+      for (const match of paragraph.matchAll(pattern)) {
+        violations.push({
+          rule: "double-negative",
+          line: lineAtOffset(block.line, paragraph, match.index),
+          detail: `"${match[0]}" makes the reader unpick two negatives`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+// The skill's first rule is to open with the answer. A filler opening spends
+// the reader's first sentence saying nothing, and it is only a fault at the
+// very start: "let me know" mid-document is ordinary English.
+function fillerOpeningViolations(text: string): Violation[] {
+  const blocks = proseBlocks(text);
+  if (blocks.length === 0) return [];
+  const opening = withoutQuotedWords(blocks[0].lines[0] ?? "").trimStart().toLowerCase();
+  for (const filler of FILLER_OPENINGS) {
+    if (!opening.startsWith(filler)) continue;
+    return [{
+      rule: "filler-opening",
+      line: blocks[0].line,
+      detail: `opens with "${filler}" instead of the answer`,
+    }];
+  }
+  return [];
+}
+
+// A listener hears each cell announced against its column name, so a table
+// whose header cells are blank tells them nothing about what they are hearing.
+function tableHeaderViolations(text: string): Violation[] {
+  const violations: Violation[] = [];
+  const lines = text.split(/\r?\n/);
+  let inFence = false;
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (/^(```|~~~)/.test(lines[i].trim())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const row = lines[i].trim();
+    const divider = lines[i + 1].trim();
+    if (!row.startsWith("|") || !/^\|[\s:|-]+\|$/.test(divider) || !divider.includes("-")) continue;
+    const cells = row.slice(1, -1).split("|").map((cell) => cell.trim());
+    if (cells.every((cell) => cell.length > 0)) continue;
+    violations.push({
+      rule: "table-header",
+      line: i + 1,
+      detail: "table header has an empty column name",
+    });
+  }
+  return violations;
+}
+
 function wordyPhraseViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
@@ -593,6 +690,10 @@ export function auditText(text: string): Violation[] {
   // they see it, hear it or touch it. These two rules are the only ones here
   // that serve a reader who is not looking at the page.
   violations.push(...wordyPhraseViolations(text));
+  violations.push(...complexWordViolations(text));
+  violations.push(...doubleNegativeViolations(text));
+  violations.push(...fillerOpeningViolations(text));
+  violations.push(...tableHeaderViolations(text));
   violations.push(...linkTextViolations(text));
   violations.push(...imageAltViolations(text));
   return violations;

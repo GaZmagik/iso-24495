@@ -27,6 +27,10 @@ const RULES = [
   "link-text",
   "image-alt",
   "wordy-phrase",
+  "complex-word",
+  "double-negative",
+  "filler-opening",
+  "table-header",
 ] as const;
 
 function rulesFor(text: string): string[] {
@@ -130,8 +134,11 @@ describe("reader-facing behaviour contracts", () => {
     // Counted with a plain splitter before the engine ran: 11, 44, 31, 28.
     expect(lengths).toEqual([11, 44, 31, 28]);
     const found = auditText(text);
+    // Re-adjudicated on 2026-08-15 when complex-word was added. The statute
+    // says "the methods whereby, the public may obtain information", so the
+    // fourth finding is real: the rule did not drift, the rule set grew.
     expect(found.map((violation) => violation.rule).sort())
-      .toEqual(["legalese", "sentence-length", "sentence-length"]);
+      .toEqual(["complex-word", "legalese", "sentence-length", "sentence-length"]);
     expect(found.filter((violation) => violation.rule === "sentence-length")
       .map((violation) => violation.detail))
       .toEqual(["44 words (limit 30)", "31 words (limit 30)"]);
@@ -322,6 +329,20 @@ describe("reader-facing behaviour contracts", () => {
       // nothing checked them, so the guidance asked for something the engine
       // never looked at.
       "wordy-phrase": ["Restart the service in order to apply the change.", "Restart the service to apply the change."],
+      // The skill has always named the plain word; nothing checked it. A word
+      // in emphasis is being discussed, so the skill can still name it.
+      "complex-word": ["We will utilise the service.", "We will use the service."],
+      // The part of positive framing a rule can judge. A blanket check for
+      // "do not" was measured and rejected: 58 hits in our own documents, of
+      // which three were warnings.
+      "double-negative": ["It is not uncommon for the check to fail.", "The check often fails."],
+      // The skill's first rule is to open with the answer.
+      "filler-opening": ["Certainly! The answer is 42.", "The answer is 42."],
+      // A listener hears each cell announced against its column name.
+      "table-header": [
+        ["| Name | |", "|---|---|", "| a | b |"].join("\n"),
+        ["| Name | Role |", "|---|---|", "| a | b |"].join("\n"),
+      ],
     };
     const empty = positiveAndNegative["link-text-empty"];
     expect(rulesFor(empty[0]), "an empty link label reports link-text").toContain("link-text");
@@ -348,7 +369,7 @@ describe("reader-facing behaviour contracts", () => {
     }
 
     const readme = readFileSync(join(import.meta.dir, "..", "..", "..", "README.md"), "utf8");
-    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, and `wordy-phrase`.";
+    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.";
     // The two rules for readers who cannot see the page must be explained, not
     // merely listed, or nobody knows why they exist.
     expect(readme).toContain("readers who hear or touch a document rather than look at it");

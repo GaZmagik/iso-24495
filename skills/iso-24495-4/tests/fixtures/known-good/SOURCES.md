@@ -52,6 +52,11 @@ Adjudicated before the first run: four sentences of 11, 44, 31 and 28 words.
 One `legalese` finding, two `sentence-length` findings, and no average, because
 four sentences sits below the floor. The engine agreed exactly.
 
+**Re-adjudicated 2026-08-15.** A `complex-word` rule was added that day, and it
+reports `whereby` in subparagraph (A). The finding is real, so the expected
+result is now four rather than three. The rule set grew; the engine did not
+drift. A changed expectation is only honest when the reason is recorded.
+
 Note for a later release: naming a banned term in this file, even inside code
 formatting, produces a finding of its own. Inline code is excluded from sentence
 parsing but not from term matching, so documentation about the rules cannot
