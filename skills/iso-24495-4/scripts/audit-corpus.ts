@@ -4,7 +4,14 @@
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { headings, mergedSentences, proseBlocks, splitSentences, wordCount } from "./lib/parse.ts";
+import {
+  headings,
+  mergedSentences,
+  proseBlocks,
+  readDocument,
+  splitSentences,
+  wordCount,
+} from "./lib/parse.ts";
 import {
   COMMON_WORDS,
   COMPLEX_WORDS,
@@ -371,14 +378,9 @@ const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|mo
 
 function linkTextViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
+  const { lines, fenced } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
-    if (/^(```|~~~)/.test(lines[i].trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
+    if (fenced(i)) continue;
     // Skip image syntax: the alt-text rule owns that.
     for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\(([^)]+)\)/g)) {
       const label = match[1].trim();
@@ -407,14 +409,9 @@ function linkTextViolations(text: string): Violation[] {
 // mark that intent explicitly rather than leaving the alt blank by accident.
 function imageAltViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
+  const { lines, fenced } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
-    if (/^(```|~~~)/.test(lines[i].trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
+    if (fenced(i)) continue;
     for (const match of lines[i].matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
       const alt = match[1].trim();
       if (alt.length > 0) continue;
@@ -517,14 +514,9 @@ function fillerOpeningViolations(text: string): Violation[] {
 // whose header cells are blank tells them nothing about what they are hearing.
 function tableHeaderViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const lines = text.split(/\r?\n/);
-  let inFence = false;
+  const { lines, fenced } = readDocument(text);
   for (let i = 0; i < lines.length - 1; i++) {
-    if (/^(```|~~~)/.test(lines[i].trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
+    if (fenced(i)) continue;
     const row = lines[i].trim();
     const divider = lines[i + 1].trim();
     // Outer pipes are optional in GitHub markdown, and the divider may carry

@@ -274,6 +274,38 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(withMark)).toContain("legalese");
   });
 
+  // The block scanners were normalised while three rules still split the text
+  // themselves, so the fix reached most of the engine and not all of it. A
+  // bare carriage return put the image finding on line 1 rather than line 3,
+  // and the table finding vanished. Every encoding must read alike.
+  test("line-based rules read the same document as the block scanners", () => {
+    const CARRIAGE_RETURN = String.fromCharCode(13);
+    const BYTE_ORDER_MARK = String.fromCharCode(65279);
+    const document = [
+      "[click here](https://example.com)",
+      "",
+      "![](chart.png)",
+      "",
+      "| A |  |",
+      "| --- | --- |",
+    ];
+    const expected = [
+      ["table-header", 5],
+      ["link-text", 1],
+      ["image-alt", 3],
+    ];
+    const found = (text: string): Array<[string, number]> =>
+      auditText(text).map((violation) => [violation.rule, violation.line]);
+    expect(found(document.join(BREAK))).toEqual(expected);
+    expect(found(document.join(CARRIAGE_RETURN))).toEqual(expected);
+    expect(found(document.join(CARRIAGE_RETURN + BREAK))).toEqual(expected);
+    expect(found(BYTE_ORDER_MARK + document.join(BREAK))).toEqual(expected);
+
+    // They must honour the shared fence rules too, not their own.
+    const fenced = ["````", "~~~", "[click here](https://example.com)", "````"];
+    expect(auditText(fenced.join(BREAK))).toEqual([]);
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {

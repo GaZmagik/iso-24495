@@ -243,6 +243,32 @@ export function headings(text: string): Heading[] {
   return scanHeadings(lines, structureOf(lines)).found;
 }
 
+export interface Document {
+  lines: string[];
+  /** True when the line is metadata, fenced code, or a table row. */
+  skip: (index: number) => boolean;
+  /** True when the line is fenced code. */
+  fenced: (index: number) => boolean;
+}
+
+/**
+ * Read a document once, for the rules that work line by line.
+ *
+ * Three rules split the text themselves and kept their own fence state, so the
+ * normalisation and the fence rules the block scanners follow never reached
+ * them. A bare carriage return put an image finding on the wrong line, and a
+ * table finding disappeared entirely.
+ */
+export function readDocument(text: string): Document {
+  const lines = toLines(text);
+  const structure = structureOf(lines);
+  return {
+    lines,
+    skip: structure.skip,
+    fenced: (index) => structure.fenced.has(index),
+  };
+}
+
 // A full stop ends a sentence far less often than it ends an abbreviation, and
 // no single test settles which. Two rounds of review broke every binary rule
 // tried here, in both directions. So a boundary now has three verdicts, and
