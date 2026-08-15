@@ -12,6 +12,7 @@ import {
 } from "../scripts/lib/parse.ts";
 
 const KNOWN_GOOD = join(import.meta.dir, "fixtures", "known-good");
+const DIFFICULT = join(import.meta.dir, "fixtures", "difficult");
 const RULES = [
   "sentence-length",
   "sentence-average",
@@ -107,6 +108,33 @@ describe("reader-facing behaviour contracts", () => {
     expect(documents).toHaveLength(7);
     const advised = documents.filter(([, file]) => file.violations.length > 0).map(([path]) => path);
     expect(advised).toEqual([]);
+  });
+
+  // Every other external document is expected to pass, so nothing measured
+  // whether the engine finds real difficulty in real writing. This is the
+  // opposite control: public-domain statute, adjudicated before the first run,
+  // where silence would be the failure.
+  test("published legal prose produces the findings adjudicated in advance", () => {
+    const path = join(DIFFICULT, "us-foia-statute.md");
+    const text = readFileSync(path, "utf8");
+    const lengths: number[] = [];
+    for (const block of proseBlocks(text)) {
+      for (const sentence of splitSentences(block.lines.join(" "))) {
+        const count = wordCount(sentence);
+        if (count > 0) lengths.push(count);
+      }
+    }
+    // Counted with a plain splitter before the engine ran: 11, 44, 31, 28.
+    expect(lengths).toEqual([11, 44, 31, 28]);
+    const found = auditText(text);
+    expect(found.map((violation) => violation.rule).sort())
+      .toEqual(["legalese", "sentence-length", "sentence-length"]);
+    expect(found.filter((violation) => violation.rule === "sentence-length")
+      .map((violation) => violation.detail))
+      .toEqual(["44 words (limit 30)", "31 words (limit 30)"]);
+    // Four sentences is below the sample floor, so the average must not run.
+    expect(lengths.length).toBeLessThan(ENGINE_THRESHOLDS.averageMinimumSentences);
+    expect(found.some((violation) => violation.rule === "sentence-average")).toBe(false);
   });
 
   // The corpus was worthless as a measurement while every document sat below

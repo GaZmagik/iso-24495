@@ -38,6 +38,29 @@ false-positive rate**, for two reasons. They are short, and prose written by an
 agent working under this plugin's own output style is not neutral evidence about
 that style. Treat their zero as a smoke test, not as a measurement.
 
+## Documents expected to fail
+
+`../difficult/` holds the opposite control. Every document above is expected to
+pass, so on its own the corpus could not tell a working engine from a silent
+one. These are published documents that should produce findings.
+
+| File | Source | Licence | Retrieved |
+|---|---|---|---|
+| `us-foia-statute.md` | 5 U.S. Code section 552, subsection (a)(1), subparagraphs (A), (C) and (D) | Public domain, as a United States federal statute | 2026-08-15 |
+
+Adjudicated before the first run: four sentences of 11, 44, 31 and 28 words.
+One `legalese` finding, two `sentence-length` findings, and no average, because
+four sentences sits below the floor. The engine agreed exactly.
+
+Note for a later release: naming a banned term in this file, even inside code
+formatting, produces a finding of its own. Inline code is excluded from sentence
+parsing but not from term matching, so documentation about the rules cannot
+quote the words the rules cover.
+
+Subparagraph (B) and the introductory clause of paragraph (1) are omitted
+because they contain em dashes, which a repository test forbids in every
+markdown file. Nothing that remains is altered.
+
 ## Adding to this corpus
 
 1. Choose the document before running the auditor, and record where it came
