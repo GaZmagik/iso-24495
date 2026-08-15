@@ -286,10 +286,17 @@ function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   return shouted;
 }
 
-function acronymViolations(text: string): Violation[] {
+function acronymViolations(text: string, known: ReadonlySet<string>): Violation[] {
   const violations: Violation[] = [];
   const defined = new Set<string>();
   const seen = new Set<string>();
+  // A definition counts wherever the reader can see it. Headings, lists and
+  // tables are not audited as prose, so "## Document Object Model (DOM)"
+  // followed by ordinary use of DOM was reported as undefined. That is where
+  // people naturally define a term, and the complaint was simply wrong.
+  for (const match of text.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
+    defined.add(match[1].replaceAll(".", ""));
+  }
   for (const block of proseBlocks(text)) {
     const tokens = block.lines.flatMap((line, lineIndex) =>
       line.split(/\s+/).filter(Boolean).map((raw) => ({ raw, line: block.line + lineIndex })),
@@ -297,7 +304,7 @@ function acronymViolations(text: string): Violation[] {
     const shouted = shoutedPositions(tokens);
     for (let i = 0; i < tokens.length; i++) {
       const acronym = acronymFromToken(tokens[i].raw);
-      if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key)) continue;
+      if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key) || known.has(acronym.key)) continue;
       if (ROMAN_NUMERAL.test(acronym.key)
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
         continue;
@@ -589,7 +596,40 @@ function proseEnumerationViolations(text: string): Violation[] {
   return violations;
 }
 
-export function auditText(text: string): Violation[] {
+/**
+ * Acronyms a project treats as known, from `.iso-24495-4/acronyms.json`.
+ *
+ * The shipped list stays universal on purpose: this plugin targets
+ * international English, and baking CSS, SQL and SDK into it would make the
+ * core list a software list. But a technical writer met a dozen findings for
+ * ordinary vocabulary, which is the shortest route to switching the hook off,
+ * so each project extends the list for itself.
+ *
+ * The file holds an array of strings. Anything unreadable or malformed leaves
+ * the core list alone rather than failing the audit, because an advisory tool
+ * must never be the reason a document cannot be checked.
+ */
+export function projectAcronyms(directory: string): ReadonlySet<string> {
+  const path = join(directory, ".iso-24495-4", "acronyms.json");
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim().toUpperCase())
+        .filter((entry) => entry.length > 0),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+export interface AuditOptions {
+  /** Extra acronyms this project treats as known. */
+  knownAcronyms?: ReadonlySet<string>;
+}
+
+export function auditText(text: string, options: AuditOptions = {}): Violation[] {
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
   const mergedLengths: number[] = [];
@@ -703,7 +743,7 @@ export function auditText(text: string): Violation[] {
   }
 
   // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...acronymViolations(text));
+  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set()));
 
   // lucid-inspired, reimplemented; proxy choice, not a standard clause.
   violations.push(...doubletViolations(text));
@@ -774,10 +814,13 @@ export function listTextFiles(
 
 export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findings {
   const paths = listTextFiles(dir, onSkip);
+  // A corpus is audited from its own directory, so the project's acronyms
+  // apply to every document in it.
+  const knownAcronyms = projectAcronyms(dir);
   const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
   for (const path of paths) {
     const key = relative(dir, path).replaceAll("\\", "/");
-    const violations = auditText(readFileSync(path, "utf8"));
+    const violations = auditText(readFileSync(path, "utf8"), { knownAcronyms });
     findings.files[key] = { violations };
     for (const v of violations) {
       findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;

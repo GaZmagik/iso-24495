@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditCorpus, auditText, ENGINE_THRESHOLDS } from "../scripts/audit-corpus.ts";
+import {
+  auditCorpus,
+  auditText,
+  ENGINE_THRESHOLDS,
+  projectAcronyms,
+} from "../scripts/audit-corpus.ts";
+import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
 import {
   classifyBoundary,
   headings,
@@ -155,6 +162,64 @@ describe("reader-facing behaviour contracts", () => {
     const text = readFileSync(join(DIFFICULT, "every-rule.md"), "utf8");
     const fired = new Set(auditText(text).map((violation) => violation.rule));
     expect([...fired].sort()).toEqual([...RULES].sort());
+  });
+
+  // Round 8. A technical writer met a dozen findings for ordinary vocabulary,
+  // which is the shortest route to switching the hook off. The shipped list
+  // stays universal; each project extends it for itself.
+  test("a project can name the acronyms it treats as known", () => {
+    const temp = mkdtempSync(join(tmpdir(), "iso-acronyms-"));
+    try {
+      expect(rulesFor("The SQL layer changed.")).toContain("acronym-undefined");
+      const known = new Set(["SQL"]);
+      expect(auditText("The SQL layer changed.", { knownAcronyms: known })).toEqual([]);
+
+      // No config leaves the core list alone.
+      expect(projectAcronyms(temp).size).toBe(0);
+
+      mkdirSync(join(temp, ".iso-24495-4"), { recursive: true });
+      const config = join(temp, ".iso-24495-4", "acronyms.json");
+      writeFileSync(config, JSON.stringify(["sql", " SDK ", "", 7]));
+      const loaded = projectAcronyms(temp);
+      expect([...loaded].sort()).toEqual(["SDK", "SQL"]);
+
+      // Malformed configuration must never stop a document being audited.
+      writeFileSync(config, "{not json");
+      expect(projectAcronyms(temp).size).toBe(0);
+      writeFileSync(config, JSON.stringify({ allow: ["SQL"] }));
+      expect(projectAcronyms(temp).size).toBe(0);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  // A definition counts wherever a reader can see it. Headings and lists are
+  // not audited as prose, so a term defined there was reported as undefined.
+  test("an acronym defined in a heading or list counts as defined", () => {
+    const use = ["", "The DOM loads first.", ""];
+    expect(rulesFor(["## Document Object Model (DOM)", ...use].join("\n")))
+      .not.toContain("acronym-undefined");
+    expect(rulesFor(["- Document Object Model (DOM)", ...use].join("\n")))
+      .not.toContain("acronym-undefined");
+    expect(rulesFor([
+      "| Term | Meaning |",
+      "|---|---|",
+      "| Document Object Model (DOM) | tree |",
+      ...use,
+    ].join("\n")))
+      .not.toContain("acronym-undefined");
+    expect(rulesFor("The DOM loads first.")).toContain("acronym-undefined");
+  });
+
+  // Every complex-word suggestion must be no longer than the word it replaces,
+  // or taking the advice pushes a sentence at the cap over it.
+  test("complex-word advice never creates a longer sentence", () => {
+    const padding = Array(27).fill("word").join(" ");
+    for (const [word, plain] of COMPLEX_WORDS) {
+      expect(plain.split(" ").length, `${word} -> ${plain}`).toBe(1);
+    }
+    expect(rulesFor(`The clause whereby ${padding}.`)).toEqual(["complex-word"]);
+    expect(rulesFor(`The clause how ${padding}.`)).toEqual([]);
   });
 
   // Round 7 repairs, each a defect an external reviewer found and I reproduced.

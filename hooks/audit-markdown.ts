@@ -6,7 +6,11 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { auditText, isAuditedDocument } from "../skills/iso-24495-4/scripts/audit-corpus.ts";
+import {
+  auditText,
+  isAuditedDocument,
+  projectAcronyms,
+} from "../skills/iso-24495-4/scripts/audit-corpus.ts";
 
 interface HookInput {
   cwd?: string;
@@ -39,7 +43,9 @@ export function adviseOnFile(filePath: string, cwd: string): string | null {
     return null;
   }
   const totals: Record<string, number> = {};
-  for (const violation of auditText(text)) {
+  // The project's own acronyms come from the same directory as the off
+  // switch, so a writer configures the plugin in one place.
+  for (const violation of auditText(text, { knownAcronyms: projectAcronyms(cwd) })) {
     totals[violation.rule] = (totals[violation.rule] ?? 0) + 1;
   }
   const parts = Object.entries(totals)

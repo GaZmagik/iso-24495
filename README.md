@@ -84,6 +84,14 @@ The last two serve readers who hear or touch a document rather than look at it. 
 
 A clean file produces nothing, and the hook never blocks a write.
 
+The shipped acronym list stays universal, so a technical vocabulary needs naming per project. Create `.iso-24495-4/acronyms.json` with the terms your readers already know:
+
+```json
+["SQL", "SDK", "CSS", "IDE"]
+```
+
+An unreadable or malformed file leaves the shipped list alone, because an advisory tool must never be the reason a document cannot be checked.
+
 To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
 
 ```json
