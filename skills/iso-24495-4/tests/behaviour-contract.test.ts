@@ -147,6 +147,65 @@ describe("reader-facing behaviour contracts", () => {
     expect(found.some((violation) => violation.rule === "sentence-average")).toBe(false);
   });
 
+  // A silent engine passed both corpus controls and every negative assertion,
+  // because absence proves nothing. Only three of seventeen rules had a
+  // positive control in a real document, so silence on the other fourteen was
+  // invisible. This fixture trips all seventeen at once.
+  test("every rule has a positive control, so a silent engine fails", () => {
+    const text = readFileSync(join(DIFFICULT, "every-rule.md"), "utf8");
+    const fired = new Set(auditText(text).map((violation) => violation.rule));
+    expect([...fired].sort()).toEqual([...RULES].sort());
+  });
+
+  // Round 7 repairs, each a defect an external reviewer found and I reproduced.
+  test("the newest rules survive the shapes real documents take", () => {
+    // A filler word is only filler when it is a whole word.
+    expect(rulesFor("Surely the answer is correct.")).not.toContain("filler-opening");
+    expect(rulesFor("Let meadows grow naturally.")).not.toContain("filler-opening");
+    expect(rulesFor("Certainly! The answer is 42.")).toContain("filler-opening");
+
+    // Front matter is metadata, not the opening sentence.
+    const frontMatter = ["---", "title: Guide", "---", ""];
+    expect(rulesFor([...frontMatter, "Certainly! The answer is 42."].join("\n")))
+      .toContain("filler-opening");
+    expect(rulesFor([...frontMatter, "The answer is 42."].join("\n")))
+      .not.toContain("filler-opening");
+
+    // Outer pipes are optional, and the divider may carry colons and padding.
+    const tables: Array<[string[], boolean]> = [
+      [["Name | ", "---|---", " a | b "], true],
+      [["Name | Role", "---|---", " a | b "], false],
+      [["| Name | |", "|:---|---:|", "| a | b |"], true],
+      [["| Name | |", "| --- | --- |", "| a | b |"], true],
+      [["| Name | Role |", "|---|---|", "| a | b |"], false],
+    ].map(([rows, expected]) => [(rows as string[]).join("\n"), expected as boolean]);
+    for (const [table, expected] of tables) {
+      expect(rulesFor(table).includes("table-header"), JSON.stringify(table)).toBe(expected);
+    }
+
+    // A word being quoted is being discussed, not used. Deleting the exemption
+    // left every test green, because our own examples live in list items.
+    expect(rulesFor("We will utilise the service.")).toContain("complex-word");
+    for (const quoted of [
+      "Prefer *use* over *utilise* in every case.",
+      "Prefer `use` over `utilise` in every case.",
+      "Prefer **use** over **utilise** in every case.",
+      "The word \"utilise\" is the one to avoid.",
+    ]) {
+      expect(rulesFor(quoted), quoted).not.toContain("complex-word");
+    }
+
+    // The advice must not create the next violation. "ascertain" suggests
+    // "check", which is shorter, so a sentence at the cap stays at the cap.
+    const padding = Array(27).fill("word").join(" ");
+    expect(rulesFor(`We must ascertain ${padding}.`)).toEqual(["complex-word"]);
+    expect(rulesFor(`We must check ${padding}.`)).toEqual([]);
+
+    // One violation per fault, so the advisory line counts honestly.
+    expect(auditText("![](diagram.png)")).toHaveLength(1);
+    expect(auditText("![   ](diagram.png)")).toHaveLength(1);
+  });
+
   // The corpus was worthless as a measurement while every document sat below
   // the ten-sentence floor, because the average rule was never even evaluated.
   // This document is external prose under the Open Government Licence, and its

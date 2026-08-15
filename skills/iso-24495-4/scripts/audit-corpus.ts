@@ -475,11 +475,19 @@ function doubleNegativeViolations(text: string): Violation[] {
 // the reader's first sentence saying nothing, and it is only a fault at the
 // very start: "let me know" mid-document is ordinary English.
 function fillerOpeningViolations(text: string): Violation[] {
-  const blocks = proseBlocks(text);
+  // Front matter is metadata, not the opening sentence. It arrives as an
+  // ordinary prose block, so without this the first real sentence of every
+  // templated document escaped the rule entirely.
+  const blocks = proseBlocks(text).filter((block) => !isFrontMatter(text, block));
   if (blocks.length === 0) return [];
   const opening = withoutQuotedWords(blocks[0].lines[0] ?? "").trimStart().toLowerCase();
   for (const filler of FILLER_OPENINGS) {
     if (!opening.startsWith(filler)) continue;
+    // The filler must be a whole word. "Surely the answer is correct" begins
+    // with the letters of "sure", and "Let meadows grow" with "let me", and
+    // both are ordinary sentences that the rule has no business touching.
+    const next = opening.charAt(filler.length);
+    if (next !== "" && /[a-z']/.test(next)) continue;
     return [{
       rule: "filler-opening",
       line: blocks[0].line,
@@ -487,6 +495,16 @@ function fillerOpeningViolations(text: string): Violation[] {
     }];
   }
   return [];
+}
+
+// A block is front matter when it is the document's first block and sits
+// between the opening and closing marker lines.
+function isFrontMatter(text: string, block: ProseBlock): boolean {
+  const lines = text.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return false;
+  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (closing === -1) return false;
+  return block.line <= closing + 1;
 }
 
 // A listener hears each cell announced against its column name, so a table
@@ -503,8 +521,15 @@ function tableHeaderViolations(text: string): Violation[] {
     if (inFence) continue;
     const row = lines[i].trim();
     const divider = lines[i + 1].trim();
-    if (!row.startsWith("|") || !/^\|[\s:|-]+\|$/.test(divider) || !divider.includes("-")) continue;
-    const cells = row.slice(1, -1).split("|").map((cell) => cell.trim());
+    // Outer pipes are optional in GitHub markdown, and the divider may carry
+    // alignment colons and padding. Requiring the tidiest form meant a table
+    // written the common way was never checked at all.
+    if (!row.includes("|") || !/^\|?[\s:|-]+\|?$/.test(divider) || !divider.includes("-")) continue;
+    // Strip the outer pipes only where the row actually has them. Removing a
+    // trailing pipe from a row written without outer pipes deletes a real
+    // column separator, and the empty column it marks is the whole point.
+    const trimmed = row.startsWith("|") ? row.replace(/^\|/, "").replace(/\|$/, "") : row;
+    const cells = trimmed.split("|").map((cell) => cell.trim());
     if (cells.every((cell) => cell.length > 0)) continue;
     violations.push({
       rule: "table-header",
