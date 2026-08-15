@@ -20,7 +20,21 @@ export interface Heading {
 // requires a header and a matching divider, so a line that merely begins with a
 // pipe is the ordinary text GitHub renders it as. Excluding it here dropped
 // "| Important note: the supplier shall comply." from the document in silence.
-const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|>)/;
+const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d{1,9}[.)]\s|>)/;
+// CommonMark lets an ordered list interrupt a paragraph only when it starts at
+// 1, which exists to protect hard-wrapped numbers. Without that rule, a line
+// continuing "The system was updated in" with "2024. The supplier shall
+// respond." became a list item and its sentence left the document. A marker of
+// ten digits or more is not a list marker at all.
+const ORDERED_MARKER = /^(\d{1,9})[.)]\s/;
+
+/** True when the line begins a block rather than continuing a paragraph. */
+function startsStructure(line: string, midParagraph: boolean): boolean {
+  const trimmed = line.trimStart();
+  const ordered = ORDERED_MARKER.exec(trimmed);
+  if (ordered !== null) return !midParagraph || ordered[1] === "1";
+  return NON_PROSE_PREFIX.test(trimmed);
+}
 // A table row need not begin with a pipe: GitHub renders "Term | Meaning" with
 // a divider beneath it, and those cells were being audited as prose, so a
 // table's contents produced findings that belonged to no sentence.
@@ -67,19 +81,29 @@ function fencedLines(lines: string[], from: number): Set<number> {
   // "shall" in an example, and a "click here" written to show what not to write.
   let listIndent = 0;
   for (let i = from; i < lines.length; i++) {
-    const raw = lines[i].replace(/^(?:[ \t]*>[ \t]?)+/, "");
+    // At most three spaces before a quote marker: four is indented code, and
+    // stripping it turned "    > ```" into a fence that hid the document.
+    let after: string;
+    const raw = lines[i].replace(/^(?: {0,3}>[ \t]?)+/, "");
     if (open === null) {
       const item = /^( *)([-*+]|\d+[.)])( +)/.exec(raw);
       // The content column is where the item's text starts, so an ordered
       // marker earns more room than a bullet. A blank line does not end a list
       // item, but a non-blank line at the left margin does.
-      if (item !== null) listIndent = item[1].length + item[2].length + item[3].length;
+      if (item !== null) {
+        listIndent = item[1].length + item[2].length + item[3].length;
+        // A fence may be the item's first content: "1. ```md" opens one. The
+        // marker has to go, or the real closing fence becomes an opener and
+        // everything after it disappears.
+        after = raw.slice(item[0].length);
+      }
       else if (raw.trim() !== "" && !/^ /.test(raw)) listIndent = 0;
     }
-    const indent = /^ */.exec(raw)?.[0].length ?? 0;
+    after = after ?? raw;
+    const indent = /^ */.exec(after)?.[0].length ?? 0;
     const match = FENCE_OPEN.exec(indent > 3 && indent <= listIndent + 3
-      ? raw.slice(indent - 3)
-      : raw);
+      ? after.slice(indent - 3)
+      : after);
     if (open === null) {
       // An info string on a backtick fence cannot itself contain a backtick.
       if (match === null || (match[2][0] === "`" && match[3].includes("`"))) continue;
@@ -115,8 +139,8 @@ const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
 /** The columns a table row declares, ignoring optional outer pipes. */
 function cellCount(row: string): number {
-  const inner = row.replace(/^\|/, "").replace(/\|$/, "");
-  return inner.split("|").length;
+  const inner = row.replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  return inner.split(/(?<!\\)\|/).length;
 }
 
 /**
@@ -142,7 +166,9 @@ function tableLines(lines: string[], skip: (index: number) => boolean): Set<numb
     table.add(i);
     table.add(i + 1);
     for (let row = i + 2; row < lines.length; row++) {
-      if (skip(row) || !lines[row].includes("|")) break;
+      // A table ends where another block begins, HTML included, and not only
+      // at a blank line. An HTML paragraph was being claimed as a row.
+      if (skip(row) || !lines[row].includes("|") || /^ {0,3}</.test(lines[row])) break;
       table.add(row);
     }
   }
@@ -255,7 +281,7 @@ export function proseBlocks(text: string): ProseBlock[] {
     if (headingLines.has(i)
       || THEMATIC_BREAK.test(line)
       || line.trim() === ""
-      || NON_PROSE_PREFIX.test(line.trimStart())) {
+      || startsStructure(line, current !== null)) {
       current = null;
       continue;
     }

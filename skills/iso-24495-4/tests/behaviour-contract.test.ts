@@ -352,6 +352,38 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(["Term | Meaning", "---|---", `Rule | ${legalese}`].join(BREAK))).toEqual([]);
   });
 
+  // Round 13. Five more shapes where structure was recognised without the
+  // constraints the specifications place on it, and each one removed text.
+  test("structure follows the specification, not the first character", () => {
+    const legalese = "The supplier shall hereby comply.";
+
+    // A fence can be a list item's first content, marker and all.
+    const asContent = ["1. ```md", "   code", "   ```", "##### Visible heading.", legalese];
+    expect(rulesFor(asContent.join(BREAK))).toContain("legalese");
+    expect(headings(asContent.join(BREAK))).toHaveLength(1);
+    // Four spaces before a quote marker is indented code, not a quoted fence.
+    expect(rulesFor(["    > ```", legalese].join(BREAK))).toContain("legalese");
+
+    // An ordered list interrupts a paragraph only when it starts at 1, which
+    // is what protects a hard-wrapped year.
+    expect(rulesFor(["The chronology continues here", `2024. ${legalese}`].join(BREAK)))
+      .toContain("legalese");
+    expect(rulesFor([`1234567890. ${legalese}`].join(BREAK))).toContain("legalese");
+    expect(rulesFor(["Intro.", "", `2. ${legalese}`].join(BREAK))).toEqual([]);
+    expect(rulesFor(["The intro continues", `1. ${legalese}`].join(BREAK))).toEqual([]);
+
+    // An escaped pipe is content, so it changes neither column count.
+    const escaped = String.raw`| A \| B | C |`;
+    expect(rulesFor([escaped, "| --- | --- | --- |",
+      "The supplier shall respond | today | now."].join(BREAK))).toContain("legalese");
+    expect(rulesFor([escaped, "| --- | --- |", `| x | ${legalese} |`].join(BREAK))).toEqual([]);
+
+    // A table ends where another block begins, and HTML is another block.
+    const html = ["Term | Meaning", "---|---", "x | y",
+      `<p>${legalese} | today.</p>`, "Ordinary ending."];
+    expect(rulesFor(html.join(BREAK))).toContain("legalese");
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
