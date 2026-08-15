@@ -20,17 +20,20 @@ export interface Heading {
 // requires a header and a matching divider, so a line that merely begins with a
 // pipe is the ordinary text GitHub renders it as. Excluding it here dropped
 // "| Important note: the supplier shall comply." from the document in silence.
-const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d{1,9}[.)]\s|>)/;
+const NON_PROSE_PREFIX = /^(#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|>)/;
 // CommonMark lets an ordered list interrupt a paragraph only when it starts at
 // 1, which exists to protect hard-wrapped numbers. Without that rule, a line
 // continuing "The system was updated in" with "2024. The supplier shall
 // respond." became a list item and its sentence left the document. A marker of
 // ten digits or more is not a list marker at all.
-const ORDERED_MARKER = /^(\d{1,9})[.)]\s/;
+const ORDERED_MARKER = /^(\d{1,9})[.)][ \t]/;
 
 /** True when the line begins a block rather than continuing a paragraph. */
 function startsStructure(line: string, midParagraph: boolean): boolean {
-  const trimmed = line.trimStart();
+  // Only ASCII space and tab indent a block. Trimming every Unicode space
+  // made a non-breaking space before ">" a blockquote, which GitHub renders
+  // as ordinary text, so the sentence left the document.
+  const trimmed = line.replace(/^[ \t]+/, "");
   const ordered = ORDERED_MARKER.exec(trimmed);
   if (ordered !== null) return !midParagraph || ordered[1] === "1";
   return NON_PROSE_PREFIX.test(trimmed);
@@ -86,7 +89,7 @@ function fencedLines(lines: string[], from: number): Set<number> {
     let after: string;
     const raw = lines[i].replace(/^(?: {0,3}>[ \t]?)+/, "");
     if (open === null) {
-      const item = /^( *)([-*+]|\d+[.)])( +)/.exec(raw);
+      const item = /^( {0,3})([-*+]|\d{1,9}[.)])( +)/.exec(raw);
       // The content column is where the item's text starts, so an ordered
       // marker earns more room than a bullet. A blank line does not end a list
       // item, but a non-blank line at the left margin does.
@@ -126,9 +129,12 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
   // The delimiter sits at column 0. Matching a trimmed line let an indented
   // "---" inside a YAML block scalar close the block early, which left a code
   // fence outside it and hid the whole document body.
-  const isDelimiter = (line: string | undefined): boolean => /^---[ \t]*$/.test(line ?? "");
-  if (!isDelimiter(lines[0])) return null;
-  const closing = lines.findIndex((line, index) => index > 0 && isDelimiter(line));
+  const isOpen = (line: string | undefined): boolean => /^---[ \t]*$/.test(line ?? "");
+  // Jekyll closes a block with "..." as well as "---", and a block left
+  // open hands its contents to the fence scanner, which hides the body.
+  const isClose = (line: string): boolean => /^(?:---|\.\.\.)[ \t]*$/.test(line);
+  if (!isOpen(lines[0])) return null;
+  const closing = lines.findIndex((line, index) => index > 0 && isClose(line));
   return closing === -1 ? null : { start: 0, end: closing };
 }
 
@@ -137,10 +143,49 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
 // it and added a token, which turned a 30-word sentence into a false finding.
 const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
+/**
+ * True when the line begins another block, which ends any table above it.
+ *
+ * Stopping only at HTML and blank lines let a table swallow the paragraph
+ * after a heading: GitHub ends a table at a heading, a break, or indented
+ * code, and the sentence left the document with no finding against it.
+ */
+function startsBlock(line: string): boolean {
+  return /^ {0,3}</.test(line)
+    || /^ {0,3}#{1,6}[ \t]/.test(line)
+    || /^ {4}/.test(line)
+    || THEMATIC_BREAK.test(line);
+}
+
+/** True when every divider cell is a run of hyphens with optional colons. */
+function isDividerRow(row: string): boolean {
+  const inner = row.replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split("|").every((cell) => /^:?-+:?$/.test(cell.trim()));
+}
+
 /** The columns a table row declares, ignoring optional outer pipes. */
 function cellCount(row: string): number {
-  const inner = row.replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
-  return inner.split(/(?<!\\)\|/).length;
+  // A backslash escapes the next character, another backslash included, so
+  // two of them leave the pipe that follows as a real column boundary.
+  const cells: string[] = [];
+  let cell = "";
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] === "\\" && i + 1 < row.length) {
+      cell += row.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (row[i] === "|") {
+      cells.push(cell);
+      cell = "";
+      continue;
+    }
+    cell += row[i];
+  }
+  cells.push(cell);
+  if (cells[0].trim() === "") cells.shift();
+  if (cells.length > 0 && cells[cells.length - 1].trim() === "") cells.pop();
+  return cells.length;
 }
 
 /**
@@ -162,13 +207,13 @@ function tableLines(lines: string[], skip: (index: number) => boolean): Set<numb
     // GitHub renders a table only when the two rows agree on the column count.
     // Without this, "A | B | C" above "---|---" claimed three lines of prose
     // and the reader's sentence vanished with no finding against it.
-    if (cellCount(header) !== cellCount(divider)) continue;
+    if (cellCount(header) !== cellCount(divider) || !isDividerRow(divider)) continue;
     table.add(i);
     table.add(i + 1);
     for (let row = i + 2; row < lines.length; row++) {
       // A table ends where another block begins, HTML included, and not only
       // at a blank line. An HTML paragraph was being claimed as a row.
-      if (skip(row) || !lines[row].includes("|") || /^ {0,3}</.test(lines[row])) break;
+      if (skip(row) || !lines[row].includes("|") || startsBlock(lines[row])) break;
       table.add(row);
     }
   }
@@ -203,7 +248,7 @@ function structureOf(lines: string[]): Structure {
   };
 }
 
-const ATX_HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
+const ATX_HEADING = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 
 interface HeadingScan {
@@ -247,13 +292,31 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
       || /^(```|~~~)/.test(previousTrimmed)) {
       continue;
     }
+    // A setext heading is the whole paragraph above its underline, not the last
+    // line of it. Taking one line let a fourteen-word heading split into a
+    // seven-word heading and a line of prose, so heading-style never fired.
+    let first = i - 1;
+    while (first > 0) {
+      const above = lines[first - 1];
+      const aboveTrimmed = above.trimStart();
+      if (above.trim() === ""
+        || /^ {4}/.test(above)
+        || NON_PROSE_PREFIX.test(aboveTrimmed)
+        || THEMATIC_BREAK.test(above)
+        || ATX_HEADING.test(above)
+        || /^(```|~~~)/.test(aboveTrimmed)
+        || SETEXT_UNDERLINE.test(above)) {
+        break;
+      }
+      first--;
+    }
+    const paragraph = lines.slice(first, i).map((line) => line.trim()).join(" ");
     found.push({
       level: underline[1][0] === "=" ? 1 : 2,
       line: i,
-      text: visibleHeadingText(previous.trim()),
+      text: visibleHeadingText(paragraph),
     });
-    structuralLines.add(i - 1);
-    structuralLines.add(i);
+    for (let line = first; line <= i; line++) structuralLines.add(line);
   }
   return { found, structuralLines };
 }

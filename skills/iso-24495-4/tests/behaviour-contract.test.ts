@@ -384,6 +384,67 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(html.join(BREAK))).toContain("legalese");
   });
 
+  // Round 14 swept the constructs the engine relies on against CommonMark and
+  // the GitHub table extension, rather than sampling them. Nine differences
+  // removed visible text, and each one is a rule the specification states.
+  test("the constructs behave as their specifications describe", () => {
+    const legalese = "The supplier shall hereby comply.";
+
+    // A table ends at a heading, a break, or indented code, not only at HTML.
+    for (const ender of ["### New section | details", "---", "    code | here"]) {
+      const table = ["A | B", "---|---", "x | y", ender, `${legalese} | today.`];
+      expect(rulesFor(table.join(BREAK)), ender).toContain("legalese");
+    }
+
+    // Ten digits cannot make a list marker, and indented code is not a list.
+    expect(rulesFor(["1234567890. ```md", legalese].join(BREAK))).toContain("legalese");
+    expect(rulesFor(["    - ```md", legalese].join(BREAK))).toContain("legalese");
+
+    // Structure is spelled with ASCII space and tab. A non-breaking space is
+    // ordinary text, and copying from a formatted document produces them.
+    const NBSP = String.fromCharCode(160);
+    expect(rulesFor(`${NBSP}> ${legalese}`)).toContain("legalese");
+    expect(rulesFor(`#${NBSP}${legalese}`)).toContain("legalese");
+    expect(headings(`#${NBSP}Heading`)).toHaveLength(0);
+    // A tab still separates a heading marker from its text.
+    expect(headings(`#${String.fromCharCode(9)}Heading`)).toHaveLength(1);
+
+    // Two backslashes escape each other, so the pipe after them is a boundary.
+    const parity = [String.raw`| A \\| B | C |`, "| --- | --- |", `${legalese} | today.`];
+    expect(rulesFor(parity.join(BREAK))).toContain("legalese");
+    // Every divider cell is hyphens, with optional colons.
+    const badDivider = ["A | B | C", "--- | : | ---", `${legalese} | x | y`];
+    expect(rulesFor(badDivider.join(BREAK))).toContain("legalese");
+
+    // A setext heading is the paragraph above the underline, not its last line.
+    const twoLine = [
+      "A deliberately lengthy heading first line with seven ordinary words",
+      "and another seven ordinary words on its second line",
+      "---",
+    ];
+    expect(rulesFor(twoLine.join(BREAK))).toContain("heading-style");
+    expect(headings(twoLine.join(BREAK))).toHaveLength(1);
+    // The paragraph starts after whatever precedes it, and never before it.
+    const preceded: Array<[string, string]> = [
+      ["blank", ""],
+      ["list", "- item"],
+      ["fence", ["```", "code", "```"].join(BREAK)],
+      ["heading", "# Title"],
+      ["break", "***"],
+      ["indented code", "    code"],
+      ["underline", "Other" + BREAK + "==="],
+    ];
+    for (const [name, before] of preceded) {
+      const document = [before, "Heading text", "---", "", legalese].join(BREAK);
+      expect(headings(document).at(-1)?.text, name).toBe("Heading text");
+      expect(rulesFor(document), name).toContain("legalese");
+    }
+
+    // Jekyll closes front matter with dots, and an unclosed block hid the body.
+    const dots = ["---", "description: |", "  ```md", "...", legalese];
+    expect(rulesFor(dots.join(BREAK))).toContain("legalese");
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
