@@ -30,6 +30,53 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
  * unclosed block hid every heading in the document while keeping its text as
  * prose. A block with no closing marker is not front matter at all.
  */
+/**
+ * Split text into lines the way a reader sees them.
+ *
+ * Splitting on /\r?\n/ alone left a bare-carriage-return document as one line,
+ * so a heading prefix swallowed every sentence after it. A leading byte order
+ * mark is removed for the same reason: it made the first line something other
+ * than "---", so front matter was not recognised and its contents opened fence
+ * state instead.
+ */
+export function toLines(text: string): string[] {
+  return text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
+}
+
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+
+/**
+ * The lines a document devotes to fenced code.
+ *
+ * Toggling on any line that starts with three backticks or tildes ignored what
+ * CommonMark actually requires, and each mistake hid visible text: a
+ * four-space-indented marker opened a fence that never legitimately opened, a
+ * tilde run closed a backtick fence, and a short run closed a longer one. A
+ * fence closes only with the same character, at least as long as its opener.
+ */
+function fencedLines(lines: string[], from: number): Set<number> {
+  const fenced = new Set<number>();
+  let open: { char: string; length: number } | null = null;
+  for (let i = from; i < lines.length; i++) {
+    const match = FENCE_OPEN.exec(lines[i]);
+    if (open === null) {
+      // An info string on a backtick fence cannot itself contain a backtick.
+      if (match === null || (match[2][0] === "`" && match[3].includes("`"))) continue;
+      open = { char: match[2][0], length: match[2].length };
+      fenced.add(i);
+      continue;
+    }
+    fenced.add(i);
+    if (match !== null
+      && match[2][0] === open.char
+      && match[2].length >= open.length
+      && match[3].trim() === "") {
+      open = null;
+    }
+  }
+  return fenced;
+}
+
 export function frontMatterRange(lines: string[]): { start: number; end: number } | null {
   // The delimiter sits at column 0. Matching a trimmed line let an indented
   // "---" inside a YAML block scalar close the block early, which left a code
@@ -54,27 +101,51 @@ const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
  * removed the second line from the document entirely, and silent removal is
  * worse than a wrong finding because nobody sees it happen.
  */
-function tableLines(lines: string[]): Set<number> {
+function tableLines(lines: string[], skip: (index: number) => boolean): Set<number> {
   const table = new Set<number>();
-  let inFence = false;
   for (let i = 0; i < lines.length - 1; i++) {
-    if (/^(```|~~~)/.test(lines[i].trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence || table.has(i)) continue;
+    if (skip(i) || table.has(i)) continue;
     const header = lines[i].trim();
     const divider = lines[i + 1].trim();
     if (!header.includes("|") || !TABLE_DIVIDER.test(divider) || !divider.includes("-")) continue;
     table.add(i);
     table.add(i + 1);
     for (let row = i + 2; row < lines.length; row++) {
-      if (!lines[row].includes("|")) break;
+      if (skip(row) || !lines[row].includes("|")) break;
       table.add(row);
     }
   }
   return table;
 }
+interface Structure {
+  frontMatter: { start: number; end: number } | null;
+  fenced: Set<number>;
+  tables: Set<number>;
+  /** True when the line is metadata, code, or a table, rather than text. */
+  skip: (index: number) => boolean;
+}
+
+/**
+ * Read a document's structure once, so the scanners cannot disagree about it.
+ *
+ * They each kept their own front matter and fence state, and every round of
+ * review found another place where two of them reached different answers and a
+ * reader lost text with nothing to show for it.
+ */
+function structureOf(lines: string[]): Structure {
+  const frontMatter = frontMatterRange(lines);
+  const fenced = fencedLines(lines, frontMatter === null ? 0 : frontMatter.end + 1);
+  const inMetadataOrCode = (index: number): boolean =>
+    (frontMatter !== null && index <= frontMatter.end) || fenced.has(index);
+  const tables = tableLines(lines, inMetadataOrCode);
+  return {
+    frontMatter,
+    fenced,
+    tables,
+    skip: (index) => inMetadataOrCode(index) || tables.has(index),
+  };
+}
+
 const ATX_HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 
@@ -89,19 +160,12 @@ function visibleHeadingText(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
 }
 
-function scanHeadings(lines: string[]): HeadingScan {
+function scanHeadings(lines: string[], structure: Structure): HeadingScan {
   const found: Heading[] = [];
   const structuralLines = new Set<number>();
-  const frontMatter = frontMatterRange(lines);
-  let inFence = false;
+  const { frontMatter, fenced } = structure;
   for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (frontMatter !== null && i <= frontMatter.end) continue;
-    if (/^(```|~~~)/.test(trimmed)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
+    if ((frontMatter !== null && i <= frontMatter.end) || fenced.has(i)) continue;
 
     const atx = ATX_HEADING.exec(lines[i]);
     if (atx) {
@@ -141,22 +205,14 @@ function scanHeadings(lines: string[]): HeadingScan {
 export function proseBlocks(text: string): ProseBlock[] {
   const blocks: ProseBlock[] = [];
   let current: ProseBlock | null = null;
-  let inFence = false;
-  const lines = text.split(/\r?\n/);
-  const headingLines = scanHeadings(lines).structuralLines;
-  // Front matter is metadata, not prose. It was audited as ordinary text, so
-  // "title: Each and Every Shall Policy" produced legalese and doublet
-  // findings against a line no reader reads as a sentence.
-  const frontMatter = frontMatterRange(lines);
-  const tables = tableLines(lines);
+  const lines = toLines(text);
+  // Front matter is metadata, code is code, and a table is a grid. None of the
+  // three is a sentence, and all three are decided once, before any rule runs.
+  const structure = structureOf(lines);
+  const headingLines = scanHeadings(lines, structure).structuralLines;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if ((frontMatter !== null && i <= frontMatter.end) || tables.has(i)) {
-      current = null;
-      continue;
-    }
-    if (/^(```|~~~)/.test(line.trim())) {
-      inFence = !inFence;
+    if (structure.skip(i)) {
       current = null;
       continue;
     }
@@ -165,8 +221,7 @@ export function proseBlocks(text: string): ProseBlock[] {
     // which merged them into giant fake sentences and biased the average.
     // A setext underline is already a heading line, so anything left that looks
     // like a break is one.
-    if (inFence
-      || headingLines.has(i)
+    if (headingLines.has(i)
       || THEMATIC_BREAK.test(line)
       || line.trim() === ""
       || NON_PROSE_PREFIX.test(line.trimStart())) {
@@ -184,8 +239,8 @@ export function proseBlocks(text: string): ProseBlock[] {
 
 /** Heading levels with their 1-indexed line numbers, ignoring fenced code. */
 export function headings(text: string): Heading[] {
-  const lines = text.split(/\r?\n/);
-  return scanHeadings(lines).found;
+  const lines = toLines(text);
+  return scanHeadings(lines, structureOf(lines)).found;
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and

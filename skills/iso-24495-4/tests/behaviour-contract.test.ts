@@ -241,6 +241,39 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(scalar.join(BREAK))).toContain("legalese");
   });
 
+  // Round 11. The three scanners each kept their own fence and front matter
+  // state, and disagreed. A four-space-indented marker opened a fence that
+  // never opened, a tilde run closed a backtick fence, a bare carriage return
+  // left the file as one line, and a byte order mark stopped front matter
+  // being front matter. Every one of them removed text a reader can see.
+  test("code fences, line endings and byte order marks cannot hide text", () => {
+    const CARRIAGE_RETURN = String.fromCharCode(13);
+    const BYTE_ORDER_MARK = String.fromCharCode(65279);
+    const legalese = "The supplier shall hereby comply.";
+
+    // A fence opens with at most three leading spaces.
+    expect(rulesFor(["    ```", legalese].join(BREAK))).toContain("legalese");
+    // A fence closes only with its own character, at least as long.
+    const nested = ["````md", "~~~bash", "example", "````", "", legalese];
+    expect(rulesFor(nested.join(BREAK))).toContain("legalese");
+    expect(headings(["````md", "~~~bash", "x", "````", "##### Deep."].join(BREAK)))
+      .toHaveLength(1);
+    // A real fence still hides its contents, closed or not.
+    expect(rulesFor(["```", legalese, "```"].join(BREAK))).toEqual([]);
+    expect(rulesFor(["```", legalese].join(BREAK))).toEqual([]);
+    expect(rulesFor(["```js", "code", "```", "", legalese].join(BREAK))).toContain("legalese");
+
+    // A bare carriage return separates lines, as CRLF already did.
+    const bareCR = ["##### Deep heading.", legalese].join(CARRIAGE_RETURN);
+    expect(rulesFor(bareCR)).toContain("legalese");
+    expect(headings(bareCR)).toHaveLength(1);
+
+    // A byte order mark precedes the opening delimiter in many Windows files.
+    const withMark = BYTE_ORDER_MARK
+      + ["---", "description: |", "  ```md", "---", legalese].join(BREAK);
+    expect(rulesFor(withMark)).toContain("legalese");
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
