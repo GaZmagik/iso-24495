@@ -213,6 +213,34 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(surrounded.join(BREAK))).toContain("legalese");
   });
 
+  // Round 10. Both structural exclusions were mine, and both lost the reader
+  // text. A thematic break joined the sentence below it, so a 30-word
+  // sentence became a false 31-word finding and an opening filler stopped
+  // being an opening. An indented "---" inside a YAML block scalar closed the
+  // front matter early, which left a code fence open and hid the whole body.
+  test("rules across the page and YAML scalars are not read as sentences", () => {
+    for (const rule of ["---", "***", "___", "- - -"]) {
+      expect(rulesFor([rule, "Certainly! The answer is 42."].join(BREAK)), rule)
+        .toContain("filler-opening");
+    }
+    // A break above a sentence must not add a word to it.
+    const thirty = Array.from({ length: 30 }, (_unused, index) => `word${index}`).join(" ");
+    expect(rulesFor(["---", `${thirty}.`].join(BREAK))).toEqual([]);
+    // A setext underline is still a heading, not a break.
+    expect(headings(["My Heading", "---", "", "Body text."].join(BREAK))).toHaveLength(1);
+
+    const scalar = [
+      "---",
+      "description: |",
+      "  ```md",
+      "  ---",
+      "  ```",
+      "---",
+      "The supplier shall be audited.",
+    ];
+    expect(rulesFor(scalar.join(BREAK))).toContain("legalese");
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
@@ -333,7 +361,7 @@ describe("reader-facing behaviour contracts", () => {
     }
 
     // The advice must not create the next violation. "ascertain" suggests
-    // "check", which is shorter, so a sentence at the cap stays at the cap.
+    // "find", which is shorter, so a sentence at the cap stays at the cap.
     const padding = Array(27).fill("word").join(" ");
     expect(rulesFor(`We must ascertain ${padding}.`)).toEqual(["complex-word"]);
     expect(rulesFor(`We must check ${padding}.`)).toEqual([]);

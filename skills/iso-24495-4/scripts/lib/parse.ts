@@ -31,10 +31,19 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
  * prose. A block with no closing marker is not front matter at all.
  */
 export function frontMatterRange(lines: string[]): { start: number; end: number } | null {
-  if (lines[0]?.trim() !== "---") return null;
-  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  // The delimiter sits at column 0. Matching a trimmed line let an indented
+  // "---" inside a YAML block scalar close the block early, which left a code
+  // fence outside it and hid the whole document body.
+  const isDelimiter = (line: string | undefined): boolean => /^---[ \t]*$/.test(line ?? "");
+  if (!isDelimiter(lines[0])) return null;
+  const closing = lines.findIndex((line, index) => index > 0 && isDelimiter(line));
   return closing === -1 ? null : { start: 0, end: closing };
 }
+
+// A rule across the page, not a word in a sentence. Table detection used to
+// remove these by accident; once it stopped, "---" joined the sentence beneath
+// it and added a token, which turned a 30-word sentence into a false finding.
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
 /**
  * The lines a document devotes to tables.
@@ -154,8 +163,11 @@ export function proseBlocks(text: string): ProseBlock[] {
     // Test the trimmed line: list markers and quotes are structure at ANY
     // indentation. Testing the raw line made nested bullets count as prose,
     // which merged them into giant fake sentences and biased the average.
+    // A setext underline is already a heading line, so anything left that looks
+    // like a break is one.
     if (inFence
       || headingLines.has(i)
+      || THEMATIC_BREAK.test(line)
       || line.trim() === ""
       || NON_PROSE_PREFIX.test(line.trimStart())) {
       current = null;
