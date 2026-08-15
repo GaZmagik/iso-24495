@@ -3,7 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { adviseOnFile } from "../../../hooks/audit-markdown.ts";
 import { join, relative } from "node:path";
-import { auditText, ENGINE_THRESHOLDS, isAuditedDocument } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import {
+  auditText,
+  ENGINE_THRESHOLDS,
+  isAuditedDocument,
+  projectAcronyms,
+} from "../../iso-24495-4/scripts/audit-corpus.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -254,9 +259,13 @@ describe("repository writing conventions", () => {
     expect(markdownFiles.length).toBeGreaterThanOrEqual(15);
     expect(markdownFiles).toContain(join(REPOSITORY_ROOT, "README.md"));
 
+    const known = projectAcronyms(REPOSITORY_ROOT);
+    expect(known.size).toBeGreaterThan(0);
     const violations = markdownFiles.flatMap((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
-      return auditText(readFileSync(path, "utf8")).map(
+      // The repository is a project like any other, so it uses its own
+      // per-project acronym list rather than a stricter setting than it ships.
+      return auditText(readFileSync(path, "utf8"), { knownAcronyms: known }).map(
         (violation) => `${relativePath}:${violation.line}: ${violation.rule}: ${violation.detail}`,
       );
     });

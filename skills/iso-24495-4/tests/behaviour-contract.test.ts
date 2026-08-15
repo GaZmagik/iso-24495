@@ -369,8 +369,14 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(["The chronology continues here", `2024. ${legalese}`].join(BREAK)))
       .toContain("legalese");
     expect(rulesFor([`1234567890. ${legalese}`].join(BREAK))).toContain("legalese");
-    expect(rulesFor(["Intro.", "", `2. ${legalese}`].join(BREAK))).toEqual([]);
-    expect(rulesFor(["The intro continues", `1. ${legalese}`].join(BREAK))).toEqual([]);
+    // A list item is audited, so silence no longer shows where the paragraph
+    // ended. The block structure does: a continuation joins the paragraph
+    // above it, and an item starts one of its own.
+    expect(proseBlocks(["The chronology continues here", "2024. It continued."].join(BREAK)))
+      .toHaveLength(1);
+    expect(proseBlocks(["The intro continues", "1. A new item."].join(BREAK)))
+      .toHaveLength(2);
+    expect(rulesFor(["Intro.", "", `2. ${legalese}`].join(BREAK))).toContain("legalese");
 
     // An escaped pipe is content, so it changes neither column count.
     const escaped = String.raw`| A \| B | C |`;
@@ -699,7 +705,13 @@ describe("reader-facing behaviour contracts", () => {
     ].join("\n");
     expect(auditText(quoted)).toEqual([]);
     expect(auditText(table)).toEqual([]);
-    expect(auditText("- Parent\n  - The supplier shall respond.")).toEqual([]);
+    // A list item is the writer's own prose, so it is measured. A nested item
+    // is its own block, which is why six bullets are not a six-sentence
+    // paragraph.
+    expect(auditText("- Parent\n  - The supplier shall respond.")
+      .map((violation) => violation.rule)).toEqual(["legalese"]);
+    const sixItems = Array.from({ length: 6 }, (_unused, index) => `- Item ${index}.`);
+    expect(auditText(sixItems.join("\n"))).toEqual([]);
 
     const separated = [
       quoted,

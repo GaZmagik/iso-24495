@@ -343,7 +343,8 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
 function doubletViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
-    const paragraph = block.lines.join("\n");
+    // Named rather than used: "*to*, not *in order to*" is the advice itself.
+    const paragraph = block.lines.map(withoutQuotedWords).join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
     const matches: Array<{ start: number; end: number; entry: DoubletEntry }> = [];
     for (const entry of DOUBLETS) {
@@ -460,7 +461,8 @@ function complexWordViolations(text: string): Violation[] {
 function doubleNegativeViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
-    const paragraph = block.lines.join("\n");
+    // Named rather than used: the rule's own description quotes the phrase.
+    const paragraph = block.lines.map(withoutQuotedWords).join("\n");
     for (const phrase of DOUBLE_NEGATIVES) {
       const pattern = new RegExp(`\\b${phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
       for (const match of paragraph.matchAll(pattern)) {
@@ -541,7 +543,8 @@ function tableHeaderViolations(text: string): Violation[] {
 function wordyPhraseViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
-    const paragraph = block.lines.join("\n");
+    // Named rather than used: "*to*, not *in order to*" is the advice itself.
+    const paragraph = block.lines.map(withoutQuotedWords).join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
     for (const entry of WORDY_PHRASES) {
       const pattern = new RegExp(`\\b${entry.phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
@@ -653,8 +656,9 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
       });
     }
     for (let i = 0; i < block.lines.length; i++) {
+      const line = withoutQuotedWords(block.lines[i]);
       for (const term of LEGALESE) {
-        const matches = block.lines[i].match(new RegExp(`\\b${term}\\b`, "gi"));
+        const matches = line.match(new RegExp(`\\b${term}\\b`, "gi"));
         for (let n = 0; n < (matches?.length ?? 0); n++) {
           violations.push({
             rule: "legalese",

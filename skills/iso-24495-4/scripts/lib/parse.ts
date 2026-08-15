@@ -28,16 +28,6 @@ const NON_PROSE_PREFIX = /^(#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|>)/;
 // ten digits or more is not a list marker at all.
 const ORDERED_MARKER = /^(\d{1,9})[.)][ \t]/;
 
-/** True when the line begins a block rather than continuing a paragraph. */
-function startsStructure(line: string, midParagraph: boolean): boolean {
-  // Only ASCII space and tab indent a block. Trimming every Unicode space
-  // made a non-breaking space before ">" a blockquote, which GitHub renders
-  // as ordinary text, so the sentence left the document.
-  const trimmed = line.replace(/^[ \t]+/, "");
-  const ordered = ORDERED_MARKER.exec(trimmed);
-  if (ordered !== null) return !midParagraph || ordered[1] === "1";
-  return NON_PROSE_PREFIX.test(trimmed);
-}
 // A table row need not begin with a pipe: GitHub renders "Term | Meaning" with
 // a divider beneath it, and those cells were being audited as prose, so a
 // table's contents produced findings that belonged to no sentence.
@@ -345,35 +335,60 @@ export function proseBlocks(text: string): ProseBlock[] {
   // three is a sentence, and all three are decided once, before any rule runs.
   const structure = structureOf(lines);
   const headingLines = scanHeadings(lines, structure).structuralLines;
+  // A list item is the writer's own prose, read as a sentence, so it is
+  // measured as one. Excluding it left the longest text in many documents
+  // unadvised: a bullet can be a 40-word sentence, and a reader meets it as
+  // one. Each item is its own block, so a list of six does not read as a
+  // six-sentence paragraph, and the marker is removed so it is not a word.
+  //
+  // A quotation is not the writer's prose. It is someone else's words, or a
+  // demonstration of the writing the document is warning against, and neither
+  // can be repaired by the writer being advised.
+  let inList = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (structure.skip(i)) {
       current = null;
+      inList = false;
       continue;
     }
-    // Test the trimmed line: list markers and quotes are structure at ANY
-    // indentation. Testing the raw line made nested bullets count as prose,
-    // which merged them into giant fake sentences and biased the average.
     // A setext underline is already a heading line, so anything left that looks
     // like a break is one.
-    if (headingLines.has(i)
-      || THEMATIC_BREAK.test(line)
-      || line.trim() === ""
-      || startsStructure(line, current !== null)) {
+    if (headingLines.has(i) || THEMATIC_BREAK.test(line) || line.trim() === "") {
       current = null;
+      inList = false;
       continue;
     }
-    // Four spaces is indented code, unless it continues a paragraph, which
-    // CommonMark does not allow code to interrupt. Inside a list item the
-    // same indentation is the item's own content.
-    if (current === null && /^(?: {4}|\t)/.test(line)) {
+    if (/^ {0,3}>/.test(line)) {
+      current = null;
+      inList = false;
       continue;
+    }
+    // Only a marker that may begin a list here counts as one. An ordered
+    // marker interrupts a paragraph solely when it is 1, which is what keeps
+    // a hard-wrapped "2024." part of the sentence above it.
+    const candidate = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(line);
+    const ordered = ORDERED_MARKER.exec(line.replace(/^[ \t]+/, ""));
+    const marker = candidate !== null
+      && (ordered === null || current === null || inList || ordered[1] === "1")
+      ? candidate
+      : null;
+    const content = marker === null ? line : line.slice(marker[0].length);
+    // Four spaces is indented code, unless it continues a paragraph or belongs
+    // to a list item. CommonMark does not let code interrupt a paragraph.
+    if (current === null && !inList && marker === null && /^(?: {4}|\t)/.test(line)) {
+      continue;
+    }
+    // A marker starts an item, so it starts a block.
+    if (marker !== null) {
+      inList = true;
+      current = null;
     }
     if (current === null) {
       current = { line: i + 1, lines: [] };
       blocks.push(current);
     }
-    current.lines.push(line);
+    current.lines.push(content);
   }
   return blocks;
 }
