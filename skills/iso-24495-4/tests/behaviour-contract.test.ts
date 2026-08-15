@@ -340,6 +340,18 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(metadata.join(BREAK))).toEqual([]);
   });
 
+  // A third reviewer attacked the parser and offered six shapes. Five matched
+  // what GitHub renders, so the engine was right about them. This one did not:
+  // a line starting with a pipe, with no divider beneath it, is ordinary text.
+  test("a pipe alone does not make a line a table row", () => {
+    const legalese = "The supplier shall hereby comply.";
+    expect(rulesFor(`| Important note: ${legalese}`)).toContain("legalese");
+    expect(rulesFor([`| x | ${legalese} |`].join(BREAK))).toContain("legalese");
+    // A header with a matching divider is still a table, rows and all.
+    expect(rulesFor(["| A | B |", "|---|---|", `| x | ${legalese} |`].join(BREAK))).toEqual([]);
+    expect(rulesFor(["Term | Meaning", "---|---", `Rule | ${legalese}`].join(BREAK))).toEqual([]);
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {

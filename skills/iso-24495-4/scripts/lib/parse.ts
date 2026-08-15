@@ -16,7 +16,11 @@ export interface Heading {
   text: string;
 }
 
-const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)/;
+// A pipe is not in this list. Table rows are recognised by tableLines, which
+// requires a header and a matching divider, so a line that merely begins with a
+// pipe is the ordinary text GitHub renders it as. Excluding it here dropped
+// "| Important note: the supplier shall comply." from the document in silence.
+const NON_PROSE_PREFIX = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|>)/;
 // A table row need not begin with a pipe: GitHub renders "Term | Meaning" with
 // a divider beneath it, and those cells were being audited as prose, so a
 // table's contents produced findings that belonged to no sentence.
