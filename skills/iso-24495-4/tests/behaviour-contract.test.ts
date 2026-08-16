@@ -701,6 +701,10 @@ describe("reader-facing behaviour contracts", () => {
     expect(proseBlocks(["<span", "hidden", "still hidden>", "Visible."].join(BREAK))
       .map((b) => b.lines.join(" ").trim())).toEqual(["Visible."]);
 
+    // A tag name may carry a namespace, as an inline SVG does.
+    expect(proseBlocks('<svg:path d="M0 0"/> hello there').map((b) => b.lines[0].trim()))
+      .toEqual(["hello there"]);
+
     // Front matter keys may be quoted, and may be written in any language.
     for (const key of ['"title": Metadata here', "résumé: Metadata here"]) {
       expect(headings(["---", key, "---", "", "Body."].join(BREAK)), key).toEqual([]);

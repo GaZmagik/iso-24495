@@ -423,7 +423,7 @@ function parse(lines: string[]): Parsed {
       visible = closes === -1 ? "" : visible.slice(closes + 1);
       tagOpen = closes === -1;
     }
-    const opens = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^>]*)?$/.exec(visible);
+    const opens = /<\/?[A-Za-z][A-Za-z0-9:-]*(?:[ \t][^>]*)?$/.exec(visible);
     if (opens !== null) {
       visible = visible.slice(0, opens.index);
       tagOpen = true;
@@ -498,7 +498,7 @@ function withoutInvisible(
 }
 
 function withoutTags(text: string): string {
-  const tag = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+(?:[^>"']|"[^"]*"|'[^']*')*)?\/?>/g;
+  const tag = /<\/?[A-Za-z][A-Za-z0-9:-]*(?:[ \t]+(?:[^>"']|"[^"]*"|'[^']*')*)?\/?>/g;
   return text.replace(tag, " ");
 }
 
