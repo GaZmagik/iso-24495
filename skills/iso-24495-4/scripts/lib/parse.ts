@@ -46,13 +46,13 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // does. A link reference definition cannot interrupt one, so it counts
 // only where a paragraph is not already open. A footnote body is visible,
 // which is why its label starts with "^" and it is not here.
-const INVISIBLE_MARKUP = /^ {0,3}(?:<!--|<!|<\?)/;
+const COMMENT_OPEN = /<!--/;
+const DECLARATION_OPEN = /^ {0,3}<!(?!--)/;
+const INSTRUCTION_OPEN = /<\?/;
 // A definition is a label, a colon, a destination, and an optional title.
 // Matching the label alone removed "[Question]: The supplier shall comply."
 // from the document, and a reader reads that as a sentence.
-const LINK_DEFINITION = /^ {0,3}\[[^\]^][^\]]*\]:[ \t]*(?:<[^>]*>|[^ \t]+)[ \t]*(?:['"(][^'")]*['")])?[ \t]*$/;
-// A definition's title may sit on its own line beneath it.
-const DEFINITION_TITLE = /^ {0,3}['"(][^'")]*['")][ \t]*$/;
+const LINK_DEFINITION = /^ {0,3}\[[^\]^][^\]]*\]:[ \t]*(?:<[^>]*>|[^ \t]+)[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))?[ \t]*$/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 
 /**
@@ -249,7 +249,6 @@ function parse(lines: string[]): Parsed {
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
   let invisibleUntil: string | null = null;
-  let definedAbove = false;
   let tagOpen = false;
 
   const closeParagraph = (): void => {
@@ -265,10 +264,7 @@ function parse(lines: string[]): Parsed {
     if (i <= tableUntil) continue;
 
     const line = expandTabs(lines[i]);
-    if (invisibleUntil !== null) {
-      if (line.includes(invisibleUntil)) invisibleUntil = null;
-      continue;
-    }
+    if (invisibleUntil !== null && !line.includes(invisibleUntil)) continue;
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
 
@@ -343,18 +339,16 @@ function parse(lines: string[]): Parsed {
       continue;
     }
 
-    if (INVISIBLE_MARKUP.test(text)) {
+    const outside = withoutInvisible(text, invisibleUntil);
+    invisibleUntil = outside.until;
+    text = outside.text;
+    // A line that held nothing but invisible markup is a block of its own, and
+    // an HTML block interrupts a paragraph, so the halves stay separate.
+    if (text.trim() === "") {
       closeParagraph();
-      // A comment runs until it closes, and every line of it is invisible.
-      if (text.startsWith("<!--") && !text.includes("-->")) invisibleUntil = "-->";
       continue;
     }
-    if (paragraph === null && LINK_DEFINITION.test(text)) {
-      definedAbove = true;
-      continue;
-    }
-    if (definedAbove && DEFINITION_TITLE.test(text)) continue;
-    definedAbove = false;
+    if (paragraph === null && LINK_DEFINITION.test(text)) continue;
 
     const fenceOpen = FENCE_OPEN.exec(text);
     if (fenceOpen !== null
@@ -455,6 +449,54 @@ function nextContent(lines: string[], index: number, stack: Container[]): string
  * and the words between "< 5" and "> 2" in ordinary prose. A tag starts
  * with a letter or a slash, and an attribute may hold a greater-than sign.
  */
+/**
+ * Remove comments, declarations and processing instructions from a line.
+ *
+ * Each is a span rather than a line: "<!-- hidden --> The supplier shall
+ * comply." holds one and a sentence, and discarding the whole line took the
+ * sentence with it. An unclosed one carries to the following lines.
+ */
+function withoutInvisible(
+  text: string,
+  until: string | null,
+): { text: string; until: string | null } {
+  let rest = text;
+  let open = until;
+  let scanning = true;
+  while (scanning) {
+    scanning = false;
+    if (open !== null) {
+      const closes = rest.indexOf(open);
+      if (closes === -1) return { text: "", until: open };
+      rest = rest.slice(closes + open.length);
+      open = null;
+      scanning = true;
+      continue;
+    }
+    const comment = rest.search(COMMENT_OPEN);
+    const instruction = rest.search(INSTRUCTION_OPEN);
+    const declaration = DECLARATION_OPEN.test(rest) ? rest.indexOf("<!") : -1;
+    // Whichever opens first on this line decides what closes it.
+    let first: { at: number; close: string } | null = null;
+    for (const entry of [
+      { at: comment, close: "-->" },
+      { at: instruction, close: "?>" },
+      { at: declaration, close: ">" },
+    ]) {
+      if (entry.at === -1) continue;
+      if (first === null || entry.at < first.at) first = entry;
+    }
+    if (first === null) continue;
+    const before = rest.slice(0, first.at);
+    const after = rest.slice(first.at);
+    const closes = after.indexOf(first.close, 2);
+    if (closes === -1) return { text: before, until: first.close };
+    rest = before + " " + after.slice(closes + first.close.length);
+    scanning = true;
+  }
+  return { text: rest, until: null };
+}
+
 function withoutTags(text: string): string {
   const tag = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+(?:[^>"']|"[^"]*"|'[^']*')*)?\/?>/g;
   return text.replace(tag, " ");

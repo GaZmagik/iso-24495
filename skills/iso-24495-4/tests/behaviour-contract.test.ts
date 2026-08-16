@@ -652,9 +652,22 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(`[Question]: ${legalese}`)).toContain("legalese");
     expect(rulesFor(['[policy]: https://example.com "shall hereby"', "", "Read it."].join(BREAK)))
       .toEqual([]);
-    // Its title may sit on the line below it.
+    // A title on its own line beneath a definition is measured. The state that
+    // skipped it survived blank lines and definitions that already had a
+    // title, so a quoted sentence after one disappeared. A visible finding on
+    // an unusual document beats a sentence leaving in silence.
     expect(rulesFor(["[policy]: https://example.com", '  "shall hereby"'].join(BREAK)))
-      .toEqual([]);
+      .toContain("legalese");
+    expect(rulesFor(['[p]: /url "title"', '"The supplier shall comply."'].join(BREAK)))
+      .toContain("legalese");
+    // A title's delimiters must match, or the line is not a definition.
+    expect(rulesFor(`[p]: /url "shall hereby'`)).toContain("legalese");
+    // A comment holds a sentence on the same line, and the sentence stays.
+    expect(proseBlocks("<!-- hidden --> The supplier shall comply.")
+      .map((b) => b.lines[0].trim())).toEqual(["The supplier shall comply."]);
+    // An indented comment and a processing instruction are invisible too.
+    expect(rulesFor(["  <!--", legalese, "  -->"].join(BREAK))).toEqual([]);
+    expect(rulesFor(["<?php", legalese, "?>"].join(BREAK))).toEqual([]);
     // A comment runs until it closes, and every line of it is invisible.
     expect(rulesFor(["<!--", legalese, "-->"].join(BREAK))).toEqual([]);
 
