@@ -34,7 +34,9 @@ const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const QUOTE_MARKER = /^ {0,3}>[ \t]?/;
-const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)/;
+// A marker with no content is still a marker: "-" on its own opens an empty
+// item, and reading it as text put a hyphen into the sentence below it.
+const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+|$)/;
 const TASK_MARKER = /^\[[ xX]\][ \t]+/;
 const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
