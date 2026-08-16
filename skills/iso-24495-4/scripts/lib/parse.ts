@@ -41,6 +41,12 @@ const TASK_MARKER = /^\[[ xX]\][ \t]+/;
 const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
 // sentence, so it is skipped while the warning beneath it is measured.
+// Text a reader never meets: a link reference definition, an HTML comment,
+// a declaration, or a processing instruction. Auditing them gave advice
+// about words that reach nobody.
+// A footnote body is visible: a reader meets it at the foot of the page, so
+// its label starts with "^" and it is not in this list.
+const INVISIBLE = /^ {0,3}(?:\[[^\]^][^\]]*\]:[ \t]|<!--|<!|<\?)/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 
 /**
@@ -80,7 +86,17 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
   const closing = lines.findIndex(
     (line, index) => index > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(line),
   );
-  return closing === -1 ? null : { start: 0, end: closing };
+  if (closing === -1) return null;
+  // Every line between the delimiters must look like YAML. Without this, a
+  // document opening with a thematic break lost everything down to the next
+  // one: "---", a paragraph a reader reads, "---" hid the paragraph.
+  const yaml = lines.slice(1, closing).every((line) =>
+    line.trim() === ""
+    || /^[ \t]/.test(line)
+    || /^#/.test(line.trim())
+    || /^- /.test(line.trim())
+    || /^[\w.$-]+[ \t]*:( |$)/.test(line));
+  return yaml ? { start: 0, end: closing } : null;
 }
 
 function indentOf(line: string): number {
@@ -113,6 +129,9 @@ function cellCount(row: string): number {
 /** True when every divider cell is hyphens, with optional colons. */
 function isDividerRow(row: string): boolean {
   if (!TABLE_DIVIDER.test(row) || !row.includes("-")) return false;
+  // A line that starts a list item is a list item. GitHub agrees: it
+  // renders "A | B" above "- | -" as a paragraph and a list.
+  if (LIST_MARKER.test(row)) return false;
   const inner = row.replace(/^\|/, "").replace(/\|$/, "");
   return inner.split("|").every((cell) => /^:?-+:?$/.test(cell.trim()));
 }
@@ -184,6 +203,9 @@ function matchOpen(line: string, stack: Container[]): { rest: string; matched: n
 function listMarkerAt(line: string, midParagraph: boolean): { length: number; column: number } | null {
   const marker = LIST_MARKER.exec(line);
   if (marker === null) return null;
+  // A marker with no content cannot interrupt a paragraph: CommonMark
+  // requires a non-blank first line for a list to do that.
+  if (midParagraph && line.slice(marker[0].length).trim() === "") return null;
   const ordered = /^\d/.test(marker[2]);
   if (midParagraph && (!ordered || marker[2].slice(0, -1) !== "1")) {
     // A bullet may interrupt a paragraph; an ordered marker may not unless it
@@ -278,8 +300,13 @@ function parse(lines: string[]): Parsed {
           continue;
         }
         // A thematic break outranks a list marker, so "- - -" is a rule across
-        // the page rather than a bullet holding two more bullets.
-        const marker = THEMATIC_BREAK.test(text) ? null : listMarkerAt(text, paragraph !== null);
+        // the page rather than a bullet holding two more bullets. A setext
+        // underline outranks it too, so a lone "-" under a paragraph is that
+        // paragraph's underline rather than an empty item.
+        const underlines = paragraph !== null && SETEXT_UNDERLINE.test(text);
+        const marker = THEMATIC_BREAK.test(text) || underlines
+          ? null
+          : listMarkerAt(text, paragraph !== null);
         if (marker !== null) {
           closeParagraph();
           const consumed = text.slice(0, marker.length);
@@ -293,11 +320,12 @@ function parse(lines: string[]): Parsed {
 
     // The label opens an alert only as a quotation's first line. Elsewhere it
     // is ordinary text, and skipping it split a paragraph in two.
-    if (paragraph === null
-      && stack.some((container) => container.kind === "quote")
-      && ALERT_MARKER.test(text.trim())) {
+    const topLevelAlert = stack.length === 1 && stack[0].kind === "quote";
+    if (paragraph === null && topLevelAlert && ALERT_MARKER.test(text.trim())) {
       continue;
     }
+
+    if (paragraph === null && INVISIBLE.test(text)) continue;
 
     const fenceOpen = FENCE_OPEN.exec(text);
     if (fenceOpen !== null
@@ -364,7 +392,9 @@ function parse(lines: string[]): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
-    paragraph.lines.push(text.trimStart());
+    // A tag is markup, not a word. Counting "<div class=\"note\">" as three
+    // words made a sentence longer than the one a reader meets.
+    paragraph.lines.push(text.replace(/<[^>]+>/g, " ").trimStart());
   }
 
   return { paragraphs, headings: found, hidden, tables };

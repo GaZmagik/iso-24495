@@ -566,7 +566,7 @@ describe("reader-facing behaviour contracts", () => {
   //   - HTML holds reader-visible prose, so its text is measured;
   //   - a GitHub alert label is a label, and GitHub is where these are read.
   test("block structure matches the CommonMark reference implementation", () => {
-    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(265);
+    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(272);
     // Every divergence carries its reason, so none can be added silently.
     for (const shape of REFERENCE_SHAPES) {
       if (shape.differsFromReference !== undefined) {
@@ -594,6 +594,40 @@ describe("reader-facing behaviour contracts", () => {
     // The alert label is a label, and its body is the sentence that matters.
     expect(proseBlocks(["> [!WARNING]", "> Careful."].join(BREAK)).map((b) => b.lines[0]))
       .toEqual(["Careful."]);
+  });
+
+  // Round 19, with the reference implementation as the judge rather than
+  // either of us. Each of these removed text a reader reads.
+  test("precedence between blocks follows the reference", () => {
+    const legalese = "The supplier shall hereby comply.";
+
+    // A list marker outranks a table divider: GitHub renders "A | B" above
+    // "- | -" as a paragraph and a list, so the sentence below is prose.
+    const pseudoTable = ["A | B", "- | -", `${legalese} | x`];
+    expect(rulesFor(pseudoTable.join(BREAK))).toContain("legalese");
+    // A real divider still makes a table.
+    expect(rulesFor(["A | B", "---|---", `x | ${legalese}`].join(BREAK))).toEqual([]);
+
+    // A setext underline outranks a list marker, so a lone "-" under a
+    // paragraph underlines it rather than opening an empty item.
+    const underlined = ["A heading with thirteen ordinary words that should be checked by the heading rule", "-"];
+    expect(headings(underlined.join(BREAK)).map((h) => h.level)).toEqual([2]);
+    expect(rulesFor(underlined.join(BREAK))).toContain("heading-style");
+    // A marker with nothing after it cannot interrupt a paragraph.
+    expect(proseBlocks(["Paragraph", "*"].join(BREAK)).map((b) => b.lines.join(" ")))
+      .toEqual(["Paragraph *"]);
+    expect(proseBlocks(["Paragraph", "1."].join(BREAK)).map((b) => b.lines.join(" ")))
+      .toEqual(["Paragraph 1."]);
+
+    // Front matter must look like YAML. A document opening with a thematic
+    // break lost everything down to the next one.
+    const hijack = ["---", "Hello world. A reader reads this.", "---", "More text."];
+    expect(proseBlocks(hijack.join(BREAK)).length).toBeGreaterThan(0);
+    expect(headings(hijack.join(BREAK)).map((h) => h.text))
+      .toEqual(["Hello world. A reader reads this."]);
+    // Real front matter is still metadata.
+    expect(rulesFor(["---", "title: Each and Every Shall Policy", "---", "", "Body."].join(BREAK)))
+      .toEqual([]);
   });
 
   // A filler word must survive emphasis and typography, and must not match
