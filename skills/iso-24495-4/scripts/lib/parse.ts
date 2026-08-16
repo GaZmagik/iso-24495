@@ -46,14 +46,86 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // does. A link reference definition cannot interrupt one, so it counts
 // only where a paragraph is not already open. A footnote body is visible,
 // which is why its label starts with "^" and it is not here.
-const COMMENT_OPEN = /<!--/;
-const DECLARATION_OPEN = /^ {0,3}<!(?!--)/;
-const INSTRUCTION_OPEN = /<\?/;
-// A definition is a label, a colon, a destination, and an optional title.
-// Matching the label alone removed "[Question]: The supplier shall comply."
-// from the document, and a reader reads that as a sentence.
-const LINK_DEFINITION = /^ {0,3}\[[^\]^][^\]]*\]:[ \t]*(?:<[^>]*>|[^ \t]+)[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))?[ \t]*$/;
+const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+
+/**
+ * A conservative single-line link reference definition.
+ *
+ * CommonMark permits more forms across lines. Keeping those visible can add a
+ * finding, while accepting a malformed definition removes a sentence without
+ * telling its writer. This parser therefore recognises only forms whose label,
+ * destination and optional title are complete on one line.
+ */
+function isLinkDefinition(line: string): boolean {
+  const start = /^ {0,3}\[/.exec(line);
+  if (start === null) return false;
+  let index = start[0].length;
+  let label = "";
+  while (index < line.length) {
+    if (line[index] === "\\" && index + 1 < line.length) {
+      label += line.slice(index, index + 2);
+      index += 2;
+      continue;
+    }
+    if (line[index] === "]") break;
+    if (line[index] === "[") return false;
+    label += line[index];
+    index++;
+  }
+  if (line[index] !== "]" || line[index + 1] !== ":") return false;
+  if (label.trim() === "" || label.startsWith("^") || label.length > 999) return false;
+  index += 2;
+  while (line[index] === " ") index++;
+
+  if (line[index] === "<") {
+    index++;
+    let closed = false;
+    while (index < line.length) {
+      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line[index + 1])) {
+        index += 2;
+        continue;
+      }
+      if (line[index] === "<") return false;
+      if (line[index] === ">") {
+        index++;
+        closed = true;
+        break;
+      }
+      index++;
+    }
+    if (!closed) return false;
+  } else {
+    const destinationStart = index;
+    let depth = 0;
+    while (index < line.length && line[index] !== " " && line[index] !== "\t") {
+      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line[index + 1])) {
+        index += 2;
+        continue;
+      }
+      if (line[index] === "(") depth++;
+      if (line[index] === ")") depth--;
+      if (depth < 0 || depth > 32) return false;
+      index++;
+    }
+    if (index === destinationStart || depth !== 0) return false;
+  }
+
+  if (index === line.length) return true;
+  if (line[index] !== " ") return false;
+  while (line[index] === " ") index++;
+  if (index === line.length) return true;
+
+  const opening = line[index];
+  const closing = opening === "(" ? ")" : opening;
+  if (opening !== "\"" && opening !== "'" && opening !== "(") return false;
+  index++;
+  while (index < line.length && line[index] !== closing) index++;
+  if (line[index] !== closing) return false;
+  index++;
+  while (line[index] === " ") index++;
+  return index === line.length;
+}
 
 /**
  * Split text into lines the way a reader sees them.
@@ -164,6 +236,8 @@ interface Parsed {
   hidden: Set<number>;
   /** Table lines: structure, but rules about tables still read them. */
   tables: Set<number>;
+  /** Source lines with invisible markup removed for line-based rules. */
+  readable: string[];
 }
 
 /**
@@ -241,6 +315,7 @@ function parse(lines: string[]): Parsed {
   const found: Heading[] = [];
   const hidden = new Set<number>();
   const tables = new Set<number>();
+  const readable = [...lines];
   const stack: Container[] = [];
   const frontMatter = frontMatterRange(lines);
 
@@ -248,8 +323,7 @@ function parse(lines: string[]): Parsed {
   let paragraphDepth = 0;
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
-  let invisibleUntil: string | null = null;
-  let tagOpen = false;
+  let invisible: { until: string; depth: number } | null = null;
 
   const closeParagraph = (): void => {
     paragraph = null;
@@ -258,19 +332,44 @@ function parse(lines: string[]): Parsed {
   for (let i = 0; i < lines.length; i++) {
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
+      readable[i] = "";
       closeParagraph();
       continue;
     }
     if (i <= tableUntil) continue;
 
     const line = expandTabs(lines[i]);
-    if (invisibleUntil !== null && !line.includes(invisibleUntil)) continue;
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
+    let text = rest;
+
+    if (invisible !== null) {
+      if (matched < invisible.depth) {
+        // An HTML block cannot escape the quotation or list item that owns it.
+        // Carrying its close marker past that boundary hid ordinary margin text.
+        invisible = null;
+        closeParagraph();
+        stack.length = matched;
+      } else {
+        const outside = withoutInvisible(text, invisible.until);
+        if (outside.until !== null) {
+          readable[i] = "";
+          continue;
+        }
+        invisible = null;
+        text = outside.text;
+        readable[i] = text;
+        if (text.trim() === "") {
+          closeParagraph();
+          continue;
+        }
+      }
+    }
 
     if (fence !== null) {
       if (allMatched) {
         hidden.add(i);
+        readable[i] = "";
         const closing = FENCE_OPEN.exec(rest);
         if (closing !== null
           && closing[2][0] === fence.char
@@ -295,7 +394,6 @@ function parse(lines: string[]): Parsed {
     // wrapped quotation or list item became a second block, and the advice
     // about the paragraph a reader sees never arrived.
     const lazy = !allMatched && paragraph !== null && !startsAnyBlock(rest);
-    let text = rest;
     let openedQuote = false;
     if (!lazy) {
       if (!allMatched) {
@@ -339,16 +437,26 @@ function parse(lines: string[]): Parsed {
       continue;
     }
 
-    const outside = withoutInvisible(text, invisibleUntil);
-    invisibleUntil = outside.until;
-    text = outside.text;
-    // A line that held nothing but invisible markup is a block of its own, and
-    // an HTML block interrupts a paragraph, so the halves stay separate.
-    if (text.trim() === "") {
+    if (BLOCK_INVISIBLE_OPEN.test(text)) {
+      const outside = withoutInvisible(text, null);
+      text = outside.text;
+      // The block belongs to its current containers. If they end before its
+      // closing marker, visible text outside them must not disappear with it.
+      if (outside.until !== null) {
+        invisible = { until: outside.until, depth: stack.length };
+      }
+      readable[i] = text;
+      // Invisible markup interrupts a paragraph, so the halves stay separate.
       closeParagraph();
+      if (text.trim() === "") continue;
+    }
+    // A tab is structural indentation, not link-definition whitespace. The
+    // expanded line cannot preserve that distinction, so the safe reading is
+    // visible prose rather than silently accepting a lookalike.
+    if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
+      readable[i] = "";
       continue;
     }
-    if (paragraph === null && LINK_DEFINITION.test(text)) continue;
 
     const fenceOpen = FENCE_OPEN.exec(text);
     if (fenceOpen !== null
@@ -356,6 +464,7 @@ function parse(lines: string[]): Parsed {
       closeParagraph();
       fence = { char: fenceOpen[2][0], length: fenceOpen[2].length };
       hidden.add(i);
+      readable[i] = "";
       continue;
     }
 
@@ -415,23 +524,19 @@ function parse(lines: string[]): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
-    // A tag may span lines: "<div" on one and 'class="note">' on the next.
-    // Removing tags line by line left the halves behind as words.
-    let visible = withoutTags(text);
-    if (tagOpen) {
-      const closes = visible.indexOf(">");
-      visible = closes === -1 ? "" : visible.slice(closes + 1);
-      tagOpen = closes === -1;
-    }
-    const opens = /<\/?[A-Za-z][A-Za-z0-9:-]*(?:[ \t][^>]*)?$/.exec(visible);
-    if (opens !== null) {
-      visible = visible.slice(0, opens.index);
-      tagOpen = true;
-    }
-    paragraph.lines.push(visible.trimStart());
+    paragraph.lines.push(text.trimStart());
   }
 
-  return { paragraphs, headings: found, hidden, tables };
+  for (const block of paragraphs) {
+    const source = block.lines.join("\n");
+    const forLineRules = visibleInline(source, false).split("\n");
+    for (let offset = 0; offset < forLineRules.length; offset++) {
+      readable[block.line - 1 + offset] = forLineRules[offset];
+    }
+    block.lines = visibleInline(source).split("\n");
+  }
+
+  return { paragraphs, headings: found, hidden, tables, readable };
 }
 
 /** The next line's text, with the same containers stripped, or none. */
@@ -443,13 +548,6 @@ function nextContent(lines: string[], index: number, stack: Container[]): string
 }
 
 /**
- * Remove HTML tags, and only those.
- *
- * A generic "<...>" swallowed an autolink, which a reader sees as a link,
- * and the words between "< 5" and "> 2" in ordinary prose. A tag starts
- * with a letter or a slash, and an attribute may hold a greater-than sign.
- */
-/**
  * Remove comments, declarations and processing instructions from a line.
  *
  * Each is a span rather than a line: "<!-- hidden --> The supplier shall
@@ -460,50 +558,146 @@ function withoutInvisible(
   text: string,
   until: string | null,
 ): { text: string; until: string | null } {
-  let rest = text;
-  let open = until;
-  let scanning = true;
-  while (scanning) {
-    scanning = false;
-    if (open !== null) {
-      const closes = rest.indexOf(open);
-      if (closes === -1) return { text: "", until: open };
-      rest = rest.slice(closes + open.length);
-      open = null;
-      scanning = true;
-      continue;
-    }
-    const comment = rest.search(COMMENT_OPEN);
-    const instruction = rest.search(INSTRUCTION_OPEN);
-    const declaration = DECLARATION_OPEN.test(rest) ? rest.indexOf("<!") : -1;
-    // Whichever opens first on this line decides what closes it.
-    let first: { at: number; close: string } | null = null;
-    for (const entry of [
-      { at: comment, close: "-->" },
-      { at: instruction, close: "?>" },
-      { at: declaration, close: ">" },
-    ]) {
-      if (entry.at === -1) continue;
-      if (first === null || entry.at < first.at) first = entry;
-    }
-    if (first === null) continue;
-    const before = rest.slice(0, first.at);
-    const after = rest.slice(first.at);
-    const closes = after.indexOf(first.close, 2);
-    if (closes === -1) return { text: before, until: first.close };
-    rest = before + " " + after.slice(closes + first.close.length);
-    scanning = true;
+  if (until !== null) {
+    const closing = closingMarkup(text, until);
+    if (closing === null) return { text: "", until };
+    return { text: text.slice(closing.at + closing.length), until: null };
   }
-  return { text: rest, until: null };
+
+  const opening = /^ {0,3}(<!--|<\?|<![A-Z])/.exec(text);
+  if (opening === null) return { text, until: null };
+  const abrupt = opening[1] === "<!--"
+    ? abruptCommentClose(text.slice(opening.index + opening[0].length))
+    : 0;
+  if (abrupt > 0) {
+    const outside = text.slice(0, opening.index) + " "
+      + text.slice(opening[0].length + abrupt);
+    return { text: outside, until: null };
+  }
+  const close = opening[1] === "<!--" ? "-->" : ">";
+  const closing = closingMarkup(text, close, opening[0].length);
+  const before = text.slice(0, opening.index);
+  if (closing === null) return { text: before, until: close };
+  return { text: before + " " + text.slice(closing.at + closing.length), until: null };
 }
 
-function withoutTags(text: string): string {
-  const tag = /<\/?[A-Za-z][A-Za-z0-9:-]*(?:[ \t]+(?:[^>"']|"[^"]*"|'[^']*')*)?\/?>/g;
-  return text.replace(tag, " ");
+const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
+const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
+
+function abruptCommentClose(afterOpening: string): number {
+  if (afterOpening.startsWith("->")) return 2;
+  return afterOpening.startsWith(">") ? 1 : 0;
+}
+
+function closingMarkup(
+  text: string,
+  close: string,
+  start = 0,
+): { at: number; length: number } | null {
+  const standard = text.indexOf(close, start);
+  if (close !== "-->") {
+    return standard === -1 ? null : { at: standard, length: close.length };
+  }
+  const malformed = text.indexOf("--!>", start);
+  if (standard === -1 && malformed === -1) return null;
+  if (standard !== -1 && (malformed === -1 || standard < malformed)) {
+    return { at: standard, length: close.length };
+  }
+  return { at: malformed, length: 4 };
+}
+
+function tickRun(text: string, start: number): number {
+  let end = start;
+  while (text[end] === "`") end++;
+  return end - start;
+}
+
+function closingTicks(text: string, start: number, length: number): number {
+  let index = start;
+  while (index < text.length) {
+    if (text[index] !== "`") {
+      index++;
+      continue;
+    }
+    const run = tickRun(text, index);
+    if (run === length) return index;
+    index += run;
+  }
+  return -1;
+}
+
+/** Remove only inline markup that CommonMark keeps out of rendered text. */
+function visibleInline(text: string, keepLiteralSyntax = true): string {
+  let visible = "";
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1])) {
+      visible += keepLiteralSyntax ? text.slice(index, index + 2) : "  ";
+      index += 2;
+      continue;
+    }
+    if (text[index] === "`") {
+      const length = tickRun(text, index);
+      const closing = closingTicks(text, index + length, length);
+      if (closing !== -1) {
+        const end = closing + length;
+        const span = text.slice(index, end);
+        if (keepLiteralSyntax) {
+          visible += span;
+        } else {
+          // Keep the words a reader sees in a code-formatted link label, but
+          // neutralise syntax that would turn a Markdown example into a link.
+          const content = text.slice(index + length, closing)
+            .replace(/[!<>[\]()]/g, " ");
+          visible += " ".repeat(length) + content + " ".repeat(length);
+        }
+        index = end;
+        continue;
+      }
+    }
+    if (text[index] !== "<") {
+      visible += text[index];
+      index++;
+      continue;
+    }
+
+    const rest = text.slice(index);
+    const tag = HTML_TAG_AT_START.exec(rest);
+    if (tag !== null) {
+      visible += " " + tag[0].replace(/[^\n]/g, "");
+      index += tag[0].length;
+      continue;
+    }
+    const abrupt = rest.startsWith("<!--") ? abruptCommentClose(rest.slice(4)) : 0;
+    if (abrupt > 0) {
+      visible += " ";
+      index += 4 + abrupt;
+      continue;
+    }
+    const invisible = rest.startsWith("<!--")
+      ? { close: "-->", offset: 4 }
+      : rest.startsWith("<?")
+        ? { close: ">", offset: 2 }
+        : /^<![A-Z]/.test(rest)
+          ? { close: ">", offset: 2 }
+          : null;
+    if (invisible !== null) {
+      const closing = closingMarkup(rest, invisible.close, invisible.offset);
+      if (closing !== null) {
+        const length = closing.at + closing.length;
+        visible += " " + rest.slice(0, length).replace(/[^\n]/g, "");
+        index += length;
+        continue;
+      }
+    }
+    visible += "<";
+    index++;
+  }
+  return visible;
 }
 
 function visibleText(text: string): string {
-  return withoutTags(text)
+  return visibleInline(text)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
 }
@@ -527,7 +721,10 @@ export function headings(text: string): Heading[] {
 export function readDocument(text: string): Document {
   const lines = toLines(text);
   const parsed = parse(lines);
-  return { lines, hidden: (index) => parsed.hidden.has(index) };
+  return {
+    lines: parsed.readable.map((line) => visibleInline(line, false)),
+    hidden: (index) => parsed.hidden.has(index),
+  };
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and

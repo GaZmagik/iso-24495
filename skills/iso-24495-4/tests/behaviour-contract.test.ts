@@ -698,12 +698,15 @@ describe("reader-facing behaviour contracts", () => {
     // behind as words a reader never meets.
     expect(proseBlocks(["<div", 'class="note">', "Visible text."].join(BREAK))
       .map((b) => b.lines.join(" ").trim())).toEqual(["Visible text."]);
+    expect(auditText(["<div", 'class="note">The supplier shall comply.</div>'].join(BREAK))
+      .find((violation) => violation.rule === "legalese")?.line).toBe(2);
     expect(proseBlocks(["<span", "hidden", "still hidden>", "Visible."].join(BREAK))
       .map((b) => b.lines.join(" ").trim())).toEqual(["Visible."]);
 
-    // A tag name may carry a namespace, as an inline SVG does.
-    expect(proseBlocks('<svg:path d="M0 0"/> hello there').map((b) => b.lines[0].trim()))
-      .toEqual(["hello there"]);
+    // CommonMark does not treat a colon as part of an HTML tag name. The
+    // source is therefore text a reader sees rather than markup to remove.
+    const namespaced = '<svg:path d="M0 0"/> hello there';
+    expect(proseBlocks(namespaced).map((b) => b.lines[0].trim())).toEqual([namespaced]);
 
     // Front matter keys may be quoted, and may be written in any language.
     for (const key of ['"title": Metadata here', "résumé: Metadata here"]) {
@@ -712,6 +715,154 @@ describe("reader-facing behaviour contracts", () => {
     // A sentence between two rules is still a heading, not metadata.
     expect(headings(["---", "Just a sentence here.", "---", "", "Body."].join(BREAK)))
       .toHaveLength(1);
+  });
+
+  test("incomplete tags cannot consume later reader-visible blocks", () => {
+    const legalese = "The supplier shall hereby comply.";
+    const interrupted = ["Opening <span", "", legalese].join(BREAK);
+    expect(proseBlocks(interrupted).map((block) => block.lines.join(" ").trim()))
+      .toEqual(["Opening <span", legalese]);
+    expect(rulesFor(interrupted)).toContain("legalese");
+
+    const beforeHeading = ["Opening <span", "# A heading", legalese].join(BREAK);
+    expect(headings(beforeHeading).map((heading) => heading.text)).toEqual(["A heading"]);
+    expect(rulesFor(beforeHeading)).toContain("legalese");
+
+    // A colon makes this a URI autolink, not a namespaced HTML tag.
+    const autolink = "Read <urn:isbn:9780141036144> before continuing.";
+    expect(proseBlocks(autolink).map((block) => block.lines[0])).toEqual([autolink]);
+  });
+
+  test("code spans and escapes protect literal markup", () => {
+    for (const literal of [
+      "The literal `<!-- shall hereby -->` remains visible.",
+      "The literal \\<!-- shall hereby --> remains visible.",
+      'The literal `<span title="shall">` remains visible.',
+      'The literal \\<span title="shall"> remains visible.',
+    ]) {
+      expect(proseBlocks(literal).map((block) => block.lines[0]), literal).toEqual([literal]);
+    }
+    const multiline = [
+      "The literal `starts",
+      "x <!-- shall hereby --> y",
+      "ends` remains visible.",
+    ];
+    expect(proseBlocks(multiline.join(BREAK))[0]?.lines).toEqual(multiline);
+    const afterBlock = "<!-- hidden --> `<!-- named -->` remains visible.";
+    expect(proseBlocks(afterBlock)[0]?.lines[0]).toBe("`<!-- named -->` remains visible.");
+    expect(proseBlocks("The literal `one `` two` stays visible.")[0]?.lines[0])
+      .toBe("The literal `one `` two` stays visible.");
+
+    for (const [source, visible] of [
+      ["Text <!-- hidden --> after.", "Text   after."],
+      ["Text <?hidden?> after.", "Text   after."],
+      ["Text <!DOCTYPE hidden> after.", "Text   after."],
+      ["Text <!-- unclosed markup.", "Text <!-- unclosed markup."],
+    ]) {
+      expect(proseBlocks(source)[0]?.lines[0], source).toBe(visible);
+    }
+  });
+
+  test("malformed comment openers remain reader-visible prose", () => {
+    const legalese = "The supplier shall comply.";
+    for (const document of [
+      `Text <!--> ${legalese}`,
+      `Text <!---> ${legalese}`,
+      `<!--> ${legalese}`,
+      `<!---> ${legalese}`,
+      `Text <!-- hidden --!> ${legalese} -->`,
+      `<!-- hidden --!> ${legalese} -->`,
+    ]) {
+      expect(rulesFor(document), document).toContain("legalese");
+      expect(proseBlocks(document)[0]?.lines.join(" "), document).toContain("shall");
+      expect(proseBlocks(document)[0]?.lines.join(" "), document).not.toContain("<!--");
+    }
+  });
+
+  test("processing instructions stop before reader-visible text", () => {
+    const legalese = "The supplier shall comply.";
+    for (const document of [
+      `Text <?hidden > ${legalese} ?>`,
+      `<?hidden > ${legalese} ?>`,
+    ]) {
+      expect(rulesFor(document), document).toContain("legalese");
+      const visible = proseBlocks(document)[0]?.lines.join(" ") ?? "";
+      expect(visible, document).toContain("shall");
+      expect(visible, document).not.toContain("<?");
+    }
+  });
+
+  test("an invisible block cannot outlive its container", () => {
+    const legalese = "The supplier shall hereby comply.";
+    for (const document of [
+      ["> <!--", legalese],
+      ["> <?instruction", legalese],
+      ["- <!--", "", legalese],
+    ]) {
+      expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("legalese");
+    }
+  });
+
+  test("line rules ignore invisible markup but still read its visible tail", () => {
+    expect(auditText("<!-- [](https://example.com) ![](image.png) -->")).toEqual([]);
+    expect(auditText(["<!--", "[](https://example.com)", "-->", "Body."].join(BREAK)))
+      .toEqual([]);
+
+    const tail = "<!-- hidden --> [](https://example.com)";
+    expect(rulesFor(tail)).toContain("link-text");
+  });
+
+  test("line rules distinguish Markdown examples from working links", () => {
+    expect(auditText("Write `[](https://example.com)` as an example.")).toEqual([]);
+    expect(auditText("Write `![](image.png)` as an example.")).toEqual([]);
+    expect(auditText("Write \\[](https://example.com) as literal text.")).toEqual([]);
+    expect(auditText("Read [`state_manager.rs`](https://example.com/source).")).toEqual([]);
+
+    const real = "Example: `[](ignored)` then [](https://example.com).";
+    expect(rulesFor(real)).toContain("link-text");
+
+    const multilineCode = ["Example `starts", "[](ignored)", "ends` here."].join(BREAK);
+    expect(auditText(multilineCode)).toEqual([]);
+    const separateParagraph = ["Opening `", "", "[](https://example.com)", "", "Closing`"].join(BREAK);
+    expect(rulesFor(separateParagraph)).toContain("link-text");
+  });
+
+  test("visible link-definition lookalikes remain prose", () => {
+    for (const visible of [
+      "[ ]: /url",
+      "[a[b]: /url",
+      "[a]: foo)bar",
+      "[a]: foo(bar",
+      `[${"a".repeat(1000)}]: /url`,
+    ]) {
+      expect(proseBlocks(visible).map((block) => block.lines[0]), visible).toEqual([visible]);
+    }
+    // The definition is invalid, while the complete <bar> within it is still
+    // HTML markup. The line remains a paragraph after that tag is removed.
+    expect(proseBlocks("[a]: <foo<bar>")).toHaveLength(1);
+    expect(proseBlocks("[a]: <foo<bar>")[0]?.lines[0]).toContain("[a]: <foo");
+    expect(proseBlocks("[a]: /url\t\"title\"")).toHaveLength(1);
+
+    for (const definition of [
+      "[a\\]]: <foo\\>bar>",
+      "[a]: foo\\(bar\\)",
+      "[a]: <foo>",
+      "[a]: <>",
+      "[a]: /url ",
+      "[a]: /url 'title'",
+      "[a]: /url (title)",
+    ]) {
+      expect(proseBlocks(definition), definition).toEqual([]);
+    }
+    expect(proseBlocks("[a]: <foo")).toHaveLength(1);
+    expect(proseBlocks("[a]:")).toHaveLength(1);
+
+    for (const invisible of [
+      `[a]: /url "[](https://example.com)"`,
+      `[a]: /url "![](image.png)"`,
+    ]) {
+      expect(auditText(invisible), invisible).toEqual([]);
+    }
   });
 
   // A filler word must survive emphasis and typography, and must not match

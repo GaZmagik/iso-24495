@@ -1,11 +1,11 @@
-// Block structure for 286 documents, checked against the CommonMark
+// Block structure for 302 documents, checked against the CommonMark
 // reference implementation.
 //
 // Rebuild this file with `build-fixture.ts` beside it, which reads the corpus
 // from `shapes.ts`, asks the reference, and refuses to write a difference it
 // cannot explain. See the README for the two commands.
 //
-// 226 documents are read identically. 60 differ, for 4 reasons, and every
+// 236 documents are read identically. 66 differ, for 5 reasons, and every
 // reason is a decision about a reader rather than about Markdown.
 //
 // Never edit an expectation by hand to make a test pass.
@@ -1959,6 +1959,184 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "paragraphs": [
       "Text continues",
       "a list."
+    ],
+    "headings": []
+  },
+  {
+    "name": "incomplete tag before paragraph",
+    "lines": [
+      "Opening <span",
+      "",
+      "Visible sentence."
+    ],
+    "paragraphs": [
+      "Opening <span",
+      "Visible sentence."
+    ],
+    "headings": []
+  },
+  {
+    "name": "namespaced URI autolink",
+    "lines": [
+      "Read <urn:isbn:9780141036144> today."
+    ],
+    "paragraphs": [
+      "Read <urn:isbn:9780141036144> today."
+    ],
+    "headings": []
+  },
+  {
+    "name": "escaped comment",
+    "lines": [
+      "The literal \\<!-- comment --> stays visible."
+    ],
+    "paragraphs": [
+      "The literal \\<!-- comment --> stays visible."
+    ],
+    "headings": []
+  },
+  {
+    "name": "comment inside code span",
+    "lines": [
+      "The literal `<!-- comment -->` stays visible."
+    ],
+    "paragraphs": [
+      "The literal `<!-- comment -->` stays visible."
+    ],
+    "headings": []
+  },
+  {
+    "name": "invalid nested link label",
+    "lines": [
+      "[a[b]: /url"
+    ],
+    "paragraphs": [
+      "[a[b]: /url"
+    ],
+    "headings": []
+  },
+  {
+    "name": "invalid link destination",
+    "lines": [
+      "[a]: foo)bar"
+    ],
+    "paragraphs": [
+      "[a]: foo)bar"
+    ],
+    "headings": []
+  },
+  {
+    "name": "comment cannot escape quote",
+    "lines": [
+      "> <!--",
+      "Visible sentence."
+    ],
+    "paragraphs": [
+      "Visible sentence."
+    ],
+    "headings": []
+  },
+  {
+    "name": "comment tail containing code",
+    "lines": [
+      "<!-- hidden --> `<!-- named -->` remains visible."
+    ],
+    "paragraphs": [
+      "`<!-- named -->` remains visible."
+    ],
+    "headings": [],
+    "differsFromReference": "A comment, declaration, processing instruction or link definition is invisible to a reader."
+  },
+  {
+    "name": "abrupt comment close",
+    "lines": [
+      "<!--> The supplier shall comply."
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": [],
+    "differsFromReference": "A comment, declaration, processing instruction or link definition is invisible to a reader."
+  },
+  {
+    "name": "abrupt inline comment close",
+    "lines": [
+      "Text <!---> The supplier shall comply."
+    ],
+    "paragraphs": [
+      "Text The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "malformed comment close",
+    "lines": [
+      "<!-- hidden --!> The supplier shall comply. -->"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. -->"
+    ],
+    "headings": [],
+    "differsFromReference": "A comment, declaration, processing instruction or link definition is invisible to a reader."
+  },
+  {
+    "name": "malformed inline comment close",
+    "lines": [
+      "Text <!-- hidden --!> The supplier shall comply. -->"
+    ],
+    "paragraphs": [
+      "Text The supplier shall comply. -->"
+    ],
+    "headings": [],
+    "differsFromReference": "A comment, declaration, processing instruction or link definition is invisible to a reader."
+  },
+  {
+    "name": "processing instruction with visible tail",
+    "lines": [
+      "<?hidden > The supplier shall comply. ?>"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. ?>"
+    ],
+    "headings": [],
+    "differsFromReference": "A comment, declaration, processing instruction or link definition is invisible to a reader."
+  },
+  {
+    "name": "inline processing instruction with visible tail",
+    "lines": [
+      "Text <?hidden > The supplier shall comply. ?>"
+    ],
+    "paragraphs": [
+      "Text The supplier shall comply. ?>"
+    ],
+    "headings": [],
+    "differsFromReference": "A comment, declaration, processing instruction or link definition is invisible to a reader."
+  },
+  {
+    "name": "multiline code span",
+    "lines": [
+      "Example `starts",
+      "[](ignored)",
+      "ends` here."
+    ],
+    "paragraphs": [
+      "Example `starts [](ignored) ends` here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "unmatched code across paragraphs",
+    "lines": [
+      "Opening `",
+      "",
+      "[](https://example.com)",
+      "",
+      "Closing`"
+    ],
+    "paragraphs": [
+      "Opening `",
+      "[](https://example.com)",
+      "Closing`"
     ],
     "headings": []
   },

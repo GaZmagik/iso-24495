@@ -99,6 +99,22 @@ const extras: Array<[string, string[]]> = [
   ["crlf paragraph", ["A.", "B."]],
   ["numbered wrap", ["Text continues", "2024. and on."]],
   ["numbered one wrap", ["Text continues", "1. a list."]],
+  ["incomplete tag before paragraph", ["Opening <span", "", "Visible sentence."]],
+  ["namespaced URI autolink", ["Read <urn:isbn:9780141036144> today."]],
+  ["escaped comment", ["The literal \\<!-- comment --> stays visible."]],
+  ["comment inside code span", ["The literal `<!-- comment -->` stays visible."]],
+  ["invalid nested link label", ["[a[b]: /url"]],
+  ["invalid link destination", ["[a]: foo)bar"]],
+  ["comment cannot escape quote", ["> <!--", "Visible sentence."]],
+  ["comment tail containing code", ["<!-- hidden --> `<!-- named -->` remains visible."]],
+  ["abrupt comment close", ["<!--> The supplier shall comply."]],
+  ["abrupt inline comment close", ["Text <!---> The supplier shall comply."]],
+  ["malformed comment close", ["<!-- hidden --!> The supplier shall comply. -->"]],
+  ["malformed inline comment close", ["Text <!-- hidden --!> The supplier shall comply. -->"]],
+  ["processing instruction with visible tail", ["<?hidden > The supplier shall comply. ?>"]],
+  ["inline processing instruction with visible tail", ["Text <?hidden > The supplier shall comply. ?>"]],
+  ["multiline code span", ["Example `starts", "[](ignored)", "ends` here."]],
+  ["unmatched code across paragraphs", ["Opening `", "", "[](https://example.com)", "", "Closing`"]],
 ];
 for (const [name, lines] of extras) MATRIX_SHAPES.push({ name, lines });
 

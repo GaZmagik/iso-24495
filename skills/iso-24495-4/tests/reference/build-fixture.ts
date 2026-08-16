@@ -64,14 +64,19 @@ function reference(markdown: string): Blocks {
  * comparison's fault.
  */
 function flatten(text: string): string {
-  return text
+  const code: string[] = [];
+  const masked = text.replace(/(?<!`)`([^`]+)`(?!`)/g, (_match, value: string) => {
+    const index = code.push(value) - 1;
+    return `\uE000${index}\uE001`;
+  });
+  return masked
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/(?<!`)`([^`]+)`(?!`)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/\*([^*]+)\*/g, "$1")
     .replace(/\\(.)/g, "$1")
     .replace(/<([a-z]+:[^>]*)>/gi, "$1")
+    .replace(/\uE000(\d+)\uE001/g, (_match, index: string) => code[Number(index)] ?? "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -124,6 +129,10 @@ function reasonFor(lines: string[]): string | null {
     return "GitHub renders a table; the reference implements CommonMark core, which has no table extension.";
   }
   if (/^ {0,3}(?:<!--|<!|<\?)/m.test(joined)
+    // A browser ends a processing instruction at its first greater-than
+    // sign, while CommonMark keeps the raw HTML span open until "?>".
+    || /<\?[^>\n]*>.*\?>/.test(joined)
+    || /<!--[^\n]*--!>/.test(joined)
     || /^ {0,3}\[[^\]^][^\]]*\]:[ 	]/m.test(joined)) {
     return "A comment, declaration, processing instruction or link definition is invisible to a reader.";
   }
