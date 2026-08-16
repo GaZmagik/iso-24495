@@ -41,12 +41,13 @@ const TASK_MARKER = /^\[[ xX]\][ \t]+/;
 const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
 // sentence, so it is skipped while the warning beneath it is measured.
-// Text a reader never meets: a link reference definition, an HTML comment,
-// a declaration, or a processing instruction. Auditing them gave advice
-// about words that reach nobody.
-// A footnote body is visible: a reader meets it at the foot of the page, so
-// its label starts with "^" and it is not in this list.
-const INVISIBLE = /^ {0,3}(?:\[[^\]^][^\]]*\]:[ \t]|<!--|<!|<\?)/;
+// Markup a reader never meets. A comment, a declaration or a processing
+// instruction interrupts a paragraph, as CommonMark says an HTML block
+// does. A link reference definition cannot interrupt one, so it counts
+// only where a paragraph is not already open. A footnote body is visible,
+// which is why its label starts with "^" and it is not here.
+const INVISIBLE_MARKUP = /^ {0,3}(?:<!--|<!|<\?)/;
+const LINK_DEFINITION = /^ {0,3}\[[^\]^][^\]]*\]:[ \t]/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 
 /**
@@ -325,7 +326,11 @@ function parse(lines: string[]): Parsed {
       continue;
     }
 
-    if (paragraph === null && INVISIBLE.test(text)) continue;
+    if (INVISIBLE_MARKUP.test(text)) {
+      closeParagraph();
+      continue;
+    }
+    if (paragraph === null && LINK_DEFINITION.test(text)) continue;
 
     const fenceOpen = FENCE_OPEN.exec(text);
     if (fenceOpen !== null

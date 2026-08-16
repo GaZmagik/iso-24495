@@ -625,6 +625,18 @@ describe("reader-facing behaviour contracts", () => {
     expect(proseBlocks(hijack.join(BREAK)).length).toBeGreaterThan(0);
     expect(headings(hijack.join(BREAK)).map((h) => h.text))
       .toEqual(["Hello world. A reader reads this."]);
+    // A comment interrupts a paragraph, as an HTML block does, so the halves
+    // around it stay separate. A link reference definition cannot interrupt
+    // one, so it belongs to the paragraph it sits inside.
+    expect(proseBlocks(["Text before.", "<!-- note -->", "Text after."].join(BREAK)))
+      .toHaveLength(2);
+    // Its words belong to that paragraph, which is what the reference reads.
+    const insideParagraph = ["Text before.", '[a]: https://example.com "shall hereby"', "Text after."];
+    expect(proseBlocks(insideParagraph.join(BREAK))).toHaveLength(1);
+    expect(rulesFor(insideParagraph.join(BREAK))).toContain("legalese");
+    // At a paragraph's start it is a definition, and invisible.
+    expect(rulesFor(['[a]: https://example.com "shall hereby"', "", "Read it."].join(BREAK)))
+      .toEqual([]);
     // Real front matter is still metadata.
     expect(rulesFor(["---", "title: Each and Every Shall Policy", "---", "", "Body."].join(BREAK)))
       .toEqual([]);
