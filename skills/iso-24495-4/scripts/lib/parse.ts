@@ -1,12 +1,19 @@
-// Markdown text extraction shared by the audit scripts. Regex heuristics
-// only. Anything smarter belongs to the agent, not to deterministic tooling.
+// Markdown block structure, read the way CommonMark describes it: each line is
+// matched against the containers already open, then against any new container
+// it starts, and only what remains is the leaf block a rule can measure.
+//
+// Seven review rounds attacked scanners that inferred structure line by line.
+// Each repair fixed the shape in front of it and broke a neighbouring one,
+// because a flag cannot express a quotation inside a list item, a paragraph
+// that continues without its marker, or an item whose content sits four
+// columns in. This is the algorithm those scanners were approximating.
 
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
 
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
-  /** The block's lines, in order. */
+  /** The block's lines, in order, with container markers removed. */
   lines: string[];
 }
 
@@ -16,141 +23,70 @@ export interface Heading {
   text: string;
 }
 
-// A pipe is not in this list. Table rows are recognised by tableLines, which
-// requires a header and a matching divider, so a line that merely begins with a
-// pipe is the ordinary text GitHub renders it as. Excluding it here dropped
-// "| Important note: the supplier shall comply." from the document in silence.
-const NON_PROSE_PREFIX = /^(#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|>)/;
-// CommonMark lets an ordered list interrupt a paragraph only when it starts at
-// 1, which exists to protect hard-wrapped numbers. Without that rule, a line
-// continuing "The system was updated in" with "2024. The supplier shall
-// respond." became a list item and its sentence left the document. A marker of
-// ten digits or more is not a list marker at all.
-const ORDERED_MARKER = /^(\d{1,9})[.)][ \t]/;
+export interface Document {
+  lines: string[];
+  /** True when the line is metadata or fenced code, which no rule reads. */
+  hidden: (index: number) => boolean;
+}
 
-// A table row need not begin with a pipe: GitHub renders "Term | Meaning" with
-// a divider beneath it, and those cells were being audited as prose, so a
-// table's contents produced findings that belonged to no sentence.
+const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?[ \t]*$/;
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const QUOTE_MARKER = /^ {0,3}>[ \t]?/;
+const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)/;
+const TASK_MARKER = /^\[[ xX]\][ \t]+/;
 const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
+// GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
+// sentence, so it is skipped while the warning beneath it is measured.
+const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 
-/**
- * The lines a document devotes to front matter, or none.
- *
- * Both scanners must agree on this. While the heading scanner entered front
- * matter on the opening marker and the prose scanner required a closing one, an
- * unclosed block hid every heading in the document while keeping its text as
- * prose. A block with no closing marker is not front matter at all.
- */
 /**
  * Split text into lines the way a reader sees them.
  *
  * Splitting on /\r?\n/ alone left a bare-carriage-return document as one line,
  * so a heading prefix swallowed every sentence after it. A leading byte order
  * mark is removed for the same reason: it made the first line something other
- * than "---", so front matter was not recognised and its contents opened fence
- * state instead.
+ * than "---", so front matter was not recognised.
  */
 export function toLines(text: string): string[] {
-  return text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
+  return text.replace(/^﻿/, "").split(/\r\n|\n|\r/);
 }
 
-const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
-
-/**
- * The lines a document devotes to fenced code.
- *
- * Toggling on any line that starts with three backticks or tildes ignored what
- * CommonMark actually requires, and each mistake hid visible text: a
- * four-space-indented marker opened a fence that never legitimately opened, a
- * tilde run closed a backtick fence, and a short run closed a longer one. A
- * fence closes only with the same character, at least as long as its opener.
- */
-function fencedLines(lines: string[], from: number): Set<number> {
-  const fenced = new Set<number>();
-  let open: { char: string; length: number } | null = null;
-  // The containers are stripped in the order they appear, so a fence opens
-  // wherever it is written: at the margin, inside a list item, inside a
-  // quotation, or inside a quotation inside a list item. Handling quotes and
-  // then one list marker read one order and not the other, and the code in
-  // the order it could not read was audited as prose.
-  let column = 0;
-  for (let i = from; i < lines.length; i++) {
-    const container = stripContainers(lines[i]);
-    if (open === null) {
-      if (container.item !== null) column = container.item;
-      else if (container.content.trim() !== "" && container.column === 0
-        && !/^ /.test(container.content)) {
-        column = 0;
-      }
-    }
-    // Indented to the item's content column, this line is the item's own
-    // content rather than indented code.
-    const inside = container.item === null && container.column === 0 && column > 0
-      && /^ /.test(container.content);
-    const content = inside && container.content.length > column
-      ? container.content.slice(column)
-      : container.content;
-    const match = FENCE_OPEN.exec(content);
-    if (open === null) {
-      // An info string on a backtick fence cannot itself contain a backtick.
-      if (match === null || (match[2][0] === "\`" && match[3].includes("\`"))) continue;
-      open = { char: match[2][0], length: match[2].length };
-      fenced.add(i);
+/** Expand tabs to four-column stops, as CommonMark measures indentation. */
+function expandTabs(line: string): string {
+  let out = "";
+  for (const character of line) {
+    if (character !== "\t") {
+      out += character;
       continue;
     }
-    fenced.add(i);
-    if (match !== null
-      && match[2][0] === open.char
-      && match[2].length >= open.length
-      && match[3].trim() === "") {
-      open = null;
-    }
+    out += " ".repeat(4 - (out.length % 4));
   }
-  return fenced;
+  return out;
 }
 
+/**
+ * The lines a document devotes to front matter, or none.
+ *
+ * The delimiter sits at column 0, because an indented "---" inside a YAML
+ * block scalar once closed the block early and hid the whole document body.
+ * Jekyll closes with "..." as well as "---".
+ */
 export function frontMatterRange(lines: string[]): { start: number; end: number } | null {
-  // The delimiter sits at column 0. Matching a trimmed line let an indented
-  // "---" inside a YAML block scalar close the block early, which left a code
-  // fence outside it and hid the whole document body.
-  const isOpen = (line: string | undefined): boolean => /^---[ \t]*$/.test(line ?? "");
-  // Jekyll closes a block with "..." as well as "---", and a block left
-  // open hands its contents to the fence scanner, which hides the body.
-  const isClose = (line: string): boolean => /^(?:---|\.\.\.)[ \t]*$/.test(line);
-  if (!isOpen(lines[0])) return null;
-  const closing = lines.findIndex((line, index) => index > 0 && isClose(line));
+  if (!/^---[ \t]*$/.test(lines[0] ?? "")) return null;
+  const closing = lines.findIndex(
+    (line, index) => index > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(line),
+  );
   return closing === -1 ? null : { start: 0, end: closing };
 }
 
-// A rule across the page, not a word in a sentence. Table detection used to
-// remove these by accident; once it stopped, "---" joined the sentence beneath
-// it and added a token, which turned a 30-word sentence into a false finding.
-const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
-
-/**
- * True when the line begins another block, which ends any table above it.
- *
- * Stopping only at HTML and blank lines let a table swallow the paragraph
- * after a heading: GitHub ends a table at a heading, a break, or indented
- * code, and the sentence left the document with no finding against it.
- */
-function startsBlock(line: string): boolean {
-  return /^ {0,3}<[a-zA-Z/!?]/.test(line)
-    || /^ {0,3}#{1,6}[ \t]/.test(line)
-    || /^ {4}/.test(line)
-    || THEMATIC_BREAK.test(line);
+function indentOf(line: string): number {
+  return (/^ */.exec(line)?.[0] ?? "").length;
 }
 
-/** True when every divider cell is a run of hyphens with optional colons. */
-function isDividerRow(row: string): boolean {
-  const inner = row.replace(/^\|/, "").replace(/\|$/, "");
-  return inner.split("|").every((cell) => /^:?-+:?$/.test(cell.trim()));
-}
-
-/** The columns a table row declares, ignoring optional outer pipes. */
+/** The columns a table row declares, respecting escaped pipes. */
 function cellCount(row: string): number {
-  // A backslash escapes the next character, another backslash included, so
-  // two of them leave the pipe that follows as a real column boundary.
   const cells: string[] = [];
   let cell = "";
   for (let i = 0; i < row.length; i++) {
@@ -172,337 +108,300 @@ function cellCount(row: string): number {
   return cells.length;
 }
 
-/**
- * The lines a document devotes to tables.
- *
- * A table begins where a header row sits directly above a divider, and runs
- * until a line without a pipe. Inferring a row from a neighbouring pipe swallowed
- * ordinary prose: "## Compare A | B" above "The supplier shall respond | today."
- * removed the second line from the document entirely, and silent removal is
- * worse than a wrong finding because nobody sees it happen.
- */
-function tableLines(lines: string[], skip: (index: number) => boolean): Set<number> {
-  const table = new Set<number>();
-  const unquote = (line: string): string =>
-    line.replace(/^(?: {0,3}>[ \t]?)+/, "");
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (skip(i) || table.has(i)) continue;
-    const header = unquote(lines[i]).trim();
-    const divider = unquote(lines[i + 1]).trim();
-    if (!header.includes("|") || !TABLE_DIVIDER.test(divider) || !divider.includes("-")) continue;
-    // GitHub renders a table only when the two rows agree on the column count.
-    // Without this, "A | B | C" above "---|---" claimed three lines of prose
-    // and the reader's sentence vanished with no finding against it.
-    if (cellCount(header) !== cellCount(divider) || !isDividerRow(divider)) continue;
-    table.add(i);
-    table.add(i + 1);
-    for (let row = i + 2; row < lines.length; row++) {
-      // A table ends where another block begins, HTML included, and not only
-      // at a blank line. An HTML paragraph was being claimed as a row.
-      const text = unquote(lines[row]);
-      if (skip(row) || !text.includes("|") || startsBlock(text)) break;
-      table.add(row);
-    }
-  }
-  return table;
-}
-interface Structure {
-  frontMatter: { start: number; end: number } | null;
-  fenced: Set<number>;
-  tables: Set<number>;
-  /** True when the line is metadata, code, or a table, rather than text. */
-  skip: (index: number) => boolean;
+/** True when every divider cell is hyphens, with optional colons. */
+function isDividerRow(row: string): boolean {
+  if (!TABLE_DIVIDER.test(row) || !row.includes("-")) return false;
+  const inner = row.replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split("|").every((cell) => /^:?-+:?$/.test(cell.trim()));
 }
 
-/**
- * Read a document's structure once, so the scanners cannot disagree about it.
- *
- * They each kept their own front matter and fence state, and every round of
- * review found another place where two of them reached different answers and a
- * reader lost text with nothing to show for it.
- */
-function structureOf(lines: string[]): Structure {
-  const frontMatter = frontMatterRange(lines);
-  const fenced = fencedLines(lines, frontMatter === null ? 0 : frontMatter.end + 1);
-  const inMetadataOrCode = (index: number): boolean =>
-    (frontMatter !== null && index <= frontMatter.end) || fenced.has(index);
-  const tables = tableLines(lines, inMetadataOrCode);
-  return {
-    frontMatter,
-    fenced,
-    tables,
-    skip: (index) => inMetadataOrCode(index) || tables.has(index),
-  };
+/** True when the line begins a block, which ends any table above it. */
+function startsBlock(line: string): boolean {
+  return /^ {0,3}<[a-zA-Z/!?]/.test(line)
+    || /^ {0,3}#{1,6}[ \t]/.test(line)
+    || /^ {4}/.test(line)
+    || THEMATIC_BREAK.test(line);
 }
 
-// GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
-// sentence, so it is skipped while the warning beneath it is measured.
-interface Containers {
-  /** The line with its container markers removed. */
-  content: string;
-  /** The column the content starts at, counting tab stops. */
+interface Container {
+  kind: "quote" | "item";
+  /** For an item, the column its content starts at. */
   column: number;
-  /** How many quotation markers were consumed. */
-  depth: number;
-  /** The content column of the innermost list item, or none. */
-  item: number | null;
 }
 
-/** Expand leading tabs to four-column stops, as CommonMark measures them. */
-function expandTabs(line: string): string {
-  let out = "";
-  for (const character of line) {
-    if (character !== "\t") {
-      out += character;
-      continue;
-    }
-    out += " ".repeat(4 - (out.length % 4));
-  }
-  return out;
+interface Parsed {
+  paragraphs: ProseBlock[];
+  headings: Heading[];
+  /** Front matter and fenced code: lines no rule reads. */
+  hidden: Set<number>;
+  /** Table lines: structure, but rules about tables still read them. */
+  tables: Set<number>;
 }
 
 /**
- * Strip the containers wrapping a line, in the order they appear.
+ * Match a line against the containers already open.
  *
- * A quotation can hold a list and a list can hold a quotation, so stripping
- * quotes and then one list marker read "> - ### Heading" correctly and
- * "- > ### Heading" not at all. The heading, the fence and the prose scanners
- * all share this, because a difference between them is how text disappears.
+ * Returns the text left after the markers that matched, and how many of them
+ * did. A line that matches fewer than all of them has left some container,
+ * unless it is a lazy continuation of a paragraph inside one.
  */
-function stripContainers(line: string): Containers {
-  let rest = expandTabs(line);
-  let consumed = 0;
-  let depth = 0;
-  let item: number | null = null;
-  for (;;) {
-    const quote = /^ {0,3}>[ ]?/.exec(rest);
-    if (quote !== null) {
-      rest = rest.slice(quote[0].length);
-      consumed += quote[0].length;
-      depth += 1;
-      item = null;
+function matchOpen(line: string, stack: Container[]): { rest: string; matched: number } {
+  let rest = line;
+  let matched = 0;
+  for (const container of stack) {
+    if (container.kind === "quote") {
+      const marker = QUOTE_MARKER.exec(rest);
+      if (marker === null) break;
+      rest = rest.slice(marker[0].length);
+      matched++;
       continue;
     }
-    const marker = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ ]+/.exec(rest);
-    if (marker !== null && marker[0].length - marker[0].trimStart().length <= 3) {
-      const spaces = marker[0].length - marker[0].trimEnd().length;
-      // Five or more spaces after a marker start indented code, not content.
-      if (spaces > 4) break;
-      rest = rest.slice(marker[0].length);
-      consumed += marker[0].length;
-      item = consumed;
+    if (rest.trim() === "") {
+      // A blank line does not end a list item.
+      matched++;
+      continue;
+    }
+    if (indentOf(rest) >= container.column) {
+      rest = rest.slice(container.column);
+      matched++;
       continue;
     }
     break;
   }
-  return { content: rest, column: consumed, depth, item };
+  return { rest, matched };
 }
 
-const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
-
-const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?[ \t]*$/;
-const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
-
-interface HeadingScan {
-  found: Heading[];
-  structuralLines: Set<number>;
+/**
+ * The list marker starting this line, if one may start here.
+ *
+ * CommonMark lets an ordered list interrupt a paragraph only when it starts at
+ * 1, which is what keeps a hard-wrapped "2024." part of the sentence above it.
+ * Five or more spaces after a marker begin indented code inside the item, so
+ * the content column is the marker plus one space.
+ */
+function listMarkerAt(line: string, midParagraph: boolean): { length: number; column: number } | null {
+  const marker = LIST_MARKER.exec(line);
+  if (marker === null) return null;
+  const ordered = /^\d/.test(marker[2]);
+  if (midParagraph && (!ordered || marker[2].slice(0, -1) !== "1")) {
+    // A bullet may interrupt a paragraph; an ordered marker may not unless it
+    // is 1. Both rules protect wrapped lines from being read as lists.
+    if (ordered) return null;
+  }
+  const spaces = marker[3].length;
+  // Five or more spaces after a marker begin indented code inside the item, so
+  // only one of them belongs to the marker and the rest stay as indentation.
+  const consumed = spaces > 4 ? marker[1].length + marker[2].length + 1 : marker[0].length;
+  const column = marker[1].length + marker[2].length + (spaces > 4 ? 1 : spaces);
+  return { length: consumed, column };
 }
 
-function visibleHeadingText(text: string): string {
+/** True when the text starts a block, so it cannot lazily continue a paragraph. */
+function startsAnyBlock(text: string): boolean {
+  return ATX_HEADING.test(text)
+    || THEMATIC_BREAK.test(text)
+    || FENCE_OPEN.test(text)
+    || QUOTE_MARKER.test(text)
+    || LIST_MARKER.test(text);
+}
+
+function parse(lines: string[]): Parsed {
+  const paragraphs: ProseBlock[] = [];
+  const found: Heading[] = [];
+  const hidden = new Set<number>();
+  const tables = new Set<number>();
+  const stack: Container[] = [];
+  const frontMatter = frontMatterRange(lines);
+
+  let paragraph: ProseBlock | null = null;
+  let paragraphDepth = 0;
+  let fence: { char: string; length: number } | null = null;
+  let tableUntil = -1;
+
+  const closeParagraph = (): void => {
+    paragraph = null;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    if (frontMatter !== null && i <= frontMatter.end) {
+      hidden.add(i);
+      closeParagraph();
+      continue;
+    }
+    if (i <= tableUntil) continue;
+
+    const line = expandTabs(lines[i]);
+    const { rest, matched } = matchOpen(line, stack);
+    const allMatched = matched === stack.length;
+
+    if (fence !== null) {
+      if (allMatched) {
+        hidden.add(i);
+        const closing = FENCE_OPEN.exec(rest);
+        if (closing !== null
+          && closing[2][0] === fence.char
+          && closing[2].length >= fence.length
+          && closing[3].trim() === "") {
+          fence = null;
+        }
+        continue;
+      }
+      // The container holding the fence has ended, so the fence has too.
+      fence = null;
+      stack.length = matched;
+    }
+
+    if (rest.trim() === "") {
+      closeParagraph();
+      if (!allMatched) stack.length = matched;
+      continue;
+    }
+
+    // A paragraph continues without its markers repeated. Without this, a
+    // wrapped quotation or list item became a second block, and the advice
+    // about the paragraph a reader sees never arrived.
+    const lazy = !allMatched && paragraph !== null && !startsAnyBlock(rest);
+    let text = rest;
+    if (!lazy) {
+      if (!allMatched) {
+        closeParagraph();
+        stack.length = matched;
+      }
+      for (;;) {
+        const quote = QUOTE_MARKER.exec(text);
+        if (quote !== null) {
+          closeParagraph();
+          text = text.slice(quote[0].length);
+          stack.push({ kind: "quote", column: 0 });
+          continue;
+        }
+        // A thematic break outranks a list marker, so "- - -" is a rule across
+        // the page rather than a bullet holding two more bullets.
+        const marker = THEMATIC_BREAK.test(text) ? null : listMarkerAt(text, paragraph !== null);
+        if (marker !== null) {
+          closeParagraph();
+          const consumed = text.slice(0, marker.length);
+          text = text.slice(marker.length).replace(TASK_MARKER, "");
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
+          continue;
+        }
+        break;
+      }
+    }
+
+    // The label opens an alert only as a quotation's first line. Elsewhere it
+    // is ordinary text, and skipping it split a paragraph in two.
+    if (paragraph === null
+      && stack.some((container) => container.kind === "quote")
+      && ALERT_MARKER.test(text.trim())) {
+      continue;
+    }
+
+    const fenceOpen = FENCE_OPEN.exec(text);
+    if (fenceOpen !== null
+      && !(fenceOpen[2][0] === "`" && fenceOpen[3].includes("`"))) {
+      closeParagraph();
+      fence = { char: fenceOpen[2][0], length: fenceOpen[2].length };
+      hidden.add(i);
+      continue;
+    }
+
+    const atx = ATX_HEADING.exec(text);
+    if (atx !== null) {
+      closeParagraph();
+      found.push({
+        level: atx[1].length,
+        line: i + 1,
+        text: visibleText((atx[2] ?? "").replace(/\s+#+\s*$/, "").trim()),
+      });
+      continue;
+    }
+
+    const underline = SETEXT_UNDERLINE.exec(text);
+    if (underline !== null && paragraph !== null && paragraphDepth === stack.length) {
+      // The paragraph above becomes the heading's text, all of its lines.
+      found.push({
+        level: underline[1][0] === "=" ? 1 : 2,
+        line: paragraph.line,
+        text: visibleText(paragraph.lines.join(" ").trim()),
+      });
+      paragraphs.splice(paragraphs.indexOf(paragraph), 1);
+      closeParagraph();
+      continue;
+    }
+
+    if (THEMATIC_BREAK.test(text)) {
+      closeParagraph();
+      continue;
+    }
+
+    // Indented code cannot interrupt a paragraph, so four columns past the
+    // container is code only where a paragraph is not already open.
+    if (paragraph === null && indentOf(text) >= 4) continue;
+
+    const divider = nextContent(lines, i, stack);
+    if (divider !== null
+      && text.includes("|")
+      && isDividerRow(divider.trim())
+      && cellCount(text.trim()) === cellCount(divider.trim())) {
+      closeParagraph();
+      tables.add(i);
+      tables.add(i + 1);
+      let row = i + 2;
+      for (; row < lines.length; row++) {
+        const content = nextContent(lines, row - 1, stack);
+        if (content === null || !content.includes("|") || startsBlock(content)) break;
+        tables.add(row);
+      }
+      tableUntil = row - 1;
+      continue;
+    }
+
+    if (paragraph === null) {
+      paragraph = { line: i + 1, lines: [] };
+      paragraphDepth = stack.length;
+      paragraphs.push(paragraph);
+    }
+    paragraph.lines.push(text.trimStart());
+  }
+
+  return { paragraphs, headings: found, hidden, tables };
+}
+
+/** The next line's text, with the same containers stripped, or none. */
+function nextContent(lines: string[], index: number, stack: Container[]): string | null {
+  const next = lines[index + 1];
+  if (next === undefined) return null;
+  const { rest, matched } = matchOpen(expandTabs(next), stack);
+  return matched === stack.length ? rest : null;
+}
+
+function visibleText(text: string): string {
   return text
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
 }
 
-function scanHeadings(lines: string[], structure: Structure): HeadingScan {
-  const { tables } = structure;
-  const found: Heading[] = [];
-  const structuralLines = new Set<number>();
-  const { frontMatter, fenced } = structure;
-  for (let i = 0; i < lines.length; i++) {
-    if ((frontMatter !== null && i <= frontMatter.end) || fenced.has(i)) continue;
-
-    // A heading can be the content of a list item or a quotation, so the
-    // markers in front of it are removed before it is recognised.
-    const atx = ATX_HEADING.exec(stripContainers(lines[i]).content);
-    if (atx) {
-      found.push({
-        level: atx[1].length,
-        line: i + 1,
-        text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
-      });
-      structuralLines.add(i);
-      continue;
-    }
-
-    const underline = SETEXT_UNDERLINE.exec(lines[i]);
-    if (!underline || i === 0) continue;
-    // A table row is not a paragraph line, so it cannot be a heading's
-    // text. Reading one as a heading filled the gap between an h1 and an
-    // h3, and the real heading-skip was never reported.
-    if (tables.has(i - 1)) continue;
-    const previous = lines[i - 1];
-    const previousTrimmed = previous.trimStart();
-    // Setext text must be the immediately preceding ordinary line. These
-    // guards keep list content and indented code in their existing categories.
-    if (previous.trim() === ""
-      || /^ {4}/.test(previous)
-      || NON_PROSE_PREFIX.test(previousTrimmed)
-      || /^(```|~~~)/.test(previousTrimmed)) {
-      continue;
-    }
-    // A setext heading is the whole paragraph above its underline, not the last
-    // line of it. Taking one line let a fourteen-word heading split into a
-    // seven-word heading and a line of prose, so heading-style never fired.
-    let first = i - 1;
-    while (first > 0) {
-      const above = lines[first - 1];
-      const aboveTrimmed = above.trimStart();
-      if (tables.has(first - 1)
-        || above.trim() === ""
-        || /^ {4}/.test(above)
-        || NON_PROSE_PREFIX.test(aboveTrimmed)
-        || THEMATIC_BREAK.test(above)
-        || ATX_HEADING.test(above)
-        || /^(```|~~~)/.test(aboveTrimmed)
-        || SETEXT_UNDERLINE.test(above)) {
-        break;
-      }
-      first--;
-    }
-    const paragraph = lines.slice(first, i).map((line) => line.trim()).join(" ");
-    found.push({
-      level: underline[1][0] === "=" ? 1 : 2,
-      // A heading starts where its text starts, which is where a reader
-      // looks when the advice names a line.
-      line: first + 1,
-      text: visibleHeadingText(paragraph),
-    });
-    for (let line = first; line <= i; line++) structuralLines.add(line);
-  }
-  return { found, structuralLines };
-}
-
-/** Collect prose paragraphs, skipping headings, lists, tables, quotes, and fenced code. */
+/** Collect prose paragraphs: what a reader reads as sentences. */
 export function proseBlocks(text: string): ProseBlock[] {
-  const blocks: ProseBlock[] = [];
-  let current: ProseBlock | null = null;
-  const lines = toLines(text);
-  // Front matter is metadata, code is code, and a table is a grid. None of the
-  // three is a sentence, and all three are decided once, before any rule runs.
-  const structure = structureOf(lines);
-  const headingLines = scanHeadings(lines, structure).structuralLines;
-  // Prose the reader reads is measured, wherever it sits. A bullet is a
-  // sentence, a warning callout is a sentence, and both were unmeasured while
-  // the marker in front of them was treated as a reason to look away.
-  //
-  // Containers are tracked as a stack of content columns, because a list item
-  // holds whole blocks: a second paragraph, a fence, a table, then more prose.
-  // A flag could not survive those, so the paragraph after them was read as
-  // indented code and left the document in silence.
-  const items: number[] = [];
-  let quoteDepth = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (structure.skip(i) || headingLines.has(i)) {
-      current = null;
-      continue;
-    }
-    const raw = lines[i];
-    // A quotation is prose too. GitHub renders an alert with this syntax, and
-    // the plugin's own runbook template asks writers to use one.
-    const quote = /^(?: {0,3}>[ \t]?)+/.exec(raw);
-    const line = quote === null ? raw : raw.slice(quote[0].length);
-    // A nested quotation is its own block. Joining it to the quotation
-    // around it made one sentence out of two, which nobody wrote.
-    const depth = (quote?.[0].match(/>/g) ?? []).length;
-    if (depth !== quoteDepth) {
-      current = null;
-      quoteDepth = depth;
-    }
-    // The label opens an alert only as the first line of a quotation. Anywhere
-    // else "[!WARNING]" is ordinary text, and treating it as a label split a
-    // six-sentence paragraph into two threes, so the advice never arrived.
-    if (depth > 0 && current === null && ALERT_MARKER.test(line.trim())) {
-      continue;
-    }
-    if (THEMATIC_BREAK.test(line) || line.trim() === "") {
-      current = null;
-      // A blank line separates blocks inside an item; it does not end the item.
-      continue;
-    }
-    const indent = (/^[ \t]*/.exec(line)?.[0] ?? "").replace(/\t/g, "    ").length;
-    // Only a marker that may begin a list here counts as one. An ordered
-    // marker interrupts a paragraph solely when it is 1, which keeps a
-    // hard-wrapped "2024." part of the sentence above it.
-    const candidate = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(line);
-    const ordered = ORDERED_MARKER.exec(line.replace(/^[ \t]+/, ""));
-    const allowed = candidate !== null
-      && indent <= (items.length === 0 ? 3 : items[items.length - 1] + 3)
-      && (ordered === null || current === null || items.length > 0 || ordered[1] === "1");
-    // Unwind to the container this line actually belongs to.
-    let unwound = false;
-    while (items.length > 0 && indent < items[items.length - 1] && !allowed) {
-      items.pop();
-      unwound = true;
-    }
-    if (allowed) {
-      while (items.length > 0 && indent < items[items.length - 1]) items.pop();
-      items.push(indent + candidate![0].trimStart().length);
-      // A task marker is a control, not a word: "- [ ] Do the thing" is three
-      // words, and counting the brackets made a 29-word item a 31-word one.
-      const content = line.slice(candidate![0].length)
-        .replace(/^\[[ xX]\][ \t]+/, "");
-      current = { line: i + 1, lines: [content] };
-      blocks.push(current);
-      continue;
-    }
-    const column = items.length === 0 ? 0 : items[items.length - 1];
-    // Four spaces past the container is indented code, and code cannot
-    // interrupt a paragraph.
-    if (current === null && indent >= column + 4) continue;
-    if (current === null || unwound || indent < column) {
-      current = { line: i + 1, lines: [] };
-      blocks.push(current);
-    }
-    current.lines.push(line.trimStart());
-  }
-  return blocks;
+  return parse(toLines(text)).paragraphs;
 }
 
-/** Heading levels with their 1-indexed line numbers, ignoring fenced code. */
+/** Heading levels with their 1-indexed line numbers. */
 export function headings(text: string): Heading[] {
-  const lines = toLines(text);
-  return scanHeadings(lines, structureOf(lines)).found;
-}
-
-export interface Document {
-  lines: string[];
-  /**
-   * True when the line is metadata or fenced code.
-   *
-   * Not tables: a rule about links, images or table headings has to look at a
-   * table to do its job, and `table-header` fell silent for every table on the
-   * day it was given the block scanners' predicate instead of this one.
-   */
-  hidden: (index: number) => boolean;
+  return parse(toLines(text)).headings;
 }
 
 /**
  * Read a document once, for the rules that work line by line.
  *
- * Three rules split the text themselves and kept their own fence state, so the
- * normalisation and the fence rules the block scanners follow never reached
- * them. A bare carriage return put an image finding on the wrong line, and a
- * table finding disappeared entirely.
+ * They skip metadata and code, and deliberately not tables: a rule about
+ * links, images or table headings has to look at a table to do its job.
  */
 export function readDocument(text: string): Document {
   const lines = toLines(text);
-  const structure = structureOf(lines);
-  return {
-    lines,
-    hidden: (index) => (structure.frontMatter !== null && index <= structure.frontMatter.end)
-      || structure.fenced.has(index),
-  };
+  const parsed = parse(lines);
+  return { lines, hidden: (index) => parsed.hidden.has(index) };
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and

@@ -9,6 +9,7 @@ import {
   projectAcronyms,
 } from "../scripts/audit-corpus.ts";
 import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
+import { REFERENCE_SHAPES } from "./fixtures/reference-blocks.ts";
 import {
   classifyBoundary,
   headings,
@@ -442,7 +443,13 @@ describe("reader-facing behaviour contracts", () => {
     ];
     for (const [name, before] of preceded) {
       const document = [before, "Heading text", "---", "", legalese].join(BREAK);
-      expect(headings(document).at(-1)?.text, name).toBe("Heading text");
+      if (name === "list") {
+        // A line at the margin below a list item continues that item's
+        // paragraph, so "---" underlines nothing and is a thematic break.
+        expect(headings(document), name).toEqual([]);
+      } else {
+        expect(headings(document).at(-1)?.text, name).toBe("Heading text");
+      }
       expect(rulesFor(document), name).toContain("legalese");
     }
 
@@ -461,8 +468,15 @@ describe("reader-facing behaviour contracts", () => {
     // Up to four spaces after a marker set the content column, so a fence
     // there is a fence. Five or more make indented code, and a fence written
     // in indented code is text.
+    // An unclosed fence ends with the item that holds it, so the paragraph at
+    // the margin below is outside the list and is measured either way. The
+    // reference parser finds one paragraph in both.
     expect(rulesFor(["-     ```md", legalese].join(BREAK))).toContain("legalese");
-    expect(rulesFor(["-    ```md", legalese].join(BREAK))).toEqual([]);
+    expect(rulesFor(["-    ```md", legalese].join(BREAK))).toContain("legalese");
+    // The fence ends with its item, so everything below is measured, not just
+    // the first line after it.
+    expect(rulesFor(["-    ```md", legalese, legalese].join(BREAK)))
+      .toEqual(["legalese", "legalese", "legalese", "legalese"]);
 
     // A table row cannot be a setext heading's text.
     const crossing = ["# Top", "", "A | B", "--- | ---", "x | y", "---", "### Actual"];
@@ -525,8 +539,11 @@ describe("reader-facing behaviour contracts", () => {
     // A tab is four columns, so a line that starts with one is indented code
     // rather than a fence, and the prose beneath it is still measured.
     expect(rulesFor([`${TAB}\`\`\`text`, legalese].join(BREAK))).toContain("legalese");
-    // A tab after a marker is four columns, not one.
-    expect(rulesFor([`-${TAB}\`\`\`text`, `-${TAB}${legalese}`].join(BREAK))).toEqual([]);
+    // A tab after a marker is four columns, not one, so the fence opens. The
+    // second marker starts a new item, which ends the first item and its
+    // fence, so its text is prose.
+    expect(rulesFor([`-${TAB}\`\`\`text`, `-${TAB}${legalese}`].join(BREAK)))
+      .toContain("legalese");
 
     // The label opens an alert only as a quotation's first line. Elsewhere it
     // is ordinary text, and treating it as a label split a paragraph in two.
@@ -538,6 +555,39 @@ describe("reader-facing behaviour contracts", () => {
     // Outside a quotation the label is a line of the paragraph, words and all.
     expect(proseBlocks(["One.", "[!WARNING]", "Two."].join(BREAK)))
       .toEqual([{ line: 1, lines: ["One.", "[!WARNING]", "Two."] }]);
+  });
+
+  // Eighteen rounds argued about what a document means. This asks the
+  // implementation that defines the language, once, and keeps its answers.
+  //
+  // Three shapes are deliberately read differently, and each is a decision
+  // about a reader rather than about Markdown:
+  //   - a task marker is a control, not two words a reader hears;
+  //   - HTML holds reader-visible prose, so its text is measured;
+  //   - a GitHub alert label is a label, and GitHub is where these are read.
+  test("block structure matches the CommonMark reference implementation", () => {
+    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(36);
+    for (const shape of REFERENCE_SHAPES) {
+      const document = shape.lines.join(BREAK) + BREAK;
+      const paragraphs = proseBlocks(document)
+        .map((block) => block.lines.join(" ").replace(/\s+/g, " ").trim());
+      expect(paragraphs, shape.name).toEqual(shape.paragraphs);
+      const found = headings(document)
+        .map((heading) => [heading.level, heading.text.replace(/\s+/g, " ").trim()]);
+      expect(found, shape.name).toEqual(shape.headings);
+    }
+  });
+
+  test("three shapes are read differently, on purpose", () => {
+    // A task marker is a control. Counting "[ ]" as two words made a 29-word
+    // item report as 31, which is advice about punctuation nobody reads aloud.
+    expect(proseBlocks("- [ ] One" + BREAK + "- [x] Two").map((b) => b.lines[0]))
+      .toEqual(["One", "Two"]);
+    // HTML carries prose a reader reads, so its text is measured.
+    expect(rulesFor("<p>The supplier shall respond.</p>")).toContain("legalese");
+    // The alert label is a label, and its body is the sentence that matters.
+    expect(proseBlocks(["> [!WARNING]", "> Careful."].join(BREAK)).map((b) => b.lines[0]))
+      .toEqual(["Careful."]);
   });
 
   // A filler word must survive emphasis and typography, and must not match
@@ -738,7 +788,6 @@ describe("reader-facing behaviour contracts", () => {
       "---",
       "---\ntitle: Draft\n---",
       "```md\nFenced text\n---\n```",
-      "- Listed text\n  ---",
       "Heading text\n\n---",
     ];
     for (const input of negatives) {
@@ -803,9 +852,11 @@ describe("reader-facing behaviour contracts", () => {
     // rather than read as indented code.
     const twoParagraphs = ["-   First paragraph.", "", "    The supplier shall respond.", "", "- Last."];
     expect(rulesFor(twoParagraphs.join("\n"))).toContain("legalese");
-    // Unwinding to an outer item starts a new block, so the two are not joined.
+    // A line that matches the outer item but not the inner one continues the
+    // inner paragraph, which is what CommonMark laziness says and what the
+    // reference parser does. Six sentences in one paragraph is a real finding.
     const nested = ["- Parent.", "  - Child one. Child two. Child three.", "  Parent four. Parent five. Parent six."];
-    expect(rulesFor(nested.join("\n"))).not.toContain("paragraph-length");
+    expect(rulesFor(nested.join("\n"))).toContain("paragraph-length");
     // A task marker is a control, not two words.
     const twentyNine = Array.from({ length: 29 }, (_unused, index) => `word${index}`).join(" ");
     expect(rulesFor(`- [ ] ${twentyNine}.`)).toEqual([]);
