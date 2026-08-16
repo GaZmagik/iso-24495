@@ -681,6 +681,13 @@ describe("reader-facing behaviour contracts", () => {
     expect(headings('# A heading <span class="label">wrapped</span> here')[0]?.text)
       .toBe("A heading  wrapped  here");
 
+    // A tag may span lines, and removing tags line by line left the halves
+    // behind as words a reader never meets.
+    expect(proseBlocks(["<div", 'class="note">', "Visible text."].join(BREAK))
+      .map((b) => b.lines.join(" ").trim())).toEqual(["Visible text."]);
+    expect(proseBlocks(["<span", "hidden", "still hidden>", "Visible."].join(BREAK))
+      .map((b) => b.lines.join(" ").trim())).toEqual(["Visible."]);
+
     // Front matter keys may be quoted, and may be written in any language.
     for (const key of ['"title": Metadata here', "résumé: Metadata here"]) {
       expect(headings(["---", key, "---", "", "Body."].join(BREAK)), key).toEqual([]);

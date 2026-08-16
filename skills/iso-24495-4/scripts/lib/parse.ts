@@ -250,6 +250,7 @@ function parse(lines: string[]): Parsed {
   let tableUntil = -1;
   let invisibleUntil: string | null = null;
   let definedAbove = false;
+  let tagOpen = false;
 
   const closeParagraph = (): void => {
     paragraph = null;
@@ -420,7 +421,20 @@ function parse(lines: string[]): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
-    paragraph.lines.push(withoutTags(text).trimStart());
+    // A tag may span lines: "<div" on one and 'class="note">' on the next.
+    // Removing tags line by line left the halves behind as words.
+    let visible = withoutTags(text);
+    if (tagOpen) {
+      const closes = visible.indexOf(">");
+      visible = closes === -1 ? "" : visible.slice(closes + 1);
+      tagOpen = closes === -1;
+    }
+    const opens = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^>]*)?$/.exec(visible);
+    if (opens !== null) {
+      visible = visible.slice(0, opens.index);
+      tagOpen = true;
+    }
+    paragraph.lines.push(visible.trimStart());
   }
 
   return { paragraphs, headings: found, hidden, tables };
