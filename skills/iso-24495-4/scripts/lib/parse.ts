@@ -68,45 +68,32 @@ const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 function fencedLines(lines: string[], from: number): Set<number> {
   const fenced = new Set<number>();
   let open: { char: string; length: number } | null = null;
-  // A fence inside a list item is indented to the item's content, which is
-  // usually four spaces and always more than the three a top-level fence may
-  // have. Reading those as ordinary text produced findings against sample code:
-  // "shall" in an example, and a "click here" written to show what not to write.
-  let listIndent = 0;
+  // The containers are stripped in the order they appear, so a fence opens
+  // wherever it is written: at the margin, inside a list item, inside a
+  // quotation, or inside a quotation inside a list item. Handling quotes and
+  // then one list marker read one order and not the other, and the code in
+  // the order it could not read was audited as prose.
+  let column = 0;
   for (let i = from; i < lines.length; i++) {
-    // At most three spaces before a quote marker: four is indented code, and
-    // stripping it turned "    > ```" into a fence that hid the document.
-    let after: string;
-    const raw = lines[i].replace(/^(?: {0,3}>[ \t]?)+/, "");
+    const container = stripContainers(lines[i]);
     if (open === null) {
-      const item = /^( {0,3})([-*+]|\d{1,9}[.)])( +)/.exec(raw);
-      // The content column is where the item's text starts, so an ordered
-      // marker earns more room than a bullet. A blank line does not end a list
-      // item, but a non-blank line at the left margin does.
-      if (item !== null) {
-        // Up to four spaces after a marker set the content column. Five or
-        // more make indented code inside the item, so a fence there is not
-        // a fence, and treating it as one hid the prose beneath it.
-        // Up to four spaces after a marker set the content column. Five or
-        // more make indented code inside the item, so a fence written there
-        // is not a fence at all.
-        const indented = item[3].length > 4;
-        listIndent = item[1].length + item[2].length + (indented ? 1 : item[3].length);
-        // A fence may be the item's first content: "1. ```md" opens one. The
-        // marker has to go, or the real closing fence becomes an opener and
-        // everything after it disappears.
-        if (!indented) after = raw.slice(item[0].length);
+      if (container.item !== null) column = container.item;
+      else if (container.content.trim() !== "" && container.column === 0
+        && !/^ /.test(container.content)) {
+        column = 0;
       }
-      else if (raw.trim() !== "" && !/^ /.test(raw)) listIndent = 0;
     }
-    after = after ?? raw;
-    const indent = /^ */.exec(after)?.[0].length ?? 0;
-    const match = FENCE_OPEN.exec(indent > 3 && indent <= listIndent + 3
-      ? after.slice(indent - 3)
-      : after);
+    // Indented to the item's content column, this line is the item's own
+    // content rather than indented code.
+    const inside = container.item === null && container.column === 0 && column > 0
+      && /^ /.test(container.content);
+    const content = inside && container.content.length > column
+      ? container.content.slice(column)
+      : container.content;
+    const match = FENCE_OPEN.exec(content);
     if (open === null) {
       // An info string on a backtick fence cannot itself contain a backtick.
-      if (match === null || (match[2][0] === "`" && match[3].includes("`"))) continue;
+      if (match === null || (match[2][0] === "\`" && match[3].includes("\`"))) continue;
       open = { char: match[2][0], length: match[2].length };
       fenced.add(i);
       continue;
@@ -250,6 +237,67 @@ function structureOf(lines: string[]): Structure {
 
 // GitHub renders "> [!WARNING]" as an alert. The marker is a label, not a
 // sentence, so it is skipped while the warning beneath it is measured.
+interface Containers {
+  /** The line with its container markers removed. */
+  content: string;
+  /** The column the content starts at, counting tab stops. */
+  column: number;
+  /** How many quotation markers were consumed. */
+  depth: number;
+  /** The content column of the innermost list item, or none. */
+  item: number | null;
+}
+
+/** Expand leading tabs to four-column stops, as CommonMark measures them. */
+function expandTabs(line: string): string {
+  let out = "";
+  for (const character of line) {
+    if (character !== "\t") {
+      out += character;
+      continue;
+    }
+    out += " ".repeat(4 - (out.length % 4));
+  }
+  return out;
+}
+
+/**
+ * Strip the containers wrapping a line, in the order they appear.
+ *
+ * A quotation can hold a list and a list can hold a quotation, so stripping
+ * quotes and then one list marker read "> - ### Heading" correctly and
+ * "- > ### Heading" not at all. The heading, the fence and the prose scanners
+ * all share this, because a difference between them is how text disappears.
+ */
+function stripContainers(line: string): Containers {
+  let rest = expandTabs(line);
+  let consumed = 0;
+  let depth = 0;
+  let item: number | null = null;
+  for (;;) {
+    const quote = /^ {0,3}>[ ]?/.exec(rest);
+    if (quote !== null) {
+      rest = rest.slice(quote[0].length);
+      consumed += quote[0].length;
+      depth += 1;
+      item = null;
+      continue;
+    }
+    const marker = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ ]+/.exec(rest);
+    if (marker !== null && marker[0].length - marker[0].trimStart().length <= 3) {
+      const spaces = marker[0].length - marker[0].trimEnd().length;
+      // Five or more spaces after a marker start indented code, not content.
+      if (spaces > 4) break;
+      rest = rest.slice(marker[0].length);
+      consumed += marker[0].length;
+      item = consumed;
+      continue;
+    }
+    break;
+  }
+  return { content: rest, column: consumed, depth, item };
+}
+
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 
 const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?[ \t]*$/;
@@ -276,10 +324,7 @@ function scanHeadings(lines: string[], structure: Structure): HeadingScan {
 
     // A heading can be the content of a list item or a quotation, so the
     // markers in front of it are removed before it is recognised.
-    const bare = lines[i]
-      .replace(/^(?: {0,3}>[ \t]?)+/, "")
-      .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
-    const atx = ATX_HEADING.exec(bare);
+    const atx = ATX_HEADING.exec(stripContainers(lines[i]).content);
     if (atx) {
       found.push({
         level: atx[1].length,
@@ -374,8 +419,10 @@ export function proseBlocks(text: string): ProseBlock[] {
       current = null;
       quoteDepth = depth;
     }
-    if (ALERT_MARKER.test(line.trim())) {
-      current = null;
+    // The label opens an alert only as the first line of a quotation. Anywhere
+    // else "[!WARNING]" is ordinary text, and treating it as a label split a
+    // six-sentence paragraph into two threes, so the advice never arrived.
+    if (depth > 0 && current === null && ALERT_MARKER.test(line.trim())) {
       continue;
     }
     if (THEMATIC_BREAK.test(line) || line.trim() === "") {

@@ -27,7 +27,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 1. **Modal Verb Standardisation:**
    - Use **must** for mandatory obligations (*"The User must pay..."*).
    - Use **must not** for prohibitions (*"The User must not copy..."*).
-   - Use **may** for discretionary permissions (*"The User may terminate..."*).
+   - Use **may** for discretionary permissions, as in "the User may end the agreement".
    - **Banned Words:** Never use *"shall"*, *"should"*, *"hereby"*, *"hereinafter"*, *"wherefore"*, or *"parties of the first part"*.
 
 2. **Explicit Subject Actor Identification:**

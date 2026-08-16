@@ -344,12 +344,12 @@ function doubletViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
     // Named rather than used: "*to*, not *in order to*" is the advice itself.
-    const paragraph = block.lines.map(withoutQuotedWords).join("\n");
+    const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
     const matches: Array<{ start: number; end: number; entry: DoubletEntry }> = [];
     for (const entry of DOUBLETS) {
       const pattern = new RegExp(`\\b${entry.phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
-      for (const match of paragraph.matchAll(pattern)) {
+      for (const match of withoutNamedTerms(paragraph, entry.phrase).matchAll(pattern)) {
         const start = match.index;
         const end = start + match[0].length;
         if (occupied.some((range) => start < range.end && end > range.start)) continue;
@@ -430,28 +430,32 @@ function imageAltViolations(text: string): Violation[] {
 
 // A word inside emphasis or code is being discussed, not used. Without this,
 // the core skill could not name "utilise" as the word to avoid.
-function withoutQuotedWords(line: string): string {
-  // Quotation marks and backticks name a word. Emphasis does not: a writer
-  // bolds a sentence to stress it, and "The supplier **shall** comply" is a
-  // use of the word. Treating emphasis as naming exempted every bolded
-  // sentence from every rule that reads words.
-  return line
-    .replace(/`[^`]*`/g, " ")
-    // Only a short quoted span names something. A quoted sentence is prose
-    // the writer chose to include, and exempting it hid both findings in
-    // "staff shall submit requests in order to avoid delays".
-    .replace(/[“”"][^“”"]*[“”"]/g,
-      (span) => (span.trim().split(/\s+/).length <= 6 ? " " : span));
+/**
+ * Blank the spans in which a term is named rather than used.
+ *
+ * A term is named when a quotation or a pair of backticks holds it and
+ * nothing else. "shall" names the word, while "Staff shall submit requests"
+ * uses it inside a sentence the writer chose to quote. Emphasis names
+ * nothing, because a writer emphasises a word they are using.
+ */
+function withoutNamedTerms(line: string, term: string): string {
+  const wanted = term.trim().toLowerCase();
+  const spans = /`[^`]*`|[\u201c\u201d"][^\u201c\u201d"]*[\u201c\u201d"]/g;
+  return line.replace(spans, (span) => {
+    const inner = span.slice(1, -1).trim().toLowerCase();
+    return inner === wanted ? " ".repeat(span.length) : span;
+  });
 }
 
 function complexWordViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
     for (let i = 0; i < block.lines.length; i++) {
-      const line = withoutQuotedWords(block.lines[i]);
+      const line = block.lines[i];
       for (const match of line.matchAll(/[A-Za-z']+/g)) {
         const plain = COMPLEX_WORDS.get(match[0].toLowerCase());
         if (!plain) continue;
+        if (withoutNamedTerms(line, match[0])[match.index] === " ") continue;
         violations.push({
           rule: "complex-word",
           line: block.line + i,
@@ -467,10 +471,10 @@ function doubleNegativeViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
     // Named rather than used: the rule's own description quotes the phrase.
-    const paragraph = block.lines.map(withoutQuotedWords).join("\n");
+    const paragraph = block.lines.join("\n");
     for (const phrase of DOUBLE_NEGATIVES) {
       const pattern = new RegExp(`\\b${phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
-      for (const match of paragraph.matchAll(pattern)) {
+      for (const match of withoutNamedTerms(paragraph, phrase).matchAll(pattern)) {
         violations.push({
           rule: "double-negative",
           line: lineAtOffset(block.line, paragraph, match.index),
@@ -549,11 +553,11 @@ function wordyPhraseViolations(text: string): Violation[] {
   const violations: Violation[] = [];
   for (const block of proseBlocks(text)) {
     // Named rather than used: "*to*, not *in order to*" is the advice itself.
-    const paragraph = block.lines.map(withoutQuotedWords).join("\n");
+    const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
     for (const entry of WORDY_PHRASES) {
       const pattern = new RegExp(`\\b${entry.phrase.replaceAll(" ", "\\s+")}\\b`, "gi");
-      for (const match of paragraph.matchAll(pattern)) {
+      for (const match of withoutNamedTerms(paragraph, entry.phrase).matchAll(pattern)) {
         const start = match.index;
         const end = start + match[0].length;
         // The longest phrase wins, so "in spite of the fact that" is not also
@@ -661,9 +665,10 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
       });
     }
     for (let i = 0; i < block.lines.length; i++) {
-      const line = withoutQuotedWords(block.lines[i]);
+      const line = block.lines[i];
       for (const term of LEGALESE) {
-        const matches = line.match(new RegExp(`\\b${term}\\b`, "gi"));
+        const matches = withoutNamedTerms(line, term)
+          .match(new RegExp(`\\b${term}\\b`, "gi"));
         for (let n = 0; n < (matches?.length ?? 0); n++) {
           violations.push({
             rule: "legalese",

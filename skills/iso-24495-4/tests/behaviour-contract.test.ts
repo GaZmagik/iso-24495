@@ -504,6 +504,42 @@ describe("reader-facing behaviour contracts", () => {
       .toContain("heading-skip");
   });
 
+  // Round 17. Containers were stripped in a fixed order, quotes then one list
+  // marker, so one nesting order was read and the other was not. Tabs were
+  // measured as one column, an alert label split ordinary paragraphs, and a
+  // short quoted sentence was mistaken for a term being named.
+  test("containers are read in the order they are written", () => {
+    const legalese = "The supplier shall hereby comply.";
+    const TAB = String.fromCharCode(9);
+    const long = "### A heading of far more than twelve ordinary words written for this test";
+
+    // Either nesting order finds the heading.
+    for (const order of [`- > ${long}`, `> - ${long}`]) {
+      expect(headings(order).map((h) => h.level), order).toEqual([3]);
+      expect(rulesFor(order), order).toContain("heading-style");
+    }
+    // And either order finds the fence, so its contents stay examples.
+    expect(rulesFor(["- > ```text", "  > shall hereby", "  > ```"].join(BREAK))).toEqual([]);
+    expect(rulesFor(["> - ```text", ">   shall hereby", ">   ```"].join(BREAK))).toEqual([]);
+
+    // A tab is four columns, so a line that starts with one is indented code
+    // rather than a fence, and the prose beneath it is still measured.
+    expect(rulesFor([`${TAB}\`\`\`text`, legalese].join(BREAK))).toContain("legalese");
+    // A tab after a marker is four columns, not one.
+    expect(rulesFor([`-${TAB}\`\`\`text`, `-${TAB}${legalese}`].join(BREAK))).toEqual([]);
+
+    // The label opens an alert only as a quotation's first line. Elsewhere it
+    // is ordinary text, and treating it as a label split a paragraph in two.
+    const six = ["One. Two. Three.", "[!WARNING]", "Four. Five. Six."];
+    expect(rulesFor(six.join(BREAK))).toContain("paragraph-length");
+    const midQuote = ["> One. Two. Three.", "> [!WARNING]", "> Four. Five. Six."];
+    expect(rulesFor(midQuote.join(BREAK))).toContain("paragraph-length");
+    expect(auditText(["> [!NOTE]", "> A short note."].join(BREAK))).toEqual([]);
+    // Outside a quotation the label is a line of the paragraph, words and all.
+    expect(proseBlocks(["One.", "[!WARNING]", "Two."].join(BREAK)))
+      .toEqual([{ line: 1, lines: ["One.", "[!WARNING]", "Two."] }]);
+  });
+
   // A filler word must survive emphasis and typography, and must not match
   // the start of an ordinary word.
   test("filler openings are matched as words, however they are typed", () => {
@@ -743,10 +779,15 @@ describe("reader-facing behaviour contracts", () => {
         { line: 1, lines: ["Outer sentence here."] },
         { line: 2, lines: ["A nested one."] },
       ]);
-    // Six words in quotation marks is a name; seven is prose.
-    expect(rulesFor('He wrote "the supplier shall comply at once" today.')).toEqual([]);
-    expect(rulesFor('He wrote "the supplier shall comply at once please" today.'))
+    // A quoted span names a term only when the span is the term. A quoted
+    // sentence is prose the writer chose to include, however short it is.
+    expect(rulesFor('Never write "shall" in a contract.')).toEqual([]);
+    expect(rulesFor('Never write `shall` in a contract.')).toEqual([]);
+    expect(rulesFor('The policy says "Staff shall submit requests" today.'))
       .toContain("legalese");
+    expect(rulesFor('Write "in order to" as two words fewer.')).toEqual([]);
+    expect(rulesFor('The note said "we did this in order to comply".'))
+      .toContain("wordy-phrase");
 
     // A heading is a heading, whatever container holds it.
     expect(headings("# Top\n- ### Nested").map((h) => h.level)).toEqual([1, 3]);
