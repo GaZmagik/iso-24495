@@ -2,7 +2,7 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
-## [0.5.0] - 2026-08-12
+## [0.5.0] - 2026-08-16
 
 ### Added
 

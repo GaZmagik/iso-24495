@@ -74,6 +74,38 @@ When configured, it re-audits changed documents and notifies the agent of rule-c
 
 Removing the config mid-session returns the monitor to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
+## What the engine reads
+
+A rule can only be as right as the text it reads. So the engine parses
+Markdown the way CommonMark describes it: each line is matched against the
+containers already open, then against any container it starts. What remains
+is the block a rule measures. That is what lets a wrapped list item, a
+quotation continuing without its marker, and a heading written inside a list
+all be read correctly.
+
+**Measured, because a reader reads them:**
+
+- paragraphs, wherever they sit;
+- list items, which are often the longest sentences in a document;
+- quotations, including GitHub alerts such as `> [!WARNING]`;
+- headings, at any depth and in any container;
+- HTML, because its text is prose a reader reads.
+
+**Not measured, because they are not sentences:**
+
+- fenced and indented code, which is a specimen rather than advice to give
+  back to the writer;
+- tables, whose cells belong to a grid, except that `table-header` reads them;
+- YAML front matter, which is metadata;
+- a GitHub alert label, which is a label;
+- a task marker, which is a control rather than two words.
+
+The parser is checked against the CommonMark reference implementation. 265
+documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`,
+and every one that this engine reads differently carries the reason why. The
+reference is not a dependency: it was installed outside the repository, asked
+once, and its answers kept.
+
 ## Advisory markdown hook (Claude Code)
 
 The plugin ships a `PostToolUse` hook (`hooks/`) that audits every `.md`, `.markdown`, or `.txt` file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one concise advisory line. It gives the total, orders up to three starting points by line, reports the remaining count, and never ranks rules by severity.
