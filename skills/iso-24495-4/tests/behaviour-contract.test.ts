@@ -51,6 +51,175 @@ function sentenceOf(words: number, stem = "word"): string {
 }
 
 describe("reader-facing behaviour contracts", () => {
+  test("an acronym is defined only when its first use actually gives the meaning", () => {
+    const laterDefinition = [
+      "The EBITDA report is ready.",
+      "",
+      "This paragraph separates the first use from the definition.",
+      "",
+      "Earnings before interest, taxes, depreciation and amortisation (EBITDA) is the measure.",
+    ].join(BREAK);
+    expect(auditText(laterDefinition).filter((finding) => finding.rule === "acronym-undefined"))
+      .toEqual([{
+        rule: "acronym-undefined",
+        line: 1,
+        detail: 'define acronym "EBITDA" on first use',
+      }]);
+    expect(rulesFor("The EBITDA report (draft) is ready."))
+      .toContain("acronym-undefined");
+    expect(rulesFor("EBITDA (draft report) is ready."))
+      .toContain("acronym-undefined");
+    expect(rulesFor("EBITDA means (earnings before interest, taxes, depreciation and amortisation)."))
+      .not.toContain("acronym-undefined");
+    expect(rulesFor("The result changed because (EBITDA fell sharply)."))
+      .toContain("acronym-undefined");
+    expect(rulesFor("EBITDA rose. Earnings before interest, taxes, depreciation and amortisation (EBITDA) explains the change."))
+      .toContain("acronym-undefined");
+    expect(rulesFor("The appendix labels the measure (EBITDA). Later, EBITDA appears in the report."))
+      .toContain("acronym-undefined");
+    expect(rulesFor("EBITDA (earnings before interest, taxes, depreciation and amortisation) is useful."))
+      .not.toContain("acronym-undefined");
+  });
+
+  test("reader-facing links and images are checked in every Markdown form", () => {
+    const input = [
+      "See [click here][refunds].",
+      "",
+      "![][diagram]",
+      "",
+      '<img src="chart.png">',
+      "",
+      "[refunds]: https://example.com/refunds",
+      "[diagram]: diagram.png",
+    ].join(BREAK);
+    expect(auditText(input).filter((finding) =>
+      finding.rule === "link-text" || finding.rule === "image-alt"))
+      .toEqual([
+        {
+          rule: "link-text",
+          line: 1,
+          detail: 'link text "click here" describes no destination (refunds)',
+        },
+        {
+          rule: "image-alt",
+          line: 3,
+          detail: "image has no alternative text (diagram)",
+        },
+        {
+          rule: "image-alt",
+          line: 5,
+          detail: "image has no alternative text (chart.png)",
+        },
+      ]);
+    expect(rulesFor("See [how to claim a refund][refunds].\n\n[refunds]: /refunds"))
+      .not.toContain("link-text");
+    expect(rulesFor("See [][refunds].\n\n[refunds]: /refunds"))
+      .toContain("link-text");
+    expect(rulesFor("See [click here][Refund   Policy].\n\n[refund policy]: /refunds"))
+      .toContain("link-text");
+    expect(rulesFor("See [click here].\n\n[click here]: /refunds"))
+      .toContain("link-text");
+    expect(rulesFor("See [the refund policy].\n\n[the refund policy]: /refunds"))
+      .not.toContain("link-text");
+    expect(rulesFor("See [**click here**](https://example.com/refunds)."))
+      .toContain("link-text");
+    expect(rulesFor("See [click here][missing]."))
+      .not.toContain("link-text");
+    expect(rulesFor("![Order flow][diagram]\n\n[diagram]: diagram.png"))
+      .not.toContain("image-alt");
+    expect(rulesFor("![][missing]"))
+      .not.toContain("image-alt");
+    expect(rulesFor('![](decorative-chart.png)'))
+      .toContain("image-alt");
+    expect(rulesFor('![](chart.png "not decorative")'))
+      .toContain("image-alt");
+    expect(rulesFor('![](chart.png "decorative")'))
+      .not.toContain("image-alt");
+    expect(rulesFor('<img src="chart.png" alt="Orders move from basket to payment">'))
+      .not.toContain("image-alt");
+    expect(rulesFor('<img title="Orders > returns" alt="Order flow" src="chart.png">'))
+      .not.toContain("image-alt");
+    expect(rulesFor('<a href="/refunds">click here</a>.'))
+      .toContain("link-text");
+    expect(rulesFor('<a\n href="/refunds">click here</a>.'))
+      .toContain("link-text");
+    expect(rulesFor('<a href="/refunds">click\nhere</a>.'))
+      .toContain("link-text");
+    expect(rulesFor('<a href="/refunds">click&nbsp;here</a>.'))
+      .toContain("link-text");
+    expect(rulesFor('<a href="/refunds"><span title="orders > returns">click here</span></a>.'))
+      .toContain("link-text");
+    expect(rulesFor('[click\nhere](/refunds)'))
+      .toContain("link-text");
+    expect(rulesFor('[refund\nguide](/refunds)'))
+      .not.toContain("link-text");
+    expect(rulesFor('<img\n src="chart.png">'))
+      .toContain("image-alt");
+    expect(rulesFor('<a href="/refunds">\n\nclick here</a>.'))
+      .not.toContain("link-text");
+    expect(rulesFor('<img\n\nsrc="chart.png">'))
+      .not.toContain("image-alt");
+    expect(rulesFor('Before. <!-- <img src="hidden.png"> --> After.'))
+      .not.toContain("image-alt");
+  });
+
+  test("table headers are checked through Markdown containers", () => {
+    const quoted = [
+      "> | Name | |",
+      "> | --- | --- |",
+      "> | Alice | Admin |",
+    ].join(BREAK);
+    const listed = [
+      "- | Name | |",
+      "  | --- | --- |",
+      "  | Alice | Admin |",
+    ].join(BREAK);
+    for (const table of [quoted, listed]) {
+      expect(auditText(table).filter((finding) => finding.rule === "table-header"))
+        .toEqual([{
+          rule: "table-header",
+          line: 1,
+          detail: "table header has an empty column name",
+        }]);
+    }
+    expect(rulesFor("| ** ** | Role |\n| --- | --- |\n| Alice | Admin |"))
+      .toContain("table-header");
+  });
+
+  test("advice points to the line where a long sentence begins", () => {
+    const long = sentenceOf(31);
+    const findings = auditText(`A short opening line.${BREAK}${long}`)
+      .filter((finding) => finding.rule === "sentence-length");
+    expect(findings).toEqual([{
+      rule: "sentence-length",
+      line: 2,
+      detail: "31 words (limit 30)",
+    }]);
+  });
+
+  test("literal answers and proper names do not receive stock phrase advice", () => {
+    expect(rulesFor("Certainly not. The change is unsafe."))
+      .not.toContain("filler-opening");
+    expect(rulesFor("[Certainly](https://example.com), the answer is 42."))
+      .toContain("filler-opening");
+    expect(rulesFor("[Certainly], the answer is 42.\n\n[Certainly]: https://example.com"))
+      .toContain("filler-opening");
+    expect(rulesFor("The journal Each and Every Child published a study."))
+      .not.toContain("doublet");
+    expect(rulesFor("Check each and every record."))
+      .toContain("doublet");
+    expect(rulesFor("Each and Every Customer must sign."))
+      .toContain("doublet");
+    expect(rulesFor("Terms and Conditions apply."))
+      .toContain("doublet");
+    expect(rulesFor("The word 'shall' is not suitable here."))
+      .not.toContain("legalese");
+    expect(rulesFor("Read [the policy](https://example.com/shall) before replying."))
+      .not.toContain("legalese");
+    expect(rulesFor("Read [the policy][shall] before replying."))
+      .toContain("legalese");
+  });
+
   test("technical punctuation and ambiguous boundaries cannot invent findings", () => {
     expect(classifyBoundary("packs etc.", "Customers receive them.")).toBe("ambiguous");
     expect(classifyBoundary("Dr.", "Smith explains it.")).toBe("merge");
@@ -567,6 +736,10 @@ describe("reader-facing behaviour contracts", () => {
   //   - a GitHub alert label is a label, and GitHub is where these are read.
   test("block structure matches the CommonMark reference implementation", () => {
     expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(286);
+    const readme = readFileSync(join(import.meta.dir, "..", "..", "..", "README.md"), "utf8");
+    expect(readme).toContain(
+      `The parser is checked against the CommonMark reference implementation. ${REFERENCE_SHAPES.length}`,
+    );
     // Every divergence carries its reason, so none can be added silently.
     for (const shape of REFERENCE_SHAPES) {
       if (shape.differsFromReference !== undefined) {
@@ -917,8 +1090,8 @@ describe("reader-facing behaviour contracts", () => {
     }
   });
 
-  // A definition counts wherever a reader can see it. Headings and lists are
-  // not audited as prose, so a term defined there was reported as undefined.
+  // A definition counts wherever a reader can see it. Structural contexts
+  // once fell outside the acronym scan, so a visible definition did not count.
   test("an acronym defined in a heading or list counts as defined", () => {
     const use = ["", "The DOM loads first.", ""];
     expect(rulesFor(["## Document Object Model (DOM)", ...use].join("\n")))
@@ -1058,6 +1231,7 @@ describe("reader-facing behaviour contracts", () => {
     }
     expect(headings("    # Indented code")).toEqual([]);
     expect(headings("    Setext-like code\n    ----------------")).toEqual([]);
+    expect(rulesFor("## **Policy title.**")).toContain("heading-style");
 
     const negatives = [
       "---",
@@ -1214,7 +1388,7 @@ describe("reader-facing behaviour contracts", () => {
     const repairs: Array<[string, string]> = [
       [sentence.replace("shall", "must"), "legalese"],
       [sentence.replace("each and every", "each").replace("item22.", "item22 for every reader."), "doublet"],
-      [sentence.replace("XYZ", "XYZ (Example Yield Zone)"), "acronym-undefined"],
+      [sentence.replace("XYZ", "XYZ (Xylophone Yield Zone)"), "acronym-undefined"],
       [sentence.replace("item10", "item10. Continue"), "sentence-length"],
     ];
     const originalRules = new Set(rulesFor(sentence));
@@ -1231,7 +1405,7 @@ describe("reader-facing behaviour contracts", () => {
       "heading-depth": ["##### Deep", "#### Permitted"],
       "heading-skip": ["# First\n### Third", "# First\n## Second"],
       "heading-style": ["# One two three four five six seven eight nine ten eleven twelve thirteen", "# One two three four five six seven eight nine ten eleven twelve"],
-      "acronym-undefined": ["The XYZ service starts.", "Example Yield Zone (XYZ) starts."],
+      "acronym-undefined": ["The XYZ service starts.", "Xylophone Yield Zone (XYZ) starts."],
       doublet: ["Check each and every record.", "Check each record."],
       "prose-enumeration": ["First inspect it, second test it, and third report it.", "First inspect it and second test it."],
       // A listener navigating by links hears only the link text, so "click

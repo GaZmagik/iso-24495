@@ -25,6 +25,10 @@ export interface Heading {
 
 export interface Document {
   lines: string[];
+  /** Reader-visible markup retained for rules about links and images. */
+  markupLines: string[];
+  /** Normalised reference labels that have valid definitions. */
+  references: ReadonlySet<string>;
   /** True when the line is metadata or fenced code, which no rule reads. */
   hidden: (index: number) => boolean;
 }
@@ -238,6 +242,15 @@ interface Parsed {
   tables: Set<number>;
   /** Source lines with invisible markup removed for line-based rules. */
   readable: string[];
+  /** Reader-visible source with HTML tags retained. */
+  markup: string[];
+  /** Valid link reference labels in this document. */
+  references: Set<string>;
+}
+
+export function normaliseReference(label: string): string {
+  return label.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, "$1")
+    .trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /**
@@ -316,6 +329,8 @@ function parse(lines: string[]): Parsed {
   const hidden = new Set<number>();
   const tables = new Set<number>();
   const readable = [...lines];
+  const markup = [...lines];
+  const references = new Set<string>();
   const stack: Container[] = [];
   const frontMatter = frontMatterRange(lines);
 
@@ -333,6 +348,7 @@ function parse(lines: string[]): Parsed {
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
+      markup[i] = "";
       closeParagraph();
       continue;
     }
@@ -354,11 +370,13 @@ function parse(lines: string[]): Parsed {
         const outside = withoutInvisible(text, invisible.until);
         if (outside.until !== null) {
           readable[i] = "";
+          markup[i] = "";
           continue;
         }
         invisible = null;
         text = outside.text;
         readable[i] = text;
+        markup[i] = text;
         if (text.trim() === "") {
           closeParagraph();
           continue;
@@ -370,6 +388,7 @@ function parse(lines: string[]): Parsed {
       if (allMatched) {
         hidden.add(i);
         readable[i] = "";
+        markup[i] = "";
         const closing = FENCE_OPEN.exec(rest);
         if (closing !== null
           && closing[2][0] === fence.char
@@ -446,6 +465,7 @@ function parse(lines: string[]): Parsed {
         invisible = { until: outside.until, depth: stack.length };
       }
       readable[i] = text;
+      markup[i] = text;
       // Invisible markup interrupts a paragraph, so the halves stay separate.
       closeParagraph();
       if (text.trim() === "") continue;
@@ -454,7 +474,10 @@ function parse(lines: string[]): Parsed {
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
     if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
+      const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
+      if (label !== undefined) references.add(normaliseReference(label));
       readable[i] = "";
+      markup[i] = "";
       continue;
     }
 
@@ -465,6 +488,7 @@ function parse(lines: string[]): Parsed {
       fence = { char: fenceOpen[2][0], length: fenceOpen[2].length };
       hidden.add(i);
       readable[i] = "";
+      markup[i] = "";
       continue;
     }
 
@@ -474,7 +498,7 @@ function parse(lines: string[]): Parsed {
       found.push({
         level: atx[1].length,
         line: i + 1,
-        text: visibleText((atx[2] ?? "").replace(/\s+#+\s*$/, "").trim()),
+        text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
       });
       continue;
     }
@@ -485,7 +509,7 @@ function parse(lines: string[]): Parsed {
       found.push({
         level: underline[1][0] === "=" ? 1 : 2,
         line: paragraph.line,
-        text: visibleText(paragraph.lines.join(" ").trim()),
+        text: paragraph.lines.join(" ").trim(),
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
       closeParagraph();
@@ -507,12 +531,21 @@ function parse(lines: string[]): Parsed {
       && isDividerRow(divider.trim())
       && cellCount(text.trim()) === cellCount(divider.trim())) {
       closeParagraph();
+      // Line-based table rules need the content after its quote or list
+      // markers. Keeping the raw container syntax made a quoted empty header
+      // invisible even though a listener still hears that table.
+      readable[i] = text;
+      readable[i + 1] = divider;
+      markup[i] = text;
+      markup[i + 1] = divider;
       tables.add(i);
       tables.add(i + 1);
       let row = i + 2;
       for (; row < lines.length; row++) {
         const content = nextContent(lines, row - 1, stack);
         if (content === null || !content.includes("|") || startsBlock(content)) break;
+        readable[row] = content;
+        markup[row] = content;
         tables.add(row);
       }
       tableUntil = row - 1;
@@ -530,13 +563,18 @@ function parse(lines: string[]): Parsed {
   for (const block of paragraphs) {
     const source = block.lines.join("\n");
     const forLineRules = visibleInline(source, false).split("\n");
+    const withTags = visibleInline(source, false, true).split("\n");
     for (let offset = 0; offset < forLineRules.length; offset++) {
       readable[block.line - 1 + offset] = forLineRules[offset];
+      markup[block.line - 1 + offset] = withTags[offset];
     }
     block.lines = visibleInline(source).split("\n");
   }
+  for (const heading of found) {
+    heading.text = visibleText(heading.text, references);
+  }
 
-  return { paragraphs, headings: found, hidden, tables, readable };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references };
 }
 
 /** The next line's text, with the same containers stripped, or none. */
@@ -627,7 +665,7 @@ function closingTicks(text: string, start: number, length: number): number {
 }
 
 /** Remove only inline markup that CommonMark keeps out of rendered text. */
-function visibleInline(text: string, keepLiteralSyntax = true): string {
+function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = false): string {
   let visible = "";
   let index = 0;
   while (index < text.length) {
@@ -664,7 +702,7 @@ function visibleInline(text: string, keepLiteralSyntax = true): string {
     const rest = text.slice(index);
     const tag = HTML_TAG_AT_START.exec(rest);
     if (tag !== null) {
-      visible += " " + tag[0].replace(/[^\n]/g, "");
+      visible += keepHtmlTags ? tag[0] : " " + tag[0].replace(/[^\n]/g, "");
       index += tag[0].length;
       continue;
     }
@@ -696,15 +734,30 @@ function visibleInline(text: string, keepLiteralSyntax = true): string {
   return visible;
 }
 
-function visibleText(text: string): string {
+function visibleText(text: string, references?: ReadonlySet<string>): string {
   return visibleInline(text)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (whole, alt: string, label: string) =>
+      references?.has(normaliseReference(label || alt)) ? alt : whole)
+    .replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (whole, label: string, target: string) =>
+      references?.has(normaliseReference(target || label)) ? label : whole)
+    .replace(/(?<![!\]])\[([^\]]+)\](?![\[(])/g, (whole, label: string) =>
+      references?.has(normaliseReference(label)) ? label : whole);
 }
 
 /** Collect prose paragraphs: what a reader reads as sentences. */
 export function proseBlocks(text: string): ProseBlock[] {
   return parse(toLines(text)).paragraphs;
+}
+
+/** Prose reduced to the words a reader meets, without link destinations. */
+export function readerProseBlocks(text: string): ProseBlock[] {
+  const parsed = parse(toLines(text));
+  return parsed.paragraphs.map((block) => ({
+    line: block.line,
+    lines: visibleText(block.lines.join("\n"), parsed.references).split("\n"),
+  }));
 }
 
 /** Heading levels with their 1-indexed line numbers. */
@@ -723,6 +776,8 @@ export function readDocument(text: string): Document {
   const parsed = parse(lines);
   return {
     lines: parsed.readable.map((line) => visibleInline(line, false)),
+    markupLines: parsed.markup,
+    references: parsed.references,
     hidden: (index) => parsed.hidden.has(index),
   };
 }

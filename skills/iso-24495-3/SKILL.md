@@ -18,7 +18,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
    - Reason freely within thinking blocks. Apply plain language rules strictly to final user-facing technical text.
 
 2. **Code & Data Preservation Immunity:**
-   - Code blocks, stack traces, AST dumps, terminal commands, and exact line quotes are **completely immune** to sentence length and simplification constraints. Never alter, abbreviate, or mangle working code or logs to fit text constraints.
+   - Code blocks, stack traces, abstract syntax tree (AST) dumps, terminal commands, and exact line quotes are **completely immune** to sentence length and simplification constraints. Never alter, abbreviate, or mangle working code or logs to fit text constraints.
 
 ---
 

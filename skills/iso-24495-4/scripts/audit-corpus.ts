@@ -7,7 +7,8 @@ import { join, relative } from "node:path";
 import {
   headings,
   mergedSentences,
-  proseBlocks,
+  normaliseReference,
+  readerProseBlocks,
   readDocument,
   splitSentences,
   wordCount,
@@ -293,20 +294,39 @@ function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   return shouted;
 }
 
+function expansionInitials(text: string): string {
+  return (text.match(/[A-Za-z]+/g) ?? [])
+    .filter((word) => !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word))
+    .map((word) => word[0].toUpperCase())
+    .join("");
+}
+
 function acronymViolations(text: string, known: ReadonlySet<string>): Violation[] {
   const violations: Violation[] = [];
   const defined = new Set<string>();
   const seen = new Set<string>();
-  // A definition counts wherever the reader can see it. Headings, lists and
-  // tables are not audited as prose, so "## Document Object Model (DOM)"
-  // followed by ordinary use of DOM was reported as undefined. That is where
-  // people naturally define a term, and the complaint was simply wrong.
-  for (const match of text.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
-    defined.add(match[1].replaceAll(".", ""));
+  const definitionLocations = new Map<string, { line: number; column: number }>();
+  const document = readDocument(text);
+  for (let i = 0; i < document.lines.length; i++) {
+    if (document.hidden(i)) continue;
+    for (const match of document.lines[i].matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
+      const key = match[1].replaceAll(".", "");
+      const words = document.lines[i].slice(0, match.index).match(/[A-Za-z]+/g) ?? [];
+      const meaningful = words.filter((word) =>
+        !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word));
+      if (expansionInitials(meaningful.slice(-key.length).join(" ")) !== key) continue;
+      if (!definitionLocations.has(key)) {
+        definitionLocations.set(key, { line: i + 1, column: match.index });
+      }
+    }
   }
-  for (const block of proseBlocks(text)) {
+  for (const block of readerProseBlocks(text)) {
     const tokens = block.lines.flatMap((line, lineIndex) =>
-      line.split(/\s+/).filter(Boolean).map((raw) => ({ raw, line: block.line + lineIndex })),
+      [...line.matchAll(/\S+/g)].map((match) => ({
+        raw: match[0],
+        line: block.line + lineIndex,
+        column: match.index,
+      })),
     );
     const shouted = shoutedPositions(tokens);
     for (let i = 0; i < tokens.length; i++) {
@@ -316,11 +336,17 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
         continue;
       }
-      const inParentheses = tokens[i].raw.includes("(");
-      const parenthesisFollows = tokens
+      const following = tokens.slice(i + 1).map((token) => token.raw).join(" ");
+      const opening = tokens
         .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)
-        .some((token) => token.raw.includes("("));
-      if (inParentheses || parenthesisFollows) {
+        .findIndex((token) => token.raw.includes("("));
+      const expansion = opening === -1
+        ? null
+        : /^\s*(?:\S+\s+){0,2}\(([^)]*)\)/.exec(following)?.[1] ?? null;
+      const parenthesisFollows = opening !== -1
+        && expansion !== null
+        && expansionInitials(expansion) === acronym.key;
+      if (parenthesisFollows) {
         defined.add(acronym.key);
         continue;
       }
@@ -328,7 +354,12 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
       // An ordinary English word is never an undefined acronym, even when it
       // sits in a run that is not shouting. "ENABLE MFA" reports MFA alone.
       if (COMMON_WORDS.has(acronym.key.toLowerCase())) continue;
-      if (defined.has(acronym.key) || seen.has(acronym.key)) continue;
+      const definition = definitionLocations.get(acronym.key);
+      const definitionPrecedes = definition !== undefined
+        && (definition.line < tokens[i].line
+          || (definition.line === tokens[i].line && definition.column <= tokens[i].column));
+      if (definitionPrecedes
+        || defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);
       violations.push({
         rule: "acronym-undefined",
@@ -340,10 +371,17 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
   return violations;
 }
 
+const NAMED_WORK = "article|book|campaign|company|film|initiative|journal|organisation|" +
+  "organization|paper|programme|program|project|publication|report|series|study|work";
+const PROPER_NAME_CONTEXT = new RegExp(
+  `(?:\\b(?:called|named|titled)|\\b(?:a|an|the)\\s+(?:${NAMED_WORK}))\\s*$`,
+  "i",
+);
+
 function doubletViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of proseBlocks(text)) {
-    // Named rather than used: "*to*, not *in order to*" is the advice itself.
+  for (const block of readerProseBlocks(text)) {
+    // The advice itself names "to" and "in order to" rather than using them.
     const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
     const matches: Array<{ start: number; end: number; entry: DoubletEntry }> = [];
@@ -352,6 +390,10 @@ function doubletViolations(text: string): Violation[] {
       for (const match of withoutNamedTerms(paragraph, entry.phrase).matchAll(pattern)) {
         const start = match.index;
         const end = start + match[0].length;
+        const titleCased = match[0].split(/\s+/)
+          .every((word) => /^(?:and|or|of|the|to)$/.test(word) || /^[A-Z][a-z]*$/.test(word));
+        const before = paragraph.slice(Math.max(0, start - 80), start);
+        if (titleCased && PROPER_NAME_CONTEXT.test(before)) continue;
         if (occupied.some((range) => start < range.end && end > range.start)) continue;
         occupied.push({ start, end });
         matches.push({ start, end, entry });
@@ -376,31 +418,109 @@ function doubletViolations(text: string): Violation[] {
 // surrounding sentence, so "click here" and a bare address both say nothing
 // about the destination.
 const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|more|more info|details|see more|learn more|go|page|website|download)$/i;
+const HTML_ANCHOR = /<a\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/a\s*>/gi;
+const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
+const HTML_TAG = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
+
+function spokenText(label: string): string {
+  return label
+    .replace(HTML_TAG, " ")
+    .replace(/&nbsp;|&#0*160;|&#x0*a0;/gi, " ")
+    .replace(/[*_~`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function htmlAttribute(attributes: string, name: string): string | null {
+  const match = new RegExp(
+    `\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    "i",
+  ).exec(attributes);
+  return match === null ? null : match[1] ?? match[2] ?? match[3] ?? "";
+}
 
 function linkTextViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, hidden } = readDocument(text);
+  const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     // Skip image syntax: the alt-text rule owns that.
     for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\(([^)]+)\)/g)) {
       const label = match[1].trim();
+      const spoken = spokenText(label);
       const target = match[2].trim();
-      const bare = /^<?(?:https?:\/\/|www\.)/i.test(label);
-      if (label.length === 0) {
+      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+      if (spoken.length === 0) {
         violations.push({
           rule: "link-text",
           line: i + 1,
           detail: "link has no text; say where it goes",
         });
-      } else if (UNINFORMATIVE_LINK.test(label) || bare) {
+      } else if (UNINFORMATIVE_LINK.test(spoken) || bare) {
         violations.push({
           rule: "link-text",
           line: i + 1,
-          detail: `link text "${label}" describes no destination (${target.slice(0, 40)})`,
+          detail: `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
         });
       }
     }
+    for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\[([^\]]*)\]/g)) {
+      const label = match[1].trim();
+      const spoken = spokenText(label);
+      const target = match[2].trim() || label;
+      if (!references.has(normaliseReference(target))) continue;
+      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+      if (spoken.length === 0) {
+        violations.push({ rule: "link-text", line: i + 1, detail: "link has no text; say where it goes" });
+      } else if (UNINFORMATIVE_LINK.test(spoken) || bare) {
+        violations.push({
+          rule: "link-text",
+          line: i + 1,
+          detail: `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
+        });
+      }
+    }
+    for (const match of lines[i].matchAll(/(?<![!\]])\[([^\]]+)\](?![\[(])/g)) {
+      const label = match[1].trim();
+      if (!references.has(normaliseReference(label))) continue;
+      const spoken = spokenText(label);
+      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+      if (!UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
+      violations.push({
+        rule: "link-text",
+        line: i + 1,
+        detail: `link text "${spoken}" describes no destination (${label.slice(0, 40)})`,
+      });
+    }
+  }
+  const markup = markupLines.join("\n");
+  for (const match of markup.matchAll(/(?<!!)\[([^\]]*\n[^\]]*)\]\(([^)\n]+)\)/g)) {
+    if (/\n[ \t]*\n/.test(match[0])) continue;
+    const spoken = spokenText(match[1]);
+    const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+    if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
+    violations.push({
+      rule: "link-text",
+      line: lineAtOffset(1, markup, match.index),
+      detail: spoken.length === 0
+        ? "link has no text; say where it goes"
+        : `link text "${spoken}" describes no destination (${match[2].trim().slice(0, 40)})`,
+    });
+  }
+  for (const match of markup.matchAll(HTML_ANCHOR)) {
+    if (/\n[ \t]*\n/.test(match[0])) continue;
+    const target = htmlAttribute(match[1], "href");
+    if (target === null) continue;
+    const spoken = spokenText(match[2]);
+    const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+    if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
+    violations.push({
+      rule: "link-text",
+      line: lineAtOffset(1, markup, match.index),
+      detail: spoken.length === 0
+        ? "link has no text; say where it goes"
+        : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
+    });
   }
   return violations;
 }
@@ -410,26 +530,48 @@ function linkTextViolations(text: string): Violation[] {
 // mark that intent explicitly rather than leaving the alt blank by accident.
 function imageAltViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, hidden } = readDocument(text);
+  const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     for (const match of lines[i].matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
       const alt = match[1].trim();
       if (alt.length > 0) continue;
       // "decorative" as the title marks an image that carries no meaning.
-      if (/\bdecorative\b/i.test(match[2])) continue;
+      // A filename containing the word does not express that decision.
+      if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(match[2])) continue;
       violations.push({
         rule: "image-alt",
         line: i + 1,
         detail: `image has no alternative text (${match[2].slice(0, 40)})`,
       });
     }
+    for (const match of lines[i].matchAll(/!\[([^\]]*)\]\[([^\]]*)\]/g)) {
+      const alt = match[1].trim();
+      if (alt.length > 0) continue;
+      const target = match[2].trim() || alt;
+      if (!references.has(normaliseReference(target))) continue;
+      violations.push({
+        rule: "image-alt",
+        line: i + 1,
+        detail: `image has no alternative text (${target.slice(0, 40)})`,
+      });
+    }
+  }
+  const markup = markupLines.join("\n");
+  for (const match of markup.matchAll(HTML_IMAGE)) {
+    if (/\n[ \t]*\n/.test(match[0])) continue;
+    const attributes = match[1];
+    if (htmlAttribute(attributes, "alt") !== null) continue;
+    const target = (htmlAttribute(attributes, "src") ?? "image").slice(0, 40);
+    violations.push({
+      rule: "image-alt",
+      line: lineAtOffset(1, markup, match.index),
+      detail: `image has no alternative text (${target})`,
+    });
   }
   return violations;
 }
 
-// A word inside emphasis or code is being discussed, not used. Without this,
-// the core skill could not name "utilise" as the word to avoid.
 /**
  * Blank the spans in which a term is named rather than used.
  *
@@ -440,7 +582,7 @@ function imageAltViolations(text: string): Violation[] {
  */
 function withoutNamedTerms(line: string, term: string): string {
   const wanted = term.trim().toLowerCase();
-  const spans = /`[^`]*`|[\u201c\u201d"][^\u201c\u201d"]*[\u201c\u201d"]/g;
+  const spans = /`[^`]*`|[\u201c\u201d"][^\u201c\u201d"]*[\u201c\u201d"]|'[^']*'|\u2018[^\u2019]*\u2019/g;
   return line.replace(spans, (span) => {
     const inner = span.slice(1, -1).trim().toLowerCase();
     return inner === wanted ? " ".repeat(span.length) : span;
@@ -449,7 +591,7 @@ function withoutNamedTerms(line: string, term: string): string {
 
 function complexWordViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of proseBlocks(text)) {
+  for (const block of readerProseBlocks(text)) {
     for (let i = 0; i < block.lines.length; i++) {
       const line = block.lines[i];
       for (const match of line.matchAll(/[A-Za-z']+/g)) {
@@ -469,7 +611,7 @@ function complexWordViolations(text: string): Violation[] {
 
 function doubleNegativeViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of proseBlocks(text)) {
+  for (const block of readerProseBlocks(text)) {
     // Named rather than used: the rule's own description quotes the phrase.
     const paragraph = block.lines.join("\n");
     for (const phrase of DOUBLE_NEGATIVES) {
@@ -493,7 +635,7 @@ function fillerOpeningViolations(text: string): Violation[] {
   // Front matter is metadata, not the opening sentence. It arrives as an
   // ordinary prose block, so without this the first real sentence of every
   // templated document escaped the rule entirely.
-  const blocks = proseBlocks(text);
+  const blocks = readerProseBlocks(text);
   if (blocks.length === 0) return [];
   // Emphasis markers are stripped, not the words inside them: "**Certainly!**"
   // is still a filler opening, and removing the emphasised text hid it. Smart
@@ -510,6 +652,8 @@ function fillerOpeningViolations(text: string): Violation[] {
     // "Let meadows grow" with "let me". All are ordinary sentences.
     const next = opening.charAt(filler.length);
     if (next !== "" && !/[\s.,;:!?)\]]/.test(next)) continue;
+    const remainder = opening.slice(filler.length).replace(/^[\s.,;:!?]+/, "");
+    if (/^not\b/.test(remainder)) continue;
     return [{
       rule: "filler-opening",
       line: blocks[0].line,
@@ -538,7 +682,7 @@ function tableHeaderViolations(text: string): Violation[] {
     // trailing pipe from a row written without outer pipes deletes a real
     // column separator, and the empty column it marks is the whole point.
     const trimmed = row.startsWith("|") ? row.replace(/^\|/, "").replace(/\|$/, "") : row;
-    const cells = trimmed.split("|").map((cell) => cell.trim());
+    const cells = trimmed.split("|").map((cell) => cell.replace(/[*_~`]/g, "").trim());
     if (cells.every((cell) => cell.length > 0)) continue;
     violations.push({
       rule: "table-header",
@@ -551,8 +695,8 @@ function tableHeaderViolations(text: string): Violation[] {
 
 function wordyPhraseViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of proseBlocks(text)) {
-    // Named rather than used: "*to*, not *in order to*" is the advice itself.
+  for (const block of readerProseBlocks(text)) {
+    // The advice itself names "to" and "in order to" rather than using them.
     const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
     for (const entry of WORDY_PHRASES) {
@@ -577,7 +721,7 @@ function wordyPhraseViolations(text: string): Violation[] {
 
 function proseEnumerationViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of proseBlocks(text)) {
+  for (const block of readerProseBlocks(text)) {
     const paragraph = block.lines.join(" ");
     const ranks = new Set<number>();
     // A hyphenated compound is one word, not a rank: "third-party service" is
@@ -636,19 +780,26 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
   const mergedLengths: number[] = [];
-  for (const block of proseBlocks(text)) {
-    const paragraph = block.lines.join(" ");
+  for (const block of readerProseBlocks(text)) {
+    const paragraph = block.lines.join("\n");
     const sentences = splitSentences(paragraph);
+    let searchAt = 0;
     for (const sentence of sentences) {
       const words = wordCount(sentence);
       if (words > 0) sentenceLengths.push(words);
+      const pattern = new RegExp(
+        sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"),
+      );
+      const found = pattern.exec(paragraph.slice(searchAt));
+      const start = searchAt + (found?.index ?? 0);
       if (words > SENTENCE_WORD_LIMIT) {
         violations.push({
           rule: "sentence-length",
-          line: block.line,
+          line: lineAtOffset(block.line, paragraph, start),
           detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
         });
       }
+      searchAt = start + (found?.[0].length ?? sentence.length);
     }
     // Counted from the fewest sentences the paragraph can hold. An unresolved
     // full stop must never manufacture the sentence that breaks the limit.
@@ -722,6 +873,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
 
     // lucid-inspired, reimplemented; proxy choice, not a standard clause.
     const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
+    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
     const headingWords = wordCount(headingText);
     // Same abstention as the paragraph rule: a heading is only two sentences
     // if it is two even when every doubtful stop is joined up.
@@ -738,7 +890,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
         line: heading.line,
         detail: `${headingSentences.length} sentences in heading`,
       });
-    } else if (headingText.endsWith(".") && !headingText.endsWith("...")) {
+    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
       violations.push({
         rule: "heading-style",
         line: heading.line,

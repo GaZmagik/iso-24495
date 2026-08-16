@@ -47,6 +47,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Changed
 
+- Acronym definitions now work in document order and must match the acronym. A later expansion or unrelated parenthesis no longer excuses an unexplained first use.
+- Link advice now follows wrapped HTML and Markdown labels and treats non-breaking space entities as spaces.
+- Image destinations containing "decorative" no longer excuse missing alternative text. Only an exact decorative title does.
+- Prose rules now judge rendered link labels rather than hidden destinations. Link and image checks cover inline, full-reference, collapsed-reference, shortcut-reference, and HTML forms.
+- Advice for long sentences now cites the sentence's starting line. Filler answers, formatted headings, formatted link labels, empty formatted table headers, and proper names are calibrated separately.
 - Sentence rules recalibrated. The engine now flags a document average above 20 words (new `sentence-average` rule, minimum sample 10 sentences) and raises the per-sentence cap from 20 to 30. Public plain-language guidance (Cutts, the Plain English Campaign, the Clear English Standard) specifies an average of 15 to 20 words rather than a per-sentence cap. The cap of 30 and the 10-sentence minimum are this project's own proxy choices, informed by measurements of local sessions whose data is not part of this repository.
 - Paragraph limit relaxed from 3 sentences to 5, matching public guidance (3 to 5, with single-sentence paragraphs fine for emphasis).
 - The core skill's voice rule is no longer absolute: active is the default, and passive is accepted where the actor is unknown, irrelevant, or secondary.

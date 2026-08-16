@@ -100,7 +100,7 @@ all be read correctly.
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 
-The parser is checked against the CommonMark reference implementation. 286
+The parser is checked against the CommonMark reference implementation. 302
 documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`,
 and every one that this engine reads differently carries the reason why. The
 reference is not a dependency: it was installed outside the repository, asked

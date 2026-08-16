@@ -57,10 +57,8 @@ reports `whereby` in subparagraph (A). The finding is real, so the expected
 result is now four rather than three. The rule set grew; the engine did not
 drift. A changed expectation is only honest when the reason is recorded.
 
-Note for a later release: naming a banned term in this file, even inside code
-formatting, produces a finding of its own. Inline code is excluded from sentence
-parsing but not from term matching, so documentation about the rules cannot
-quote the words the rules cover.
+A quoted or backticked span exempts a term only when the span names that term.
+Longer quoted sentences remain subject to the same checks as other prose.
 
 Subparagraph (B) and the introductory clause of paragraph (1) are omitted
 because they contain em dashes, which a repository test forbids in every

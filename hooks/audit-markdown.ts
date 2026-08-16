@@ -37,6 +37,14 @@ function joined(items: string[]): string {
   return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
 
+function conciseFileName(fileName: string): string {
+  const words = fileName.trim().split(/\s+/);
+  if (words.length <= 8) return fileName;
+  // The file remains recognisable without letting user data make the
+  // advisory itself breach the sentence cap.
+  return `${words.slice(0, 7).join(" ")} [shortened] ${words.at(-1)}`;
+}
+
 export function formatAdvice(fileName: string, violations: readonly Violation[]): string | null {
   if (violations.length === 0) return null;
   const ruleCount = new Set(violations.map((violation) => violation.rule)).size;
@@ -56,7 +64,7 @@ export function formatAdvice(fileName: string, violations: readonly Violation[])
   const findingLabel = violations.length === 1 ? "finding" : "findings";
   const ruleLabel = ruleCount === 1 ? "rule" : "rules";
   const sentences = [
-    `iso-24495 advisory for ${fileName}: ${violations.length} ${findingLabel} across ${ruleCount} ${ruleLabel}.`,
+    `iso-24495 advisory for ${conciseFileName(fileName)}: ${violations.length} ${findingLabel} across ${ruleCount} ${ruleLabel}.`,
   ];
   if (startingPoints.length > 0) {
     const points = startingPoints.map((point) =>

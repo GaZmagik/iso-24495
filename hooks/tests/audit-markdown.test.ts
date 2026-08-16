@@ -78,6 +78,7 @@ describe("formatAdvice", () => {
       "AWS NDA migration guide.md",
       "a.md",
       "quarterly-review-of-the-supplier-onboarding-process-2026.md",
+      "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one.md",
     ];
     const findings = [
       violation("sentence-average", 1),
