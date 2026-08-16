@@ -566,7 +566,7 @@ describe("reader-facing behaviour contracts", () => {
   //   - HTML holds reader-visible prose, so its text is measured;
   //   - a GitHub alert label is a label, and GitHub is where these are read.
   test("block structure matches the CommonMark reference implementation", () => {
-    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(272);
+    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(286);
     // Every divergence carries its reason, so none can be added silently.
     for (const shape of REFERENCE_SHAPES) {
       if (shape.differsFromReference !== undefined) {
@@ -640,6 +640,54 @@ describe("reader-facing behaviour contracts", () => {
     // Real front matter is still metadata.
     expect(rulesFor(["---", "title: Each and Every Shall Policy", "---", "", "Body."].join(BREAK)))
       .toEqual([]);
+  });
+
+  // Round 20, judged against the reference implementation. Two reviewers
+  // attacked the same repairs and found opposite faults in them: text hidden
+  // that a reader sees, and markup measured as words.
+  test("markup is recognised by its grammar, not by its first character", () => {
+    const legalese = "The supplier shall hereby comply.";
+
+    // A definition needs a destination. Without one it is a sentence.
+    expect(rulesFor(`[Question]: ${legalese}`)).toContain("legalese");
+    expect(rulesFor(['[policy]: https://example.com "shall hereby"', "", "Read it."].join(BREAK)))
+      .toEqual([]);
+    // Its title may sit on the line below it.
+    expect(rulesFor(["[policy]: https://example.com", '  "shall hereby"'].join(BREAK)))
+      .toEqual([]);
+    // A comment runs until it closes, and every line of it is invisible.
+    expect(rulesFor(["<!--", legalese, "-->"].join(BREAK))).toEqual([]);
+
+    // A setext underline cannot be a lazy continuation, so a stray "--" below
+    // a list item stays part of the item rather than making it a heading.
+    const lazyRule = [`- ${legalese} It continues here.`, "--"];
+    expect(headings(lazyRule.join(BREAK))).toEqual([]);
+    expect(rulesFor(lazyRule.join(BREAK))).toContain("legalese");
+
+    // The label opens an alert, so it is a label only on the opening line.
+    expect(proseBlocks(["> [!WARNING]", "> Careful."].join(BREAK)).map((b) => b.lines[0]))
+      .toEqual(["Careful."]);
+    expect(proseBlocks(["> First.", ">", "> [!WARNING]", "> Careful."].join(BREAK))
+      .map((b) => b.lines.join(" "))).toEqual(["First.", "[!WARNING] Careful."]);
+
+    // A tag is markup; an autolink and a comparison are text a reader reads.
+    expect(proseBlocks('A <span class="label">tag</span> here.').map((b) => b.lines[0]))
+      .toEqual(["A  tag  here."]);
+    expect(proseBlocks("The value is < 5 and > 2 today.").map((b) => b.lines[0]))
+      .toEqual(["The value is < 5 and > 2 today."]);
+    expect(proseBlocks("Read <https://example.com> today.").map((b) => b.lines[0]))
+      .toEqual(["Read <https://example.com> today."]);
+    // A heading loses its tags too, so its length is the length a reader sees.
+    expect(headings('# A heading <span class="label">wrapped</span> here')[0]?.text)
+      .toBe("A heading  wrapped  here");
+
+    // Front matter keys may be quoted, and may be written in any language.
+    for (const key of ['"title": Metadata here', "résumé: Metadata here"]) {
+      expect(headings(["---", key, "---", "", "Body."].join(BREAK)), key).toEqual([]);
+    }
+    // A sentence between two rules is still a heading, not metadata.
+    expect(headings(["---", "Just a sentence here.", "---", "", "Body."].join(BREAK)))
+      .toHaveLength(1);
   });
 
   // A filler word must survive emphasis and typography, and must not match

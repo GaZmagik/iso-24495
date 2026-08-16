@@ -1,50 +1,22 @@
-import { Parser } from "commonmark";
-import { writeFileSync } from "node:fs";
-import { headings, proseBlocks } from "../../scripts/lib/parse.ts";
+// The corpus the reference comparison runs over.
+//
+// Two parts. A matrix of every container prefix the engine claims to
+// understand, applied to every leaf block it claims to find, and the
+// transitions between them. Then documents built from a grammar of lines by a
+// seeded generator, so the corpus holds shapes nobody thought to choose.
+//
+// The seed is fixed, so the same corpus is produced every time.
 
-const B = String.fromCharCode(10);
+export interface Shape {
+  name: string;
+  lines: string[];
+}
+
 const TAB = String.fromCharCode(9);
-const parser = new Parser();
+const BREAK = String.fromCharCode(10);
 
-function reference(markdown: string) {
-  const walker = parser.parse(markdown).walker();
-  const paragraphs: string[] = [];
-  const found: Array<[number, string]> = [];
-  let event = walker.next();
-  let text: string | null = null;
-  let level = 0;
-  let kind: "paragraph" | "heading" | null = null;
-  while (event) {
-    const { node, entering } = event;
-    if (node.type === "paragraph" || node.type === "heading") {
-      if (entering) {
-        text = "";
-        kind = node.type;
-        level = node.type === "heading" ? node.level : 0;
-      } else {
-        const value = (text ?? "").replace(/\s+/g, " ").trim();
-        if (kind === "paragraph") paragraphs.push(value);
-        else found.push([level, value]);
-        text = null;
-        kind = null;
-      }
-    }
-    if (text !== null && (node.type === "text" || node.type === "code")) text += node.literal ?? "";
-    if (text !== null && (node.type === "softbreak" || node.type === "linebreak")) text += " ";
-    event = walker.next();
-  }
-  return { paragraphs, headings: found };
-}
+export const MATRIX_SHAPES: Shape[] = [];
 
-function ours(markdown: string) {
-  return {
-    paragraphs: proseBlocks(markdown).map((b) => b.lines.join(" ").replace(/\s+/g, " ").trim()),
-    headings: headings(markdown).map((h) => [h.level, h.text.replace(/\s+/g, " ").trim()] as [number, string]),
-  };
-}
-
-// Every container prefix the engine claims to understand, applied to every
-// leaf block it claims to find, plus the transitions between them.
 const containers: Array<[string, string[]]> = [
   ["margin", []],
   ["bullet", ["- "]],
@@ -79,7 +51,7 @@ function indentFor(prefixes: string[]): string {
   return prefixes.map((prefix) => " ".repeat(prefix.length)).join("");
 }
 
-const shapes: Array<{ name: string; lines: string[] }> = [];
+
 
 for (const [containerName, prefixes] of containers) {
   for (const [leafName, body] of leaves) {
@@ -90,7 +62,7 @@ for (const [containerName, prefixes] of containers) {
         prefix.trimEnd() === ">" ? "> " : " ".repeat(prefix.length)).join("");
       return (index === 0 ? opener : continuation) + line;
     });
-    shapes.push({ name: `${containerName} / ${leafName}`, lines });
+    MATRIX_SHAPES.push({ name: `${containerName} / ${leafName}`, lines });
   }
 }
 
@@ -128,27 +100,58 @@ const extras: Array<[string, string[]]> = [
   ["numbered wrap", ["Text continues", "2024. and on."]],
   ["numbered one wrap", ["Text continues", "1. a list."]],
 ];
-for (const [name, lines] of extras) shapes.push({ name, lines });
+for (const [name, lines] of extras) MATRIX_SHAPES.push({ name, lines });
 
-const rows: Array<{ name: string; lines: string[]; paragraphs: string[]; headings: Array<[number, string]> }> = [];
-const differ: string[] = [];
 
-for (const shape of shapes) {
-  const markdown = shape.lines.join(B) + B;
-  const a = reference(markdown);
-  const b = ours(markdown);
-  const same = JSON.stringify(a.paragraphs) === JSON.stringify(b.paragraphs)
-    && JSON.stringify(a.headings) === JSON.stringify(b.headings);
-  if (!same) {
-    differ.push(shape.name);
-    console.log("DIFFERS: " + shape.name);
-    console.log("   markdown  :", JSON.stringify(shape.lines));
-    console.log("   reference :", JSON.stringify(a));
-    console.log("   ours      :", JSON.stringify(b));
-    continue;
-  }
-  rows.push({ name: shape.name, lines: shape.lines, paragraphs: a.paragraphs, headings: a.headings });
+// A seeded generator, so the corpus is the same every time it is built.
+let seed = 20260816;
+function next(limit: number): number {
+  seed = (seed * 1103515245 + 12345) % 2147483648;
+  return seed % limit;
+}
+function pick<T>(items: T[]): T {
+  return items[next(items.length)];
 }
 
-console.log(`${rows.length} of ${shapes.length} shapes agree; ${differ.length} differ.`);
-writeFileSync("./matrix.json", JSON.stringify(rows, null, 2));
+const PREFIXES = ["", "- ", "1. ", "> ", "  ", "    ", TAB, ">", "* ", "2) ", "  - ", "> > ", "- > ", "> - "];
+const BODIES = [
+  "One sentence here.",
+  "Two words.",
+  "The supplier shall comply.",
+  "# Heading",
+  "### Deeper heading",
+  "===",
+  "---",
+  "***",
+  "```",
+  "~~~",
+  "```text",
+  "| A | B |",
+  "|---|---|",
+  "A | B",
+  "---|---",
+  "",
+  "[link](https://example.com)",
+  "![](image.png)",
+  "<p>Inline html.</p>",
+  "Text with `code` inside.",
+  "Text with **bold** inside.",
+  "[!WARNING]",
+  "- [ ] Task item",
+  "10. Ordered ten",
+  "\\- Escaped marker",
+  "Trailing spaces here  ",
+];
+
+
+export const GENERATED_SHAPES: Shape[] = [];
+const seen = new Set<string>();
+for (let n = 0; n < 500 && GENERATED_SHAPES.length < 120; n++) {
+  const count = 2 + next(4);
+  const lines: string[] = [];
+  for (let i = 0; i < count; i++) lines.push(pick(PREFIXES) + pick(BODIES));
+  const key = lines.join(BREAK);
+  if (seen.has(key)) continue;
+  seen.add(key);
+  GENERATED_SHAPES.push({ name: `generated: ${lines.join(" / ").slice(0, 60)}`, lines });
+}

@@ -1,21 +1,14 @@
-// Block structure for 272 documents, checked against the CommonMark reference
-// implementation on 2026-08-16.
+// Block structure for 286 documents, checked against the CommonMark
+// reference implementation.
 //
-// Two corpora. The first is a matrix: every container prefix the engine claims
-// to understand, applied to every leaf block it claims to find, and the
-// transitions between them. The second is generated from a grammar of lines by
-// a seeded builder, so it holds shapes nobody thought to choose.
+// Rebuild this file with `build-fixture.ts` beside it, which reads the corpus
+// from `shapes.ts`, asks the reference, and refuses to write a difference it
+// cannot explain. See the README for the two commands.
 //
-// The scripts that produced this file are checked in beside it, in
-// `../reference/`, with instructions. The reference itself is not a
-// dependency: install it outside the repository, run them, and the counts can
-// be checked rather than believed. Never edit an expectation by hand to make a
-// test pass. An expectation that disagrees with the reference needs a reason,
-// and the recorder refuses to write one without it.
+// 226 documents are read identically. 60 differ, for 4 reasons, and every
+// reason is a decision about a reader rather than about Markdown.
 //
-// 27 rows differ from the reference, for 6 reasons. Each is a decision about a
-// reader rather than about Markdown: tables, HTML, front matter, alert labels,
-// task markers, and text a reader never sees.
+// Never edit an expectation by hand to make a test pass.
 
 export interface ReferenceShape {
   name: string;
@@ -1747,6 +1740,17 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "differsFromReference": "GitHub renders a table; the reference implements CommonMark core, which has no table extension."
   },
   {
+    "name": "quote holding table",
+    "lines": [
+      "> | A | B |",
+      "> |---|---|",
+      "> | x | y |"
+    ],
+    "paragraphs": [],
+    "headings": [],
+    "differsFromReference": "GitHub renders a table; the reference implements CommonMark core, which has no table extension."
+  },
+  {
     "name": "tab item",
     "lines": [
       "-\tA."
@@ -1908,7 +1912,7 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "Text."
     ],
     "headings": [],
-    "differsFromReference": "HTML carries prose a reader reads, so its text is measured rather than skipped as a block."
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
   },
   {
     "name": "front matter then item",
@@ -1922,7 +1926,7 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "A."
     ],
     "headings": [],
-    "differsFromReference": "Front matter is metadata on GitHub and in Jekyll; CommonMark has no such concept and reads it as a heading."
+    "differsFromReference": "Front matter is metadata on GitHub and in Jekyll; CommonMark has no such concept."
   },
   {
     "name": "crlf paragraph",
@@ -1959,157 +1963,16 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "headings": []
   },
   {
-    "name": "alert at top level",
+    "name": "generated: * - [ ] Task item / |---|---|",
     "lines": [
-      "> [!WARNING]",
-      "> Careful now."
+      "* - [ ] Task item",
+      "|---|---|"
     ],
     "paragraphs": [
-      "Careful now."
-    ],
-    "headings": [],
-    "differsFromReference": "A GitHub alert label is a label, not a sentence; CommonMark has no alerts and reads it as text."
-  },
-  {
-    "name": "alert nested",
-    "lines": [
-      "> > [!WARNING]",
-      "> > Careful now."
-    ],
-    "paragraphs": [
-      "[!WARNING] Careful now."
-    ],
-    "headings": []
-  },
-  {
-    "name": "alert in a list",
-    "lines": [
-      "- > [!NOTE]",
-      "  > Careful now."
-    ],
-    "paragraphs": [
-      "[!NOTE] Careful now."
-    ],
-    "headings": []
-  },
-  {
-    "name": "alert label alone",
-    "lines": [
-      "[!WARNING]",
-      "Ordinary text."
-    ],
-    "paragraphs": [
-      "[!WARNING] Ordinary text."
-    ],
-    "headings": []
-  },
-  {
-    "name": "task items",
-    "lines": [
-      "- [ ] One task",
-      "- [x] Another task"
-    ],
-    "paragraphs": [
-      "One task",
-      "Another task"
+      "Task item |---|---|"
     ],
     "headings": [],
     "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
-  },
-  {
-    "name": "task in ordered",
-    "lines": [
-      "1. [ ] One task"
-    ],
-    "paragraphs": [
-      "One task"
-    ],
-    "headings": [],
-    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
-  },
-  {
-    "name": "link definition",
-    "lines": [
-      "[policy]: https://example.com \"title\"",
-      "",
-      "Read [it][policy]."
-    ],
-    "paragraphs": [
-      "Read [it][policy]."
-    ],
-    "headings": [],
-    "differsFromReference": "A link reference definition, comment, declaration or processing instruction is invisible to a reader."
-  },
-  {
-    "name": "html comment",
-    "lines": [
-      "<!-- hidden note -->",
-      "",
-      "Visible text."
-    ],
-    "paragraphs": [
-      "Visible text."
-    ],
-    "headings": []
-  },
-  {
-    "name": "doctype",
-    "lines": [
-      "<!DOCTYPE html>",
-      "",
-      "Visible text."
-    ],
-    "paragraphs": [
-      "Visible text."
-    ],
-    "headings": []
-  },
-  {
-    "name": "processing instruction",
-    "lines": [
-      "<?php echo 1; ?>",
-      "",
-      "Visible text."
-    ],
-    "paragraphs": [
-      "Visible text."
-    ],
-    "headings": []
-  },
-  {
-    "name": "html block",
-    "lines": [
-      "<div class=\"note\">",
-      "Inner text here.",
-      "</div>"
-    ],
-    "paragraphs": [
-      "Inner text here."
-    ],
-    "headings": [],
-    "differsFromReference": "HTML carries prose a reader reads, so its text is measured rather than skipped as a block."
-  },
-  {
-    "name": "generated: 1. ``` / - > The supplier shall comply. / ```",
-    "lines": [
-      "1. ```",
-      "- > The supplier shall comply.",
-      "```"
-    ],
-    "paragraphs": [
-      "The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: ```text / - > |---|---| / * ```text",
-    "lines": [
-      "```text",
-      "- > |---|---|",
-      "* ```text"
-    ],
-    "paragraphs": [],
-    "headings": []
   },
   {
     "name": "generated:   ### Deeper heading / \tText with **bold** inside.",
@@ -2126,6 +1989,99 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     ]
   },
   {
+    "name": "generated: 1. Text with **bold** inside. / [link](https://example.com)",
+    "lines": [
+      "1. Text with **bold** inside.",
+      "[link](https://example.com)"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside. [link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ``` / \t### Deeper heading",
+    "lines": [
+      "  - ```",
+      "\t### Deeper heading"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: \t- [ ] Task item / * |---|---|",
+    "lines": [
+      "\t- [ ] Task item",
+      "* |---|---|"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ---|--- / 1. <p>Inline html.</p>",
+    "lines": [
+      "- > ---|---",
+      "1. <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "---|---",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated:   - |---|---| /   The supplier shall comply.",
+    "lines": [
+      "  - |---|---|",
+      "  The supplier shall comply."
+    ],
+    "paragraphs": [
+      "|---|---| The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. ### Deeper heading / - > ---",
+    "lines": [
+      "1. ### Deeper heading",
+      "- > ---"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: * ---|--- / * - [ ] Task item",
+    "lines": [
+      "* ---|---",
+      "* - [ ] Task item"
+    ],
+    "paragraphs": [
+      "---|---",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   - [link](https://example.com) / * ```text",
+    "lines": [
+      "  - [link](https://example.com)",
+      "* ```text"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
     "name": "generated: ---|--- /   - \\- Escaped marker",
     "lines": [
       "---|---",
@@ -2136,6 +2092,1084 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "\\- Escaped marker"
     ],
     "headings": []
+  },
+  {
+    "name": "generated: \t--- /   Text with **bold** inside.",
+    "lines": [
+      "\t---",
+      "  Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   Text with **bold** inside. / 1. ---|---",
+    "lines": [
+      "  Text with **bold** inside.",
+      "1. ---|---"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ### Deeper heading /   - The supplier shall comply.",
+    "lines": [
+      "* ### Deeper heading",
+      "  - The supplier shall comply."
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: - > --- /   - - [ ] Task item",
+    "lines": [
+      "- > ---",
+      "  - - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   - <p>Inline html.</p> / \t[link](https://example.com)",
+    "lines": [
+      "  - <p>Inline html.</p>",
+      "\t[link](https://example.com)"
+    ],
+    "paragraphs": [
+      "Inline html. [link](https://example.com)"
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated: --- /   - The supplier shall comply.",
+    "lines": [
+      "---",
+      "  - The supplier shall comply."
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ``` / \t```text",
+    "lines": [
+      "- > ```",
+      "\t```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   [link](https://example.com) / 1. \\- Escaped marker",
+    "lines": [
+      "  [link](https://example.com)",
+      "1. \\- Escaped marker"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)",
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: The supplier shall comply. /   [link](https://example.com)",
+    "lines": [
+      "The supplier shall comply.",
+      "  [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. [link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - \\- Escaped marker /   Text with **bold** inside.",
+    "lines": [
+      "  - \\- Escaped marker",
+      "  Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "\\- Escaped marker Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * |---|---| / * <p>Inline html.</p>",
+    "lines": [
+      "* |---|---|",
+      "* <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "|---|---|",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated:   - ---|--- / ```",
+    "lines": [
+      "  - ---|---",
+      "```"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ---|--- / 1. ```text",
+    "lines": [
+      "  - ---|---",
+      "1. ```text"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   --- /   - |---|---|",
+    "lines": [
+      "  ---",
+      "  - |---|---|"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t---|--- / ```text",
+    "lines": [
+      "\t---|---",
+      "```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: \t``` / * - [ ] Task item",
+    "lines": [
+      "\t```",
+      "* - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: 1. \\- Escaped marker /   - Text with **bold** inside.",
+    "lines": [
+      "1. \\- Escaped marker",
+      "  - Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   |---|---| / 1. ```",
+    "lines": [
+      "  |---|---|",
+      "1. ```"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - [ ] Task item / - > ```",
+    "lines": [
+      "- [ ] Task item",
+      "- > ```"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   ```text / 1. |---|---|",
+    "lines": [
+      "  ```text",
+      "1. |---|---|"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   --- / * ---|---",
+    "lines": [
+      "  ---",
+      "* ---|---"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > - [ ] Task item / * ### Deeper heading",
+    "lines": [
+      "- > - [ ] Task item",
+      "* ### Deeper heading"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: \t---|--- / \t\\- Escaped marker",
+    "lines": [
+      "\t---|---",
+      "\t\\- Escaped marker"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   - \\- Escaped marker /   - Text with **bold** inside.",
+    "lines": [
+      "  - \\- Escaped marker",
+      "  - Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * One sentence here. / \t### Deeper heading",
+    "lines": [
+      "* One sentence here.",
+      "\t### Deeper heading"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: - > ---|--- / \t- [ ] Task item",
+    "lines": [
+      "- > ---|---",
+      "\t- [ ] Task item"
+    ],
+    "paragraphs": [
+      "---|---",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   ---|--- / - > [link](https://example.com)",
+    "lines": [
+      "  ---|---",
+      "- > [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "---|---",
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ---|--- /   ### Deeper heading",
+    "lines": [
+      "  - ---|---",
+      "  ### Deeper heading"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: \tOne sentence here. / 1. One sentence here.",
+    "lines": [
+      "\tOne sentence here.",
+      "1. One sentence here."
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \tText with **bold** inside. / ```text",
+    "lines": [
+      "\tText with **bold** inside.",
+      "```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: - > - [ ] Task item / * <p>Inline html.</p>",
+    "lines": [
+      "- > - [ ] Task item",
+      "* <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "Task item",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated:   - <p>Inline html.</p> /   - <p>Inline html.</p>",
+    "lines": [
+      "  - <p>Inline html.</p>",
+      "  - <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "Inline html.",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated: - > ``` / \t|---|---|",
+    "lines": [
+      "- > ```",
+      "\t|---|---|"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ```text / [link](https://example.com)",
+    "lines": [
+      "  - ```text",
+      "[link](https://example.com)"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   ```text / * Text with **bold** inside.",
+    "lines": [
+      "  ```text",
+      "* Text with **bold** inside."
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: \t``` / * Text with **bold** inside.",
+    "lines": [
+      "\t```",
+      "* Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > One sentence here. / * - [ ] Task item",
+    "lines": [
+      "- > One sentence here.",
+      "* - [ ] Task item"
+    ],
+    "paragraphs": [
+      "One sentence here.",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: \t|---|---| / \tText with **bold** inside.",
+    "lines": [
+      "\t|---|---|",
+      "\tText with **bold** inside."
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ### Deeper heading / - > ```text",
+    "lines": [
+      "  - ### Deeper heading",
+      "- > ```text"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: * ``` / - > Text with **bold** inside.",
+    "lines": [
+      "* ```",
+      "- > Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - Text with **bold** inside. / - > - [ ] Task item",
+    "lines": [
+      "  - Text with **bold** inside.",
+      "- > - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: 1. The supplier shall comply. / - > Text with **bold** insid",
+    "lines": [
+      "1. The supplier shall comply.",
+      "- > Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "The supplier shall comply.",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ```text / \t- [ ] Task item",
+    "lines": [
+      "  - ```text",
+      "\t- [ ] Task item"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: ---|--- /   - ---|---",
+    "lines": [
+      "---|---",
+      "  - ---|---"
+    ],
+    "paragraphs": [
+      "---|---",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. |---|---| /   ### Deeper heading",
+    "lines": [
+      "1. |---|---|",
+      "  ### Deeper heading"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   - <p>Inline html.</p> /   ```",
+    "lines": [
+      "  - <p>Inline html.</p>",
+      "  ```"
+    ],
+    "paragraphs": [
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated: * One sentence here. / * ---",
+    "lines": [
+      "* One sentence here.",
+      "* ---"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - --- / - [ ] Task item",
+    "lines": [
+      "  - ---",
+      "- [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: [link](https://example.com) / - > ```text",
+    "lines": [
+      "[link](https://example.com)",
+      "- > ```text"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: --- / * - [ ] Task item",
+    "lines": [
+      "---",
+      "* - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: 1. [link](https://example.com) /   |---|---|",
+    "lines": [
+      "1. [link](https://example.com)",
+      "  |---|---|"
+    ],
+    "paragraphs": [
+      "[link](https://example.com) |---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: One sentence here. / 1. Text with **bold** inside.",
+    "lines": [
+      "One sentence here.",
+      "1. Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "One sentence here.",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ``` / - > ---|---",
+    "lines": [
+      "  - ```",
+      "- > ---|---"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. ### Deeper heading / - > ```text",
+    "lines": [
+      "1. ### Deeper heading",
+      "- > ```text"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: 1. |---|---| / ```",
+    "lines": [
+      "1. |---|---|",
+      "```"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ```text /   ---|---",
+    "lines": [
+      "- > ```text",
+      "  ---|---"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: > > |---|---| / \tThe supplier shall comply.",
+    "lines": [
+      "> > |---|---|",
+      "\tThe supplier shall comply."
+    ],
+    "paragraphs": [
+      "|---|---| The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ### Deeper heading / - [ ] Task item",
+    "lines": [
+      "- > ### Deeper heading",
+      "- [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: \t[link](https://example.com) / \t<p>Inline html.</p>",
+    "lines": [
+      "\t[link](https://example.com)",
+      "\t<p>Inline html.</p>"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * \\- Escaped marker / \t```",
+    "lines": [
+      "* \\- Escaped marker",
+      "\t```"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. --- / \t<p>Inline html.</p>",
+    "lines": [
+      "1. ---",
+      "\t<p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated:   - |---|---| / * <p>Inline html.</p>",
+    "lines": [
+      "  - |---|---|",
+      "* <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "|---|---|",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated:   --- / 1. One sentence here.",
+    "lines": [
+      "  ---",
+      "1. One sentence here."
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   ---|--- / \tText with **bold** inside.",
+    "lines": [
+      "  ---|---",
+      "\tText with **bold** inside."
+    ],
+    "paragraphs": [
+      "---|--- Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   --- / - > - [ ] Task item",
+    "lines": [
+      "  ---",
+      "- > - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   - The supplier shall comply. / * [link](https://example.co",
+    "lines": [
+      "  - The supplier shall comply.",
+      "* [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "The supplier shall comply.",
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t--- / - [ ] Task item",
+    "lines": [
+      "\t---",
+      "- [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   - \\- Escaped marker / - > <p>Inline html.</p>",
+    "lines": [
+      "  - \\- Escaped marker",
+      "- > <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
+    "name": "generated: * ### Deeper heading / * ---",
+    "lines": [
+      "* ### Deeper heading",
+      "* ---"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   - [link](https://example.com) / - > ```",
+    "lines": [
+      "  - [link](https://example.com)",
+      "- > ```"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ### Deeper heading / \tOne sentence here.",
+    "lines": [
+      "* ### Deeper heading",
+      "\tOne sentence here."
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: - > Text with **bold** inside. /   - ---|---",
+    "lines": [
+      "- > Text with **bold** inside.",
+      "  - ---|---"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > One sentence here. / * ### Deeper heading",
+    "lines": [
+      "- > One sentence here.",
+      "* ### Deeper heading"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   |---|---| /   - The supplier shall comply.",
+    "lines": [
+      "  |---|---|",
+      "  - The supplier shall comply."
+    ],
+    "paragraphs": [
+      "|---|---|",
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > |---|---| /   - ---",
+    "lines": [
+      "- > |---|---|",
+      "  - ---"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > |---|---| / * ---",
+    "lines": [
+      "- > |---|---|",
+      "* ---"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. The supplier shall comply. / [link](https://example.com)",
+    "lines": [
+      "1. The supplier shall comply.",
+      "[link](https://example.com)"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. [link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \\- Escaped marker /   ```text",
+    "lines": [
+      "\\- Escaped marker",
+      "  ```text"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > - [ ] Task item / - > - [ ] Task item",
+    "lines": [
+      "- > - [ ] Task item",
+      "- > - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: 1. - [ ] Task item / - > ```text",
+    "lines": [
+      "1. - [ ] Task item",
+      "- > ```text"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: - > ### Deeper heading / [link](https://example.com)",
+    "lines": [
+      "- > ### Deeper heading",
+      "[link](https://example.com)"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: ---|--- / * One sentence here.",
+    "lines": [
+      "---|---",
+      "* One sentence here."
+    ],
+    "paragraphs": [
+      "---|---",
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. Text with **bold** inside. / - > ---|---",
+    "lines": [
+      "1. Text with **bold** inside.",
+      "- > ---|---"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - The supplier shall comply. /   - [ ] Task item",
+    "lines": [
+      "  - The supplier shall comply.",
+      "  - [ ] Task item"
+    ],
+    "paragraphs": [
+      "The supplier shall comply.",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: - > The supplier shall comply. / ---|---",
+    "lines": [
+      "- > The supplier shall comply.",
+      "---|---"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. ---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * [link](https://example.com) /   - Text with **bold** insid",
+    "lines": [
+      "* [link](https://example.com)",
+      "  - Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "[link](https://example.com)",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * One sentence here. / - [ ] Task item",
+    "lines": [
+      "* One sentence here.",
+      "- [ ] Task item"
+    ],
+    "paragraphs": [
+      "One sentence here.",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: 1. The supplier shall comply. / \t\\- Escaped marker / \t- [ ] ",
+    "lines": [
+      "1. The supplier shall comply.",
+      "\t\\- Escaped marker",
+      "\t- [ ] Task item"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. \\- Escaped marker",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   ```text / - > ### Deeper heading",
+    "lines": [
+      "  ```text",
+      "- > ### Deeper heading"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: - > One sentence here. / - > - [ ] Task item",
+    "lines": [
+      "- > One sentence here.",
+      "- > - [ ] Task item"
+    ],
+    "paragraphs": [
+      "One sentence here.",
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
   },
   {
     "name": "generated:   - The supplier shall comply. /   ```text",
@@ -2158,6 +3192,19 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "|---|---|"
     ],
     "headings": []
+  },
+  {
+    "name": "generated: * ---|--- / 1. <p>Inline html.</p>",
+    "lines": [
+      "* ---|---",
+      "1. <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "---|---",
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
   },
   {
     "name": "generated: * --- /   [link](https://example.com)",
@@ -2198,6 +3245,18 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "headings": []
   },
   {
+    "name": "generated: \tThe supplier shall comply. / * - [ ] Task item",
+    "lines": [
+      "\tThe supplier shall comply.",
+      "* - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
     "name": "generated: - > ``` / 1. One sentence here.",
     "lines": [
       "- > ```",
@@ -2209,15 +3268,51 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "headings": []
   },
   {
-    "name": "generated: \t--- /   Text with **bold** inside.",
+    "name": "generated: \t|---|---| /   - - [ ] Task item",
     "lines": [
-      "\t---",
-      "  Text with **bold** inside."
+      "\t|---|---|",
+      "  - - [ ] Task item"
     ],
     "paragraphs": [
-      "Text with **bold** inside."
+      "Task item"
     ],
-    "headings": []
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: \tOne sentence here. / * - [ ] Task item",
+    "lines": [
+      "\tOne sentence here.",
+      "* - [ ] Task item"
+    ],
+    "paragraphs": [
+      "Task item"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated: - > - [ ] Task item /   - [link](https://example.com)",
+    "lines": [
+      "- > - [ ] Task item",
+      "  - [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "Task item",
+      "[link](https://example.com)"
+    ],
+    "headings": [],
+    "differsFromReference": "A task marker is a control a reader hears as a checkbox, not two words."
+  },
+  {
+    "name": "generated:   - |---|---| / \t|---|---|",
+    "lines": [
+      "  - |---|---|",
+      "\t|---|---|"
+    ],
+    "paragraphs": [],
+    "headings": [],
+    "differsFromReference": "GitHub renders a table; the reference implements CommonMark core, which has no table extension."
   },
   {
     "name": "generated:   ```text / - > [link](https://example.com)",
@@ -2227,6 +3322,18 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     ],
     "paragraphs": [],
     "headings": []
+  },
+  {
+    "name": "generated: 1. ```text /   <p>Inline html.</p>",
+    "lines": [
+      "1. ```text",
+      "  <p>Inline html.</p>"
+    ],
+    "paragraphs": [
+      "Inline html."
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
   },
   {
     "name": "generated:   - Text with **bold** inside. / - > \\- Escaped marker",
@@ -2252,6 +3359,18 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "headings": []
   },
   {
+    "name": "generated: 1. <p>Inline html.</p> /   [link](https://example.com)",
+    "lines": [
+      "1. <p>Inline html.</p>",
+      "  [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "Inline html. [link](https://example.com)"
+    ],
+    "headings": [],
+    "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."
+  },
+  {
     "name": "generated: * \\- Escaped marker / - > |---|---|",
     "lines": [
       "* \\- Escaped marker",
@@ -2270,899 +3389,6 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "* ---"
     ],
     "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   Text with **bold** inside. / 1. ---|---",
-    "lines": [
-      "  Text with **bold** inside.",
-      "1. ---|---"
-    ],
-    "paragraphs": [
-      "Text with **bold** inside.",
-      "---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * ``` /   ---",
-    "lines": [
-      "* ```",
-      "  ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: \t--- / - > ---",
-    "lines": [
-      "\t---",
-      "- > ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   ``` / \t- [ ] Task item",
-    "lines": [
-      "  ```",
-      "\t- [ ] Task item"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: - > ### Deeper heading / 1. Text with **bold** inside.",
-    "lines": [
-      "- > ### Deeper heading",
-      "1. Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "Text with **bold** inside."
-    ],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated:   \\- Escaped marker / 1. ---",
-    "lines": [
-      "  \\- Escaped marker",
-      "1. ---"
-    ],
-    "paragraphs": [
-      "\\- Escaped marker"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: One sentence here. / 1. One sentence here.",
-    "lines": [
-      "One sentence here.",
-      "1. One sentence here."
-    ],
-    "paragraphs": [
-      "One sentence here.",
-      "One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * ### Deeper heading /   - The supplier shall comply.",
-    "lines": [
-      "* ### Deeper heading",
-      "  - The supplier shall comply."
-    ],
-    "paragraphs": [
-      "The supplier shall comply."
-    ],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated: 1. ``` /   - ---",
-    "lines": [
-      "1. ```",
-      "  - ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: ### Deeper heading / \t\\- Escaped marker",
-    "lines": [
-      "### Deeper heading",
-      "\t\\- Escaped marker"
-    ],
-    "paragraphs": [],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated: Text with **bold** inside. / * ---|---",
-    "lines": [
-      "Text with **bold** inside.",
-      "* ---|---"
-    ],
-    "paragraphs": [
-      "Text with **bold** inside.",
-      "---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \t\\- Escaped marker / |---|---|",
-    "lines": [
-      "\t\\- Escaped marker",
-      "|---|---|"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * ```text / \\- Escaped marker",
-    "lines": [
-      "* ```text",
-      "\\- Escaped marker"
-    ],
-    "paragraphs": [
-      "\\- Escaped marker"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: ``` /   ---|---",
-    "lines": [
-      "```",
-      "  ---|---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: * One sentence here. /   One sentence here.",
-    "lines": [
-      "* One sentence here.",
-      "  One sentence here."
-    ],
-    "paragraphs": [
-      "One sentence here. One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * Text with **bold** inside. /   ---",
-    "lines": [
-      "* Text with **bold** inside.",
-      "  ---"
-    ],
-    "paragraphs": [],
-    "headings": [
-      [
-        2,
-        "Text with **bold** inside."
-      ]
-    ]
-  },
-  {
-    "name": "generated:   - ---|--- / 1. Text with **bold** inside.",
-    "lines": [
-      "  - ---|---",
-      "1. Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "---|---",
-      "Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - ### Deeper heading /   ---",
-    "lines": [
-      "  - ### Deeper heading",
-      "  ---"
-    ],
-    "paragraphs": [],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated:   |---|---| / The supplier shall comply.",
-    "lines": [
-      "  |---|---|",
-      "The supplier shall comply."
-    ],
-    "paragraphs": [
-      "|---|---| The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. One sentence here. / * ---",
-    "lines": [
-      "1. One sentence here.",
-      "* ---"
-    ],
-    "paragraphs": [
-      "One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \t---|--- / * [link](https://example.com)",
-    "lines": [
-      "\t---|---",
-      "* [link](https://example.com)"
-    ],
-    "paragraphs": [
-      "[link](https://example.com)"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   \\- Escaped marker /   ---|---",
-    "lines": [
-      "  \\- Escaped marker",
-      "  ---|---"
-    ],
-    "paragraphs": [
-      "\\- Escaped marker ---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - |---|---| / 1. One sentence here.",
-    "lines": [
-      "  - |---|---|",
-      "1. One sentence here."
-    ],
-    "paragraphs": [
-      "|---|---|",
-      "One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > One sentence here. /   One sentence here.",
-    "lines": [
-      "- > One sentence here.",
-      "  One sentence here."
-    ],
-    "paragraphs": [
-      "One sentence here. One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   [link](https://example.com) / * ---|---",
-    "lines": [
-      "  [link](https://example.com)",
-      "* ---|---"
-    ],
-    "paragraphs": [
-      "[link](https://example.com)",
-      "---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > |---|---| / \t---|---",
-    "lines": [
-      "- > |---|---|",
-      "\t---|---"
-    ],
-    "paragraphs": [
-      "|---|---| ---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \t[link](https://example.com) /   |---|---|",
-    "lines": [
-      "\t[link](https://example.com)",
-      "  |---|---|"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * ---|--- /   ```text",
-    "lines": [
-      "* ---|---",
-      "  ```text"
-    ],
-    "paragraphs": [
-      "---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \t- [ ] Task item /   The supplier shall comply.",
-    "lines": [
-      "\t- [ ] Task item",
-      "  The supplier shall comply."
-    ],
-    "paragraphs": [
-      "The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: --- /   - The supplier shall comply.",
-    "lines": [
-      "---",
-      "  - The supplier shall comply."
-    ],
-    "paragraphs": [
-      "The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > [link](https://example.com) / - > One sentence here.",
-    "lines": [
-      "- > [link](https://example.com)",
-      "- > One sentence here."
-    ],
-    "paragraphs": [
-      "[link](https://example.com)",
-      "One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. --- / 1. ---",
-    "lines": [
-      "1. ---",
-      "1. ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: * Text with **bold** inside. / \t\\- Escaped marker",
-    "lines": [
-      "* Text with **bold** inside.",
-      "\t\\- Escaped marker"
-    ],
-    "paragraphs": [
-      "Text with **bold** inside. \\- Escaped marker"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - --- / 1. Text with **bold** inside.",
-    "lines": [
-      "  - ---",
-      "1. Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: ```text /   One sentence here.",
-    "lines": [
-      "```text",
-      "  One sentence here."
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   - --- / 1. |---|---|",
-    "lines": [
-      "  - ---",
-      "1. |---|---|"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \t---|--- / \t- [ ] Task item",
-    "lines": [
-      "\t---|---",
-      "\t- [ ] Task item"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: - > ``` / \t```text",
-    "lines": [
-      "- > ```",
-      "\t```text"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: Text with **bold** inside. /   - One sentence here.",
-    "lines": [
-      "Text with **bold** inside.",
-      "  - One sentence here."
-    ],
-    "paragraphs": [
-      "Text with **bold** inside.",
-      "One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. --- / 1. ### Deeper heading",
-    "lines": [
-      "1. ---",
-      "1. ### Deeper heading"
-    ],
-    "paragraphs": [],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated:   - [link](https://example.com) /   - [link](https://example",
-    "lines": [
-      "  - [link](https://example.com)",
-      "  - [link](https://example.com)"
-    ],
-    "paragraphs": [
-      "[link](https://example.com)",
-      "[link](https://example.com)"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * \\- Escaped marker /   The supplier shall comply.",
-    "lines": [
-      "* \\- Escaped marker",
-      "  The supplier shall comply."
-    ],
-    "paragraphs": [
-      "\\- Escaped marker The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   ```text / 1. ### Deeper heading",
-    "lines": [
-      "  ```text",
-      "1. ### Deeper heading"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   - One sentence here. /   - Text with **bold** inside.",
-    "lines": [
-      "  - One sentence here.",
-      "  - Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "One sentence here.",
-      "Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - [link](https://example.com) / One sentence here.",
-    "lines": [
-      "  - [link](https://example.com)",
-      "One sentence here."
-    ],
-    "paragraphs": [
-      "[link](https://example.com) One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * Text with **bold** inside. / - > ---",
-    "lines": [
-      "* Text with **bold** inside.",
-      "- > ---"
-    ],
-    "paragraphs": [
-      "Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - \\- Escaped marker /   Text with **bold** inside.",
-    "lines": [
-      "  - \\- Escaped marker",
-      "  Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "\\- Escaped marker Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. \\- Escaped marker / 1. ```text",
-    "lines": [
-      "1. \\- Escaped marker",
-      "1. ```text"
-    ],
-    "paragraphs": [
-      "\\- Escaped marker"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > [link](https://example.com) /   The supplier shall compl",
-    "lines": [
-      "- > [link](https://example.com)",
-      "  The supplier shall comply."
-    ],
-    "paragraphs": [
-      "[link](https://example.com) The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > ---|--- / \t### Deeper heading",
-    "lines": [
-      "- > ---|---",
-      "\t### Deeper heading"
-    ],
-    "paragraphs": [
-      "---|---"
-    ],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated:   ---|--- / Text with **bold** inside.",
-    "lines": [
-      "  ---|---",
-      "Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "---|--- Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * ---|--- / * The supplier shall comply.",
-    "lines": [
-      "* ---|---",
-      "* The supplier shall comply."
-    ],
-    "paragraphs": [
-      "---|---",
-      "The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > One sentence here. / \tOne sentence here.",
-    "lines": [
-      "- > One sentence here.",
-      "\tOne sentence here."
-    ],
-    "paragraphs": [
-      "One sentence here. One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * ```text /   - ---",
-    "lines": [
-      "* ```text",
-      "  - ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: * ``` / * One sentence here.",
-    "lines": [
-      "* ```",
-      "* One sentence here."
-    ],
-    "paragraphs": [
-      "One sentence here."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \t--- / \t---|---",
-    "lines": [
-      "\t---",
-      "\t---|---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: \t``` / * ---",
-    "lines": [
-      "\t```",
-      "* ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: - > ### Deeper heading /   The supplier shall comply.",
-    "lines": [
-      "- > ### Deeper heading",
-      "  The supplier shall comply."
-    ],
-    "paragraphs": [
-      "The supplier shall comply."
-    ],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated:   [link](https://example.com) /   ---|---",
-    "lines": [
-      "  [link](https://example.com)",
-      "  ---|---"
-    ],
-    "paragraphs": [
-      "[link](https://example.com) ---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. --- /   - \\- Escaped marker",
-    "lines": [
-      "1. ---",
-      "  - \\- Escaped marker"
-    ],
-    "paragraphs": [
-      "\\- Escaped marker"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \tThe supplier shall comply. / ---",
-    "lines": [
-      "\tThe supplier shall comply.",
-      "---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: * --- / * Text with **bold** inside.",
-    "lines": [
-      "* ---",
-      "* Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "Text with **bold** inside."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - ``` / * ---",
-    "lines": [
-      "  - ```",
-      "* ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   ```text / - > ```text",
-    "lines": [
-      "  ```text",
-      "- > ```text"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: - > [link](https://example.com) / 1. The supplier shall comp",
-    "lines": [
-      "- > [link](https://example.com)",
-      "1. The supplier shall comply."
-    ],
-    "paragraphs": [
-      "[link](https://example.com)",
-      "The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   One sentence here. / - > [link](https://example.com)",
-    "lines": [
-      "  One sentence here.",
-      "- > [link](https://example.com)"
-    ],
-    "paragraphs": [
-      "One sentence here.",
-      "[link](https://example.com)"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: \tText with **bold** inside. / ```text",
-    "lines": [
-      "\tText with **bold** inside.",
-      "```text"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. ``` / 1. ---",
-    "lines": [
-      "1. ```",
-      "1. ---"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated: \t```text /   |---|---|",
-    "lines": [
-      "\t```text",
-      "  |---|---|"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. ```text / \t[link](https://example.com)",
-    "lines": [
-      "1. ```text",
-      "\t[link](https://example.com)"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   - --- / 1. \\- Escaped marker",
-    "lines": [
-      "  - ---",
-      "1. \\- Escaped marker"
-    ],
-    "paragraphs": [
-      "\\- Escaped marker"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: ---|--- /   The supplier shall comply.",
-    "lines": [
-      "---|---",
-      "  The supplier shall comply."
-    ],
-    "paragraphs": [
-      "---|--- The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   ``` / <p>Inline html.</p>",
-    "lines": [
-      "  ```",
-      "<p>Inline html.</p>"
-    ],
-    "paragraphs": [],
-    "headings": []
-  },
-  {
-    "name": "generated:   - The supplier shall comply. / ```",
-    "lines": [
-      "  - The supplier shall comply.",
-      "```"
-    ],
-    "paragraphs": [
-      "The supplier shall comply."
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > ---|--- /   - ---|---",
-    "lines": [
-      "- > ---|---",
-      "  - ---|---"
-    ],
-    "paragraphs": [
-      "---|---",
-      "---|---"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: 1. |---|---| /   ### Deeper heading",
-    "lines": [
-      "1. |---|---|",
-      "  ### Deeper heading"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": [
-      [
-        3,
-        "Deeper heading"
-      ]
-    ]
-  },
-  {
-    "name": "generated: 1. |---|---| / ```",
-    "lines": [
-      "1. |---|---|",
-      "```"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated:   - The supplier shall comply. / * [link](https://example.co",
-    "lines": [
-      "  - The supplier shall comply.",
-      "* [link](https://example.com)"
-    ],
-    "paragraphs": [
-      "The supplier shall comply.",
-      "[link](https://example.com)"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: - > |---|---| / * ---",
-    "lines": [
-      "- > |---|---|",
-      "* ---"
-    ],
-    "paragraphs": [
-      "|---|---|"
-    ],
-    "headings": []
-  },
-  {
-    "name": "generated: * [link](https://example.com) /   - Text with **bold** insid",
-    "lines": [
-      "* [link](https://example.com)",
-      "  - Text with **bold** inside."
-    ],
-    "paragraphs": [
-      "[link](https://example.com)",
-      "Text with **bold** inside."
-    ],
     "headings": []
   }
 ];

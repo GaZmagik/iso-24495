@@ -47,7 +47,12 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // only where a paragraph is not already open. A footnote body is visible,
 // which is why its label starts with "^" and it is not here.
 const INVISIBLE_MARKUP = /^ {0,3}(?:<!--|<!|<\?)/;
-const LINK_DEFINITION = /^ {0,3}\[[^\]^][^\]]*\]:[ \t]/;
+// A definition is a label, a colon, a destination, and an optional title.
+// Matching the label alone removed "[Question]: The supplier shall comply."
+// from the document, and a reader reads that as a sentence.
+const LINK_DEFINITION = /^ {0,3}\[[^\]^][^\]]*\]:[ \t]*(?:<[^>]*>|[^ \t]+)[ \t]*(?:['"(][^'")]*['")])?[ \t]*$/;
+// A definition's title may sit on its own line beneath it.
+const DEFINITION_TITLE = /^ {0,3}['"(][^'")]*['")][ \t]*$/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 
 /**
@@ -96,7 +101,8 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
     || /^[ \t]/.test(line)
     || /^#/.test(line.trim())
     || /^- /.test(line.trim())
-    || /^[\w.$-]+[ \t]*:( |$)/.test(line));
+    // A key may be quoted, and it may be written in any language.
+    || /^(?:['"][^'"]*['"]|[^:\s]+)[ \t]*:( |$)/.test(line));
   return yaml ? { start: 0, end: closing } : null;
 }
 
@@ -242,6 +248,8 @@ function parse(lines: string[]): Parsed {
   let paragraphDepth = 0;
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
+  let invisibleUntil: string | null = null;
+  let definedAbove = false;
 
   const closeParagraph = (): void => {
     paragraph = null;
@@ -256,6 +264,10 @@ function parse(lines: string[]): Parsed {
     if (i <= tableUntil) continue;
 
     const line = expandTabs(lines[i]);
+    if (invisibleUntil !== null) {
+      if (line.includes(invisibleUntil)) invisibleUntil = null;
+      continue;
+    }
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
 
@@ -287,6 +299,7 @@ function parse(lines: string[]): Parsed {
     // about the paragraph a reader sees never arrived.
     const lazy = !allMatched && paragraph !== null && !startsAnyBlock(rest);
     let text = rest;
+    let openedQuote = false;
     if (!lazy) {
       if (!allMatched) {
         closeParagraph();
@@ -298,6 +311,7 @@ function parse(lines: string[]): Parsed {
           closeParagraph();
           text = text.slice(quote[0].length);
           stack.push({ kind: "quote", column: 0 });
+          openedQuote = true;
           continue;
         }
         // A thematic break outranks a list marker, so "- - -" is a rule across
@@ -321,16 +335,25 @@ function parse(lines: string[]): Parsed {
 
     // The label opens an alert only as a quotation's first line. Elsewhere it
     // is ordinary text, and skipping it split a paragraph in two.
-    const topLevelAlert = stack.length === 1 && stack[0].kind === "quote";
-    if (paragraph === null && topLevelAlert && ALERT_MARKER.test(text.trim())) {
+    // The label opens an alert, so it is only a label on the line that opens
+    // the quotation. Later inside the same quotation GitHub renders it as
+    // ordinary text, and a reader meets it as a word.
+    if (openedQuote && stack.length === 1 && ALERT_MARKER.test(text.trim())) {
       continue;
     }
 
     if (INVISIBLE_MARKUP.test(text)) {
       closeParagraph();
+      // A comment runs until it closes, and every line of it is invisible.
+      if (text.startsWith("<!--") && !text.includes("-->")) invisibleUntil = "-->";
       continue;
     }
-    if (paragraph === null && LINK_DEFINITION.test(text)) continue;
+    if (paragraph === null && LINK_DEFINITION.test(text)) {
+      definedAbove = true;
+      continue;
+    }
+    if (definedAbove && DEFINITION_TITLE.test(text)) continue;
+    definedAbove = false;
 
     const fenceOpen = FENCE_OPEN.exec(text);
     if (fenceOpen !== null
@@ -353,7 +376,7 @@ function parse(lines: string[]): Parsed {
     }
 
     const underline = SETEXT_UNDERLINE.exec(text);
-    if (underline !== null && paragraph !== null && paragraphDepth === stack.length) {
+    if (underline !== null && !lazy && paragraph !== null && paragraphDepth === stack.length) {
       // The paragraph above becomes the heading's text, all of its lines.
       found.push({
         level: underline[1][0] === "=" ? 1 : 2,
@@ -397,9 +420,7 @@ function parse(lines: string[]): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
-    // A tag is markup, not a word. Counting "<div class=\"note\">" as three
-    // words made a sentence longer than the one a reader meets.
-    paragraph.lines.push(text.replace(/<[^>]+>/g, " ").trimStart());
+    paragraph.lines.push(withoutTags(text).trimStart());
   }
 
   return { paragraphs, headings: found, hidden, tables };
@@ -413,8 +434,20 @@ function nextContent(lines: string[], index: number, stack: Container[]): string
   return matched === stack.length ? rest : null;
 }
 
+/**
+ * Remove HTML tags, and only those.
+ *
+ * A generic "<...>" swallowed an autolink, which a reader sees as a link,
+ * and the words between "< 5" and "> 2" in ordinary prose. A tag starts
+ * with a letter or a slash, and an attribute may hold a greater-than sign.
+ */
+function withoutTags(text: string): string {
+  const tag = /<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+(?:[^>"']|"[^"]*"|'[^']*')*)?\/?>/g;
+  return text.replace(tag, " ");
+}
+
 function visibleText(text: string): string {
-  return text
+  return withoutTags(text)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
 }
