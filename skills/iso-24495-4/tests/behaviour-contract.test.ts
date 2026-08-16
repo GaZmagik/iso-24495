@@ -566,7 +566,7 @@ describe("reader-facing behaviour contracts", () => {
   //   - HTML holds reader-visible prose, so its text is measured;
   //   - a GitHub alert label is a label, and GitHub is where these are read.
   test("block structure matches the CommonMark reference implementation", () => {
-    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(166);
+    expect(REFERENCE_SHAPES.length).toBeGreaterThanOrEqual(265);
     // Every divergence carries its reason, so none can be added silently.
     for (const shape of REFERENCE_SHAPES) {
       if (shape.differsFromReference !== undefined) {

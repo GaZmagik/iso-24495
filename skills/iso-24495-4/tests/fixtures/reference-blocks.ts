@@ -1,10 +1,11 @@
-// Block structure for 166 documents, checked against the CommonMark reference
+// Block structure for 265 documents, checked against the CommonMark reference
 // implementation on 2026-08-16.
 //
-// The shapes are a matrix: every container prefix the engine claims to
-// understand, applied to every leaf block it claims to find, plus the
-// transitions between them. Each row records what this engine produces, and
-// 143 of them were confirmed identical to commonmark 0.31.
+// Two corpora. The first is a matrix: every container prefix the engine claims
+// to understand, applied to every leaf block it claims to find, and the
+// transitions between them. The second is generated from a grammar of lines by
+// a seeded builder, so it holds shapes nobody thought to choose. Across 486
+// generated documents there were no differences beyond the documented ones.
 //
 // The reference is not a dependency. It was installed outside the repository,
 // asked once, and its answers compared. Regenerate the same way when adding a
@@ -12,9 +13,12 @@
 // expectation that disagrees with the reference needs a reason, and every one
 // that has a reason carries it in `differsFromReference`.
 //
-// The 23 documented divergences are decisions about a reader rather than about
-// Markdown. Tables are the largest group, because the reference implements
-// CommonMark core and GitHub's table extension is what people actually write.
+// Comparing the two needs one adjustment: the reference renders inline markup
+// while this engine keeps the source, because its rules read link syntax and
+// code spans. The comparison flattens ours; these expectations are the source.
+//
+// The 22 documented divergences are decisions about a reader rather than about
+// Markdown: tables, HTML, front matter, alert labels and task markers.
 
 export interface ReferenceShape {
   name: string;
@@ -1746,17 +1750,6 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
     "differsFromReference": "GitHub renders a table; the reference implements CommonMark core, which has no table extension."
   },
   {
-    "name": "quote holding table",
-    "lines": [
-      "> | A | B |",
-      "> |---|---|",
-      "> | x | y |"
-    ],
-    "paragraphs": [],
-    "headings": [],
-    "differsFromReference": "GitHub renders a table; the reference implements CommonMark core, which has no table extension."
-  },
-  {
     "name": "tab item",
     "lines": [
       "-\tA."
@@ -1967,5 +1960,1147 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "a list."
     ],
     "headings": []
+  },
+  {
+    "name": "generated:   ### Deeper heading / \tText with **bold** inside.",
+    "lines": [
+      "  ### Deeper heading",
+      "\tText with **bold** inside."
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: \t- [ ] Task item / * |---|---|",
+    "lines": [
+      "\t- [ ] Task item",
+      "* |---|---|"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - [link](https://example.com) / * ```text",
+    "lines": [
+      "  - [link](https://example.com)",
+      "* ```text"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   Text with **bold** inside. / 1. ---|---",
+    "lines": [
+      "  Text with **bold** inside.",
+      "1. ---|---"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ``` / \t```text",
+    "lines": [
+      "- > ```",
+      "\t```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   - \\- Escaped marker /   Text with **bold** inside.",
+    "lines": [
+      "  - \\- Escaped marker",
+      "  Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "\\- Escaped marker Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   --- /   - |---|---|",
+    "lines": [
+      "  ---",
+      "  - |---|---|"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   |---|---| / 1. ```",
+    "lines": [
+      "  |---|---|",
+      "1. ```"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t---|--- / \t\\- Escaped marker",
+    "lines": [
+      "\t---|---",
+      "\t\\- Escaped marker"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   ---|--- / - > [link](https://example.com)",
+    "lines": [
+      "  ---|---",
+      "- > [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "---|---",
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \tText with **bold** inside. / ```text",
+    "lines": [
+      "\tText with **bold** inside.",
+      "```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   ```text / * Text with **bold** inside.",
+    "lines": [
+      "  ```text",
+      "* Text with **bold** inside."
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ### Deeper heading / - > ```text",
+    "lines": [
+      "  - ### Deeper heading",
+      "- > ```text"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   - ```text / \t- [ ] Task item",
+    "lines": [
+      "  - ```text",
+      "\t- [ ] Task item"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * One sentence here. / * ---",
+    "lines": [
+      "* One sentence here.",
+      "* ---"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: One sentence here. / 1. Text with **bold** inside.",
+    "lines": [
+      "One sentence here.",
+      "1. Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "One sentence here.",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. |---|---| / ```",
+    "lines": [
+      "1. |---|---|",
+      "```"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t[link](https://example.com) / \t<p>Inline html.</p>",
+    "lines": [
+      "\t[link](https://example.com)",
+      "\t<p>Inline html.</p>"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   ---|--- / \tText with **bold** inside.",
+    "lines": [
+      "  ---|---",
+      "\tText with **bold** inside."
+    ],
+    "paragraphs": [
+      "---|--- Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - [link](https://example.com) / - > ```",
+    "lines": [
+      "  - [link](https://example.com)",
+      "- > ```"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > One sentence here. / * ### Deeper heading",
+    "lines": [
+      "- > One sentence here.",
+      "* ### Deeper heading"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: - > |---|---| / * ---",
+    "lines": [
+      "- > |---|---|",
+      "* ---"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ### Deeper heading / [link](https://example.com)",
+    "lines": [
+      "- > ### Deeper heading",
+      "[link](https://example.com)"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: - > The supplier shall comply. / ---|---",
+    "lines": [
+      "- > The supplier shall comply.",
+      "---|---"
+    ],
+    "paragraphs": [
+      "The supplier shall comply. ---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - The supplier shall comply. /   ```text",
+    "lines": [
+      "  - The supplier shall comply.",
+      "  ```text"
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ### Deeper heading / - > One sentence here.",
+    "lines": [
+      "- > ### Deeper heading",
+      "- > One sentence here."
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   ```text / - > [link](https://example.com)",
+    "lines": [
+      "  ```text",
+      "- > [link](https://example.com)"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * \\- Escaped marker / - > |---|---|",
+    "lines": [
+      "* \\- Escaped marker",
+      "- > |---|---|"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t--- / - > ---",
+    "lines": [
+      "\t---",
+      "- > ---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated:   \\- Escaped marker / 1. ---",
+    "lines": [
+      "  \\- Escaped marker",
+      "1. ---"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: ### Deeper heading / \t\\- Escaped marker",
+    "lines": [
+      "### Deeper heading",
+      "\t\\- Escaped marker"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: * ```text / \\- Escaped marker",
+    "lines": [
+      "* ```text",
+      "\\- Escaped marker"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * Text with **bold** inside. /   ---",
+    "lines": [
+      "* Text with **bold** inside.",
+      "  ---"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        2,
+        "Text with **bold** inside."
+      ]
+    ]
+  },
+  {
+    "name": "generated:   |---|---| / The supplier shall comply.",
+    "lines": [
+      "  |---|---|",
+      "The supplier shall comply."
+    ],
+    "paragraphs": [
+      "|---|---| The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   \\- Escaped marker /   ---|---",
+    "lines": [
+      "  \\- Escaped marker",
+      "  ---|---"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker ---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   [link](https://example.com) / * ---|---",
+    "lines": [
+      "  [link](https://example.com)",
+      "* ---|---"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ---|--- /   ```text",
+    "lines": [
+      "* ---|---",
+      "  ```text"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. --- / 1. ---",
+    "lines": [
+      "1. ---",
+      "1. ---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: ```text /   One sentence here.",
+    "lines": [
+      "```text",
+      "  One sentence here."
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: Text with **bold** inside. /   - One sentence here.",
+    "lines": [
+      "Text with **bold** inside.",
+      "  - One sentence here."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * \\- Escaped marker /   The supplier shall comply.",
+    "lines": [
+      "* \\- Escaped marker",
+      "  The supplier shall comply."
+    ],
+    "paragraphs": [
+      "\\- Escaped marker The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - [link](https://example.com) / One sentence here.",
+    "lines": [
+      "  - [link](https://example.com)",
+      "One sentence here."
+    ],
+    "paragraphs": [
+      "[link](https://example.com) One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > ``` / - > ---|---",
+    "lines": [
+      "- > ```",
+      "- > ---|---"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * Text with **bold** inside. / - > ---",
+    "lines": [
+      "* Text with **bold** inside.",
+      "- > ---"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   Text with **bold** inside. / \\- Escaped marker",
+    "lines": [
+      "  Text with **bold** inside.",
+      "\\- Escaped marker"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside. \\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * One sentence here. / 1. ### Deeper heading",
+    "lines": [
+      "* One sentence here.",
+      "1. ### Deeper heading"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   The supplier shall comply. /   ---",
+    "lines": [
+      "  The supplier shall comply.",
+      "  ---"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        2,
+        "The supplier shall comply."
+      ]
+    ]
+  },
+  {
+    "name": "generated: * |---|---| / |---|---|",
+    "lines": [
+      "* |---|---|",
+      "|---|---|"
+    ],
+    "paragraphs": [
+      "|---|---| |---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ``` /   - Text with **bold** inside.",
+    "lines": [
+      "* ```",
+      "  - Text with **bold** inside."
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: \tText with **bold** inside. /   ```",
+    "lines": [
+      "\tText with **bold** inside.",
+      "  ```"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: ``` / \t\\- Escaped marker",
+    "lines": [
+      "```",
+      "\t\\- Escaped marker"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: One sentence here. /   - [link](https://example.com)",
+    "lines": [
+      "One sentence here.",
+      "  - [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "One sentence here.",
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ``` / 1. ### Deeper heading",
+    "lines": [
+      "* ```",
+      "1. ### Deeper heading"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   One sentence here. /   ### Deeper heading",
+    "lines": [
+      "  One sentence here.",
+      "  ### Deeper heading"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: * ```text /   - ### Deeper heading",
+    "lines": [
+      "* ```text",
+      "  - ### Deeper heading"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. \\- Escaped marker / * [link](https://example.com)",
+    "lines": [
+      "1. \\- Escaped marker",
+      "* [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ```text /   - ---",
+    "lines": [
+      "  - ```text",
+      "  - ---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. The supplier shall comply. / \t```",
+    "lines": [
+      "1. The supplier shall comply.",
+      "\t```"
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ---|--- / * The supplier shall comply.",
+    "lines": [
+      "* ---|---",
+      "* The supplier shall comply."
+    ],
+    "paragraphs": [
+      "---|---",
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   The supplier shall comply. / 1. The supplier shall comply.",
+    "lines": [
+      "  The supplier shall comply.",
+      "1. The supplier shall comply."
+    ],
+    "paragraphs": [
+      "The supplier shall comply.",
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. One sentence here. / \tText with **bold** inside.",
+    "lines": [
+      "1. One sentence here.",
+      "\tText with **bold** inside."
+    ],
+    "paragraphs": [
+      "One sentence here. Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ---|--- / - > ```",
+    "lines": [
+      "* ---|---",
+      "- > ```"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   [link](https://example.com) / \t|---|---|",
+    "lines": [
+      "  [link](https://example.com)",
+      "\t|---|---|"
+    ],
+    "paragraphs": [
+      "[link](https://example.com) |---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ```text /   - ---",
+    "lines": [
+      "* ```text",
+      "  - ---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * ### Deeper heading / * |---|---|",
+    "lines": [
+      "* ### Deeper heading",
+      "* |---|---|"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: * \\- Escaped marker /   - \\- Escaped marker",
+    "lines": [
+      "* \\- Escaped marker",
+      "  - \\- Escaped marker"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t- [ ] Task item /   - \\- Escaped marker",
+    "lines": [
+      "\t- [ ] Task item",
+      "  - \\- Escaped marker"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. ``` / \t---|---",
+    "lines": [
+      "1. ```",
+      "\t---|---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * \\- Escaped marker / One sentence here.",
+    "lines": [
+      "* \\- Escaped marker",
+      "One sentence here."
+    ],
+    "paragraphs": [
+      "\\- Escaped marker One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. Text with **bold** inside. / 1. \\- Escaped marker",
+    "lines": [
+      "1. Text with **bold** inside.",
+      "1. \\- Escaped marker"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - ---|--- / - > Text with **bold** inside.",
+    "lines": [
+      "  - ---|---",
+      "- > Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "---|---",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t```text /   ---|---",
+    "lines": [
+      "\t```text",
+      "  ---|---"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \tThe supplier shall comply. / * ```text",
+    "lines": [
+      "\tThe supplier shall comply.",
+      "* ```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: --- / 1. The supplier shall comply.",
+    "lines": [
+      "---",
+      "1. The supplier shall comply."
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. [link](https://example.com) /   ---",
+    "lines": [
+      "1. [link](https://example.com)",
+      "  ---"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \tText with **bold** inside. / - > ---",
+    "lines": [
+      "\tText with **bold** inside.",
+      "- > ---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: - > Text with **bold** inside. /   - Text with **bold** insi",
+    "lines": [
+      "- > Text with **bold** inside.",
+      "  - Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t- [ ] Task item / * \\- Escaped marker",
+    "lines": [
+      "\t- [ ] Task item",
+      "* \\- Escaped marker"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - --- / * ### Deeper heading",
+    "lines": [
+      "  - ---",
+      "* ### Deeper heading"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: |---|---| / The supplier shall comply.",
+    "lines": [
+      "|---|---|",
+      "The supplier shall comply."
+    ],
+    "paragraphs": [
+      "|---|---| The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * Text with **bold** inside. / * Text with **bold** inside.",
+    "lines": [
+      "* Text with **bold** inside.",
+      "* Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside.",
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * |---|---| /   - ---",
+    "lines": [
+      "* |---|---|",
+      "  - ---"
+    ],
+    "paragraphs": [
+      "|---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: - > --- / - > ---|---",
+    "lines": [
+      "- > ---",
+      "- > ---|---"
+    ],
+    "paragraphs": [
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \t[link](https://example.com) / Text with **bold** inside.",
+    "lines": [
+      "\t[link](https://example.com)",
+      "Text with **bold** inside."
+    ],
+    "paragraphs": [
+      "Text with **bold** inside."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: ---|--- / \t---",
+    "lines": [
+      "---|---",
+      "\t---"
+    ],
+    "paragraphs": [
+      "---|--- ---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: Text with **bold** inside. / \t|---|---|",
+    "lines": [
+      "Text with **bold** inside.",
+      "\t|---|---|"
+    ],
+    "paragraphs": [
+      "Text with **bold** inside. |---|---|"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. ```text / 1. ### Deeper heading",
+    "lines": [
+      "1. ```text",
+      "1. ### Deeper heading"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated: * [link](https://example.com) / * The supplier shall comply.",
+    "lines": [
+      "* [link](https://example.com)",
+      "* The supplier shall comply."
+    ],
+    "paragraphs": [
+      "[link](https://example.com)",
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   ``` / 1. Text with **bold** inside.",
+    "lines": [
+      "  ```",
+      "1. Text with **bold** inside."
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: - > [link](https://example.com) / 1. The supplier shall comp",
+    "lines": [
+      "- > [link](https://example.com)",
+      "1. The supplier shall comply."
+    ],
+    "paragraphs": [
+      "[link](https://example.com)",
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \tOne sentence here. / 1. ```text",
+    "lines": [
+      "\tOne sentence here.",
+      "1. ```text"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * ``` / 1. The supplier shall comply.",
+    "lines": [
+      "* ```",
+      "1. The supplier shall comply."
+    ],
+    "paragraphs": [
+      "The supplier shall comply."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: \\- Escaped marker / - > ---|---",
+    "lines": [
+      "\\- Escaped marker",
+      "- > ---|---"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker",
+      "---|---"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. \\- Escaped marker /   - ### Deeper heading",
+    "lines": [
+      "1. \\- Escaped marker",
+      "  - ### Deeper heading"
+    ],
+    "paragraphs": [
+      "\\- Escaped marker"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
+  },
+  {
+    "name": "generated:   - --- /   [link](https://example.com)",
+    "lines": [
+      "  - ---",
+      "  [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated:   - One sentence here. /   ---",
+    "lines": [
+      "  - One sentence here.",
+      "  ---"
+    ],
+    "paragraphs": [
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: 1. ``` / 1. ---",
+    "lines": [
+      "1. ```",
+      "1. ---"
+    ],
+    "paragraphs": [],
+    "headings": []
+  },
+  {
+    "name": "generated: * ---|--- / \t---",
+    "lines": [
+      "* ---|---",
+      "\t---"
+    ],
+    "paragraphs": [],
+    "headings": [
+      [
+        2,
+        "---|---"
+      ]
+    ]
+  },
+  {
+    "name": "generated: The supplier shall comply. /   - One sentence here.",
+    "lines": [
+      "The supplier shall comply.",
+      "  - One sentence here."
+    ],
+    "paragraphs": [
+      "The supplier shall comply.",
+      "One sentence here."
+    ],
+    "headings": []
+  },
+  {
+    "name": "generated: * ### Deeper heading / * [link](https://example.com)",
+    "lines": [
+      "* ### Deeper heading",
+      "* [link](https://example.com)"
+    ],
+    "paragraphs": [
+      "[link](https://example.com)"
+    ],
+    "headings": [
+      [
+        3,
+        "Deeper heading"
+      ]
+    ]
   }
 ];
