@@ -12,6 +12,14 @@ const CORPUS = join(FIXTURES, "corpus");
 const REPOSITORY = join(FIXTURES, "repo-level2");
 const ANSWERS = join(FIXTURES, "answers.sample.json");
 const SCRIPTS = join(import.meta.dir, "..", "scripts");
+const TEXT_AUDIT_SCRIPT = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "iso-24495-text-audit",
+  "scripts",
+  "audit-text-cli.ts",
+);
 
 function capture() {
   const stdout: string[] = [];
@@ -62,6 +70,51 @@ describe("audit-corpus runCli", () => {
     const absent = capture();
     expect(runCorpusCli(["bun", "audit-corpus-cli.ts", join(CORPUS, "missing")], absent.writeOut, absent.writeErr)).toBe(1);
     expect(absent.stderr[0]).toStartWith("audit-corpus:");
+  });
+
+  test("rejects malformed corpus options before writing any output", () => {
+    const temp = mkdtempSync(join(tmpdir(), "iso-corpus-options-"));
+    const originalDirectory = process.cwd();
+    try {
+      process.chdir(temp);
+      writeFileSync("--project-dir", "keep this content");
+
+      const collision = capture();
+      expect(runCorpusCli(
+        ["bun", "audit-corpus-cli.ts", CORPUS, "--json", "--project-dir"],
+        collision.writeOut,
+        collision.writeErr,
+      )).toBe(2);
+      expect(collision.stderr[0]).toContain("--json requires");
+      expect(readFileSync("--project-dir", "utf8")).toBe("keep this content");
+
+      const unknown = capture();
+      expect(runCorpusCli(
+        ["bun", "audit-corpus-cli.ts", CORPUS, "--unknown"],
+        unknown.writeOut,
+        unknown.writeErr,
+      )).toBe(2);
+      expect(unknown.stderr[0]).toContain("unknown option");
+
+      const extra = capture();
+      expect(runCorpusCli(
+        ["bun", "audit-corpus-cli.ts", CORPUS, "extra.md"],
+        extra.writeOut,
+        extra.writeErr,
+      )).toBe(2);
+      expect(extra.stderr[0]).toContain("unexpected argument");
+
+      const duplicate = capture();
+      expect(runCorpusCli(
+        ["bun", "audit-corpus-cli.ts", CORPUS, "--json", "one.json", "--json", "two.json"],
+        duplicate.writeOut,
+        duplicate.writeErr,
+      )).toBe(2);
+      expect(duplicate.stderr[0]).toContain("--json appears more than once");
+    } finally {
+      process.chdir(originalDirectory);
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   test("reports skipped unreadable entries without failing the audit", () => {
@@ -254,8 +307,8 @@ describe("command line entry files", () => {
   // busy.
   const ENTRY_TIMEOUT_MS = 20_000;
 
-  async function run(entry: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
-    const proc = Bun.spawn(["bun", join(SCRIPTS, entry), ...args], {
+  async function runScript(script: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+    const proc = Bun.spawn(["bun", script, ...args], {
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -263,10 +316,22 @@ describe("command line entry files", () => {
     return { stdout, exitCode: await proc.exited };
   }
 
+  function run(entry: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+    return runScript(join(SCRIPTS, entry), args);
+  }
+
   test("audit-corpus-cli reports the fixture corpus", async () => {
     const { stdout, exitCode } = await run("audit-corpus-cli.ts", [CORPUS]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Total: 11 across 7 files.");
+  }, ENTRY_TIMEOUT_MS);
+
+  test("audit-text-cli reports one selected file", async () => {
+    const file = join(CORPUS, "legalese-sample.md");
+    const { stdout, exitCode } = await runScript(TEXT_AUDIT_SCRIPT, [file, "--project-dir", CORPUS]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("| legalese-sample.md | 3 | legalese |");
+    expect(stdout).toContain("The user decides whether the text suits its readers and purpose.");
   }, ENTRY_TIMEOUT_MS);
 
   test("audit-evidence-cli reports the fixture repository", async () => {
@@ -302,12 +367,13 @@ describe("command line entry files", () => {
   // per-test timeout on a loaded machine.
   test("each entry file propagates the failure exit code", async () => {
     const entries = [
-      "audit-corpus-cli.ts",
-      "audit-evidence-cli.ts",
-      "score-maturity-cli.ts",
-      "generate-report-cli.ts",
+      join(SCRIPTS, "audit-corpus-cli.ts"),
+      join(SCRIPTS, "audit-evidence-cli.ts"),
+      join(SCRIPTS, "score-maturity-cli.ts"),
+      join(SCRIPTS, "generate-report-cli.ts"),
+      TEXT_AUDIT_SCRIPT,
     ];
-    const results = await Promise.all(entries.map((entry) => run(entry, [])));
+    const results = await Promise.all(entries.map((entry) => runScript(entry, [])));
     expect(results.map((result) => result.exitCode)).toEqual(entries.map(() => 2));
   }, ENTRY_TIMEOUT_MS);
 });

@@ -1,6 +1,6 @@
 # ISO 24495 Plain Language Skills
 
-Five [Agent Skills](https://code.claude.com/docs/en/skills) that make an AI agent write in plain language, and help organisations implement it. They apply principles inspired by the ISO 24495 *Plain language* series to every user-facing response.
+Six [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
 
 The skills are plain `SKILL.md` files with agent-neutral wording. Any tool that reads the Agent Skills format can use them.
 
@@ -15,8 +15,9 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms. |
 | `iso-24495-4` | **Organisational implementation (provisional).** A task skill for plain language gap analysis in organisations: a process-artefact sweep, a corpus audit, a five-dimension maturity model with deterministic scoring, and an append-only audit trend. Ships TypeScript tooling run with [Bun](https://bun.sh) (`bun test` covered). Based on the unpublished ISO/CD 24495-4 committee draft. |
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: visual hierarchy, navigation aids, tables for comparisons, consistent visual signalling. Based on the unpublished ISO/WD 24495-5 working draft. |
+| `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
 
-The core skill activates the other skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex multi-section documents. Each also activates on request by name.
+The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. The text audit never activates automatically.
 
 All skills exempt internal reasoning and preserve code blocks, commands, and logs untouched. Technical and legal accuracy always supersede formatting rules.
 
@@ -42,6 +43,12 @@ Or from a local clone:
 
 Once installed, the agent loads the skills when their descriptions match the task. To apply one explicitly, ask for it by name, for example: "Apply `iso-24495-2` to this licence text."
 
+Invoke `iso-24495-text-audit` directly and supply one file or directory. The skill reads only that path and leaves every change to the user:
+
+```text
+/iso-24495-plain-language:iso-24495-text-audit docs/policy.md
+```
+
 To enforce the core skill on every response, add a line to your agent's instruction file (`CLAUDE.md`, `AGENTS.md`, or equivalent):
 
 ```markdown
@@ -61,18 +68,6 @@ Publication status: Part 1 published 2023, Part 2 August 2025, Part 3 May 2026. 
 The principles derive from the International Plain Language Federation's freely published framework. Every quantitative rule here (sentence length, paragraph density, legalese, heading depth) is this project's own proxy. No rule is a clause of any standard.
 
 Nothing this plugin produces is a statement of ISO conformance. No certification scheme exists for ISO 24495. "Aligned" in the skills means aligned with this project's interpretation, nothing more.
-
-## Background monitor (Claude Code)
-
-The plugin ships a background monitor (`monitors/monitors.json`) for `iso-24495-4` engagements. It stays silent unless the working directory contains `.iso-24495-4/monitor.json` naming a corpus directory:
-
-```json
-{ "corpusDir": "docs" }
-```
-
-When configured, it re-audits changed documents and notifies the agent of rule-count deltas as they happen. Without a config it waits for one to appear and never exits on its own. The host therefore never raises a "task ended" notification.
-
-Removing the config mid-session returns the monitor to the waiting state. It requires Bun and is Claude Code-specific; the skills themselves work without it.
 
 ## What the engine reads
 
@@ -106,15 +101,15 @@ and every one that this engine reads differently carries the reason why. The
 reference is not a dependency: it was installed outside the repository, asked
 once, and its answers kept.
 
-## Advisory markdown hook (Claude Code)
+## User-invoked text audit
 
-The plugin ships a `PostToolUse` hook (`hooks/`) that audits every `.md`, `.markdown`, or `.txt` file Claude writes or edits. It uses the same rule engine as the Part 4 corpus audit. When a file carries violations, Claude receives one concise advisory line. It gives the total, orders up to three starting points by line, reports the remaining count, and never ranks rules by severity.
+The `iso-24495-text-audit` skill audits a selected `.md`, `.markdown`, or `.txt` file or directory. It uses the same rule engine as the Part 4 corpus audit. It reports each finding with its file, line, rule, and explanation.
 
 The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
 The last two serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
-A clean file produces nothing, and the hook never blocks a write.
+The result reports zero findings when no implemented rule fires. That result does not prove the text suits its audience or purpose.
 
 The shipped acronym list stays universal, so a technical vocabulary needs naming per project. Create `.iso-24495-4/acronyms.json` with the terms your readers already know:
 
@@ -124,13 +119,9 @@ The shipped acronym list stays universal, so a technical vocabulary needs naming
 
 An unreadable or malformed file leaves the shipped list alone, because an advisory tool must never be the reason a document cannot be checked.
 
-To switch it off for a project, create `.iso-24495-4/hooks.json` containing:
+The skill never runs automatically. It requires Bun and does not alter the selected text.
 
-```json
-{ "markdownAudit": false }
-```
-
-It requires Bun and is Claude Code-specific; the skills themselves work without it.
+Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
 
 ## Testing policy
 
@@ -152,13 +143,13 @@ This project follows the [Google TypeScript Style Guide](https://google.github.i
 
 ## Why this project holds itself to these rules
 
-This repository is both the tool and a user of the tool. Its hook audits every markdown edit, including this file. Its own audits have failed and forced rewrites; the changelog records them.
+This repository is both the tool and a user of the tool. Its shared gate audits every supported document, including this file.
 
 That is deliberate. A plain language project that exempts itself has no claim on anyone else. The Part 4 maturity audit runs against this repository first, and its findings are acted on here first.
 
 ## Roadmap
 
-All five skills, the output style, the background monitor, and the advisory markdown hook have shipped. What remains:
+All six skills and the output style ship in v0.5.0. What remains:
 
 - **When ISO publishes Part 4:** revise the provisional `iso-24495-4` skill against the published text. Its committee-draft text is not public, so the current maturity model is original guidance.
 - **When ISO publishes Part 5:** revise the provisional `iso-24495-5` skill against the published text.

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { adviseOnFile } from "../../../hooks/audit-markdown.ts";
 import { join, relative } from "node:path";
 import {
   auditText,
@@ -21,12 +20,11 @@ const FLOOR_WORDING = /between|at least|no fewer|minimum/i;
 const RANGE_WORDING = /(?<![0-9])15(?![0-9])/;
 const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
 const ENTRY_FILES = [
-  "hooks/audit-markdown-main.ts",
+  "skills/iso-24495-text-audit/scripts/audit-text-cli.ts",
   "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
   "skills/iso-24495-4/scripts/audit-evidence-cli.ts",
   "skills/iso-24495-4/scripts/generate-report-cli.ts",
   "skills/iso-24495-4/scripts/score-maturity-cli.ts",
-  "skills/iso-24495-4/scripts/watch-corpus-main.ts",
 ];
 const AGENT_SPECIFIC_PATTERNS = [
   { name: "agent name", pattern: /\b(?:Claude Code|Codex|agy|muse)\b/i },
@@ -194,12 +192,12 @@ function typescriptStyleViolations(path: string): StyleViolation[] {
 }
 
 describe("repository writing conventions", () => {
-  test("all five skills use agent-neutral wording", () => {
+  test("all six skills use agent-neutral wording", () => {
     const skillFiles = readdirSync(SKILLS_ROOT)
       .map((directory) => join(SKILLS_ROOT, directory, "SKILL.md"))
       .filter(existsSync)
       .sort();
-    expect(skillFiles).toHaveLength(5);
+    expect(skillFiles).toHaveLength(6);
 
     const violations = skillFiles.flatMap((path) => {
       const text = readFileSync(path, "utf8");
@@ -214,7 +212,9 @@ describe("repository writing conventions", () => {
     const files = repositoryTextFiles();
     expect(files.length).toBeGreaterThanOrEqual(40);
     expect(files).toContain(join(REPOSITORY_ROOT, "README.md"));
-    expect(files).toContain(join(REPOSITORY_ROOT, "hooks", "audit-markdown.ts"));
+    expect(files).toContain(
+      join(REPOSITORY_ROOT, "skills", "iso-24495-text-audit", "SKILL.md"),
+    );
 
     // No historical exemption. The changelog's date separators carry no
     // meaning, so they were normalised too and the rule covers everything.
@@ -225,11 +225,7 @@ describe("repository writing conventions", () => {
     expect(violations).toEqual([]);
   });
 
-  // The guard has to accept every document the shipped hook accepts. Comparing
-  // two extension lists proved nothing: one caller lower-cased the extension
-  // and the other did not, so a file named in capitals slipped between them.
-  // Both now call the engine's own predicate, which this pins by behaviour.
-  test("the dogfood guard audits exactly what the hook audits", () => {
+  test("the dogfood guard follows the engine's audited extensions", () => {
     const temp = mkdtempSync(join(tmpdir(), "iso-extension-"));
     try {
       // Distinct stems: this filesystem is case-insensitive, so "a.txt" and
@@ -238,17 +234,67 @@ describe("repository writing conventions", () => {
         const path = join(temp, name);
         writeFileSync(path, "The supplier shall comply.");
         expect(isAuditedDocument(path), `${name} must be audited`).toBe(true);
-        expect(adviseOnFile(path, temp), `${name} must reach the hook`).toContain("legalese");
         expect(repositoryTextFiles(temp), `${name} must reach the guard`).toContain(path);
       }
       const ignored = join(temp, "notes.txtx");
       writeFileSync(ignored, "The supplier shall comply.");
       expect(isAuditedDocument(ignored)).toBe(false);
-      expect(adviseOnFile(ignored, temp)).toBeNull();
       expect(repositoryTextFiles(temp)).not.toContain(ignored);
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
+  });
+
+  test("the plugin remains passive until the text audit skill is invoked", () => {
+    const plugin = JSON.parse(
+      readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "plugin.json"), "utf8"),
+    ) as { experimental?: { monitors?: unknown } };
+    expect(plugin.experimental?.monitors).toBeUndefined();
+    expect(existsSync(join(REPOSITORY_ROOT, "monitors", "monitors.json"))).toBe(false);
+    expect(existsSync(join(REPOSITORY_ROOT, "hooks", "hooks.json"))).toBe(false);
+    expect(existsSync(join(REPOSITORY_ROOT, ".iso-24495-4", "monitor.json"))).toBe(false);
+
+    const marketplace = JSON.parse(
+      readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "marketplace.json"), "utf8"),
+    ) as { plugins: Array<{ skills: string[] }> };
+    expect(marketplace.plugins[0].skills).toContain("./skills/iso-24495-text-audit");
+
+    const auditSkill = readFileSync(
+      join(SKILLS_ROOT, "iso-24495-text-audit", "SKILL.md"),
+      "utf8",
+    );
+    expect(auditSkill).toMatch(/^disable-model-invocation: true$/m);
+    expect(auditSkill).toMatch(/^argument-hint: "\[file-or-directory\]"$/m);
+    expect(auditSkill).not.toContain("[TODO:");
+    const auditInterface = readFileSync(
+      join(SKILLS_ROOT, "iso-24495-text-audit", "agents", "openai.yaml"),
+      "utf8",
+    );
+    expect(auditInterface).toMatch(/^\s*allow_implicit_invocation: false$/m);
+  });
+
+  test("current release guidance no longer describes the removed automation", () => {
+    const checkScript = readFileSync(join(REPOSITORY_ROOT, "scripts", "check.sh"), "utf8");
+    expect(checkScript).not.toContain("user's hook and monitor");
+
+    const auditSource = readFileSync(
+      join(SKILLS_ROOT, "iso-24495-4", "scripts", "audit-corpus.ts"),
+      "utf8",
+    );
+    expect(auditSource).not.toContain("switching the hook off");
+
+    const changelog = readFileSync(join(REPOSITORY_ROOT, "CHANGELOG.md"), "utf8");
+    expect(changelog).toContain("Seven documents in different registers currently produce nothing.");
+    expect(changelog).not.toContain("Six documents in different registers currently produce nothing.");
+
+    const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
+    expect(readme).toContain("Directory audits skip selected or nested symbolic links and directory junctions");
+
+    const auditSkill = readFileSync(
+      join(SKILLS_ROOT, "iso-24495-text-audit", "SKILL.md"),
+      "utf8",
+    );
+    expect(auditSkill).toContain("Do not follow a selected or nested symbolic link or directory junction");
   });
 
   test("all repository documents pass the shared audit", () => {

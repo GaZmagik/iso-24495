@@ -10,7 +10,7 @@ echo "==> Test suite with coverage thresholds"
 bun test
 
 # The suite imports the library modules directly, so a broken entry shim passes
-# it. This runs the shipped command the way a user's hook and monitor do.
+# it. This runs a shipped command through the same entry file users receive.
 echo "==> Shipped audit entry point against this repository"
 bun skills/iso-24495-4/scripts/audit-corpus-cli.ts .
 

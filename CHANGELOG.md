@@ -2,17 +2,18 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
-## [0.5.0] - 2026-08-16
+## [0.5.0] - 2026-08-17
 
 ### Added
 
+- `iso-24495-text-audit` lets the user audit one selected `.md`, `.markdown`, or `.txt` file or directory. It reports located mechanical findings and leaves validity, suitability, and rewriting decisions to the user.
 - Part 5 now provides templates for architecture decision records, runbooks, and design documents.
 - Part 5 requires the matching template before writing and defines a content-preserving restructuring workflow.
 - `filler-opening` now requires a whole word and skips front matter. It reported "Surely the answer is correct" and "Let meadows grow naturally" as filler openings, which is wrong advice on ordinary sentences. It also missed a filler opening after front matter, which is how most templated documents begin.
 - `table-header` now recognises tables written without outer pipes, which GitHub renders and writers commonly use.
 - `complex-word` suggests only equivalents no longer than the word they replace, so its own advice cannot push a sentence past the 30-word cap. "ascertain" now suggests "find" rather than "find out".
 - One integrated fixture trips all seventeen rules in a realistic document. It complements the isolated positive controls by checking that rules remain observable when their findings occur together.
-- The advisory hook now reports totals and up to three starting lines in document order. It states how many findings remain and keeps document averages separate from line-specific repairs.
+- The text audit reports every finding with its file, line, rule, and explanation. It also reports unreadable entries and carries no pass or compliance verdict.
 - List items are measured as the sentences a reader reads them as. A bullet is prose, it can run to forty words, and nothing was checking it, so the longest text in many documents went unadvised. Each item is its own block, so six bullets are not a six-sentence paragraph, and the marker is not counted as a word.
 - Quotations are measured too. Markdown cannot prove who wrote a quotation, and GitHub renders `> [!WARNING]` as an alert, which this plugin's own runbook template asks writers to use. Staying silent there hid the most important sentence in a document. The alert label is skipped, because a label is not a sentence.
 - A demonstration of bad writing belongs in a fenced block, which the engine leaves alone. The three skills showed their misaligned examples as quotations, so those examples are now fenced, and the aligned examples stay as quotations and pass the rules they demonstrate.
@@ -41,7 +42,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Corpus JSON output now carries a deterministic configuration hash covering every engine threshold.
 - Setext headings are now recognised. A heading underlined with `=` or `-` was invisible to every heading rule, so a fourteen-word one escaped `heading-style` and its underline counted as a word of prose. Thematic breaks, front matter, underlines inside fences or lists, four-space indented code, and an underline separated from its text by a blank line are all excluded.
 - A behaviour contract test covers what coverage cannot. It pins the boundary verdicts for technical punctuation, the acronym calibration matrix, complete heading recognition, and the Markdown exclusions the engine makes deliberately. It also pins encoding and English-variety equivalence, rule composition with isolated repairs, and the capability boundary. That last one asserts the engine emits exactly seventeen rules and names what it deliberately does not detect, so nobody mistakes writing guidance for an automated check.
-- A hand-written known-good corpus measures the false-positive rate on plain prose, which was previously unmeasured. Six documents in different registers currently produce nothing.
+- A hand-written known-good corpus measures the false-positive rate on plain prose, which was previously unmeasured. Seven documents in different registers currently produce nothing.
 - A GitHub Actions workflow runs the suite on every pull request. It calls `scripts/check.sh`, the same single gate a contributor runs locally, so a failed build reproduces with one command.
 - Plain-language checks for script comments are cancelled, not deferred. Version 0.4.0 announced them for this release. Comments are fragments rather than documents, and checking them well would need a separate extractor for each language plus the docstring conventions layered on top. That machinery costs more than the advice it would produce, so the plan is withdrawn rather than postponed.
 
@@ -56,15 +57,24 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - Paragraph limit relaxed from 3 sentences to 5, matching public guidance (3 to 5, with single-sentence paragraphs fine for emphasis).
 - The core skill's voice rule is no longer absolute: active is the default, and passive is accepted where the actor is unknown, irrelevant, or secondary.
 - The core skill and output style gain guidance the standards emphasise and the plugin lacked: the four governing principles named (relevant, findable, understandable, usable), and audience-first framing. It also adds positive framing, direct address, subject-verb proximity, explicit connective words, wordy-phrase replacements, and repetition over elegant variation. Layout rules are now labelled house conventions.
-- The advisory hook now audits `.md`, `.markdown`, and `.txt` files.
+- The text audit reads `.md`, `.markdown`, and `.txt` files.
 - The output style gains a **Reporting work** section, and the send-time check grows from four measures to nine. Two external reviews judged 165 of this project's own replies against the four governing principles. They found failures the sentence and paragraph limits cannot see: a defect reported as a count rather than a finding, and work called done while a gate was still open. They also found options described unevenly, a rule contradicted after it was given, and grammar dropped in the name of brevity.
 - Each of those failures is a rule with a matching item in the send-time check. The five reporting items apply only when a reply reports work, so a one-line answer stays one line.
 - The output style now covers reply layout and carries a send-time check. It states the limits apply to replies as well as documents, and holds a reply paragraph to 4 sentences. It asks for the draft to be read back against four measures before sending. Measured on one long reply, the revision cut violations from 10 to 1 and the average sentence from 23.1 words to 14.8. It cut the length from 463 words to 266 with no loss of content.
 - Tests pin that the style and core skill quote the engine's current limits, and that the check survives edits.
-- Each script is now a library module with a separate logic-free entry file (`audit-corpus-cli.ts`, `watch-corpus-main.ts`, and so on). Hook and monitor commands point at the new entries. Every measured file covers 100% of lines and functions, and end-to-end tests run each entry.
+- Each shipped command now has a library module and a separate logic-free entry file. Every measured file covers 100% of lines and functions, and end-to-end tests run each entry.
+
+### Removed
+
+- The background corpus monitor no longer ships. Installing the plugin no longer creates a session-long task that can interfere with `/goal`.
+- The automatic `PostToolUse` text hook no longer ships. Text auditing now begins only when the user invokes `iso-24495-text-audit`.
 
 ### Fixed
 
+- Selected and nested symbolic links or directory junctions are now skipped and reported. Directory audits never follow them beyond the path the user approved or around a cycle.
+- Text and corpus audits now report a file that becomes unreadable after enumeration as skipped, while continuing with readable files.
+- Both audit commands reject missing option values, unknown options, extra arguments, and duplicate options before writing output.
+- The obsolete project-level monitor configuration was removed with the monitor implementation.
 - The shouting test now reads a distilled lexicon of about 7,400 words rather than 400 hand-picked ones. Absence from a short list meant nothing, so `ROTATE KEYS` was reported as two undefined acronyms while `ENABLE MFA` was silent. The list is distilled offline from local English prose, keeping only words written in lower case in at least 92% of their uses, so acronyms cannot enter it. Words that are also common acronyms are removed deliberately. A run of two capitals must now be entirely ordinary words to count as shouting, and an ordinary word is never reported as an acronym.
 - Headings indented up to three spaces are now recognised, as CommonMark requires. An indented heading was invisible to every heading rule, so a skipped level inside an indented block went unreported.
 - An inline abbreviation followed by a capital is now undecided rather than joined. Merging by default turned two real sentences into one long one and reduced a six-sentence paragraph to five, which hid a violation.
@@ -73,9 +83,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - `acronym-undefined` states its limits plainly. It reports a capitalised token that no other evidence explains. It stays silent inside a run of capitals that is mostly ordinary English words, because that is shouting rather than terminology. It stays silent on a Roman numeral unless the numeral is one that commonly doubles as an acronym and nothing nearby marks it as a number. It does not attempt to expand acronyms, and it will miss an undefined acronym that sits inside shouted text.
 - `prose-enumeration` no longer counts an ordinal inside a hyphenated compound. `third-party service` was read as a third item and turned ordinary prose into a finding.
 - The output style no longer presents 15 words as a minimum average. The engine sets an upper limit and no lower one, so a concise reply was failing a check whose only remedy was padding.
-- The repository's own audit guard now covers every extension the hook audits, not only `.md`. A violating `.txt` or `.markdown` file could previously ship with every gate green. Both the hook and the guard now call one exported predicate, `isAuditedDocument`, which ignores letter case. A file named `NOTES.TXT` can no longer be audited in one place and skipped in the other.
+- The repository's own audit guard covers every extension the text audit reads, not only `.md`. Both use `isAuditedDocument`, which ignores letter case.
 - The end-to-end entry file tests no longer fail at random. Each spawns a cold Bun process, which can take longer than the default five second limit on a loaded machine, and the process was then killed mid-run. Two of five suite runs failed before the fix and six of six passed after it.
-- The background monitor now detects a change by content digest rather than by modification time and size. A correction that preserved byte length within one filesystem timestamp tick, two seconds on some filesystems, went unreported (present since 0.3.1).
 
 ## [0.4.1] - 2026-08-12
 

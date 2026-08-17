@@ -8,7 +8,7 @@
     {
       "name": "iso-24495-plain-language",
       "displayName": "ISO 24495 Plain Language",
-      "description": "Plain language skills inspired by the ISO 24495 series: core principles, legal writing, science and technical writing, a provisional document design extension, and a provisional organisational implementation task skill.",
+      "description": "Six plain language skills inspired by the ISO 24495 series, including a user-invoked text audit.",
       "version": "0.5.0",
       "author": {
         "name": "Gareth Williams"
@@ -23,7 +23,8 @@
         "./skills/iso-24495-2",
         "./skills/iso-24495-3",
         "./skills/iso-24495-4",
-        "./skills/iso-24495-5"
+        "./skills/iso-24495-5",
+        "./skills/iso-24495-text-audit"
       ]
     }
   ]

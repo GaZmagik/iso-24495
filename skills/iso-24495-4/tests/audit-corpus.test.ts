@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -27,13 +36,21 @@ describe("listTextFiles", () => {
     const root = mkdtempSync(join(tmpdir(), "iso-24495-4-walk-"));
     try {
       writeFileSync(join(root, "good.md"), "A short sentence.\n");
+      const blocked = join(root, "blocked.md");
+      writeFileSync(blocked, "This entry disappears during inspection.\n");
       const target = join(root, "target-dir");
       mkdirSync(target);
-      symlinkSync(target, join(root, "dangling"), "junction");
+      const dangling = join(root, "dangling");
+      symlinkSync(target, dangling, "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      expect(listTextFiles(root, (path) => skipped.push(path))).toEqual([join(root, "good.md")]);
-      expect(skipped).toEqual([join(root, "dangling")]);
+      const inspectEntry: typeof lstatSync = (path) => {
+        if (path === blocked) throw new Error("entry vanished");
+        return lstatSync(path);
+      };
+      expect(listTextFiles(root, (path) => skipped.push(path), readdirSync, inspectEntry))
+        .toEqual([join(root, "good.md")]);
+      expect(skipped.sort()).toEqual([blocked, dangling].sort());
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -66,14 +83,20 @@ describe("auditCorpus skip reporting", () => {
     const root = mkdtempSync(join(tmpdir(), "iso-24495-4-audit-skip-"));
     try {
       writeFileSync(join(root, "good.md"), "A short sentence.\n");
+      const blocked = join(root, "blocked.md");
+      writeFileSync(blocked, "This file becomes unreadable.\n");
       const target = join(root, "target-dir");
       mkdirSync(target);
       symlinkSync(target, join(root, "dangling"), "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      const findings = auditCorpus(root, (path) => skipped.push(path));
+      const readText = (path: string): string => {
+        if (path === blocked) throw new Error("file became unreadable");
+        return readFileSync(path, "utf8");
+      };
+      const findings = auditCorpus(root, (path) => skipped.push(path), readText);
       expect(Object.keys(findings.files)).toEqual(["good.md"]);
-      expect(skipped).toEqual([join(root, "dangling")]);
+      expect(skipped.sort()).toEqual([blocked, join(root, "dangling")].sort());
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

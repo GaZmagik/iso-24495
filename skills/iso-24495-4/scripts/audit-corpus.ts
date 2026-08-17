@@ -2,7 +2,7 @@
 // Emits counts and locations only. It never judges clarity and its output
 // must never be presented as ISO compliance.
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
@@ -45,15 +45,14 @@ const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
 const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
 const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
 const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
-// Exported so the hook and the repository's own dogfood guard read the same
-// list. While each kept its own copy, a .txt file could ship unaudited.
+// Exported so each audit surface and the repository guard read the same list.
+// Separate copies once disagreed about whether a .txt file was covered.
 export const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
 
 /**
  * Whether this path is a document the engine audits. Every caller must use
- * this rather than its own test: comparing extension lists proved nothing,
- * because one caller lower-cased the extension and another did not, so
- * `notes.TXT` was audited by the hook and skipped by the repository guard.
+ * this rather than its own test. Comparing extension lists proved nothing,
+ * because one caller lower-cased the extension and another did not.
  */
 export function isAuditedDocument(path: string): boolean {
   const lower = path.toLowerCase();
@@ -749,7 +748,7 @@ function proseEnumerationViolations(text: string): Violation[] {
  * The shipped list stays universal on purpose: this plugin targets
  * international English, and baking CSS, SQL and SDK into it would make the
  * core list a software list. But a technical writer met a dozen findings for
- * ordinary vocabulary, which is the shortest route to switching the hook off,
+ * ordinary vocabulary, which is the shortest route to abandoning the audit,
  * so each project extends the list for itself.
  *
  * The file holds an array of strings. Anything unreadable or malformed leaves
@@ -927,6 +926,7 @@ function walk(
   onSkip: ((path: string) => void) | undefined,
   isRoot: boolean,
   readDirectory: typeof readdirSync,
+  inspectEntry: typeof lstatSync,
 ): void {
   let entries: string[];
   try {
@@ -942,17 +942,23 @@ function walk(
   for (const entry of entries) {
     if (entry === "node_modules" || entry === ".git") continue;
     const full = join(dir, entry);
-    let isDirectory: boolean;
+    let entryStat: ReturnType<typeof lstatSync>;
     try {
-      isDirectory = statSync(full).isDirectory();
+      entryStat = inspectEntry(full);
     } catch {
       // Dangling links and permission failures skip the entry, not the walk.
       // The caller is told, so it can distinguish "skipped" from "gone".
       onSkip?.(full);
       continue;
     }
-    if (isDirectory) {
-      walk(full, out, onSkip, false, readDirectory);
+    // Do not follow links found under the selected root. A link may leave the
+    // approved path or form a cycle, so reading it would widen the audit.
+    if (entryStat.isSymbolicLink()) {
+      onSkip?.(full);
+      continue;
+    }
+    if (entryStat.isDirectory()) {
+      walk(full, out, onSkip, false, readDirectory, inspectEntry);
     } else if (TEXT_EXTENSIONS.some((ext) => entry.toLowerCase().endsWith(ext))) {
       out.push(full);
     }
@@ -963,13 +969,20 @@ export function listTextFiles(
   dir: string,
   onSkip?: (path: string) => void,
   readDirectory: typeof readdirSync = readdirSync,
+  inspectEntry: typeof lstatSync = lstatSync,
 ): string[] {
   const paths: string[] = [];
-  walk(dir, paths, onSkip, true, readDirectory);
+  walk(dir, paths, onSkip, true, readDirectory, inspectEntry);
   return paths.sort();
 }
 
-export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findings {
+type ReadTextFile = (path: string, encoding: "utf8") => string;
+
+export function auditCorpus(
+  dir: string,
+  onSkip?: (path: string) => void,
+  readText: ReadTextFile = readFileSync,
+): Findings {
   const paths = listTextFiles(dir, onSkip);
   // A corpus is audited from its own directory, so the project's acronyms
   // apply to every document in it.
@@ -977,7 +990,14 @@ export function auditCorpus(dir: string, onSkip?: (path: string) => void): Findi
   const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
   for (const path of paths) {
     const key = relative(dir, path).replaceAll("\\", "/");
-    const violations = auditText(readFileSync(path, "utf8"), { knownAcronyms });
+    let text: string;
+    try {
+      text = readText(path, "utf8");
+    } catch {
+      onSkip?.(path);
+      continue;
+    }
+    const violations = auditText(text, { knownAcronyms });
     findings.files[key] = { violations };
     for (const v of violations) {
       findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
@@ -996,10 +1016,27 @@ export function runCli(
     stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
     return 2;
   }
-  const jsonFlag = argv.indexOf("--json");
-  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
-    stderr("audit-corpus: --json requires an output file");
-    return 2;
+  let jsonPath: string | undefined;
+  const seenOptions = new Set<string>();
+  for (let index = 3; index < argv.length; index++) {
+    const option = argv[index];
+    if (option !== "--json") {
+      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
+      stderr(`audit-corpus: ${kind}: ${option}`);
+      return 2;
+    }
+    if (seenOptions.has(option)) {
+      stderr(`audit-corpus: ${option} appears more than once`);
+      return 2;
+    }
+    seenOptions.add(option);
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) {
+      stderr("audit-corpus: --json requires an output file");
+      return 2;
+    }
+    jsonPath = value;
+    index++;
   }
   try {
     const skipped: string[] = [];
@@ -1007,8 +1044,8 @@ export function runCli(
     for (const path of skipped) {
       stderr(`warning: skipped unreadable entry: ${path}`);
     }
-    if (jsonFlag !== -1) {
-      writeFileSync(argv[jsonFlag + 1], JSON.stringify(findings, null, 2));
+    if (jsonPath !== undefined) {
+      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
     }
     stdout("| Rule | Violations |");
     stdout("|------|------------|");
