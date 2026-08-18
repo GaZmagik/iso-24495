@@ -7,7 +7,9 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Added
 
 - The plugin installs in Codex CLI as well as Claude Code. Codex reads the same marketplace manifest, and every skill now carries `agents/openai.yaml`, which gives Codex its display name, short description and suggested prompt.
-- `iso-24495-style` carries the output style as a skill, word for word, with a test keeping the two identical. It ships in `codex-skills/`, which Codex reads through `.codex-plugin/plugin.json` and Claude Code does not scan. Claude keeps its six skills and its output style, and Codex gains the one thing it has no output style for. Codex has no output style, so a Codex user names this skill in their own `AGENTS.md` to get the same behaviour. A plugin cannot apply itself there: an `AGENTS.md` inside a plugin is ignored, which was tested rather than assumed.
+- `iso-24495-style` carries the output style as a skill, word for word, with a test keeping the two identical. Codex has no output style, so a Codex user names this skill in their own `AGENTS.md` to get the same behaviour.
+- The style skill ships in `codex-skills/`, which Codex reads through `.codex-plugin/plugin.json` and Claude Code does not scan. Claude keeps its six skills and its output style.
+- A plugin cannot apply itself in Codex: an `AGENTS.md` inside a plugin is ignored, which was tested rather than assumed. Only a project's file, or the one in the Codex home directory, is read.
 - `iso-24495-text-audit` lets the user audit one selected `.md`, `.markdown`, or `.txt` file or directory. It reports located mechanical findings and leaves validity, suitability, and rewriting decisions to the user.
 - Part 5 now provides templates for architecture decision records, runbooks, and design documents.
 - Part 5 requires the matching template before writing and defines a content-preserving restructuring workflow.
