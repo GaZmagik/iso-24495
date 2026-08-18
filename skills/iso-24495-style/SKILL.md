@@ -1,6 +1,7 @@
 ---
 name: iso-24495-style
 description: Hold every response to the ISO 24495 plain-language rules, and route to the sector skills. Use where the agent has no always-on style setting.
+disable-model-invocation: true
 metadata:
   version: "0.5.0"
 ---
