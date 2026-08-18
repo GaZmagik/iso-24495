@@ -11,6 +11,16 @@ import {
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
+const CODEX_SKILLS_ROOT = join(REPOSITORY_ROOT, "codex-skills");
+
+/** Every skill this repository ships, whichever agent reads it. */
+function everySkillDirectory(): Array<{ name: string; path: string }> {
+  return [SKILLS_ROOT, CODEX_SKILLS_ROOT].flatMap((root) =>
+    readdirSync(root)
+      .filter((entry) => entry.startsWith("iso-24495-"))
+      .map((entry) => ({ name: entry, path: join(root, entry) })),
+  );
+}
 const SKIPPED_DIRECTORIES = new Set([".git", ".iso-24495-4", "node_modules"]);
 const SENTENCE_OR_LINE = /(?<=[.!?])[ \t]+|\r?\n/;
 // A floor can be worded as a range as easily as as a minimum. "Average 15 to
@@ -193,8 +203,8 @@ function typescriptStyleViolations(path: string): StyleViolation[] {
 
 describe("repository writing conventions", () => {
   test("every skill uses agent-neutral wording", () => {
-    const skillFiles = readdirSync(SKILLS_ROOT)
-      .map((directory) => join(SKILLS_ROOT, directory, "SKILL.md"))
+    const skillFiles = everySkillDirectory()
+      .map(({ path }) => join(path, "SKILL.md"))
       .filter(existsSync)
       .sort();
     expect(skillFiles.length).toBeGreaterThanOrEqual(7);
@@ -555,13 +565,12 @@ describe("repository writing conventions", () => {
   // Codex itself: it registered this repository as a marketplace and listed the
   // plugin, and every key below appears in the Codex binary.
   describe("Codex CLI compatibility", () => {
-    const skillNames = readdirSync(SKILLS_ROOT)
-      .filter((entry) => entry.startsWith("iso-24495-"));
+    const skills = everySkillDirectory();
 
     test("every skill carries a Codex interface file", () => {
-      expect(skillNames.length).toBeGreaterThanOrEqual(7);
-      for (const name of skillNames) {
-        const path = join(SKILLS_ROOT, name, "agents", "openai.yaml");
+      expect(skills.length).toBeGreaterThanOrEqual(7);
+      for (const { name, path: directory } of skills) {
+        const path = join(directory, "agents", "openai.yaml");
         expect(existsSync(path), `${name} has agents/openai.yaml`).toBe(true);
         const contents = readFileSync(path, "utf8");
         // The three keys Codex reads for presentation. A missing one leaves the
@@ -574,14 +583,25 @@ describe("repository writing conventions", () => {
       }
     });
 
-    test("the marketplace lists every skill directory", () => {
+    // Claude reads the marketplace manifest and scans `skills/` whatever the
+    // manifest says, which was tested: a skill left out of the list still
+    // loaded. So the response style lives outside that directory, and Codex
+    // finds it through its own manifest, which names both roots.
+    test("each manifest names the skills its agent should read", () => {
       const marketplace = readFileSync(
         join(REPOSITORY_ROOT, ".claude-plugin", "marketplace.json"),
         "utf8",
       );
-      for (const name of skillNames) {
-        expect(marketplace, name).toContain(`./skills/${name}`);
+      for (const entry of readdirSync(SKILLS_ROOT)) {
+        expect(marketplace, entry).toContain(`./skills/${entry}`);
       }
+      expect(marketplace).not.toContain("codex-skills");
+
+      const codex = JSON.parse(readFileSync(
+        join(REPOSITORY_ROOT, ".codex-plugin", "plugin.json"),
+        "utf8",
+      )) as { skills: string[] };
+      expect(codex.skills).toEqual(["./skills/", "./codex-skills/"]);
     });
 
     // Codex has no output style, so the same rules are a skill there. The two
@@ -592,7 +612,10 @@ describe("repository writing conventions", () => {
         join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"),
         "utf8",
       );
-      const skill = readFileSync(join(SKILLS_ROOT, "iso-24495-style", "SKILL.md"), "utf8");
+      const skill = readFileSync(
+        join(CODEX_SKILLS_ROOT, "iso-24495-style", "SKILL.md"),
+        "utf8",
+      );
       const body = style.split("---")[2].trim();
       expect(body.length).toBeGreaterThan(500);
       expect(skill).toContain(body);

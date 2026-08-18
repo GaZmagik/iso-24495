@@ -1,0 +1,25 @@
+{
+  "name": "iso-24495-plain-language",
+  "version": "0.5.0",
+  "description": "Six plain language skills inspired by the ISO 24495 series, plus the response style Codex has no output style for.",
+  "author": {
+    "name": "Gareth Williams"
+  },
+  "license": "MIT",
+  "keywords": [
+    "plain-language",
+    "iso-24495",
+    "writing",
+    "documentation",
+    "legal-writing",
+    "technical-writing"
+  ],
+  "skills": [
+    "./skills/",
+    "./codex-skills/"
+  ],
+  "interface": {
+    "displayName": "ISO 24495 Plain Language",
+    "shortDescription": "Write so readers can find, understand and act on what they read"
+  }
+}
