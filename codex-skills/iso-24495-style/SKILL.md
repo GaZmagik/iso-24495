@@ -1,16 +1,25 @@
 ---
 name: iso-24495-style
-description: Hold every response to the ISO 24495 plain-language rules, and route to the sector skills. Use where the agent has no always-on style setting.
+description: Hold every response to the ISO 24495 plain-language rules, and route to the sector skills. Codex has no output style, so these rules are a skill.
 metadata:
   version: "0.5.0"
 ---
 
 # ISO 24495 Response Style
 
-These rules govern every response. Where an agent has an always-on style
-setting, it carries them without being asked. Where it has none, invoke this
-skill, or name it in whatever file that agent reads for standing
-instructions.
+Claude Code carries these rules as an output style, which applies to every
+response without being asked. Codex has no equivalent, so the same rules ship
+here as a skill.
+
+To apply them to every response, name this skill in your `AGENTS.md`:
+
+```text
+Apply the `iso-24495-style` skill to every response.
+```
+
+Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. A plugin
+cannot apply itself: an `AGENTS.md` inside a plugin is ignored. For a single
+reply, invoke `$iso-24495-style` instead.
 
 The rules below are the shipped output style, word for word. A test keeps the
 two identical, so neither can drift from the other.

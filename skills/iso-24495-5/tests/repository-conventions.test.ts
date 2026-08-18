@@ -202,12 +202,15 @@ function typescriptStyleViolations(path: string): StyleViolation[] {
 }
 
 describe("repository writing conventions", () => {
-  test("every skill uses agent-neutral wording", () => {
-    const skillFiles = everySkillDirectory()
-      .map(({ path }) => join(path, "SKILL.md"))
+  // Only the skills Claude and Codex both read. A skill under `codex-skills/`
+  // is read by one agent by construction, so naming that agent there tells a
+  // reader what to do rather than leaving them to guess.
+  test("every shared skill uses agent-neutral wording", () => {
+    const skillFiles = readdirSync(SKILLS_ROOT)
+      .map((entry) => join(SKILLS_ROOT, entry, "SKILL.md"))
       .filter(existsSync)
       .sort();
-    expect(skillFiles.length).toBeGreaterThanOrEqual(7);
+    expect(skillFiles.length).toBeGreaterThanOrEqual(6);
 
     const violations = skillFiles.flatMap((path) => {
       const text = readFileSync(path, "utf8");
