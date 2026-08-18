@@ -1,8 +1,8 @@
 // Process-artefact sweep: the PRIMARY audit for Part 4. Detects the presence
 // of organisational plain language systems. It records presence and paths
-// only — evaluating artefact quality is the agent's job, with the human.
+// only. Evaluating artefact quality is the agent's job, with the human.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Evidence } from "./lib/types.ts";
 
@@ -60,21 +60,35 @@ export function auditEvidence(dir: string): Evidence {
   return evidence;
 }
 
-if (import.meta.main) {
-  const dir = process.argv[2];
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
   if (!dir) {
-    console.error("Usage: bun audit-evidence.ts <workspace-dir> [--json <out-file>]");
-    process.exit(2);
+    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
+    return 2;
   }
-  const evidence = auditEvidence(dir);
-  const jsonFlag = process.argv.indexOf("--json");
-  if (jsonFlag !== -1 && process.argv[jsonFlag + 1]) {
-    await Bun.write(process.argv[jsonFlag + 1], JSON.stringify(evidence, null, 2));
+  const jsonFlag = argv.indexOf("--json");
+  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+    stderr("audit-evidence: --json requires an output file");
+    return 2;
   }
-  console.log("| Artefact category | Found | Paths |");
-  console.log("|-------------------|-------|-------|");
-  for (const category of CATEGORIES) {
-    const { found, paths } = evidence.artefacts[category];
-    console.log(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
+  try {
+    const evidence = auditEvidence(dir);
+    if (jsonFlag !== -1) {
+      writeFileSync(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2));
+    }
+    stdout("| Artefact category | Found | Paths |");
+    stdout("|-------------------|-------|-------|");
+    for (const category of CATEGORIES) {
+      const { found, paths } = evidence.artefacts[category];
+      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
+    }
+    return 0;
+  } catch (error) {
+    stderr(`audit-evidence: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
   }
 }

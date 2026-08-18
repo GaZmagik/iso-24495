@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495-2 Legal Writing"
+  short_description: "Plain language for contracts, licences and compliance text"
+  default_prompt: "Use $iso-24495-2 when drafting or reviewing a contract, licence, policy or other legal text."

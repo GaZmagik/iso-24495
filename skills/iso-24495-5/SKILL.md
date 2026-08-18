@@ -2,16 +2,18 @@
 name: iso-24495-5
 description: Provisional sector-specific Plain Language standard for document design (based on ISO/WD 24495-5, under development). Applied when structuring complex documents so readers can find and navigate content through layout, visual hierarchy, and navigation aids.
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   iso-standard: "ISO/WD 24495-5"
   iso-status: "working-draft"
 ---
 
-# ISO/WD 24495-5 — Plain Language (Document Design) [PROVISIONAL DRAFT]
+# ISO/WD 24495-5 - Plain Language (Document Design) [PROVISIONAL DRAFT]
 
 > **Provisional status:** ISO 24495-5 is a Working Draft (ISO/WD 24495-5) and is not yet published. This skill is original guidance based on the draft's public scope and established information design practice. It does not reproduce ISO text. Expect revision when the standard is published.
 
-Extends ISO 24495-1:2023 for the visual and structural design of complex documents: reports, specifications, guides, contracts presented as documents, and long-form technical or health information. Visual design works together with linguistic cues to help readers find and navigate a document's structure and content.
+Extends ISO 24495-1:2023 for the structural design of complex documents: reports, specifications, guides, contracts presented as documents, and long-form technical or health information. Design works together with linguistic cues to help readers find and navigate a document's structure and content.
+
+**Design for readers who are not looking at the page.** The intended readers include everyone who uses the document. Some see it, some hear it through a screen reader, and some read it by touch. A listener has no visual hierarchy. Their structure is the heading tree, the link text and the reading order. Every rule below is written to hold when the document is heard.
 
 ## Scope & Execution Boundaries
 
@@ -24,6 +26,27 @@ Extends ISO 24495-1:2023 for the visual and structural design of complex documen
 
 3. **Content Primacy:**
    - Document design must **never** cut or distort content to fit a layout. Accuracy and completeness supersede visual tidiness.
+
+---
+
+## Required Templates
+
+Read the matching template before writing any of these document types:
+
+- **Architecture decision record (ADR):** Read the template file at `assets/adr-template.md`.
+- **Runbook:** Read the template file at `assets/runbook-template.md`.
+- **Design document:** Read the template file at `assets/design-doc-template.md`.
+
+## Restructure an Existing Document
+
+When asked to restructure an existing document:
+
+1. Identify the reader tasks, current hierarchy, and navigation needs.
+2. Preserve every prose passage and content item.
+3. Change only headings, list types, table structure, and visual formatting.
+4. Check the result against the hierarchy, navigation, structure, and signalling rules below.
+
+Do not rewrite prose, change tone, or remove content. Those changes belong to Parts 1 to 3.
 
 ---
 
@@ -50,6 +73,13 @@ Extends ISO 24495-1:2023 for the visual and structural design of complex documen
 5. **Consistent Visual Signalling:**
    - Give each visual device (bold, italics, blockquotes, code formatting, icons) **one meaning** per document and apply it consistently.
    - Never use the same device for two different meanings, or two devices for the same meaning.
+   - **Never let a visual device carry meaning on its own.** Bold, colour, an icon and a position on the page are all silent to a listener. State the meaning in words as well. "Required fields are marked in red" fails; "Required fields are marked with the word required" works.
+
+6. **Reaching Readers Who Cannot See the Page:**
+   - **Link text names its destination.** A screen reader can list every link in a document, read aloud without the sentence around it. "Click here" and a bare web address tell that reader nothing.
+   - **Every image that carries meaning has alternative text** describing what it shows, not what it is. An image that carries no meaning is decorative and may say so.
+   - **Tables carry a header row**, because a listener hears each cell announced against its column name.
+   - **The reading order is the document order.** A sidebar or a floating callout only makes sense out of sequence, so give each one its own heading in the flow.
 
 ---
 
@@ -57,7 +87,12 @@ Extends ISO 24495-1:2023 for the visual and structural design of complex documen
 
 ### Example 1: Structuring Comparative Information
 * ❌ **Not aligned (Buried in Prose):**
-  > "The Basic plan costs £5 per month and includes 10 GB of storage but no priority support, whereas the Pro plan is £15 per month with 100 GB and priority support, and the Team plan, at £40 per month, offers 1 TB, priority support, and audit logs."
+  ```text
+  The Basic plan costs £5 per month and includes 10 GB of storage but no
+  priority support, whereas the Pro plan is £15 per month with 100 GB and
+  priority support, and the Team plan, at £40 per month, offers 1 TB,
+  priority support, and audit logs.
+  ```
 * ✅ **ISO 24495-5 (Draft) Aligned:**
   > Choose a plan based on storage and support needs:
   >

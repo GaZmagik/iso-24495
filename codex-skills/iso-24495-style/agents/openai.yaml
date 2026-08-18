@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495 Response Style"
+  short_description: "Hold every response to the ISO 24495 plain-language rules"
+  default_prompt: "Use $iso-24495-style to hold every response to the ISO 24495 plain-language rules and route to the sector skills."

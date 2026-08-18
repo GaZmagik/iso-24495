@@ -2,12 +2,12 @@
 name: iso-24495-2
 description: Sector-specific Plain Language standard for legal communication (ISO 24495-2:2025). Applied during contract drafting, license review, and legal/compliance writing.
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   iso-standard: "ISO 24495-2:2025"
   iso-status: "published"
 ---
 
-# ISO 24495-2:2025 — Plain Language (Legal Communication)
+# ISO 24495-2:2025 - Plain Language (Legal Communication)
 
 Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, and regulatory compliance.
 
@@ -27,7 +27,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 1. **Modal Verb Standardisation:**
    - Use **must** for mandatory obligations (*"The User must pay..."*).
    - Use **must not** for prohibitions (*"The User must not copy..."*).
-   - Use **may** for discretionary permissions (*"The User may terminate..."*).
+   - Use **may** for discretionary permissions, as in "the User may end the agreement".
    - **Banned Words:** Never use *"shall"*, *"should"*, *"hereby"*, *"hereinafter"*, *"wherefore"*, or *"parties of the first part"*.
 
 2. **Explicit Subject Actor Identification:**
@@ -45,7 +45,11 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 
 ### Example 1: Contractual Obligation
 * ❌ **Not aligned (Archaic Legalese):**
-  > "The Licensee shall hereinafter hold harmless and indemnify the Licensor from and against any and all claims wherefore notice has not been provided within thirty (30) days."
+  ```text
+  The Licensee shall hereinafter hold harmless and indemnify the Licensor
+  from and against any and all claims wherefore notice has not been provided
+  within thirty (30) days.
+  ```
 * ✅ **ISO 24495-2 Aligned:**
   > **Indemnification Notice Requirement:**
   > 1. **Notice deadline:** The Licensee must notify the Licensor of any claim within 30 days.

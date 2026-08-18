@@ -2,12 +2,12 @@
 name: iso-24495-3
 description: Sector-specific Plain Language standard for science and technical writing (ISO 24495-3:2026). Applied during software documentation, architecture specs, and technical analysis.
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   iso-standard: "ISO 24495-3:2026"
   iso-status: "published"
 ---
 
-# ISO 24495-3:2026 — Plain Language (Science and Technical Communication)
+# ISO 24495-3:2026 - Plain Language (Science and Technical Communication)
 
 Extends ISO 24495-1:2023 for software architecture, technical documentation, algorithm explanations, code reviews, and scientific analysis.
 
@@ -18,7 +18,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
    - Reason freely within thinking blocks. Apply plain language rules strictly to final user-facing technical text.
 
 2. **Code & Data Preservation Immunity:**
-   - Code blocks, stack traces, AST dumps, terminal commands, and exact line quotes are **completely immune** to sentence length and simplification constraints. Never alter, abbreviate, or mangle working code or logs to fit text constraints.
+   - Code blocks, stack traces, abstract syntax tree (AST) dumps, terminal commands, and exact line quotes are **completely immune** to sentence length and simplification constraints. Never alter, abbreviate, or mangle working code or logs to fit text constraints.
 
 ---
 
@@ -44,7 +44,11 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
 
 ### Example 1: Concurrency Control Explanation
 * ❌ **Not aligned (Dense & Abstract):**
-  > "In order to prevent race conditions during concurrent state mutations within the execution pipeline, a mutex lock mechanism is introduced prior to updating the shared buffer allocation in memory."
+  ```text
+  In order to prevent race conditions during concurrent state mutations
+  within the execution pipeline, a mutex lock mechanism is introduced prior
+  to updating the shared buffer allocation in memory.
+  ```
 * ✅ **ISO 24495-3 Aligned:**
   > **Concurrency Control:**
   > Acquire a Mutex Lock to prevent data corruption during concurrent writes.

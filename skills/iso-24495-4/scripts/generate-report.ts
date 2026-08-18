@@ -3,6 +3,7 @@
 // never rewritten, so successive audits prove (or disprove) progress.
 
 import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 export interface ReportInput {
   findings: Findings;
@@ -84,32 +85,50 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   return { report: lines.join("\n"), state };
 }
 
-if (import.meta.main) {
-  const [findingsPath, evidencePath, maturityPath] = process.argv.slice(2);
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+  now: () => string = () => new Date().toISOString(),
+): number {
+  const [findingsPath, evidencePath, maturityPath] = argv.slice(2);
   if (!findingsPath || !evidencePath || !maturityPath) {
-    console.error(
-      "Usage: bun generate-report.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]",
+    stderr(
+      "Usage: bun generate-report-cli.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]",
     );
-    process.exit(2);
+    return 2;
   }
-  const stateFlag = process.argv.indexOf("--state");
-  const statePath = stateFlag !== -1 ? process.argv[stateFlag + 1] : null;
-  const priorState =
-    statePath && (await Bun.file(statePath).exists())
-      ? await Bun.file(statePath).json()
+  const stateFlag = argv.indexOf("--state");
+  const outFlag = argv.indexOf("--out");
+  if (stateFlag !== -1 && !argv[stateFlag + 1]) {
+    stderr("generate-report: --state requires a state file");
+    return 2;
+  }
+  if (outFlag !== -1 && !argv[outFlag + 1]) {
+    stderr("generate-report: --out requires a report file");
+    return 2;
+  }
+  try {
+    const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
+    const priorState = statePath && existsSync(statePath)
+      ? JSON.parse(readFileSync(statePath, "utf8"))
       : null;
-  const { report, state } = generateReport({
-    findings: await Bun.file(findingsPath).json(),
-    evidence: await Bun.file(evidencePath).json(),
-    maturity: await Bun.file(maturityPath).json(),
-    state: priorState,
-    now: new Date().toISOString(),
-  });
-  if (statePath) await Bun.write(statePath, JSON.stringify(state, null, 2));
-  const outFlag = process.argv.indexOf("--out");
-  if (outFlag !== -1 && process.argv[outFlag + 1]) {
-    await Bun.write(process.argv[outFlag + 1], report);
-  } else {
-    console.log(report);
+    const { report, state } = generateReport({
+      findings: JSON.parse(readFileSync(findingsPath, "utf8")),
+      evidence: JSON.parse(readFileSync(evidencePath, "utf8")),
+      maturity: JSON.parse(readFileSync(maturityPath, "utf8")),
+      state: priorState,
+      now: now(),
+    });
+    if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 2));
+    if (outFlag !== -1) {
+      writeFileSync(argv[outFlag + 1], report);
+    } else {
+      stdout(report);
+    }
+    return 0;
+  } catch (error) {
+    stderr(`generate-report: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
   }
 }

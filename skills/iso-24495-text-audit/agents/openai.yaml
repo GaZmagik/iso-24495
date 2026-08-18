@@ -1,0 +1,7 @@
+interface:
+  display_name: "ISO 24495 Text Audit"
+  short_description: "Audit selected text for plain-language findings"
+  default_prompt: "Use $iso-24495-text-audit to audit a selected text file for plain-language findings."
+
+policy:
+  allow_implicit_invocation: false

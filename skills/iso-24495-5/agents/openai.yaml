@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495-5 Document Design"
+  short_description: "Structure long documents so readers can navigate them (provisional)"
+  default_prompt: "Use $iso-24495-5 when structuring a report, specification or guide, including for readers who cannot see the page."

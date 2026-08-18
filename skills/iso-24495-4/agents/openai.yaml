@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495-4 Organisational Implementation"
+  short_description: "Plain language gap analysis, policy and review workflows (provisional)"
+  default_prompt: "Use $iso-24495-4 for organisational plain language work: gap analysis, policy drafting, or review workflow design."
