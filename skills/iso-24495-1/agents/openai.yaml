@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495-1 Plain Language"
+  short_description: "Write so readers can find, understand and act on what they read"
+  default_prompt: "Use $iso-24495-1 to hold this answer to plain language: lead with the outcome, keep sentences short, and say what the reader does next."

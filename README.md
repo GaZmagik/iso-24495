@@ -39,6 +39,38 @@ Or from a local clone:
 /plugin install iso-24495-plain-language@iso-24495
 ```
 
+## Installation (Codex CLI)
+
+Codex reads the same marketplace manifest, so the plugin installs from the same
+address:
+
+```
+codex plugin marketplace add https://github.com/GaZmagik/iso-24495.git
+codex plugin add iso-24495-plain-language@iso-24495
+```
+
+Or from a local clone, where `.` is the repository root:
+
+```
+codex plugin marketplace add .
+codex plugin add iso-24495-plain-language@iso-24495
+```
+
+Every skill carries `agents/openai.yaml`, which gives Codex its display name,
+its short description, and the prompt Codex offers for it. Invoke a skill by
+name, as in `$iso-24495-1`, or ask for it in words.
+
+Codex has no output style, so the same rules are a skill there:
+`iso-24495-style` holds the output style word for word, and a test keeps the
+two identical. Name it in your `AGENTS.md` to apply it to every response:
+
+```
+Apply `iso-24495-style` to every response.
+```
+
+Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. An
+`AGENTS.md` inside a plugin is ignored, so a plugin cannot apply itself.
+
 ## Usage
 
 Once installed, the agent loads the skills when their descriptions match the task. To apply one explicitly, ask for it by name, for example: "Apply `iso-24495-2` to this licence text."

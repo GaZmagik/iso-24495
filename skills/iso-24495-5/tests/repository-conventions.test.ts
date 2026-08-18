@@ -192,12 +192,12 @@ function typescriptStyleViolations(path: string): StyleViolation[] {
 }
 
 describe("repository writing conventions", () => {
-  test("all six skills use agent-neutral wording", () => {
+  test("every skill uses agent-neutral wording", () => {
     const skillFiles = readdirSync(SKILLS_ROOT)
       .map((directory) => join(SKILLS_ROOT, directory, "SKILL.md"))
       .filter(existsSync)
       .sort();
-    expect(skillFiles).toHaveLength(6);
+    expect(skillFiles.length).toBeGreaterThanOrEqual(7);
 
     const violations = skillFiles.flatMap((path) => {
       const text = readFileSync(path, "utf8");
@@ -547,6 +547,65 @@ describe("repository writing conventions", () => {
     test("the README tells a contributor to run the same script", () => {
       const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
       expect(readme).toMatch(/scripts\/check\.sh/);
+    });
+  });
+
+  // Codex reads the same marketplace manifest as Claude Code, and gives each
+  // skill its display name from `agents/openai.yaml`. Both were checked against
+  // Codex itself: it registered this repository as a marketplace and listed the
+  // plugin, and every key below appears in the Codex binary.
+  describe("Codex CLI compatibility", () => {
+    const skillNames = readdirSync(SKILLS_ROOT)
+      .filter((entry) => entry.startsWith("iso-24495-"));
+
+    test("every skill carries a Codex interface file", () => {
+      expect(skillNames.length).toBeGreaterThanOrEqual(7);
+      for (const name of skillNames) {
+        const path = join(SKILLS_ROOT, name, "agents", "openai.yaml");
+        expect(existsSync(path), `${name} has agents/openai.yaml`).toBe(true);
+        const contents = readFileSync(path, "utf8");
+        // The three keys Codex reads for presentation. A missing one leaves the
+        // skill unnamed in its interface.
+        expect(contents, name).toMatch(/^\s*display_name: ".+"$/m);
+        expect(contents, name).toMatch(/^\s*short_description: ".+"$/m);
+        expect(contents, name).toMatch(/^\s*default_prompt: ".+"$/m);
+        // Codex invokes a skill as $name, so the prompt has to name it.
+        expect(contents, name).toContain(`$${name}`);
+      }
+    });
+
+    test("the marketplace lists every skill directory", () => {
+      const marketplace = readFileSync(
+        join(REPOSITORY_ROOT, ".claude-plugin", "marketplace.json"),
+        "utf8",
+      );
+      for (const name of skillNames) {
+        expect(marketplace, name).toContain(`./skills/${name}`);
+      }
+    });
+
+    // Codex has no output style, so the same rules are a skill there. The two
+    // must say the same thing, or a Codex user and a Claude user are held to
+    // different standards.
+    test("the style skill holds the output style word for word", () => {
+      const style = readFileSync(
+        join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"),
+        "utf8",
+      );
+      const skill = readFileSync(join(SKILLS_ROOT, "iso-24495-style", "SKILL.md"), "utf8");
+      const body = style.split("---")[2].trim();
+      expect(body.length).toBeGreaterThan(500);
+      expect(skill).toContain(body);
+    });
+
+    test("the README explains Codex installation and its one limit", () => {
+      const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
+      expect(readme).toContain("codex plugin marketplace add");
+      expect(readme).toContain("codex plugin add iso-24495-plain-language@iso-24495");
+      // A plugin cannot apply itself in Codex: its own AGENTS.md is ignored,
+      // which was tested directly rather than assumed.
+      expect(readme).toContain("AGENTS.md");
+      expect(readme).toMatch(/iso-24495-style/);
     });
   });
 });

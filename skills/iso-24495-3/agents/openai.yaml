@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495-3 Technical Writing"
+  short_description: "Plain language for documentation, architecture and code review"
+  default_prompt: "Use $iso-24495-3 when writing documentation, an architecture note, or a technical explanation."
