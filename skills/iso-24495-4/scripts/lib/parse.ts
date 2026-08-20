@@ -781,64 +781,130 @@ function bracketPartners(text: string): Map<number, number> {
   return partners;
 }
 
+/** A link or image found in the text, with the offsets it occupies. */
+export interface MarkdownLink {
+  start: number;
+  end: number;
+  image: boolean;
+  label: string;
+  target: string;
+  kind: "inline" | "reference" | "shortcut";
+}
+
 /**
- * Replace every inline link and image with its label, keeping the line count.
+ * Every link and image in the text, in the order they appear.
  *
- * A label may hold balanced brackets, which a pattern stopping at the first "]" cannot
- * see: it left the destination and title in place, so hidden text was counted as prose.
+ * One scan serves the flattener and every rule that reads links, so they cannot disagree
+ * about where a link is. Each caller keeps its own filter, because the rules and the
+ * flattener genuinely differ: an empty label is a finding for one and not a link for the
+ * other.
  *
- * The destination still ends at the first ")", as it did before, so a destination holding
- * a bracketed pair of its own is out of scope here and reads as it always has.
+ * Reading each link with its own pattern was quadratic, because a label pattern scans to
+ * the end of the text from every "[" and then gives the ground back one character at a
+ * time. Ten thousand unmatched brackets cost about nine seconds across the rules.
+ *
+ * Two boundaries are unchanged: a destination still ends at the first ")", and a label
+ * still ends at its matching "]" rather than at a nested link.
  */
-function flattenInlineLinks(text: string): string {
+export function markdownLinks(text: string): MarkdownLink[] {
   const partners = bracketPartners(text);
-  let flattened = "";
+  const ends = codeSpanEnds(text);
+  const links: MarkdownLink[] = [];
   let index = 0;
-  let closingParen: number | null = 0;
+  let noClosingParen = false;
   while (index < text.length) {
-    if (text[index] === BACKSLASH && index + 1 < text.length) {
-      flattened += text.slice(index, index + 2);
+    if (text[index] === BACKSLASH) {
       index += 2;
       continue;
     }
+    if (text[index] === "`") {
+      const closing = ends.get(index);
+      index = closing === undefined ? index + tickRun(text, index) : closing;
+      continue;
+    }
     const image = text[index] === "!" && text[index + 1] === "[";
-    const label = image ? index + 1 : index;
-    if (text[label] !== "[" || closingParen === null) {
-      flattened += text[index];
+    const opens = image ? index + 1 : index;
+    const closes = text[opens] === "[" ? partners.get(opens) : undefined;
+    if (closes === undefined) {
       index += 1;
       continue;
     }
-    const labelEnd = partners.get(label);
-    // A link needs a label; an image may have an empty one.
-    if (labelEnd === undefined || text[labelEnd + 1] !== "(" || (!image && labelEnd === label + 1)) {
-      flattened += text[index];
-      index += 1;
+    const label = text.slice(opens + 1, closes);
+    const after = text[closes + 1];
+
+    if (after === "(" && !noClosingParen) {
+      const paren = text.indexOf(")", closes + 2);
+      // Once no ")" remains, none remains for any later link either.
+      if (paren === -1) noClosingParen = true;
+      else {
+        links.push({
+          start: index,
+          end: paren + 1,
+          image,
+          label,
+          target: text.slice(closes + 2, paren),
+          kind: "inline",
+        });
+        index = paren + 1;
+        continue;
+      }
+    }
+
+    if (after === "[") {
+      const targetEnd = partners.get(closes + 1);
+      if (targetEnd !== undefined) {
+        links.push({
+          start: index,
+          end: targetEnd + 1,
+          image,
+          label,
+          target: text.slice(closes + 2, targetEnd),
+          kind: "reference",
+        });
+        index = targetEnd + 1;
+        continue;
+      }
+    }
+
+    // A label followed by "(" or "[" is a link whose other half is malformed, and reads
+    // as literal text, exactly as the patterns this replaced concluded.
+    if (after !== "(" && after !== "[") {
+      links.push({ start: index, end: closes + 1, image, label, target: "", kind: "shortcut" });
+      index = closes + 1;
       continue;
     }
-    // Once no ")" remains, none remains for any later link either, so the search stops.
-    closingParen = text.indexOf(")", labelEnd + 2);
-    if (closingParen === -1) {
-      closingParen = null;
-      flattened += text[index];
-      index += 1;
-      continue;
-    }
-    const end = closingParen + 1;
-    flattened += keepLines(text.slice(index, end), text.slice(label + 1, labelEnd));
-    index = end;
+    index += 1;
   }
-  return flattened;
+  return links;
+}
+
+/** The label a reader sees in place of a link, or the link untouched where it stays. */
+function flattenedLink(
+  link: MarkdownLink,
+  whole: string,
+  references?: ReadonlySet<string>,
+): string {
+  // A link needs a label; an image may have an empty one.
+  if (!link.image && link.label.length === 0) return whole;
+  if (link.kind === "inline") return keepLines(whole, link.label);
+  const named = link.kind === "reference" ? link.target || link.label : link.label;
+  return references?.has(normaliseReference(named)) ? keepLines(whole, link.label) : whole;
+}
+
+function flattenLinks(text: string, references?: ReadonlySet<string>): string {
+  let flattened = "";
+  let at = 0;
+  for (const link of markdownLinks(text)) {
+    flattened += text.slice(at, link.start);
+    flattened += flattenedLink(link, text.slice(link.start, link.end), references);
+    at = link.end;
+  }
+  return flattened + text.slice(at);
 }
 
 
 function visibleText(text: string, references?: ReadonlySet<string>): string {
-  return flattenInlineLinks(visibleInline(text))
-    .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (whole, alt: string, label: string) =>
-      references?.has(normaliseReference(label || alt)) ? keepLines(whole, alt) : whole)
-    .replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (whole, label: string, target: string) =>
-      references?.has(normaliseReference(target || label)) ? keepLines(whole, label) : whole)
-    .replace(/(?<![!\]])\[([^\]]+)\](?![\[(])/g, (whole, label: string) =>
-      references?.has(normaliseReference(label)) ? keepLines(whole, label) : whole);
+  return flattenLinks(visibleInline(text), references);
 }
 
 /** Collect prose paragraphs: what a reader reads as sentences. */

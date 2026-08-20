@@ -6,6 +6,7 @@ import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  markdownLinks,
   mergedSentences,
   normaliseReference,
   readerProseBlocks,
@@ -539,13 +540,26 @@ function linkTextViolations(text: string): Violation[] {
   const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
-    // Skip image syntax: the alt-text rule owns that.
-    for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\(([^)]+)\)/g)) {
-      const label = match[1].trim();
+    // One scan serves all three forms. Reading each with its own pattern was quadratic:
+    // a label pattern scans to the end of the line from every "[" and then gives the
+    // ground back one character at a time.
+    for (const link of markdownLinks(lines[i] as string)) {
+      // Skip image syntax: the alt-text rule owns that.
+      if (link.image) continue;
+      const label = link.label.trim();
       const spoken = spokenText(label);
-      const target = match[2].trim();
       const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+      let target = link.target.trim();
+      if (link.kind === "inline") {
+        if (target.length === 0) continue;
+      } else {
+        // A reference names its destination, and a bare label names its own.
+        target = link.kind === "reference" ? target || label : label;
+        if (!references.has(normaliseReference(target))) continue;
+      }
       if (spoken.length === 0) {
+        // A shortcut reference with no text is not a link at all.
+        if (link.kind === "shortcut") continue;
         violations.push({
           rule: "link-text",
           line: i + 1,
@@ -559,47 +573,26 @@ function linkTextViolations(text: string): Violation[] {
         });
       }
     }
-    for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\[([^\]]*)\]/g)) {
-      const label = match[1].trim();
-      const spoken = spokenText(label);
-      const target = match[2].trim() || label;
-      if (!references.has(normaliseReference(target))) continue;
-      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
-      if (spoken.length === 0) {
-        violations.push({ rule: "link-text", line: i + 1, detail: "link has no text; say where it goes" });
-      } else if (UNINFORMATIVE_LINK.test(spoken) || bare) {
-        violations.push({
-          rule: "link-text",
-          line: i + 1,
-          detail: `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
-        });
-      }
-    }
-    for (const match of lines[i].matchAll(/(?<![!\]])\[([^\]]+)\](?![\[(])/g)) {
-      const label = match[1].trim();
-      if (!references.has(normaliseReference(label))) continue;
-      const spoken = spokenText(label);
-      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
-      if (!UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
-      violations.push({
-        rule: "link-text",
-        line: i + 1,
-        detail: `link text "${spoken}" describes no destination (${label.slice(0, 40)})`,
-      });
-    }
   }
   const markup = markupLines.join("\n");
-  for (const match of markup.matchAll(/(?<!!)\[([^\]]*\n[^\]]*)\]\(([^)\n]+)\)/g)) {
-    if (/\n[ \t]*\n/.test(match[0])) continue;
-    const spoken = spokenText(match[1]);
+  // A link whose label runs over a line ending. The same scan finds it, filtered to the
+  // labels that hold one.
+  for (const link of markdownLinks(markup)) {
+    if (link.image || link.kind !== "inline") continue;
+    if (!link.label.includes("\n")) continue;
+    const target = link.target.trim();
+    if (target.length === 0 || link.target.includes("\n")) continue;
+    const whole = markup.slice(link.start, link.end);
+    if (/\n[ \t]*\n/.test(whole)) continue;
+    const spoken = spokenText(link.label);
     const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineAtOffset(1, markup, link.start),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
-        : `link text "${spoken}" describes no destination (${match[2].trim().slice(0, 40)})`,
+        : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
     });
   }
   for (const match of markup.matchAll(HTML_ANCHOR)) {
@@ -628,27 +621,21 @@ function imageAltViolations(text: string): Violation[] {
   const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
-    for (const match of lines[i].matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
-      const alt = match[1].trim();
-      if (alt.length > 0) continue;
-      // "decorative" as the title marks an image that carries no meaning.
-      // A filename containing the word does not express that decision.
-      if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(match[2])) continue;
+    // One scan finds both image forms, filtered to the ones with no alternative text.
+    for (const link of markdownLinks(lines[i] as string)) {
+      if (!link.image || link.kind === "shortcut") continue;
+      if (link.label.trim().length > 0) continue;
+      const target = link.target.trim();
+      if (link.kind === "inline") {
+        if (target.length === 0) continue;
+        // "decorative" as the title marks an image that carries no meaning.
+        // A filename containing the word does not express that decision.
+        if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(link.target)) continue;
+      } else if (!references.has(normaliseReference(target))) continue;
       violations.push({
         rule: "image-alt",
         line: i + 1,
-        detail: `image has no alternative text (${match[2].slice(0, 40)})`,
-      });
-    }
-    for (const match of lines[i].matchAll(/!\[([^\]]*)\]\[([^\]]*)\]/g)) {
-      const alt = match[1].trim();
-      if (alt.length > 0) continue;
-      const target = match[2].trim() || alt;
-      if (!references.has(normaliseReference(target))) continue;
-      violations.push({
-        rule: "image-alt",
-        line: i + 1,
-        detail: `image has no alternative text (${target.slice(0, 40)})`,
+        detail: `image has no alternative text (${(link.kind === "inline" ? link.target : target).slice(0, 40)})`,
       });
     }
   }

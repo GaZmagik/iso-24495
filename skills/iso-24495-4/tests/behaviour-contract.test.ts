@@ -393,16 +393,27 @@ ${sentence}`)
     // Matching each "[" to its partner by scanning forward would be quadratic, so the
     // partners are matched once for the whole text. Doubling the input must roughly
     // double the work rather than quadruple it.
-    const flatten = (size: number): void => {
-      readerProseBlocks("Read [outer [inner] text](/uri) here. ".repeat(size));
+    // Measured through the whole audit, because every rule that reads links used to run a
+    // pattern of its own over the same text. Ten thousand unmatched brackets cost about
+    // nine seconds across them; one shared scan is what removed it.
+    const audit = (size: number): void => {
+      auditText("Read [outer [inner] text](/uri) here. ".repeat(size));
     };
-    flatten(2_000);
+    audit(1_000);
     const time = (size: number): number => {
       const started = performance.now();
-      flatten(size);
+      audit(size);
       return performance.now() - started;
     };
-    expect(time(4_000) / Math.max(time(2_000), 1)).toBeLessThan(3);
+    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
+
+    // Brackets that never close are the shape that was worst, and the shape a generated
+    // or damaged document reaches without anybody meaning harm.
+    for (const hostile of ["[".repeat(20_000), "[".repeat(20_000) + "]", "[a](".repeat(5_000)]) {
+      const started = performance.now();
+      auditText(hostile);
+      expect(performance.now() - started, hostile.slice(0, 12)).toBeLessThan(1_000);
+    }
 
     // A bracket inside a code span is content, not structure. Counting it took the outer
     // label's closing bracket, which corrupted the reader text and lost the finding that
@@ -418,6 +429,7 @@ ${sentence}`)
     for (const literal of [
       "Read [ this and [ that here.",
       "Read [label](unclosed destination here.",
+      "Read [label][unclosed reference here.",
       "Read [](/uri) and [outer [inner]] text.",
     ]) {
       expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
