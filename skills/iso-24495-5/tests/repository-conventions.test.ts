@@ -653,6 +653,14 @@ describe("repository writing conventions", () => {
       expect(skill).not.toContain("shows the offending value");
       expect(skill).toContain("Never put a secret in an error");
       expect(table).toContain("a safe value");
+
+      // The prose ban is not enough on its own. The worked example is the part a model
+      // copies, and it interpolated an arbitrary input straight into the message while
+      // the rule above it forbade exactly that.
+      const examples = skill.split("```")[1] ?? "";
+      expect(examples).toContain("token.length");
+      expect(examples).not.toContain("${input}");
+      expect(examples).not.toContain("${token}");
     });
   });
 });

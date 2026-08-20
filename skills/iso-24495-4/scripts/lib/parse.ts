@@ -727,6 +727,7 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
   return visible;
 }
 
+const BACKSLASH = "\\";
 const NEWLINE = "\n";
 
 function countLines(text: string): number {
@@ -745,10 +746,82 @@ function keepLines(whole: string, kept: string): string {
   return removed > 0 ? kept + NEWLINE.repeat(removed) : kept;
 }
 
+/**
+ * Where each "[" meets its partner, matched in one pass.
+ *
+ * Scanning forward from every bracket for a partner that may not exist would be quadratic,
+ * and generated Markdown can hold a hundred thousand of them. A bracket behind a backslash
+ * is literal text and takes no part.
+ */
+function bracketPartners(text: string): Map<number, number> {
+  const partners = new Map<number, number>();
+  const open: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === BACKSLASH) {
+      index += 1;
+      continue;
+    }
+    if (text[index] === "[") open.push(index);
+    else if (text[index] === "]") {
+      const start = open.pop();
+      if (start !== undefined) partners.set(start, index);
+    }
+  }
+  return partners;
+}
+
+/**
+ * Replace every inline link and image with its label, keeping the line count.
+ *
+ * A label may hold balanced brackets, which a pattern stopping at the first "]" cannot
+ * see: it left the destination and title in place, so hidden text was counted as prose.
+ *
+ * The destination still ends at the first ")", as it did before, so a destination holding
+ * a bracketed pair of its own is out of scope here and reads as it always has.
+ */
+function flattenInlineLinks(text: string): string {
+  const partners = bracketPartners(text);
+  let flattened = "";
+  let index = 0;
+  let closingParen: number | null = 0;
+  while (index < text.length) {
+    if (text[index] === BACKSLASH && index + 1 < text.length) {
+      flattened += text.slice(index, index + 2);
+      index += 2;
+      continue;
+    }
+    const image = text[index] === "!" && text[index + 1] === "[";
+    const label = image ? index + 1 : index;
+    if (text[label] !== "[" || closingParen === null) {
+      flattened += text[index];
+      index += 1;
+      continue;
+    }
+    const labelEnd = partners.get(label);
+    // A link needs a label; an image may have an empty one.
+    if (labelEnd === undefined || text[labelEnd + 1] !== "(" || (!image && labelEnd === label + 1)) {
+      flattened += text[index];
+      index += 1;
+      continue;
+    }
+    // Once no ")" remains, none remains for any later link either, so the search stops.
+    closingParen = text.indexOf(")", labelEnd + 2);
+    if (closingParen === -1) {
+      closingParen = null;
+      flattened += text[index];
+      index += 1;
+      continue;
+    }
+    const end = closingParen + 1;
+    flattened += keepLines(text.slice(index, end), text.slice(label + 1, labelEnd));
+    index = end;
+  }
+  return flattened;
+}
+
+
 function visibleText(text: string, references?: ReadonlySet<string>): string {
-  return visibleInline(text)
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (whole, alt: string) => keepLines(whole, alt))
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, (whole, label: string) => keepLines(whole, label))
+  return flattenInlineLinks(visibleInline(text))
     .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (whole, alt: string, label: string) =>
       references?.has(normaliseReference(label || alt)) ? keepLines(whole, alt) : whole)
     .replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (whole, label: string, target: string) =>
@@ -958,6 +1031,17 @@ function codeSpanEnds(text: string): Map<number, number> {
 }
 
 /**
+ * Whether a stop is still standing after this character.
+ *
+ * A terminator starts one, closing markup leaves it alone, and anything else ends it.
+ * Shared with the escape branch so an escaped character and a plain one cannot drift.
+ */
+function readTerminatorState(character: string, terminated: boolean): boolean {
+  if (TERMINATOR.has(character)) return true;
+  return CLOSING_MARKUP.has(character) ? terminated : false;
+}
+
+/**
  * Where each sentence boundary starts, as a span of whitespace to drop.
  *
  * One forward pass, so a long run of closing markup costs what it should. A regex with a
@@ -974,7 +1058,10 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
   while (index < text.length) {
     const character = text[index] as string;
     if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1] as string)) {
-      terminated = false;
+      // The escape renders as the bare character, so the reader sees a terminator or a
+      // closing marker and the state must follow it. Clearing the state outright was
+      // right only for an escaped backtick, and it lost every other boundary.
+      terminated = readTerminatorState(text[index + 1] as string, terminated);
       index += 2;
       continue;
     }
@@ -997,11 +1084,7 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
       index = end;
       continue;
     }
-    if (TERMINATOR.has(character)) {
-      terminated = true;
-    } else if (!CLOSING_MARKUP.has(character)) {
-      terminated = false;
-    }
+    terminated = readTerminatorState(character, terminated);
     index += 1;
   }
   return spans;

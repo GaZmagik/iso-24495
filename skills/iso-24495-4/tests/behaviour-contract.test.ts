@@ -15,6 +15,7 @@ import {
   headings,
   mergedSentences,
   proseBlocks,
+  readerProseBlocks,
   splitSentences,
   wordCount,
 } from "../scripts/lib/parse.ts";
@@ -288,6 +289,39 @@ describe("reader-facing behaviour contracts", () => {
     const escaped = `The escaped marker \\\` appears here. The next one \\\` appears there.`;
     expect(splitSentences(escaped)).toHaveLength(2);
   });
+  test("an escaped character is read as the character a reader sees", () => {
+    // CommonMark renders an escape as the bare character, so an escaped "!" still ends a
+    // sentence. Clearing the boundary state for every escape was right only for an escaped
+    // backtick opener, and it swallowed every other rendered terminator and closing marker.
+    const slash = String.fromCharCode(92);
+    const tick = String.fromCharCode(96);
+
+    // The contract is equivalence, not a count: escaping a character must not change how
+    // the text reads, whatever the surrounding rules then decide about it.
+    const marks = ["!", "?", ".", ",", ";", ":", tick, String.fromCharCode(34), ")", "]"];
+    for (const mark of marks) {
+      const plain = "Items include etc" + mark + " Next sentence here.";
+      const escaped = "Items include etc" + slash + mark + " Next sentence here.";
+      expect(splitSentences(escaped).length, mark).toBe(splitSentences(plain).length);
+      expect(mergedSentences(escaped).length, mark).toBe(mergedSentences(plain).length);
+    }
+
+    // A numbering dot and an abbreviation must survive the escape too, or the classifier
+    // reads a token the reader never sees.
+    for (const lead of ["Step 1", "Items include etc"]) {
+      const plain = lead + ". Next sentence here.";
+      const escaped = lead + slash + ". Next sentence here.";
+      expect(splitSentences(escaped).length, lead).toBe(splitSentences(plain).length);
+      expect(mergedSentences(escaped).length, lead).toBe(mergedSentences(plain).length);
+    }
+
+    // The harm as a reader meets it: two sixteen-word sentences reported as one long one.
+    const text = Array(16).fill("alpha").join(" ") + slash + "! Beta "
+      + Array(15).fill("beta").join(" ") + ".";
+    expect(splitSentences(text)).toHaveLength(2);
+    expect(auditText(text).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
+  });
+
   test("a backslash blocks a code span from opening, never from closing", () => {
     // CommonMark reads escapes left to right, so an escape stops a run from opening a
     // span. Once a span is open the search for its closer ignores backslashes entirely.
@@ -316,6 +350,59 @@ describe("reader-facing behaviour contracts", () => {
     expect(splitSentences(pair)).toHaveLength(2);
   });
 
+  test("a link label may hold brackets, and only the label is prose", () => {
+    // CommonMark allows balanced brackets inside a link label. Matching the label with a
+    // pattern that stopped at the first "]" left the destination and title unflattened, so
+    // hidden text was counted as prose and manufactured a sentence-length finding.
+    const hidden = Array.from({ length: 35 }, (_, index) => `hidden${index}`).join(" ");
+    const nested = `Read [outer [inner] text](/uri "${hidden}").`;
+    expect(auditText(nested).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
+
+    // The label itself is still prose, brackets and all.
+    const long = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ");
+    expect(auditText(`Read [outer [inner] ${long}](/uri).`)
+      .filter((v) => v.rule === "sentence-length")).toHaveLength(1);
+
+    // An image label behaves the same way, and an empty one is still allowed.
+    expect(auditText(`Read ![alt [inner] text](/uri "${hidden}").`)
+      .filter((v) => v.rule === "sentence-length")).toHaveLength(0);
+
+    // Line endings inside a nested link are kept, exactly as for a plain one.
+    const sentence = `${long}.`;
+    const found = auditText(`Read [outer [inner] text](/uri "first
+second"). Short.
+${sentence}`)
+      .filter((v) => v.rule === "sentence-length");
+    expect(found).toHaveLength(1);
+    expect(found[0]?.line).toBe(3);
+  });
+
+  test("nested link labels are flattened in one pass, not one scan each", () => {
+    // Matching each "[" to its partner by scanning forward would be quadratic, so the
+    // partners are matched once for the whole text. Doubling the input must roughly
+    // double the work rather than quadruple it.
+    const flatten = (size: number): void => {
+      readerProseBlocks("Read [outer [inner] text](/uri) here. ".repeat(size));
+    };
+    flatten(2_000);
+    const time = (size: number): number => {
+      const started = performance.now();
+      flatten(size);
+      return performance.now() - started;
+    };
+    expect(time(4_000) / Math.max(time(2_000), 1)).toBeLessThan(3);
+
+    // Anything that does not parse as a link is left exactly as it was found, which is
+    // what the pattern it replaced did too.
+    for (const literal of [
+      "Read [ this and [ that here.",
+      "Read [label](unclosed destination here.",
+      "Read [](/uri) and [outer [inner]] text.",
+    ]) {
+      expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
+    }
+  });
+
   test("markup that spans lines does not move the lines after it", () => {
     // A link destination or title may hold a line ending. Flattening the link to its
     // label deleted that line ending, so every later sentence in the block was reported
@@ -332,6 +419,42 @@ describe("reader-facing behaviour contracts", () => {
       expect(found, text).toHaveLength(1);
       expect(found[0]?.line, text).toBe(line);
     }
+  });
+
+  test("a large document cannot stall the rules that walk it", () => {
+    // Three places rebuilt a whole prefix or suffix inside a loop over the same text, so
+    // each cost grew with the square of the document. Repairing only the one the review
+    // named would have left the shape alive in the other two.
+    //
+    // The shape is what is measured, not the clock: tripling the input triples linear work
+    // and multiplies quadratic work by nine, and that separation holds on any machine.
+    const growth = (work: (size: number) => void, size: number): number => {
+      const time = (at: number): number => {
+        const started = performance.now();
+        work(at);
+        return performance.now() - started;
+      };
+      work(size);
+      return time(size * 3) / Math.max(time(size), 1);
+    };
+
+    // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
+    const known = new Set(["AB"]);
+    const acronyms = (size: number): void => {
+      auditText(Array(size).fill("Alpha Beta (AB)").join(" ") + ".", { knownAcronyms: known });
+    };
+    expect(growth(acronyms, 1_000)).toBeLessThan(5);
+
+    // Every finding counted the line endings before it from the start of the paragraph.
+    const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
+    const paragraphs = (size: number): void => {
+      auditText(Array(size).fill(sentence).join(" "));
+    };
+    expect(growth(paragraphs, 1_000)).toBeLessThan(5);
+
+    // The findings themselves must survive the repair, not merely arrive sooner.
+    const long = Array(500).fill(sentence).join(" ");
+    expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
   });
 
   test("a hostile token cannot stall the rules that read it", () => {
