@@ -676,9 +676,11 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
     }
     if (text[index] === "`") {
       const length = tickRun(text, index);
-      const closing = closingTicks(text, index + length, length);
-      if (closing !== -1) {
-        const end = closing + length;
+      // The shared index knows where every span ends. Searching the rest of the text for
+      // each unmatched run was quadratic: 10,000 backticks cost 4.6 seconds.
+      const end = codeSpanEnds(text).get(index);
+      if (end !== undefined) {
+        const closing = end - length;
         const span = text.slice(index, end);
         if (keepLiteralSyntax) {
           visible += span;
@@ -692,6 +694,11 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
         index = end;
         continue;
       }
+      // An unmatched run is literal text. Emitting one character and looking again made
+      // the next backtick rescan the rest of the run, which cost 4.6 seconds at 10,000.
+      visible += text.slice(index, index + length);
+      index += length;
+      continue;
     }
     if (text[index] !== "<") {
       visible += text[index];
@@ -874,14 +881,71 @@ const CLOSING_MARKUP = new Set(["*", "_", "`", '"', "'", "’", "”", ")", "]",
 const TERMINATOR = new Set([".", "!", "?"]);
 
 /**
+ * Where each code span ends, keyed by where it opens.
+ *
+ * Every backtick run is collected in one pass, then each opener takes the next unused run
+ * of its own length. Searching the remaining text per run was quadratic: an audit of
+ * 10,000 backticks took 5.4 seconds. The result is cached for the text last asked about,
+ * because a block is read by many rules in turn.
+ */
+let spanCacheText: string | null = null;
+let spanCacheEnds: Map<number, number> | null = null;
+
+function codeSpanEnds(text: string): Map<number, number> {
+  if (spanCacheText === text && spanCacheEnds !== null) return spanCacheEnds;
+  const runs: Array<{ start: number; length: number }> = [];
+  for (let index = 0; index < text.length; ) {
+    if (text[index] === "\\" && ESCAPABLE.test(text[index + 1] ?? "")) {
+      index += 2;
+      continue;
+    }
+    if (text[index] === "`") {
+      const length = tickRun(text, index);
+      runs.push({ start: index, length });
+      index += length;
+      continue;
+    }
+    index += 1;
+  }
+  const byLength = new Map<number, number[]>();
+  runs.forEach((run, position) => {
+    const list = byLength.get(run.length);
+    if (list === undefined) byLength.set(run.length, [position]);
+    else list.push(position);
+  });
+  const cursors = new Map<number, number>();
+  const ends = new Map<number, number>();
+  let position = 0;
+  while (position < runs.length) {
+    const run = runs[position] as { start: number; length: number };
+    const candidates = byLength.get(run.length) ?? [];
+    let cursor = cursors.get(run.length) ?? 0;
+    while (cursor < candidates.length && (candidates[cursor] as number) <= position) cursor += 1;
+    cursors.set(run.length, cursor);
+    if (cursor >= candidates.length) {
+      position += 1;
+      continue;
+    }
+    const closing = runs[candidates[cursor] as number] as { start: number; length: number };
+    ends.set(run.start, closing.start + closing.length);
+    position = (candidates[cursor] as number) + 1;
+  }
+  spanCacheText = text;
+  spanCacheEnds = ends;
+  return ends;
+}
+
+/**
  * Where each sentence boundary starts, as a span of whitespace to drop.
  *
  * One forward pass, so a long run of closing markup costs what it should. A regex with a
  * variable-length lookbehind rescanned that run instead, and 25,000 markers took two
- * seconds. Code spans are skipped whole, delimiter runs and escapes included, because a
- * span in backticks is a term being named and its punctuation belongs to the name.
+ * seconds. A closed code span is skipped whole, because a span in backticks is a term
+ * being named and its punctuation belongs to the name. An unmatched run is ordinary text
+ * and leaves the sentence before it alone.
  */
 function boundarySpans(text: string): Array<{ at: number; length: number }> {
+  const ends = codeSpanEnds(text);
   const spans: Array<{ at: number; length: number }> = [];
   let terminated = false;
   let index = 0;
@@ -893,10 +957,14 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
       continue;
     }
     if (character === "`") {
-      const run = tickRun(text, index);
-      const closing = closingTicks(text, index + run, run);
+      const closing = ends.get(index);
+      if (closing === undefined) {
+        // Not a span at all, so the run is literal and the stop before it still stands.
+        index += tickRun(text, index);
+        continue;
+      }
       terminated = false;
-      index = closing === -1 ? index + run : closing + run;
+      index = closing;
       continue;
     }
     if (/\s/.test(character)) {
@@ -917,32 +985,49 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
   return spans;
 }
 
-function splitOutsideCodeSpans(text: string): string[] {
-  const fragments: string[] = [];
-  let start = 0;
-  for (const span of boundarySpans(text)) {
-    fragments.push(text.slice(start, span.at));
-    start = span.at + span.length;
-  }
-  fragments.push(text.slice(start));
-  return fragments;
+/** A sentence and where it starts in the text it came from. */
+export interface LocatedSentence {
+  text: string;
+  start: number;
 }
 
-function segment(text: string, ambiguous: "merge" | "split"): string[] {
-  const sentences: string[] = [];
-  for (const fragment of splitOutsideCodeSpans(text)) {
+function segment(text: string, ambiguous: "merge" | "split"): LocatedSentence[] {
+  const fragments: LocatedSentence[] = [];
+  let from = 0;
+  for (const span of boundarySpans(text)) {
+    fragments.push({ text: text.slice(from, span.at), start: from });
+    from = span.at + span.length;
+  }
+  fragments.push({ text: text.slice(from), start: from });
+
+  const sentences: LocatedSentence[] = [];
+  for (const fragment of fragments) {
     const previous = sentences.at(-1);
     if (previous !== undefined) {
-      const verdict = classifyBoundary(previous, fragment);
+      const verdict = classifyBoundary(previous.text, fragment.text);
       const decided = verdict === "ambiguous" ? ambiguous : verdict;
       if (decided === "merge") {
-        sentences[sentences.length - 1] = `${previous} ${fragment}`;
+        previous.text = `${previous.text} ${fragment.text}`;
         continue;
       }
     }
-    sentences.push(fragment);
+    sentences.push({ ...fragment });
   }
-  return sentences.map((s) => s.trim()).filter((s) => s.length > 0);
+  return sentences
+    .map((sentence) => {
+      const leading = sentence.text.length - sentence.text.trimStart().length;
+      return { text: sentence.text.trim(), start: sentence.start + leading };
+    })
+    .filter((sentence) => sentence.text.length > 0);
+}
+
+/**
+ * Each sentence with the offset it starts at. Callers that need to report a line use
+ * this, rather than rebuilding the sentence as a regular expression to find it again.
+ * That rebuild threw `regular expression too large` on a long enough sentence.
+ */
+export function locateSentences(text: string): LocatedSentence[] {
+  return segment(text, "split");
 }
 
 /**
@@ -951,7 +1036,7 @@ function segment(text: string, ambiguous: "merge" | "split"): string[] {
  * sentence into a violation.
  */
 export function splitSentences(text: string): string[] {
-  return segment(text, "split");
+  return segment(text, "split").map((sentence) => sentence.text);
 }
 
 /**
@@ -960,7 +1045,7 @@ export function splitSentences(text: string): string[] {
  * manufacture an extra sentence.
  */
 export function mergedSentences(text: string): string[] {
-  return segment(text, "merge");
+  return segment(text, "merge").map((sentence) => sentence.text);
 }
 
 export function wordCount(sentence: string): number {

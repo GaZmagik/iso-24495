@@ -10,7 +10,7 @@ import {
   normaliseReference,
   readerProseBlocks,
   readDocument,
-  splitSentences,
+  locateSentences,
   wordCount,
 } from "./lib/parse.ts";
 import {
@@ -781,24 +781,18 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   const mergedLengths: number[] = [];
   for (const block of readerProseBlocks(text)) {
     const paragraph = block.lines.join("\n");
-    const sentences = splitSentences(paragraph);
-    let searchAt = 0;
-    for (const sentence of sentences) {
-      const words = wordCount(sentence);
+    // The splitter reports where each sentence starts, so nothing needs locating twice.
+    // Rebuilding a sentence as a regular expression threw on a long one.
+    for (const sentence of locateSentences(paragraph)) {
+      const words = wordCount(sentence.text);
       if (words > 0) sentenceLengths.push(words);
-      const pattern = new RegExp(
-        sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"),
-      );
-      const found = pattern.exec(paragraph.slice(searchAt));
-      const start = searchAt + (found?.index ?? 0);
       if (words > SENTENCE_WORD_LIMIT) {
         violations.push({
           rule: "sentence-length",
-          line: lineAtOffset(block.line, paragraph, start),
+          line: lineAtOffset(block.line, paragraph, sentence.start),
           detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
         });
       }
-      searchAt = start + (found?.[0].length ?? sentence.length);
     }
     // Counted from the fewest sentences the paragraph can hold. An unresolved
     // full stop must never manufacture the sentence that breaks the limit.

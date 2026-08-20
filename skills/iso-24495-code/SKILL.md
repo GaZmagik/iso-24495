@@ -15,10 +15,10 @@ person reading it is the reader the standard is about.
 **Scope**. This skill governs what a reader reads: the order units appear in, what they are
 called, what the comments say, and what an error tells the person who hits it.
 
-It does not govern correctness, performance, or system design. It makes one structural demand,
-in rule 2, and only because a reader cannot reach a helper without reading its container first.
-For maintainability weaknesses such as complexity and dead code, use a code quality skill built
-on ISO/IEC 5055.
+It does not govern correctness, performance, or system design. It does govern local
+organisation, in rules 1 and 2, because where a unit sits and how far it reaches decide what a
+reader must hold in their head. For maintainability weaknesses such as complexity and dead code,
+use a code quality skill built on ISO/IEC 5055.
 
 **This is an interpretation of ISO 24495-1 applied by analogy, not a conformance claim.**
 
@@ -52,8 +52,9 @@ the implementation below it.
 
 ### 2. One job per unit
 
-A function does one thing that its name describes. **Split any function you need the word "and"
-to describe.**
+A function does one thing that its name describes. **A name needing "and" is a prompt to look,
+not an instruction to split.** Some operations are genuinely single and named for a pair, as
+`compareAndSwap` is, and splitting those breaks them.
 
 Helpers belong at the top level or as members of a class, rather than buried as closures inside
 the function they serve. A reader cannot reach a closure without reading its container first.
@@ -69,10 +70,14 @@ the function they serve. A reader cannot reach a closure without reading its con
 
 ### 4. A comment says why, never what
 
-The code already says what it does. A comment earns its place when it records a reason a reader
-cannot recover from the code: a constraint, a rejected alternative, a bug it guards against.
+A comment earns its place when it records something a reader cannot recover from the code: a
+reason, a constraint, a rejected alternative, a bug it guards against.
 
-**Delete a comment that restates the line beneath it.** Delete commented-out code.
+**Delete a comment that merely restates the line beneath it**, and delete commented-out code.
+
+This is not a rule against documentation. An interface comment tells a caller what a function
+returns, when it returns nothing, and what it throws. That is the reader's work being done for
+them, so it belongs there even when the body makes it obvious.
 
 ### 5. An error message serves the person who hits it
 

@@ -241,6 +241,34 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(`${lead} ${follow}`).filter((rule) => rule === "sentence-length")).toHaveLength(0);
   });
 
+  test("an unmatched backtick run keeps the sentence it follows", () => {
+    // A run that never closes is literal text, not a code span, so it must not erase the
+    // stop before it. Clearing the state on sight of a backtick merged two sentences.
+    for (const run of [1, 2, 3, 7]) {
+      const text = `Stop.${"`".repeat(run)} Next sentence.`;
+      expect(splitSentences(text), text).toHaveLength(2);
+      expect(mergedSentences(text), text).toHaveLength(2);
+    }
+    const left = `First ${Array(16).fill("alpha").join(" ")}`;
+    const right = `Next ${Array(16).fill("beta").join(" ")}`;
+    expect(auditText(`${left}.\` ${right}.`).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
+  });
+
+  test("hostile input cannot stall or crash the audit itself", () => {
+    // Testing the splitter alone proved the wrong thing: `auditText` rebuilt every
+    // sentence as a regular expression to locate it, and threw on a large one.
+    const markers = `.${")".repeat(200_000)} Next.`;
+    const startedMarkers = performance.now();
+    expect(() => auditText(markers)).not.toThrow();
+    expect(performance.now() - startedMarkers).toBeLessThan(5_000);
+
+    // Backtick runs were rescanned for every unmatched run, which was quadratic.
+    const ticks = `x${"`".repeat(10_000)}y`;
+    const startedTicks = performance.now();
+    auditText(ticks);
+    expect(performance.now() - startedTicks).toBeLessThan(2_000);
+  });
+
   test("a long run of closing markers cannot stall the audit", () => {
     // A variable-length lookbehind rescanned the marker run, which cost 2.1 seconds at
     // 25,000 markers and about 127 CPU seconds at a million. Hostile or generated

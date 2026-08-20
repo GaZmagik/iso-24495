@@ -1,7 +1,7 @@
 {
   "name": "iso-24495-plain-language",
   "version": "0.6.0",
-  "description": "Six plain language skills inspired by the ISO 24495 series, plus the response style Codex has no output style for.",
+  "description": "Seven plain language skills inspired by the ISO 24495 series, plus the response style Codex has no output style for.",
   "author": {
     "name": "Gareth Williams"
   },
