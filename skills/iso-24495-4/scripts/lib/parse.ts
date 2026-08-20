@@ -814,7 +814,9 @@ function bareWord(token: string): string {
 
 /** Decide whether the stop between two fragments ends a sentence. */
 export function classifyBoundary(previous: string, next: string): Boundary {
-  const token = lastToken(previous);
+  // `**e.g.**` is the same abbreviation as `e.g.`, so the closing markup comes off
+  // before the token is read. Leaving it on hid the stop and split the sentence.
+  const token = lastToken(previous).replace(/[*_`"'’”)\]}]+$/, "");
   if (!token.endsWith(".")) return "split";
   const word = bareWord(token);
   // Only the first word of the next fragment carries evidence. Reading the
@@ -867,30 +869,60 @@ export function classifyBoundary(previous: string, next: string): Boundary {
   return "split";
 }
 
+/** Markup that can close after a sentence ends, as in `**Lead in.**` or `("Done.")`. */
+const CLOSING_MARKUP = new Set(["*", "_", "`", '"', "'", "’", "”", ")", "]", "}"]);
+const TERMINATOR = new Set([".", "!", "?"]);
+
 /**
- * A copy of the text with every code span's contents replaced by `x`, one for one, so
- * offsets still line up. A span in backticks is a term being named, so punctuation
- * inside it belongs to the name and can never end a sentence.
+ * Where each sentence boundary starts, as a span of whitespace to drop.
+ *
+ * One forward pass, so a long run of closing markup costs what it should. A regex with a
+ * variable-length lookbehind rescanned that run instead, and 25,000 markers took two
+ * seconds. Code spans are skipped whole, delimiter runs and escapes included, because a
+ * span in backticks is a term being named and its punctuation belongs to the name.
  */
-function maskCodeSpans(text: string): string {
-  return text.replace(/`[^`]*`/g, (span) => `\`${"x".repeat(span.length - 2)}\``);
+function boundarySpans(text: string): Array<{ at: number; length: number }> {
+  const spans: Array<{ at: number; length: number }> = [];
+  let terminated = false;
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index] as string;
+    if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1] as string)) {
+      terminated = false;
+      index += 2;
+      continue;
+    }
+    if (character === "`") {
+      const run = tickRun(text, index);
+      const closing = closingTicks(text, index + run, run);
+      terminated = false;
+      index = closing === -1 ? index + run : closing + run;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      let end = index;
+      while (end < text.length && /\s/.test(text[end] as string)) end++;
+      if (terminated) spans.push({ at: index, length: end - index });
+      terminated = false;
+      index = end;
+      continue;
+    }
+    if (TERMINATOR.has(character)) {
+      terminated = true;
+    } else if (!CLOSING_MARKUP.has(character)) {
+      terminated = false;
+    }
+    index += 1;
+  }
+  return spans;
 }
 
-/**
- * A sentence can end inside emphasis, quotes or brackets, as in `**Lead in.** Next`.
- * The terminator is then not the character before the space, so the closing markers
- * are allowed to sit between them.
- */
-const BOUNDARY = /(?<=[.!?][*_`"'’”)\]]*)\s+/g;
-
 function splitOutsideCodeSpans(text: string): string[] {
-  const masked = maskCodeSpans(text);
   const fragments: string[] = [];
   let start = 0;
-  BOUNDARY.lastIndex = 0;
-  for (let match = BOUNDARY.exec(masked); match !== null; match = BOUNDARY.exec(masked)) {
-    fragments.push(text.slice(start, match.index));
-    start = match.index + match[0].length;
+  for (const span of boundarySpans(text)) {
+    fragments.push(text.slice(start, span.at));
+    start = span.at + span.length;
   }
   fragments.push(text.slice(start));
   return fragments;

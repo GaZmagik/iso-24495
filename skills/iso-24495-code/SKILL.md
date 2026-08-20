@@ -15,8 +15,10 @@ person reading it is the reader the standard is about.
 **Scope**. This skill governs what a reader reads: the order units appear in, what they are
 called, what the comments say, and what an error tells the person who hits it.
 
-It does not govern correctness, performance, or architecture. For maintainability weaknesses
-such as complexity and dead code, use `iso-5055-code-quality`.
+It does not govern correctness, performance, or system design. It makes one structural demand,
+in rule 2, and only because a reader cannot reach a helper without reading its container first.
+For maintainability weaknesses such as complexity and dead code, use a code quality skill built
+on ISO/IEC 5055.
 
 **This is an interpretation of ISO 24495-1 applied by analogy, not a conformance claim.**
 
@@ -43,6 +45,10 @@ the implementation below it.
 > Measured on 30 generated implementations of one specification. Without this rule the public
 > function landed anywhere in the file, and in half the files it was the last thing in it.
 > With the rule it sat in the first fifth of the file every time.
+>
+> The measure was chosen after those runs rather than before them, and the effect appeared in
+> one model family but not in the two others tested. Treat it as a hypothesis with a clean
+> separation, not a settled result.
 
 ### 2. One job per unit
 
@@ -73,6 +79,11 @@ cannot recover from the code: a constraint, a rejected alternative, a bug it gua
 An error names the problem, shows the offending value, and where it helps, says what to do
 instead. Write it in the words its reader would use, so it can be acted on without opening the
 source.
+
+**Never put a secret in an error.** A credential, token, key, password, session identifier or
+personal detail must not appear in a message, because messages reach logs, telemetry and screens.
+Name the field and describe the fault instead: `API token rejected: expected 32 characters, got 8`.
+Where you cannot show a value safely, show its shape.
 
 ```
 Bad:   throw new Error("invalid input")

@@ -13,7 +13,9 @@ metadata:
 
 Extends ISO 24495-1:2023 for the structural design of complex documents: reports, specifications, guides, contracts presented as documents, and long-form technical or health information. Design works together with linguistic cues to help readers find and navigate a document's structure and content.
 
-**Design for readers who are not looking at the page.** The intended readers include everyone who uses the document. Some see it, some hear it through a screen reader, and some read it by touch. A listener has no visual hierarchy. Their structure is the heading tree, the link text and the reading order. Every rule below is written to hold when the document is heard.
+**Design for readers who are not looking at the page.** The intended readers include everyone who uses the document. Some see it, some hear it through a screen reader, and some read it by touch.
+
+A listener has no visual hierarchy. Their structure is the heading tree, the link text and the reading order. Every rule below is written to hold when the document is heard.
 
 ## Scope & Execution Boundaries
 

@@ -241,6 +241,33 @@ describe("reader-facing behaviour contracts", () => {
     expect(rulesFor(`${lead} ${follow}`).filter((rule) => rule === "sentence-length")).toHaveLength(0);
   });
 
+  test("a long run of closing markers cannot stall the audit", () => {
+    // A variable-length lookbehind rescanned the marker run, which cost 2.1 seconds at
+    // 25,000 markers and about 127 CPU seconds at a million. Hostile or generated
+    // Markdown must not be able to stop an audit.
+    const hostile = `.${")".repeat(25_000)} Next.`;
+    const started = performance.now();
+    splitSentences(hostile);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  test("a code span is one atom, whatever its delimiter run", () => {
+    // CommonMark allows any number of backticks to open a span, and a backslash escapes
+    // a backtick. A mask that only knows paired single ticks miscounts both.
+    const doubled = "One. Two. Three. Four. Use ``alpha. beta`` in the call.";
+    expect(splitSentences(doubled)).toHaveLength(5);
+
+    const escaped = `The escaped marker \\\` appears here. The next one \\\` appears there.`;
+    expect(splitSentences(escaped)).toHaveLength(2);
+  });
+
+  test("an abbreviation stays an abbreviation behind emphasis", () => {
+    // `**e.g.**` must behave as `e.g.` does. Allowing a stop to end a sentence through
+    // closing markup let the classifier see "**e.g.**" and miss the abbreviation.
+    const emphasised = "Items include **e.g.** tools and paper. Next section starts here.";
+    expect(splitSentences(emphasised)).toHaveLength(2);
+  });
+
   test("a code span is one atom, so punctuation inside it ends nothing", () => {
     // Writing about punctuation means quoting it. A span in backticks is a term being
     // named, so a stop inside it is part of the name and never a sentence boundary.

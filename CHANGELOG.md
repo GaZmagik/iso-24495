@@ -13,6 +13,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Fixed
 
 - A full stop inside emphasis, quotes or brackets now ends a sentence. `**Lead in.** Next sentence.` was read as one sentence, because the terminator sits before the closing markers rather than before the space. Two short sentences were merged and reported as one long one, so the bug manufactured `sentence-length` findings on the commonest heading-in-a-paragraph pattern in these very skills.
+- The sentence scanner runs in one forward pass. An earlier draft of this release used a variable-length lookbehind, which rescanned a run of closing markup. 25,000 markers took 2.1 seconds, and a million took roughly two minutes of processor time. Hostile or generated Markdown could therefore stall an audit. The scan is now linear, and a million markers takes 51 milliseconds.
+- An abbreviation behind emphasis is still an abbreviation. `**e.g.**` split a sentence where `e.g.` did not, because the closing markup hid the stop from the classifier.
 - A code span is now one atom. `` `alpha. beta` `` split a sentence into three, so any text that quotes punctuation was miscounted. A span in backticks is a term being named, which the word rules already respected and the sentence splitter did not.
 
 ## [0.5.0] - 2026-08-17
