@@ -354,6 +354,43 @@ function expansionInitials(text: string): string {
     .join("");
 }
 
+/**
+ * What the bracket after an acronym spells, or null where nothing does.
+ *
+ * The bracket must open a token, no more than two tokens after the acronym, which is what
+ * the pattern this replaced allowed. The span then runs to the first token holding a
+ * closing bracket. A span carrying a different number of words from the key cannot spell
+ * it, and is refused without being read, which is what keeps a long one cheap.
+ */
+function expansionSpelling(
+  tokens: ReadonlyArray<{ raw: string }>,
+  from: number,
+  want: number,
+  carried: ReadonlyArray<number>,
+  initials: ReadonlyArray<string>,
+  nextClose: ReadonlyArray<number>,
+): string | null {
+  let open = -1;
+  const window = Math.min(from + ENGINE_THRESHOLDS.acronymDefinitionWindow, tokens.length);
+  for (let at = from; at < window; at++) {
+    if ((tokens[at] as { raw: string }).raw.startsWith("(")) {
+      open = at;
+      break;
+    }
+  }
+  if (open === -1) return null;
+  const close = nextClose[open] ?? tokens.length;
+  if (close >= tokens.length) return null;
+  const opener = (tokens[open] as { raw: string }).raw;
+  if (open === close) return expansionInitials(opener.slice(1, opener.indexOf(")")));
+  const closer = (tokens[close] as { raw: string }).raw;
+  const first = expansionInitials(opener.slice(1));
+  const last = expansionInitials(closer.slice(0, closer.indexOf(")")));
+  const between = (carried[close] as number) - (carried[open + 1] as number);
+  if (first.length + between + last.length !== want) return null;
+  return first + initials.slice(carried[open + 1], carried[close]).join("") + last;
+}
+
 function acronymViolations(text: string, known: ReadonlySet<string>): Violation[] {
   const violations: Violation[] = [];
   const defined = new Set<string>();
@@ -390,16 +427,14 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         column: match.index,
       })),
     );
-    // How many words carrying an initial precede each token. An expansion spelling a key
-    // of at most six initials cannot hold more than six such words, and the bracketed
-    // part of a span excludes at most one word at each end, so a span holding more than
-    // eight can be rejected without reading it.
+    // The words that carry an initial, in order, and how many precede each token. An
+    // expansion is judged against these rather than against the text it came from.
     const carried: number[] = new Array(tokens.length + 1);
+    const initials: string[] = [];
     carried[0] = 0;
     for (let at = 0; at < tokens.length; at++) {
-      const words = ((tokens[at] as { raw: string }).raw.match(/[A-Za-z]+/g) ?? [])
-        .filter((word) => !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word));
-      carried[at + 1] = (carried[at] as number) + words.length;
+      initials.push(...expansionInitials((tokens[at] as { raw: string }).raw));
+      carried[at + 1] = initials.length;
     }
 
     // The first token at or after each position that holds a closing bracket, built once
@@ -417,31 +452,13 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
         continue;
       }
-      // The expansion is read to the bracket that closes it, wherever that falls. A token
-      // count cannot bound it, because the words that carry no initial ("and", "of",
-      // "the") are unlimited, so a valid six-initial expansion can run to any length.
-      // Joining the whole remaining document for every acronym was quadratic instead:
-      // 8,000 of them cost 8.8 seconds.
-      const closes = nextClose[i + 1] ?? tokens.length;
-      const spelt = (carried[Math.min(closes + 1, tokens.length)] as number)
-        - (carried[i + 1] as number);
-      // Too many such words to spell the key, so the expansion cannot match and the
-      // acronym still has to be judged on everything else the rule knows.
-      const following = spelt > LONGEST_ACRONYM + 2
-        ? ""
-        : tokens
-          .slice(i + 1, closes + 1)
-          .map((token) => token.raw)
-          .join(" ");
-      const opening = tokens
-        .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)
-        .findIndex((token) => token.raw.includes("("));
-      const expansion = opening === -1
-        ? null
-        : /^\s*(?:\S+\s+){0,2}\(([^)]*)\)/.exec(following)?.[1] ?? null;
-      const parenthesisFollows = opening !== -1
-        && expansion !== null
-        && expansionInitials(expansion) === acronym.key;
+      // The expansion has to spell the key exactly, so a span carrying a different number
+      // of words that begin with a letter is refused before it is read. Reading each one
+      // was quadratic: 8,000 acronyms cost 8.8 seconds, and a document of discounted words
+      // defeated a guard that only refused spans carrying too many.
+      const expansion = expansionSpelling(tokens, i + 1, acronym.key.length, carried,
+        initials, nextClose);
+      const parenthesisFollows = expansion === acronym.key;
       if (parenthesisFollows) {
         defined.add(acronym.key);
         continue;

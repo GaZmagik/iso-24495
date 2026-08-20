@@ -810,9 +810,16 @@ export function markdownLinks(text: string): MarkdownLink[] {
   const partners = bracketPartners(text);
   const ends = codeSpanEnds(text);
   const links: MarkdownLink[] = [];
+  // Where to carry on from, once the label being read inside comes to an end.
+  const resume = new Map<number, number>();
   let index = 0;
   let noClosingParen = false;
   while (index < text.length) {
+    const onwards = resume.get(index);
+    if (onwards !== undefined) {
+      index = onwards;
+      continue;
+    }
     if (text[index] === BACKSLASH) {
       index += 2;
       continue;
@@ -845,7 +852,11 @@ export function markdownLinks(text: string): MarkdownLink[] {
           target: text.slice(closes + 2, paren),
           kind: "inline",
         });
-        index = paren + 1;
+        // Read on inside the label, because CommonMark allows an image or a link there
+        // and jumping past the whole thing hid it from every rule. The destination is
+        // stepped over when the label ends, so no character is read twice.
+        resume.set(closes, paren + 1);
+        index = opens + 1;
         continue;
       }
     }
@@ -878,27 +889,59 @@ export function markdownLinks(text: string): MarkdownLink[] {
   return links;
 }
 
+/** Where a link's label begins, past the "[" and any "!" before it. */
+function labelStart(link: MarkdownLink): number {
+  return link.start + (link.image ? 2 : 1);
+}
+
 /** The label a reader sees in place of a link, or the link untouched where it stays. */
 function flattenedLink(
   link: MarkdownLink,
   whole: string,
+  label: string,
   references?: ReadonlySet<string>,
 ): string {
-  // A link needs a label; an image may have an empty one.
-  if (!link.image && link.label.length === 0) return whole;
-  if (link.kind === "inline") return keepLines(whole, link.label);
+  // An empty label is still a link, and a reader sees nothing where it stands. Leaving it
+  // as written counted its destination and title as prose. The rule that reports a link
+  // with no text reads the source lines, so it is unaffected.
+  if (link.kind === "inline") return keepLines(whole, label);
   const named = link.kind === "reference" ? link.target || link.label : link.label;
-  return references?.has(normaliseReference(named)) ? keepLines(whole, link.label) : whole;
+  return references?.has(normaliseReference(named)) ? keepLines(whole, label) : whole;
 }
 
+/**
+ * Replace every link and image with the label a reader sees.
+ *
+ * A label may hold a link or an image of its own, so the labels are closed with a stack
+ * rather than by reading each one again from the start. Every character is then read
+ * once, however deeply the text nests.
+ */
 function flattenLinks(text: string, references?: ReadonlySet<string>): string {
+  const open: Array<{ link: MarkdownLink; label: string }> = [];
   let flattened = "";
   let at = 0;
+  const write = (fragment: string): void => {
+    const inner = open.at(-1);
+    if (inner === undefined) flattened += fragment;
+    else inner.label += fragment;
+  };
+  const close = (): void => {
+    const inner = open.pop() as { link: MarkdownLink; label: string };
+    inner.label += text.slice(at, labelStart(inner.link) + inner.link.label.length);
+    at = inner.link.end;
+    write(flattenedLink(inner.link, text.slice(inner.link.start, at), inner.label, references));
+  };
   for (const link of markdownLinks(text)) {
-    flattened += text.slice(at, link.start);
-    flattened += flattenedLink(link, text.slice(link.start, link.end), references);
-    at = link.end;
+    while (open.length > 0) {
+      const inner = open.at(-1) as { link: MarkdownLink; label: string };
+      if (link.start < labelStart(inner.link) + inner.link.label.length) break;
+      close();
+    }
+    write(text.slice(at, link.start));
+    at = labelStart(link);
+    open.push({ link, label: "" });
   }
+  while (open.length > 0) close();
   return flattened + text.slice(at);
 }
 
@@ -965,8 +1008,21 @@ const SINGLE_INITIAL = /^[^A-Za-z]*[A-Z]\.$/;
 
 export type Boundary = "merge" | "split" | "ambiguous";
 
+const WHITESPACE = /\s/;
+
+/**
+ * The last whitespace-separated token in the fragment.
+ *
+ * Read from the end rather than split, because a merged sentence grows with every
+ * boundary and splitting the whole of it again for each one cost the square of its
+ * length: 3,000 merged fragments took 0.4 seconds.
+ */
 function lastToken(fragment: string): string {
-  return fragment.trimEnd().split(/\s+/).at(-1) ?? "";
+  let end = fragment.length;
+  while (end > 0 && WHITESPACE.test(fragment[end - 1] as string)) end -= 1;
+  let start = end;
+  while (start > 0 && !WHITESPACE.test(fragment[start - 1] as string)) start -= 1;
+  return fragment.slice(start, end);
 }
 
 function bareWord(token: string): string {

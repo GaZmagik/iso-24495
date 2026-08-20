@@ -362,6 +362,64 @@ describe("reader-facing behaviour contracts", () => {
     expect(splitSentences(pair)).toHaveLength(2);
   });
 
+  test("what sits inside a link label is still read", () => {
+    // CommonMark allows an image inside a link. Jumping past the whole link once the
+    // outer one was recognised hid everything nested in it, so an image with no
+    // alternative text produced no finding and its markup was counted as prose.
+    const nested = "[read ![](image.png)](destination) here.";
+    expect(auditText(nested).map((v) => v.rule)).toContain("image-alt");
+    expect(readerProseBlocks(nested)[0]?.lines.join("")).toBe("read  here.");
+
+    // A described image inside a link is fine, and its description is the prose.
+    const described = "[read ![a chart of costs](chart.png)](destination) here.";
+    expect(auditText(described).map((v) => v.rule)).not.toContain("image-alt");
+    expect(readerProseBlocks(described)[0]?.lines.join("")).toBe("read a chart of costs here.");
+
+    // A link inside a link label is read as well, so its text is judged.
+    expect(auditText("[[click here](inner)](outer) here.").map((v) => v.rule))
+      .toContain("link-text");
+
+    // Reference and shortcut forms are unchanged, here and on the released engine.
+    const shortcut = "[[click here]] follows." + "\n\n" + "[click here]: /uri";
+    expect(readerProseBlocks(shortcut)[0]?.lines.join(""))
+      .toBe("[[click here]] follows.");
+  });
+
+  test("deep nesting is read once, not once per level", () => {
+    // Reading a label by starting again inside it would cost a pass for every level.
+    // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
+    const deep = (size: number): void => {
+      auditText("[a](x)".replace("a", "a".repeat(1)) .repeat(1)
+        + "[".repeat(size) + "]".repeat(size));
+    };
+    deep(1_000);
+    const time = (size: number): number => {
+      const started = performance.now();
+      deep(size);
+      return performance.now() - started;
+    };
+    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
+
+    let layered = "innermost";
+    for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
+    expect(() => auditText(layered)).not.toThrow();
+  });
+
+  test("an empty link shows a reader nothing, so it measures as nothing", () => {
+    // A link with no text still has a destination and a title, and leaving them in place
+    // counted hidden markup as prose. A reader sees an empty link and a full stop.
+    const hidden = Array.from({ length: 35 }, (_, index) => `hidden${index}`).join(" ");
+    const empty = `[](/uri "${hidden}").`;
+    const rules = auditText(empty).map((v) => v.rule);
+    expect(rules).toContain("link-text");
+    expect(rules).not.toContain("sentence-length");
+    expect(readerProseBlocks(empty)[0]?.lines.join("")).toBe(".");
+
+    // A reference naming nothing is not a link, so it stays exactly as it was found.
+    expect(readerProseBlocks("[][nothing] here.")[0]?.lines.join(""))
+      .toBe("[][nothing] here.");
+  });
+
   test("a link label may hold brackets, and only the label is prose", () => {
     // CommonMark allows balanced brackets inside a link label. Matching the label with a
     // pattern that stopped at the first "]" left the destination and title unflattened, so
@@ -430,7 +488,7 @@ ${sentence}`)
       "Read [ this and [ that here.",
       "Read [label](unclosed destination here.",
       "Read [label][unclosed reference here.",
-      "Read [](/uri) and [outer [inner]] text.",
+      "Read [outer [inner]] text.",
     ]) {
       expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
     }
@@ -452,6 +510,42 @@ ${sentence}`)
       expect(found, text).toHaveLength(1);
       expect(found[0]?.line, text).toBe(line);
     }
+  });
+
+  test("a definition is judged by the words that actually spell the acronym", () => {
+    // The count of words carrying an initial has to match the key exactly, and the key
+    // decides how many that is. A fixed six was borrowed from the pattern that finds a
+    // definition, whose capture really is capped at six, and applied to the pattern that
+    // finds an acronym, which is not capped at all.
+    const spell = (letters: string[]): string => letters.join(".") + ".";
+    const words = ["Alpha", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+      "India", "Juliett"];
+    for (const size of [3, 6, 7, 8, 9, 10]) {
+      const key = spell(words.slice(0, size).map((word) => word[0] as string));
+      const defined = `${key} (${words.slice(0, size).join(" ")}) works.`;
+      expect(auditText(defined).map((v) => v.rule), defined.slice(0, 40))
+        .not.toContain("acronym-undefined");
+    }
+
+    // A definition that spells something else is still undefined, at every length.
+    const wrong = "A.B.C.D.E.F.G.H.I. (Alpha Beta Charlie) works.";
+    expect(auditText(wrong).map((v) => v.rule)).toContain("acronym-undefined");
+  });
+
+  test("a discounted word cannot reopen the search for a definition", () => {
+    // Every word here is discounted: "A" reads as the article, and so does "and". The
+    // guard counted nothing and therefore read the whole remaining document for every
+    // candidate, which is the cost it was written to prevent.
+    const hostile = (size: number): void => {
+      auditText(Array(size).fill("A.A.A. (").join(" ") + " and).");
+    };
+    hostile(1_000);
+    const time = (size: number): number => {
+      const started = performance.now();
+      hostile(size);
+      return performance.now() - started;
+    };
+    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
   });
 
   test("an expansion is read to its closing bracket, however long it runs", () => {
