@@ -238,10 +238,6 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
 // no more than six preceding words can ever spell one.
 const LONGEST_ACRONYM = 6;
 
-// Two tokens before the parenthesis, and an expansion far longer than six initials could
-// need. An expansion this long cannot spell a six-letter acronym anyway.
-const EXPANSION_TOKEN_BOUND = 32;
-
 function acronymFromToken(raw: string): { display: string; key: string } | null {
   let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’\)\]}>,:;!?]+$/, "");
   if (!ACRONYM_SHAPE.test(token) && token.endsWith(".")) token = token.slice(0, -1);
@@ -393,6 +389,25 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         column: match.index,
       })),
     );
+    // How many words carrying an initial precede each token. An expansion spelling a key
+    // of at most six initials cannot hold more than six such words, and the bracketed
+    // part of a span excludes at most one word at each end, so a span holding more than
+    // eight can be rejected without reading it.
+    const carried: number[] = new Array(tokens.length + 1);
+    carried[0] = 0;
+    for (let at = 0; at < tokens.length; at++) {
+      const words = ((tokens[at] as { raw: string }).raw.match(/[A-Za-z]+/g) ?? [])
+        .filter((word) => !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word));
+      carried[at + 1] = (carried[at] as number) + words.length;
+    }
+
+    // The first token at or after each position that holds a closing bracket, built once
+    // for the block so no acronym has to search forward for one.
+    const nextClose: number[] = new Array(tokens.length);
+    for (let at = tokens.length - 1, closing = tokens.length; at >= 0; at--) {
+      if ((tokens[at] as { raw: string }).raw.includes(")")) closing = at;
+      nextClose[at] = closing;
+    }
     const shouted = shoutedPositions(tokens);
     for (let i = 0; i < tokens.length; i++) {
       const acronym = acronymFromToken(tokens[i].raw);
@@ -401,15 +416,22 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
         continue;
       }
-      // The pattern below reads at most two tokens, then a parenthesis it must close, so
-      // a bound of that plus a generous expansion is all it can ever see. Joining the
-      // whole remaining document for every acronym was quadratic: 8,000 of them cost 8.8
-      // seconds. Past the bound the expansion reads as absent, which is already what the
-      // rule concludes when no parenthesis follows.
-      const following = tokens
-        .slice(i + 1, i + 1 + EXPANSION_TOKEN_BOUND)
-        .map((token) => token.raw)
-        .join(" ");
+      // The expansion is read to the bracket that closes it, wherever that falls. A token
+      // count cannot bound it, because the words that carry no initial ("and", "of",
+      // "the") are unlimited, so a valid six-initial expansion can run to any length.
+      // Joining the whole remaining document for every acronym was quadratic instead:
+      // 8,000 of them cost 8.8 seconds.
+      const closes = nextClose[i + 1] ?? tokens.length;
+      const spelt = (carried[Math.min(closes + 1, tokens.length)] as number)
+        - (carried[i + 1] as number);
+      // Too many such words to spell the key, so the expansion cannot match and the
+      // acronym still has to be judged on everything else the rule knows.
+      const following = spelt > LONGEST_ACRONYM + 2
+        ? ""
+        : tokens
+          .slice(i + 1, closes + 1)
+          .map((token) => token.raw)
+          .join(" ");
       const opening = tokens
         .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)
         .findIndex((token) => token.raw.includes("("));

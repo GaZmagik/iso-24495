@@ -657,10 +657,13 @@ describe("repository writing conventions", () => {
       // The prose ban is not enough on its own. The worked example is the part a model
       // copies, and it interpolated an arbitrary input straight into the message while
       // the rule above it forbade exactly that.
+      // Banning two names let the same sink back in under a third. A value on a throw
+      // path has just failed validation, so no bare identifier may be interpolated at
+      // all; a shape such as ".length" or a "typeof" is what the rule asks for.
       const examples = skill.split("```")[1] ?? "";
       expect(examples).toContain("token.length");
-      expect(examples).not.toContain("${input}");
-      expect(examples).not.toContain("${token}");
+      const bareValue = new RegExp("\\$\\{\\s*[A-Za-z_\\$][\\w\\$]*\\s*}");
+      expect(bareValue.test(examples), examples).toBe(false);
     });
   });
 });

@@ -307,13 +307,25 @@ describe("reader-facing behaviour contracts", () => {
     }
 
     // A numbering dot and an abbreviation must survive the escape too, or the classifier
-    // reads a token the reader never sees.
-    for (const lead of ["Step 1", "Items include etc"]) {
-      const plain = lead + ". Next sentence here.";
-      const escaped = lead + slash + ". Next sentence here.";
-      expect(splitSentences(escaped).length, lead).toBe(splitSentences(plain).length);
-      expect(mergedSentences(escaped).length, lead).toBe(mergedSentences(plain).length);
+    // reads a token the reader never sees. The compound case is the one that matters: a
+    // real stop, then an escaped closing marker after it, which is what the first version
+    // of this loop failed to construct and therefore failed to catch.
+    for (const lead of ["Step 1", "Items include etc", "Items include e.g", "Dr"]) {
+      for (const closer of ["", ")", "]", String.fromCharCode(34), "'"]) {
+        const plain = lead + "." + closer + " Next sentence here.";
+        const escaped = lead + "." + (closer === "" ? "" : slash + closer) + " Next sentence here.";
+        expect(splitSentences(escaped).length, escaped).toBe(splitSentences(plain).length);
+        expect(mergedSentences(escaped).length, escaped).toBe(mergedSentences(plain).length);
+      }
     }
+
+    // Both reproducers from review, verbatim. An abbreviation behind an escaped closer
+    // was read as "e.g.\\", which is not an abbreviation, so it started a sixth sentence
+    // and reported a paragraph that was never over the limit.
+    const paragraph = "One. Two. Three. Four. Items include e.g" + slash + ") tools and paper.";
+    expect(splitSentences(paragraph)).toHaveLength(5);
+    expect(auditText(paragraph).map((v) => v.rule)).not.toContain("paragraph-length");
+    expect(splitSentences("Dr" + slash + ") Smith explains it.")).toHaveLength(1);
 
     // The harm as a reader meets it: two sixteen-word sentences reported as one long one.
     const text = Array(16).fill("alpha").join(" ") + slash + "! Beta "
@@ -392,6 +404,15 @@ ${sentence}`)
     };
     expect(time(4_000) / Math.max(time(2_000), 1)).toBeLessThan(3);
 
+    // A bracket inside a code span is content, not structure. Counting it took the outer
+    // label's closing bracket, which corrupted the reader text and lost the finding that
+    // the same sentence produces without the span.
+    const tick = String.fromCharCode(96);
+    const spanned = "[Certainly " + tick + "[" + tick + " we should proceed](/uri).";
+    expect(readerProseBlocks(spanned)[0]?.lines.join(""))
+      .toBe("Certainly " + tick + "[" + tick + " we should proceed.");
+    expect(auditText(spanned).map((v) => v.rule)).toContain("filler-opening");
+
     // Anything that does not parse as a link is left exactly as it was found, which is
     // what the pattern it replaced did too.
     for (const literal of [
@@ -419,6 +440,24 @@ ${sentence}`)
       expect(found, text).toHaveLength(1);
       expect(found[0]?.line, text).toBe(line);
     }
+  });
+
+  test("an expansion is read to its closing bracket, however long it runs", () => {
+    // A definition is spelled by the words that carry initials, and the ignored words
+    // between them are unlimited. Bounding the lookahead by a token count therefore cut
+    // valid expansions short and reported an acronym that the text defines on the spot.
+    const padded = `ABCDEF (Alpha ${Array(30).fill("and").join(" ")} `
+      + "Beta Charlie Delta Echo Foxtrot) works.";
+    expect(auditText(padded).map((v) => v.rule)).not.toContain("acronym-undefined");
+
+    // Just outside: the expansion no longer spells the acronym, so it is undefined.
+    const wrong = `ABCDEF (Alpha ${Array(30).fill("and").join(" ")} Beta Charlie) works.`;
+    expect(auditText(wrong).map((v) => v.rule)).toContain("acronym-undefined");
+
+    // A parenthesis that never closes cannot define anything, and must not be searched
+    // to the end of the document for every acronym that precedes it.
+    expect(auditText("ABCDEF (Alpha Beta Charlie Delta Echo Foxtrot works.")
+      .map((v) => v.rule)).toContain("acronym-undefined");
   });
 
   test("a large document cannot stall the rules that walk it", () => {

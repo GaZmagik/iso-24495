@@ -754,11 +754,21 @@ function keepLines(whole: string, kept: string): string {
  * is literal text and takes no part.
  */
 function bracketPartners(text: string): Map<number, number> {
+  const ends = codeSpanEnds(text);
   const partners = new Map<number, number>();
   const open: number[] = [];
-  for (let index = 0; index < text.length; index += 1) {
+  let index = 0;
+  while (index < text.length) {
     if (text[index] === BACKSLASH) {
-      index += 1;
+      index += 2;
+      continue;
+    }
+    // A bracket inside a code span is content. Counting it took the label's own closing
+    // bracket and corrupted the text a reader sees. The moves here mirror the other two
+    // scanners over this text, so a third one cannot drift from them.
+    if (text[index] === "`") {
+      const closing = ends.get(index);
+      index = closing === undefined ? index + tickRun(text, index) : closing;
       continue;
     }
     if (text[index] === "[") open.push(index);
@@ -766,6 +776,7 @@ function bracketPartners(text: string): Map<number, number> {
       const start = open.pop();
       if (start !== undefined) partners.set(start, index);
     }
+    index += 1;
   }
   return partners;
 }
@@ -897,15 +908,32 @@ function bareWord(token: string): string {
 }
 
 /** Decide whether the stop between two fragments ends a sentence. */
+/**
+ * The text as a reader sees it, with each backslash escape resolved to its character.
+ *
+ * The same test the scanners use decides what an escape covers, so a token can never be
+ * classified as something the reader never sees.
+ */
+function rendered(text: string): string {
+  let visible = "";
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === BACKSLASH && ESCAPABLE.test(text[index + 1] ?? "")) index += 1;
+    visible += text[index];
+  }
+  return visible;
+}
+
 export function classifyBoundary(previous: string, next: string): Boundary {
   // `**e.g.**` is the same abbreviation as `e.g.`, so the closing markup comes off
   // before the token is read. Leaving it on hid the stop and split the sentence.
-  const token = lastToken(previous).replace(/[*_`"'’”)\]}]+$/, "");
+  // An escape renders as the bare character, so `e.g.\)` is the same abbreviation
+  // as `e.g.)`. Reading the source token left a backslash on the end and hid it.
+  const token = rendered(lastToken(previous)).replace(/[*_`"'’”)\]}]+$/, "");
   if (!token.endsWith(".")) return "split";
   const word = bareWord(token);
   // Only the first word of the next fragment carries evidence. Reading the
   // whole fragment made every test match something somewhere.
-  const nextToken = next.trimStart().split(/\s+/)[0] ?? "";
+  const nextToken = rendered(next.trimStart().split(/\s+/)[0] ?? "");
   const nextWord = nextToken.replace(/[^A-Za-z]/g, "").toLowerCase();
   const nextIsCapitalised = /^[^A-Za-z]*[A-Z]/.test(nextToken);
   const nextIsLowercaseName = LOWERCASE_NAMES.has(nextToken.replace(/[^A-Za-z0-9]/g, ""));

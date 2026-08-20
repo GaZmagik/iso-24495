@@ -90,14 +90,19 @@ personal detail must not appear in a message, because messages reach logs, telem
 Name the field and describe the fault instead: `API token rejected: expected 32 characters, got 8`.
 Where you cannot show a value safely, show its shape.
 
-The value decides which of these you write, so name the field before you interpolate it.
-A duration is safe to quote. A token is not, at any length.
+**A value on this path has just failed validation, so its contents are unknown.** Naming
+the field does not make them safe: whatever the caller passed is what reaches the log.
+Report the format you expected and the shape of what arrived, never the value itself.
 
 ```
-Bad:     throw new Error("invalid input")
-Good:    throw new TypeError(`Duration "${duration}" must be a number followed by ms, s, m, h or d`)
-Secret:  throw new Error(`API token rejected: expected 32 characters, got ${token.length}`)
+Bad:   throw new Error("invalid input")
+Good:  throw new TypeError(
+         `Duration must be a number followed by ms, s, m, h or d; got ${duration.length} characters`)
+Good:  throw new Error(`API token rejected: expected 32 characters, got ${token.length}`)
 ```
+
+Quote a value only where you control it, such as one you have already matched against
+a fixed set. Then the set, not the caller, decides what can appear.
 
 ### 6. Prefer the plain construction
 
