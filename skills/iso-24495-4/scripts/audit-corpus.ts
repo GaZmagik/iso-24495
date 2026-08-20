@@ -213,8 +213,27 @@ function acronymFromToken(raw: string): { display: string; key: string } | null 
   return { display: token, key };
 }
 
+function isLetter(character: string | undefined): boolean {
+  return character !== undefined && /[A-Za-z]/.test(character);
+}
+
+/**
+ * The token with its surrounding punctuation removed, keeping a trailing full stop
+ * because an acronym may be written "U.S.".
+ *
+ * Scanned from each end rather than trimmed with an anchored alternation, which retried
+ * the suffix at every position: one token of 100,000 markers cost about ten seconds.
+ */
+function lettersOnly(raw: string): string {
+  let start = 0;
+  while (start < raw.length && !isLetter(raw[start])) start += 1;
+  let end = raw.length;
+  while (end > start && !isLetter(raw[end - 1]) && raw[end - 1] !== ".") end -= 1;
+  return raw.slice(start, end);
+}
+
 function isAllCaps(raw: string): boolean {
-  const stripped = raw.replace(/^[^A-Za-z]+|[^A-Za-z.]+$/g, "");
+  const stripped = lettersOnly(raw);
   return ACRONYM_SHAPE.test(stripped) || /^[A-Z]{2,}$/.test(stripped);
 }
 

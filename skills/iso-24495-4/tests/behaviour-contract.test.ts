@@ -288,6 +288,61 @@ describe("reader-facing behaviour contracts", () => {
     const escaped = `The escaped marker \\\` appears here. The next one \\\` appears there.`;
     expect(splitSentences(escaped)).toHaveLength(2);
   });
+  test("a backslash blocks a code span from opening, never from closing", () => {
+    // CommonMark reads escapes left to right, so an escape stops a run from opening a
+    // span. Once a span is open the search for its closer ignores backslashes entirely.
+    // Built by concatenation because a backslash inside a template literal is read twice
+    // over, and the first version of this test silently escaped its own interpolation.
+    const tick = String.fromCharCode(96);
+    const escapedTick = "\\" + tick;
+
+    // The spec's own example. The escaped backtick closes the span, so "bar" is prose and
+    // the stop after it splits. Discarding the escaped run let the opener reach the final
+    // backtick instead, which swallowed that stop and merged two sentences into one.
+    expect(splitSentences(tick + "foo" + escapedTick + "bar. Next." + tick)).toHaveLength(2);
+
+    // The same defect seen as a reader sees it: two short sentences reported as one long.
+    const left = Array(15).fill("alpha").join(" ");
+    const right = Array(15).fill("beta").join(" ");
+    const closed = tick + "code" + escapedTick + " " + left + ". " + right + tick + ".";
+    expect(auditText(closed).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
+
+    // An escaped run at the start opens nothing, so the run is literal and the stop stands.
+    expect(splitSentences("Stop. " + escapedTick + "not code" + tick + " follows.")).toHaveLength(2);
+
+    // Two backslashes escape each other, so the backtick after them still opens a span and
+    // the stop inside it ends nothing.
+    const pair = "Use \\\\" + tick + "alpha. beta" + tick + " once. Then stop.";
+    expect(splitSentences(pair)).toHaveLength(2);
+  });
+
+  test("markup that spans lines does not move the lines after it", () => {
+    // A link destination or title may hold a line ending. Flattening the link to its
+    // label deleted that line ending, so every later sentence in the block was reported
+    // one line early and the reader opened an innocent line.
+    const long = `${Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ")}.`;
+    const cases: Array<[string, number]> = [
+      [`Read [the guide](/uri "first\nsecond"). Short.\n${long}`, 3],
+      [`Read ![alt](/uri "first\nsecond"). Short.\n${long}`, 3],
+      [`Read [the guide][a\nb]. Short.\n${long}\n\n[a b]: /uri`, 3],
+      [`Read <span\nclass="x">here</span>. Short.\n${long}`, 3],
+    ];
+    for (const [text, line] of cases) {
+      const found = auditText(text).filter((violation) => violation.rule === "sentence-length");
+      expect(found, text).toHaveLength(1);
+      expect(found[0]?.line, text).toBe(line);
+    }
+  });
+
+  test("a hostile token cannot stall the rules that read it", () => {
+    // Trimming a token to its letters with an anchored alternation retried the suffix at
+    // every position, so one token of 100,000 markers took about ten seconds. The parser
+    // was already linear by then, which is why the cost survived the earlier repair.
+    const token = `x${"`".repeat(40_000)}y`;
+    const started = performance.now();
+    auditText(token);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 
   test("an abbreviation stays an abbreviation behind emphasis", () => {
     // `**e.g.**` must behave as `e.g.` does. Allowing a stop to end a sentence through

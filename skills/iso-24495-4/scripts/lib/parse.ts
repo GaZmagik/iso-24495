@@ -650,20 +650,6 @@ function tickRun(text: string, start: number): number {
   return end - start;
 }
 
-function closingTicks(text: string, start: number, length: number): number {
-  let index = start;
-  while (index < text.length) {
-    if (text[index] !== "`") {
-      index++;
-      continue;
-    }
-    const run = tickRun(text, index);
-    if (run === length) return index;
-    index += run;
-  }
-  return -1;
-}
-
 /** Remove only inline markup that CommonMark keeps out of rendered text. */
 function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = false): string {
   let visible = "";
@@ -741,16 +727,34 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
   return visible;
 }
 
+const NEWLINE = "\n";
+
+function countLines(text: string): number {
+  return text.split(NEWLINE).length;
+}
+
+/**
+ * Keep the label, and keep the line count.
+ *
+ * A link destination or title may hold a line ending. Deleting it with the rest of the
+ * markup moved every later sentence in the block one line up, so a finding pointed at an
+ * innocent line. The removed text always follows the label, so the endings go on the end.
+ */
+function keepLines(whole: string, kept: string): string {
+  const removed = countLines(whole) - countLines(kept);
+  return removed > 0 ? kept + NEWLINE.repeat(removed) : kept;
+}
+
 function visibleText(text: string, references?: ReadonlySet<string>): string {
   return visibleInline(text)
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (whole, alt: string) => keepLines(whole, alt))
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, (whole, label: string) => keepLines(whole, label))
     .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (whole, alt: string, label: string) =>
-      references?.has(normaliseReference(label || alt)) ? alt : whole)
+      references?.has(normaliseReference(label || alt)) ? keepLines(whole, alt) : whole)
     .replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (whole, label: string, target: string) =>
-      references?.has(normaliseReference(target || label)) ? label : whole)
+      references?.has(normaliseReference(target || label)) ? keepLines(whole, label) : whole)
     .replace(/(?<![!\]])\[([^\]]+)\](?![\[(])/g, (whole, label: string) =>
-      references?.has(normaliseReference(label)) ? label : whole);
+      references?.has(normaliseReference(label)) ? keepLines(whole, label) : whole);
 }
 
 /** Collect prose paragraphs: what a reader reads as sentences. */
@@ -880,31 +884,41 @@ export function classifyBoundary(previous: string, next: string): Boundary {
 const CLOSING_MARKUP = new Set(["*", "_", "`", '"', "'", "’", "”", ")", "]", "}"]);
 const TERMINATOR = new Set([".", "!", "?"]);
 
+/** The last text asked about, because a block is read by many rules in turn. */
+let spanCacheText: string | null = null;
+let spanCacheEnds: Map<number, number> | null = null;
+
 /**
  * Where each code span ends, keyed by where it opens.
  *
  * Every backtick run is collected in one pass, then each opener takes the next unused run
  * of its own length. Searching the remaining text per run was quadratic: an audit of
- * 10,000 backticks took 5.4 seconds. The result is cached for the text last asked about,
- * because a block is read by many rules in turn.
+ * 10,000 backticks took 5.4 seconds.
+ *
+ * CommonMark reads escapes left to right, so a backslash stops a run from opening a span.
+ * Once a span is open the search for its closer ignores backslashes, which is why an
+ * escaped run is collected here rather than discarded: it can still close.
  */
-let spanCacheText: string | null = null;
-let spanCacheEnds: Map<number, number> | null = null;
-
 function codeSpanEnds(text: string): Map<number, number> {
   if (spanCacheText === text && spanCacheEnds !== null) return spanCacheEnds;
-  const runs: Array<{ start: number; length: number }> = [];
+  const runs: Array<{ start: number; length: number; escaped: boolean }> = [];
+  // Counted forward rather than looked up behind each run, because a long backslash
+  // run before every backtick would make the lookup quadratic.
+  let backslashes = 0;
   for (let index = 0; index < text.length; ) {
-    if (text[index] === "\\" && ESCAPABLE.test(text[index + 1] ?? "")) {
-      index += 2;
+    if (text[index] === "\\") {
+      backslashes += 1;
+      index += 1;
       continue;
     }
     if (text[index] === "`") {
       const length = tickRun(text, index);
-      runs.push({ start: index, length });
+      runs.push({ start: index, length, escaped: backslashes % 2 === 1 });
+      backslashes = 0;
       index += length;
       continue;
     }
+    backslashes = 0;
     index += 1;
   }
   const byLength = new Map<number, number[]>();
@@ -917,17 +931,25 @@ function codeSpanEnds(text: string): Map<number, number> {
   const ends = new Map<number, number>();
   let position = 0;
   while (position < runs.length) {
-    const run = runs[position] as { start: number; length: number };
-    const candidates = byLength.get(run.length) ?? [];
-    let cursor = cursors.get(run.length) ?? 0;
+    const run = runs[position] as { start: number; length: number; escaped: boolean };
+    // An escaped backslash consumes the first backtick only, so a longer run still
+    // opens a span, one backtick shorter and one offset later.
+    const openLength = run.escaped ? run.length - 1 : run.length;
+    const openStart = run.escaped ? run.start + 1 : run.start;
+    if (openLength === 0) {
+      position += 1;
+      continue;
+    }
+    const candidates = byLength.get(openLength) ?? [];
+    let cursor = cursors.get(openLength) ?? 0;
     while (cursor < candidates.length && (candidates[cursor] as number) <= position) cursor += 1;
-    cursors.set(run.length, cursor);
+    cursors.set(openLength, cursor);
     if (cursor >= candidates.length) {
       position += 1;
       continue;
     }
     const closing = runs[candidates[cursor] as number] as { start: number; length: number };
-    ends.set(run.start, closing.start + closing.length);
+    ends.set(openStart, closing.start + closing.length);
     position = (candidates[cursor] as number) + 1;
   }
   spanCacheText = text;

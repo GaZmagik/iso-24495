@@ -633,5 +633,26 @@ describe("repository writing conventions", () => {
       expect(readme).toContain("AGENTS.md");
       expect(readme).toMatch(/iso-24495-style/);
     });
+
+    // A rule stated flat in one place and qualified in another is a conflict, and the
+    // model resolves it by picking one. Both carve-outs were stated in the rule bodies
+    // while the summary table still stated the bare rule, so the table contradicted them.
+    test("the code skill states its carve-outs wherever it states the rule", () => {
+      const skill = readFileSync(join(SKILLS_ROOT, "iso-24495-code", "SKILL.md"), "utf8");
+      const table = skill
+        .split("\n")
+        .filter((line) => line.startsWith("| "))
+        .join("\n");
+
+      // Interface documentation says what a function does, so "why, never what" cannot
+      // stand alone anywhere in the skill.
+      expect(skill).not.toContain("says why, never what");
+      expect(table).toContain("interface documentation says what");
+
+      // A secret must never reach a log, so no site may ask for the offending value flat.
+      expect(skill).not.toContain("shows the offending value");
+      expect(skill).toContain("Never put a secret in an error");
+      expect(table).toContain("a safe value");
+    });
   });
 });

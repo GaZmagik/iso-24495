@@ -28,8 +28,8 @@ use a code quality skill built on ISO/IEC 5055.
 |---|---|---|
 | Findable | The reader can find what they need | The public entry point appears first |
 | Understandable | The reader understands it | Names say what the thing is, in the reader's words |
-| Relevant | The reader gets what they need | Comments say why, never what |
-| Usable | The reader can act on it | An error names the problem and shows the value |
+| Relevant | The reader gets what they need | A comment says why; interface documentation says what |
+| Usable | The reader can act on it | An error names the problem and shows a safe value |
 
 ## Rules
 
@@ -68,7 +68,7 @@ the function they serve. A reader cannot reach a closure without reading its con
 - Prefer a longer name that reads to a shorter one that must be decoded. `remainingBudget`
   beats `rb`.
 
-### 4. A comment says why, never what
+### 4. A comment says why; interface documentation says what a caller needs
 
 A comment earns its place when it records something a reader cannot recover from the code: a
 reason, a constraint, a rejected alternative, a bug it guards against.
@@ -81,9 +81,9 @@ them, so it belongs there even when the body makes it obvious.
 
 ### 5. An error message serves the person who hits it
 
-An error names the problem, shows the offending value, and where it helps, says what to do
-instead. Write it in the words its reader would use, so it can be acted on without opening the
-source.
+An error names the problem, shows a value it is safe to show, and where it helps, says what
+to do instead. Write it in the words its reader would use, so it can be acted on without
+opening the source.
 
 **Never put a secret in an error.** A credential, token, key, password, session identifier or
 personal detail must not appear in a message, because messages reach logs, telemetry and screens.
