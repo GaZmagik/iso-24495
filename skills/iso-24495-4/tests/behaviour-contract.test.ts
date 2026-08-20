@@ -220,6 +220,40 @@ describe("reader-facing behaviour contracts", () => {
       .toContain("legalese");
   });
 
+  test("a full stop inside emphasis or quotes still ends the sentence", () => {
+    // `**Lead in.** Next sentence.` is the commonest heading-in-a-paragraph pattern in
+    // this repository's own skills. The stop sits before the closing markers, not before
+    // the space, so a naive boundary rule merges the pair and reports one long sentence.
+    const cases = [
+      "**Lead in here.** Then a following sentence.",
+      "*Emphasised lead.* Then a following sentence.",
+      '"A quoted sentence." Then a following sentence.',
+      "(A parenthetical sentence.) Then a following sentence.",
+    ];
+    for (const text of cases) {
+      expect(splitSentences(text), text).toHaveLength(2);
+      expect(mergedSentences(text), text).toHaveLength(2);
+    }
+
+    // Two halves that are each short must not add up to one over-long sentence.
+    const lead = "**A bold lead in sentence of exactly twelve words here now yes.**";
+    const follow = `Then ${Array.from({ length: 21 }, (_, index) => `word${index}`).join(" ")}.`;
+    expect(rulesFor(`${lead} ${follow}`).filter((rule) => rule === "sentence-length")).toHaveLength(0);
+  });
+
+  test("a code span is one atom, so punctuation inside it ends nothing", () => {
+    // Writing about punctuation means quoting it. A span in backticks is a term being
+    // named, so a stop inside it is part of the name and never a sentence boundary.
+    const spans = [
+      "Use the token `alpha. beta` in the call. Then continue here.",
+      "The splitter read `**Lead in.** Next sentence.` as one sentence. That was the bug.",
+      "Set `timeout=1.5` before starting. The default is lower.",
+    ];
+    for (const text of spans) {
+      expect(splitSentences(text), text).toHaveLength(2);
+    }
+  });
+
   test("technical punctuation and ambiguous boundaries cannot invent findings", () => {
     expect(classifyBoundary("packs etc.", "Customers receive them.")).toBe("ambiguous");
     expect(classifyBoundary("Dr.", "Smith explains it.")).toBe("merge");

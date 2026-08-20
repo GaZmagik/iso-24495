@@ -2,6 +2,19 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.6.0] - 2026-08-20
+
+### Added
+
+- `iso-24495-code` applies the plain language principles to source code: the order units appear in, their names, what a comment says, and what an error tells the reader who hits it. It does not set size or complexity thresholds, because those are software quality rather than language, and it says so.
+- The skill exists because the writing rules were measured and found to do nothing to code. Across 30 generated implementations of one specification, the prose style changed neither the number of functions nor their length. It left the public function anywhere in the file, and last of all in half of them. Explicit code rules put it in the first fifth every time, and raised named units from a median of 12 to 15. Every implementation still passed all 25 hidden tests.
+- The README now points at the standard itself. It links the ISO catalogue entry for Part 1, the International Plain Language Federation framework, and PLAIN's background on the standard.
+
+### Fixed
+
+- A full stop inside emphasis, quotes or brackets now ends a sentence. `**Lead in.** Next sentence.` was read as one sentence, because the terminator sits before the closing markers rather than before the space. Two short sentences were merged and reported as one long one, so the bug manufactured `sentence-length` findings on the commonest heading-in-a-paragraph pattern in these very skills.
+- A code span is now one atom. `` `alpha. beta` `` split a sentence into three, so any text that quotes punctuation was miscounted. A span in backticks is a term being named, which the word rules already respected and the sentence splitter did not.
+
 ## [0.5.0] - 2026-08-17
 
 ### Added

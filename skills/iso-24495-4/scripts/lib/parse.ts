@@ -867,9 +867,38 @@ export function classifyBoundary(previous: string, next: string): Boundary {
   return "split";
 }
 
+/**
+ * A copy of the text with every code span's contents replaced by `x`, one for one, so
+ * offsets still line up. A span in backticks is a term being named, so punctuation
+ * inside it belongs to the name and can never end a sentence.
+ */
+function maskCodeSpans(text: string): string {
+  return text.replace(/`[^`]*`/g, (span) => `\`${"x".repeat(span.length - 2)}\``);
+}
+
+/**
+ * A sentence can end inside emphasis, quotes or brackets, as in `**Lead in.** Next`.
+ * The terminator is then not the character before the space, so the closing markers
+ * are allowed to sit between them.
+ */
+const BOUNDARY = /(?<=[.!?][*_`"'’”)\]]*)\s+/g;
+
+function splitOutsideCodeSpans(text: string): string[] {
+  const masked = maskCodeSpans(text);
+  const fragments: string[] = [];
+  let start = 0;
+  BOUNDARY.lastIndex = 0;
+  for (let match = BOUNDARY.exec(masked); match !== null; match = BOUNDARY.exec(masked)) {
+    fragments.push(text.slice(start, match.index));
+    start = match.index + match[0].length;
+  }
+  fragments.push(text.slice(start));
+  return fragments;
+}
+
 function segment(text: string, ambiguous: "merge" | "split"): string[] {
   const sentences: string[] = [];
-  for (const fragment of text.split(/(?<=[.!?])\s+/)) {
+  for (const fragment of splitOutsideCodeSpans(text)) {
     const previous = sentences.at(-1);
     if (previous !== undefined) {
       const verdict = classifyBoundary(previous, fragment);
