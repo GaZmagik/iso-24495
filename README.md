@@ -105,6 +105,16 @@ The principles derive from the International Plain Language Federation's freely 
 
 Nothing this plugin produces is a statement of ISO conformance. No certification scheme exists for ISO 24495. "Aligned" in the skills means aligned with this project's interpretation, nothing more.
 
+## Reference
+
+Read the standard rather than this project's reading of it.
+
+- **[ISO 24495-1:2023, Plain language, Part 1: Governing principles and guidelines](https://www.iso.org/standard/78907.html)**, the published standard these skills interpret. The ISO catalogue also carries Part 2 (legal writing) and Part 3 (science and technical communication).
+- **[The International Plain Language Federation's definition and framework](https://www.iplfederation.org/iso-standard/)**, freely published, and the source of the four governing principles used here.
+- **[Plain Language Association International on the ISO standard](https://plainlanguage.com/what-is-plain-language/iso-plain-language-standard/)**, background on how the standard was drafted and what it covers.
+
+The ISO texts are licensed, so the standards themselves cost money. Everything in this repository is built from the freely published material above.
+
 ## What the engine reads
 
 A rule can only be as right as the text it reads. So the engine parses
