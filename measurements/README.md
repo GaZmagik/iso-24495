@@ -59,6 +59,11 @@ python measurements/analyse-implementations.py measurements/implementations/clau
 
 Between them the first two print every figure the article quotes.
 
+`article-figures.py` prints the preregistered outcomes as a three-arm table, with the range beside
+every median. It was extended to do that after a reviewer found the article reporting medians
+alone, and never reporting the primary outcome at all. The third command summarises one arm and
+rounds its medians, so it is the wrong place to check a figure like 26.5.
+
 `article-figures.py` scores each run with `analyse-implementations.py`'s own `score` rather than
 measuring anything itself. A second definition of "named unit" would disagree with the article
 by a little. A script that reads as a check while contradicting what it checks is worse than no

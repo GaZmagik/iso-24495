@@ -91,7 +91,8 @@ def report_shape():
 
 def report_named_files():
     print("\nTHE FILES THE ARTICLE NAMES")
-    for tool, arm, run in [("claude", "control", 8), ("claude", "code", 2)]:
+    # control-7 is the run the code figure shows, so its line number is printed here too.
+    for tool, arm, run in [("claude", "control", 7), ("claude", "control", 8), ("claude", "code", 2)]:
         path = os.path.join(IMPLEMENTATIONS, tool, f"{arm}-{run}", "evaluate.ts")
         if not os.path.isfile(path):
             continue
@@ -108,10 +109,46 @@ def report_openings():
     print("  Run: bun measurements/count-review-replies.ts")
 
 
+def summarise(values):
+    """A median with its range beside it, which the preregistration requires."""
+    median = statistics.median(values)
+    shown = f"{median:.1f}".rstrip("0").rstrip(".")
+    return f"{shown} [{min(values)} to {max(values)}]"
+
+
+def report_preregistered():
+    """Every preregistered outcome, all three arms, with the ranges the medians need.
+
+    Wrapper structure is the primary outcome and was the one prediction made in advance. The
+    report_shape summary above rounds its medians and prints comment lines as a total, so
+    neither it nor the analyser could produce the exact figures the article quotes. A median
+    without its range also makes overlapping distributions look separated, which is the thing
+    the range exists to prevent: named units run 9 to 15 in two of the three arms.
+    """
+    print("\nPREREGISTERED OUTCOMES, CLAUDE, MEDIAN [RANGE] ACROSS TEN RUNS")
+    measures = [("named units", "units"), ("longest own unit", "longest_own"),
+                ("comment lines", "comments"), ("file lines", "length")]
+    columns = {}
+    for label, arm in ARMS:
+        rows = [row for _, _, row in scored("claude", arm)]
+        if not rows:
+            continue
+        columns[label] = {"wrapper files (primary)": f"{sum(1 for r in rows if r['wrapper'])} of 10"}
+        for name, key in measures:
+            columns[label][name] = summarise([row[key] for row in rows])
+    if not columns:
+        return
+    labels = [label for label, _ in ARMS if label in columns]
+    print(f"  {'outcome':24s}" + "".join(f"{label:>20s}" for label in labels))
+    for name in ["wrapper files (primary)"] + [name for name, _ in measures]:
+        print(f"  {name:24s}" + "".join(f"{columns[label][name]:>20s}" for label in labels))
+
+
 if __name__ == "__main__":
     if not os.path.isdir(IMPLEMENTATIONS):
         sys.exit(f"no implementations found at {IMPLEMENTATIONS}")
     report_positions()
     report_shape()
+    report_preregistered()
     report_named_files()
     report_openings()
