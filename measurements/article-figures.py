@@ -110,10 +110,14 @@ def report_openings():
 
 
 def summarise(values):
-    """A median with its range beside it, which the preregistration requires."""
+    """A median with its range beside it, which the preregistration requires.
+
+    The parentheses match the table the article already prints, so a reader comparing the two
+    sees the same string rather than the same number in a different dress.
+    """
     median = statistics.median(values)
     shown = f"{median:.1f}".rstrip("0").rstrip(".")
-    return f"{shown} [{min(values)} to {max(values)}]"
+    return f"{shown} ({min(values)} to {max(values)})"
 
 
 def report_preregistered():
@@ -125,7 +129,7 @@ def report_preregistered():
     without its range also makes overlapping distributions look separated, which is the thing
     the range exists to prevent: named units run 9 to 15 in two of the three arms.
     """
-    print("\nPREREGISTERED OUTCOMES, CLAUDE, MEDIAN [RANGE] ACROSS TEN RUNS")
+    print("\nPREREGISTERED OUTCOMES, CLAUDE, MEDIAN (RANGE) ACROSS TEN RUNS")
     measures = [("named units", "units"), ("longest own unit", "longest_own"),
                 ("comment lines", "comments"), ("file lines", "length")]
     columns = {}
