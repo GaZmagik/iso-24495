@@ -66,6 +66,20 @@ interface StyleViolation {
   rule: string;
 }
 
+/**
+ * Whether a path holds preserved evidence rather than this project's own writing.
+ *
+ * The measurement artefacts are verbatim output from three models, the task those models were
+ * given, and a preregistration written before the runs. Editing any of them to pass these checks
+ * would destroy what they are for, so they are held to the record rather than to the house style.
+ */
+function isPreservedArtefact(relativePath: string): boolean {
+  return relativePath.startsWith("measurements/review-replies/")
+    || relativePath.startsWith("measurements/implementations/")
+    || relativePath.startsWith("measurements/task/")
+    || relativePath === "measurements/PREREGISTRATION.md";
+}
+
 function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -230,9 +244,12 @@ describe("repository writing conventions", () => {
     );
 
     // No historical exemption. The changelog's date separators carry no
-    // meaning, so they were normalised too and the rule covers everything.
+    // meaning, so they were normalised too and the rule covers everything this
+    // project wrote. A model's own dashes in a preserved reply are its writing,
+    // not ours, and normalising them would make the quotation untrue.
     const violations = files.flatMap((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
+      if (isPreservedArtefact(relativePath)) return [];
       return /[\u2013\u2014]/.test(readFileSync(path, "utf8")) ? [relativePath] : [];
     });
     expect(violations).toEqual([]);
@@ -313,7 +330,9 @@ describe("repository writing conventions", () => {
   test("all repository documents pass the shared audit", () => {
     const markdownFiles = repositoryTextFiles().filter((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
-      return isAuditedDocument(path) && !relativePath.includes("/tests/fixtures/");
+      return isAuditedDocument(path)
+        && !relativePath.includes("/tests/fixtures/")
+        && !isPreservedArtefact(relativePath);
     });
     expect(markdownFiles.length).toBeGreaterThanOrEqual(15);
     expect(markdownFiles).toContain(join(REPOSITORY_ROOT, "README.md"));
@@ -334,7 +353,9 @@ describe("repository writing conventions", () => {
   test("TypeScript follows the mechanically checkable style rules", () => {
     const typescriptFiles = repositoryTextFiles().filter((path) => {
       const relativePath = relative(REPOSITORY_ROOT, path).replaceAll("\\", "/");
-      return path.endsWith(".ts") && !relativePath.includes("/tests/fixtures/");
+      return path.endsWith(".ts")
+        && !relativePath.includes("/tests/fixtures/")
+        && !isPreservedArtefact(relativePath);
     });
     expect(typescriptFiles.length).toBeGreaterThanOrEqual(10);
     expect(typescriptFiles).toContain(

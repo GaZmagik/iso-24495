@@ -1,0 +1,15 @@
+import { expect, test } from "bun:test";
+import { evaluate } from "./evaluate";
+const ok=(e:string,v:number)=>test(e,()=>expect(evaluate(e)).toBeCloseTo(v,9));
+ok("1+2",3); ok("2*3+4",10); ok("4+2*3",10); ok("(4+2)*3",18);
+ok("10-2-3",5); ok("100/5/2",10); ok("7%3",1); ok("2^3^2",512);
+ok("-2^2",-4); ok("(-2)^2",4); ok("-(3+4)",-7); ok("+5",5);
+ok(" 2.5 * 4 ",10); ok(".5+.5",1); ok("10.",10); ok("2*-3",-6);
+ok("((1+2)*(3+4))",21); ok("2^-1",0.5);
+test("trailing operator",()=>{try{evaluate("2 +");throw new Error("no throw")}catch(e:any){expect(e).toBeInstanceOf(SyntaxError);expect(e.message).toMatch(/ at position 3$/)}});
+test("unclosed paren",()=>{try{evaluate("(1 + 2");throw new Error("no throw")}catch(e:any){expect(e).toBeInstanceOf(SyntaxError);expect(e.message).toMatch(/ at position 6$/)}});
+test("unexpected paren",()=>{try{evaluate("1 + )");throw new Error("no throw")}catch(e:any){expect(e).toBeInstanceOf(SyntaxError);expect(e.message).toMatch(/ at position 4$/)}});
+test("empty",()=>{try{evaluate("");throw new Error("no throw")}catch(e:any){expect(e).toBeInstanceOf(SyntaxError);expect(e.message).toMatch(/ at position 0$/)}});
+test("bad char",()=>{try{evaluate("1 $ 2");throw new Error("no throw")}catch(e:any){expect(e).toBeInstanceOf(SyntaxError);expect(e.message).toMatch(/ at position 2$/)}});
+test("div zero",()=>{expect(()=>evaluate("1/0")).toThrow(RangeError)});
+test("mod zero",()=>{expect(()=>evaluate("1%0")).toThrow(RangeError)});
