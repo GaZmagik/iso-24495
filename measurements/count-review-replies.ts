@@ -23,11 +23,17 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-/** The engine that produced these figures, at tag v0.6.0. */
+/**
+ * The engine that produced these figures, at tag v0.6.0.
+ *
+ * These are the bytes a clone receives, with line feeds. The first set recorded here was taken
+ * from a working copy whose line endings Git had rewritten on checkout, so it matched one
+ * machine and would have failed for every reader. `.gitattributes` now stops that rewriting.
+ */
 const ENGINE: Record<string, string> = {
-  "parse.ts": "e33664bb35ba6f2822733fb7fcfaf331161820210f9a108fb7f121ae5b2a4903",
-  "lexicon.ts": "775387bc90d83f37d8e32a1f6c37d335be894d60c4816ae16a315c2f5337a2a9",
-  "types.ts": "dfe2787ff18237d92796b6e24d9b4677388160dfb5f7bcf3db1ae5233886098a",
+  "parse.ts": "aeb969bab6e72324a0bbffad19cd8ecd1c40ab59bfd25c85e1ff3773032d14bb",
+  "lexicon.ts": "84e7bce47649a8e693893a0fc711b24c9a2a635d27220494d7b943bf1224f7bc",
+  "types.ts": "c2921931b57feab7900e8a1e9677dec536f9c75924ed6a81d7f41a65fdc358b6",
 };
 
 /** The saved replies, so a changed input cannot pass as the measured one either. */
