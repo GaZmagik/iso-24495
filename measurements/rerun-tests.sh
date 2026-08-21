@@ -20,12 +20,20 @@
 #   negative finding: the first version of this script reported no failures across ninety runs
 #   that had never executed.
 #
-#   It reads bun's EXIT STATUS, captured before the output is filtered. A reviewer showed that
-#   the third version could be given a false pass: an implementation that prints ` 25 pass` and
-#   ` 0 fail` of its own accord satisfied the text check, while bun exited 1 having failed all
-#   25 tests. These implementations are model-generated code that this script executes, so their
-#   output is not trustworthy. The status is bun's own and the forged text cannot reach it.
-#   Piping bun into sed hid that status, because a pipeline reports its LAST command.
+#   It reads bun's EXIT STATUS, captured before the output is filtered, AND requires the junit
+#   report bun writes after the run. Two false passes were demonstrated against earlier versions.
+#   One printed ` 25 pass` and ` 0 fail` of its own accord while bun exited 1 having failed all
+#   25 tests. The next called `process.exit(0)` during import, so bun exited 0 before any test
+#   ran. The report answers both, because bun writes it only after the run completes.
+#   Piping bun into sed hid the status, because a pipeline reports its LAST command.
+#
+# WHAT THIS DOES NOT DO. It reproduces fixed, published inputs. It is not a sandbox for hostile
+# code. An implementation determined to lie shares this process and could forge any marker inside
+# it; only process isolation and an outside witness would settle that. None of the ninety files
+# published here contains a `process.exit`, an `exitCode`, a console call or a runtime API, which
+# is checkable rather than asserted. The same goes for the tools themselves: a forged `bun` on
+# the path could fake everything above, and hashing it from inside the same environment would
+# prove nothing. This script trusts its shell, its bun and its operating system.
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -40,6 +48,40 @@ fi
 
 trap 'rm -rf "$SCRATCH"' EXIT
 mkdir -p "$SCRATCH"
+
+# One run's verdict, so the loop below and the test that attacks this predicate exercise the
+# same code. A test that reimplements the check proves only that the copy agrees with itself.
+check_run() {
+  local directory="$1"
+  local out status report
+  out=$(cd "$directory" && bun test ./hidden.test.ts \
+    --reporter=junit --reporter-outfile=result.xml 2>&1)
+  status=$?
+  # bun colours its summary, so the escape codes are stripped before anything is read.
+  out=$(printf '%s' "$out" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
+  report="$directory/result.xml"
+  CHECK_OUTPUT="$out"
+  CHECK_STATUS="$status"
+  [ "$status" -eq 0 ] && [ -f "$report" ] \
+    && grep -q 'tests="25"' "$report" \
+    && grep -q 'failures="0"' "$report" \
+    && grep -q 'skipped="0"' "$report"
+}
+
+# `rerun-tests.sh --check-one <directory>` judges one prepared directory and says so. The
+# directory must already hold evaluate.ts and hidden.test.ts.
+if [ "${1:-}" = "--check-one" ]; then
+  if [ -z "${2:-}" ] || [ ! -d "$2" ]; then
+    echo "usage: rerun-tests.sh --check-one <directory>"
+    exit 2
+  fi
+  if check_run "$2"; then
+    echo "PASS"
+    exit 0
+  fi
+  echo "FAIL (bun exited $CHECK_STATUS)"
+  exit 1
+fi
 
 total=0
 passed=0
@@ -58,27 +100,22 @@ for tool in claude codex gemini; do
       mkdir -p "$directory"
       cp "$source_file" "$directory/evaluate.ts"
       cp "$HARNESS" "$directory/hidden.test.ts"
-      # bun's status is captured BEFORE the output is filtered. Piping into sed would report
-      # sed's status instead, and the text alone can be forged by the code under test.
-      out=$(cd "$directory" && bun test ./hidden.test.ts 2>&1)
-      status=$?
-      # bun colours its summary, so the escape codes are stripped before anything is counted.
-      out=$(printf '%s' "$out" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
       total=$((total + 1))
-      if [ "$status" -eq 0 ] \
-        && printf '%s' "$out" | grep -qE "^ 25 pass" \
-        && printf '%s' "$out" | grep -qE "^ 0 fail"; then
+      if check_run "$directory"; then
         passed=$((passed + 1))
       else
         failed="$failed $run"
-        echo "--- $run did not pass: bun exited $status ---"
-        printf '%s\n' "$out" | grep -E "pass|fail|error" | head -4
+        echo "--- $run did not pass: bun exited $CHECK_STATUS ---"
+        [ -f "$directory/result.xml" ] \
+          || echo "    no result.xml: the tests did not run to completion"
+        printf '%s\n' "$CHECK_OUTPUT" | grep -E "pass|fail|error" | head -4
       fi
     done
   done
 done
 
 echo
+echo "bun $(bun --version)"
 echo "RERAN:  $total"
 echo "PASSED: $passed"
 echo "FAILED:${failed:- none}"
