@@ -1,0 +1,4 @@
+interface:
+  display_name: "ISO 24495 Plain Language in Code"
+  short_description: "Write code a person can read: entry point first, names, comments, error messages"
+  default_prompt: "Use $iso-24495-code when writing or restructuring source, so the public entry point comes first and the names, comments and error messages serve the reader."

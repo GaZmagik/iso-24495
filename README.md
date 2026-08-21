@@ -1,6 +1,6 @@
 # ISO 24495 Plain Language Skills
 
-Six [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
+Seven [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
 
 The skills are plain `SKILL.md` files with agent-neutral wording. Any tool that reads the Agent Skills format can use them.
 
@@ -15,11 +15,12 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms. |
 | `iso-24495-4` | **Organisational implementation (provisional).** A task skill for plain language gap analysis in organisations: a process-artefact sweep, a corpus audit, a five-dimension maturity model with deterministic scoring, and an append-only audit trend. Ships TypeScript tooling run with [Bun](https://bun.sh) (`bun test` covered). Based on the unpublished ISO/CD 24495-4 committee draft. |
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: visual hierarchy, navigation aids, tables for comparisons, consistent visual signalling. Based on the unpublished ISO/WD 24495-5 working draft. |
+| `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
 
 The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. The text audit never activates automatically.
 
-All skills exempt internal reasoning and preserve code blocks, commands, and logs untouched. Technical and legal accuracy always supersede formatting rules.
+All skills exempt internal reasoning. The writing skills preserve code blocks, commands, and logs untouched; `iso-24495-code` is the exception, because governing code is its subject. Technical and legal accuracy always supersede formatting rules.
 
 ## Installation (Claude Code)
 
@@ -105,6 +106,16 @@ The principles derive from the International Plain Language Federation's freely 
 
 Nothing this plugin produces is a statement of ISO conformance. No certification scheme exists for ISO 24495. "Aligned" in the skills means aligned with this project's interpretation, nothing more.
 
+## Reference
+
+Read the standard rather than this project's reading of it.
+
+- **[ISO 24495-1:2023, Plain language, Part 1: Governing principles and guidelines](https://www.iso.org/standard/78907.html)**, the published standard these skills interpret. The ISO catalogue also carries Part 2 (legal writing) and Part 3 (science and technical communication).
+- **[The International Plain Language Federation's definition and framework](https://www.iplfederation.org/iso-standard/)**, freely published, and the source of the four governing principles used here.
+- **[Plain Language Association International on the ISO standard](https://plainlanguage.com/what-is-plain-language/iso-plain-language-standard/)**, background on how the standard was drafted and what it covers.
+
+The ISO texts are licensed, so the standards themselves cost money. Everything in this repository is built from the freely published material above.
+
 ## What the engine reads
 
 A rule can only be as right as the text it reads. So the engine parses
@@ -185,7 +196,7 @@ That is deliberate. A plain language project that exempts itself has no claim on
 
 ## Roadmap
 
-All six skills and the output style ship in v0.5.0. What remains:
+All seven skills and the output style ship in v0.6.0. What remains:
 
 - **When ISO publishes Part 4:** revise the provisional `iso-24495-4` skill against the published text. Its committee-draft text is not public, so the current maturity model is original guidance.
 - **When ISO publishes Part 5:** revise the provisional `iso-24495-5` skill against the published text.

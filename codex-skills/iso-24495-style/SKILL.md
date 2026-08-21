@@ -2,7 +2,7 @@
 name: iso-24495-style
 description: Hold every response to the ISO 24495 plain-language rules, and route to the sector skills. Codex has no output style, so these rules are a skill.
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # ISO 24495 Response Style

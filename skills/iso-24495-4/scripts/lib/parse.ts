@@ -650,20 +650,6 @@ function tickRun(text: string, start: number): number {
   return end - start;
 }
 
-function closingTicks(text: string, start: number, length: number): number {
-  let index = start;
-  while (index < text.length) {
-    if (text[index] !== "`") {
-      index++;
-      continue;
-    }
-    const run = tickRun(text, index);
-    if (run === length) return index;
-    index += run;
-  }
-  return -1;
-}
-
 /** Remove only inline markup that CommonMark keeps out of rendered text. */
 function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = false): string {
   let visible = "";
@@ -676,9 +662,11 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
     }
     if (text[index] === "`") {
       const length = tickRun(text, index);
-      const closing = closingTicks(text, index + length, length);
-      if (closing !== -1) {
-        const end = closing + length;
+      // The shared index knows where every span ends. Searching the rest of the text for
+      // each unmatched run was quadratic: 10,000 backticks cost 4.6 seconds.
+      const end = codeSpanEnds(text).get(index);
+      if (end !== undefined) {
+        const closing = end - length;
         const span = text.slice(index, end);
         if (keepLiteralSyntax) {
           visible += span;
@@ -692,6 +680,11 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
         index = end;
         continue;
       }
+      // An unmatched run is literal text. Emitting one character and looking again made
+      // the next backtick rescan the rest of the run, which cost 4.6 seconds at 10,000.
+      visible += text.slice(index, index + length);
+      index += length;
+      continue;
     }
     if (text[index] !== "<") {
       visible += text[index];
@@ -734,16 +727,260 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
   return visible;
 }
 
+const BACKSLASH = "\\";
+const NEWLINE = "\n";
+
+function countLines(text: string): number {
+  return text.split(NEWLINE).length;
+}
+
+/**
+ * Keep the label, and keep the line count.
+ *
+ * A link destination or title may hold a line ending. Deleting it with the rest of the
+ * markup moved every later sentence in the block one line up, so a finding pointed at an
+ * innocent line. The removed text always follows the label, so the endings go on the end.
+ */
+function keepLines(whole: string, kept: string): string {
+  const removed = countLines(whole) - countLines(kept);
+  return removed > 0 ? kept + NEWLINE.repeat(removed) : kept;
+}
+
+/**
+ * Where each "[" meets its partner, matched in one pass.
+ *
+ * Scanning forward from every bracket for a partner that may not exist would be quadratic,
+ * and generated Markdown can hold a hundred thousand of them. A bracket behind a backslash
+ * is literal text and takes no part.
+ */
+function bracketPartners(text: string): Map<number, number> {
+  const ends = codeSpanEnds(text);
+  const partners = new Map<number, number>();
+  const open: number[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] === BACKSLASH) {
+      index += 2;
+      continue;
+    }
+    // A bracket inside a code span is content. Counting it took the label's own closing
+    // bracket and corrupted the text a reader sees. The moves here mirror the other two
+    // scanners over this text, so a third one cannot drift from them.
+    if (text[index] === "`") {
+      const closing = ends.get(index);
+      index = closing === undefined ? index + tickRun(text, index) : closing;
+      continue;
+    }
+    if (text[index] === "[") open.push(index);
+    else if (text[index] === "]") {
+      const start = open.pop();
+      if (start !== undefined) {
+        partners.set(start, index);
+        // CommonMark allows a square bracket inside a destination, where it is not
+        // label structure. Counting it let a destination close a label that opened
+        // before the link, and the link vanished from every rule.
+        if (text[index + 1] === "(") {
+          const paren = text.indexOf(")", index + 2);
+          if (paren !== -1) {
+            index = paren + 1;
+            continue;
+          }
+        }
+      }
+    }
+    index += 1;
+  }
+  return partners;
+}
+
+/** A link or image found in the text, with the offsets it occupies. */
+export interface MarkdownLink {
+  start: number;
+  end: number;
+  image: boolean;
+  label: string;
+  target: string;
+  kind: "inline" | "reference" | "shortcut";
+  /**
+   * Whether a reader meets this as an element in its own right.
+   *
+   * What sits inside an image's alt text contributes words to that alt and is never
+   * rendered separately, so the rules pass over it while the text still reads it.
+   */
+  rendered: boolean;
+}
+
+/**
+ * Every link and image in the text, in the order they appear.
+ *
+ * One scan serves the flattener and every rule that reads links, so they cannot disagree
+ * about where a link is. Each caller keeps its own filter, because the rules and the
+ * flattener genuinely differ: an empty label is a finding for one and not a link for the
+ * other.
+ *
+ * Reading each link with its own pattern was quadratic, because a label pattern scans to
+ * the end of the text from every "[" and then gives the ground back one character at a
+ * time. Ten thousand unmatched brackets cost about nine seconds across the rules.
+ *
+ * Two boundaries are unchanged: a destination still ends at the first ")", and a label
+ * still ends at its matching "]" rather than at a nested link.
+ */
+export function markdownLinks(text: string): MarkdownLink[] {
+  const partners = bracketPartners(text);
+  const ends = codeSpanEnds(text);
+  const links: MarkdownLink[] = [];
+  // Where to carry on from, once the label being read inside comes to an end.
+  const resume = new Map<number, number>();
+  // The ends of the alt texts currently being read inside, innermost last.
+  const withinAlt: number[] = [];
+  let index = 0;
+  let noClosingParen = false;
+  while (index < text.length) {
+    const onwards = resume.get(index);
+    if (onwards !== undefined) {
+      index = onwards;
+      continue;
+    }
+    if (text[index] === BACKSLASH) {
+      index += 2;
+      continue;
+    }
+    if (text[index] === "`") {
+      const closing = ends.get(index);
+      index = closing === undefined ? index + tickRun(text, index) : closing;
+      continue;
+    }
+    while (withinAlt.length > 0 && (withinAlt.at(-1) as number) <= index) withinAlt.pop();
+    const rendered = withinAlt.length === 0;
+    const image = text[index] === "!" && text[index + 1] === "[";
+    const opens = image ? index + 1 : index;
+    const closes = text[opens] === "[" ? partners.get(opens) : undefined;
+    if (closes === undefined) {
+      index += 1;
+      continue;
+    }
+    const label = text.slice(opens + 1, closes);
+    const after = text[closes + 1];
+
+    if (after === "(" && !noClosingParen) {
+      const paren = text.indexOf(")", closes + 2);
+      // Once no ")" remains, none remains for any later link either.
+      if (paren === -1) noClosingParen = true;
+      else {
+        links.push({
+          start: index,
+          end: paren + 1,
+          image,
+          label,
+          target: text.slice(closes + 2, paren),
+          kind: "inline",
+          rendered,
+        });
+        // Read on inside a link label, because CommonMark allows an image there and
+        // jumping past the whole thing hid it from every rule. The destination is
+        // stepped over when the label ends, so nothing is read twice. A link inside a
+        // link label is a separate matter: CommonMark resolves those to the innermost
+        // link alone, and this scan reports both, which is a stated limitation.
+        // An image's alt text is read for the words it contributes, but nothing inside
+        // it is an element in its own right, so the rules are told to pass over it.
+        if (image) withinAlt.push(closes);
+        resume.set(closes, paren + 1);
+        index = opens + 1;
+        continue;
+      }
+    }
+
+    if (after === "[") {
+      const targetEnd = partners.get(closes + 1);
+      if (targetEnd !== undefined) {
+        links.push({
+          start: index,
+          end: targetEnd + 1,
+          image,
+          label,
+          target: text.slice(closes + 2, targetEnd),
+          kind: "reference",
+          rendered,
+        });
+        // A reference link carries a label too, and a linked badge is written this way.
+        if (image) withinAlt.push(closes);
+        resume.set(closes, targetEnd + 1);
+        index = opens + 1;
+        continue;
+      }
+    }
+
+    // A label followed by "(" or "[" is a link whose other half is malformed, and reads
+    // as literal text, exactly as the patterns this replaced concluded.
+    if (after !== "(" && after !== "[") {
+      links.push({ start: index, end: closes + 1, image, label, target: "", kind: "shortcut", rendered });
+      index = closes + 1;
+      continue;
+    }
+    index += 1;
+  }
+  return links;
+}
+
+/** Where a link's label begins, past the "[" and any "!" before it. */
+function labelStart(link: MarkdownLink): number {
+  return link.start + (link.image ? 2 : 1);
+}
+
+/** The label a reader sees in place of a link, or the link untouched where it stays. */
+function flattenedLink(
+  link: MarkdownLink,
+  whole: string,
+  label: string,
+  references?: ReadonlySet<string>,
+): string {
+  // An empty label is still a link, and a reader sees nothing where it stands. Leaving it
+  // as written counted its destination and title as prose. The rule that reports a link
+  // with no text reads the source lines, so it is unaffected.
+  if (link.kind === "inline") return keepLines(whole, label);
+  const named = link.kind === "reference" ? link.target || link.label : link.label;
+  return references?.has(normaliseReference(named)) ? keepLines(whole, label) : whole;
+}
+
+/**
+ * Replace every link and image with the label a reader sees.
+ *
+ * A label may hold a link or an image of its own, so the labels are closed with a stack
+ * rather than by reading each one again from the start. Every character is then read
+ * once, however deeply the text nests.
+ */
+function flattenLinks(text: string, references?: ReadonlySet<string>): string {
+  const open: Array<{ link: MarkdownLink; label: string }> = [];
+  let flattened = "";
+  let at = 0;
+  const write = (fragment: string): void => {
+    const inner = open.at(-1);
+    if (inner === undefined) flattened += fragment;
+    else inner.label += fragment;
+  };
+  const close = (): void => {
+    const inner = open.pop() as { link: MarkdownLink; label: string };
+    inner.label += text.slice(at, labelStart(inner.link) + inner.link.label.length);
+    at = inner.link.end;
+    write(flattenedLink(inner.link, text.slice(inner.link.start, at), inner.label, references));
+  };
+  for (const link of markdownLinks(text)) {
+    while (open.length > 0) {
+      const inner = open.at(-1) as { link: MarkdownLink; label: string };
+      if (link.start < labelStart(inner.link) + inner.link.label.length) break;
+      close();
+    }
+    write(text.slice(at, link.start));
+    at = labelStart(link);
+    open.push({ link, label: "" });
+  }
+  while (open.length > 0) close();
+  return flattened + text.slice(at);
+}
+
+
 function visibleText(text: string, references?: ReadonlySet<string>): string {
-  return visibleInline(text)
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (whole, alt: string, label: string) =>
-      references?.has(normaliseReference(label || alt)) ? alt : whole)
-    .replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (whole, label: string, target: string) =>
-      references?.has(normaliseReference(target || label)) ? label : whole)
-    .replace(/(?<![!\]])\[([^\]]+)\](?![\[(])/g, (whole, label: string) =>
-      references?.has(normaliseReference(label)) ? label : whole);
+  return flattenLinks(visibleInline(text), references);
 }
 
 /** Collect prose paragraphs: what a reader reads as sentences. */
@@ -804,8 +1041,21 @@ const SINGLE_INITIAL = /^[^A-Za-z]*[A-Z]\.$/;
 
 export type Boundary = "merge" | "split" | "ambiguous";
 
+const WHITESPACE = /\s/;
+
+/**
+ * The last whitespace-separated token in the fragment.
+ *
+ * Read from the end rather than split, because a merged sentence grows with every
+ * boundary and splitting the whole of it again for each one cost the square of its
+ * length: 3,000 merged fragments took 0.4 seconds.
+ */
 function lastToken(fragment: string): string {
-  return fragment.trimEnd().split(/\s+/).at(-1) ?? "";
+  let end = fragment.length;
+  while (end > 0 && WHITESPACE.test(fragment[end - 1] as string)) end -= 1;
+  let start = end;
+  while (start > 0 && !WHITESPACE.test(fragment[start - 1] as string)) start -= 1;
+  return fragment.slice(start, end);
 }
 
 function bareWord(token: string): string {
@@ -813,13 +1063,32 @@ function bareWord(token: string): string {
 }
 
 /** Decide whether the stop between two fragments ends a sentence. */
+/**
+ * The text as a reader sees it, with each backslash escape resolved to its character.
+ *
+ * The same test the scanners use decides what an escape covers, so a token can never be
+ * classified as something the reader never sees.
+ */
+function rendered(text: string): string {
+  let visible = "";
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === BACKSLASH && ESCAPABLE.test(text[index + 1] ?? "")) index += 1;
+    visible += text[index];
+  }
+  return visible;
+}
+
 export function classifyBoundary(previous: string, next: string): Boundary {
-  const token = lastToken(previous);
+  // `**e.g.**` is the same abbreviation as `e.g.`, so the closing markup comes off
+  // before the token is read. Leaving it on hid the stop and split the sentence.
+  // An escape renders as the bare character, so `e.g.\)` is the same abbreviation
+  // as `e.g.)`. Reading the source token left a backslash on the end and hid it.
+  const token = rendered(lastToken(previous)).replace(/[*_`"'’”)\]}]+$/, "");
   if (!token.endsWith(".")) return "split";
   const word = bareWord(token);
   // Only the first word of the next fragment carries evidence. Reading the
   // whole fragment made every test match something somewhere.
-  const nextToken = next.trimStart().split(/\s+/)[0] ?? "";
+  const nextToken = rendered(next.trimStart().split(/\s+/)[0] ?? "");
   const nextWord = nextToken.replace(/[^A-Za-z]/g, "").toLowerCase();
   const nextIsCapitalised = /^[^A-Za-z]*[A-Z]/.test(nextToken);
   const nextIsLowercaseName = LOWERCASE_NAMES.has(nextToken.replace(/[^A-Za-z0-9]/g, ""));
@@ -867,21 +1136,186 @@ export function classifyBoundary(previous: string, next: string): Boundary {
   return "split";
 }
 
-function segment(text: string, ambiguous: "merge" | "split"): string[] {
-  const sentences: string[] = [];
-  for (const fragment of text.split(/(?<=[.!?])\s+/)) {
+/** Markup that can close after a sentence ends, as in `**Lead in.**` or `("Done.")`. */
+const CLOSING_MARKUP = new Set(["*", "_", "`", '"', "'", "’", "”", ")", "]", "}"]);
+const TERMINATOR = new Set([".", "!", "?"]);
+
+/** The last text asked about, because a block is read by many rules in turn. */
+let spanCacheText: string | null = null;
+let spanCacheEnds: Map<number, number> | null = null;
+
+/**
+ * Where each code span ends, keyed by where it opens.
+ *
+ * Every backtick run is collected in one pass, then each opener takes the next unused run
+ * of its own length. Searching the remaining text per run was quadratic: an audit of
+ * 10,000 backticks took 5.4 seconds.
+ *
+ * CommonMark reads escapes left to right, so a backslash stops a run from opening a span.
+ * Once a span is open the search for its closer ignores backslashes, which is why an
+ * escaped run is collected here rather than discarded: it can still close.
+ */
+function codeSpanEnds(text: string): Map<number, number> {
+  if (spanCacheText === text && spanCacheEnds !== null) return spanCacheEnds;
+  const runs: Array<{ start: number; length: number; escaped: boolean }> = [];
+  // Counted forward rather than looked up behind each run, because a long backslash
+  // run before every backtick would make the lookup quadratic.
+  let backslashes = 0;
+  for (let index = 0; index < text.length; ) {
+    if (text[index] === "\\") {
+      backslashes += 1;
+      index += 1;
+      continue;
+    }
+    if (text[index] === "`") {
+      const length = tickRun(text, index);
+      runs.push({ start: index, length, escaped: backslashes % 2 === 1 });
+      backslashes = 0;
+      index += length;
+      continue;
+    }
+    backslashes = 0;
+    index += 1;
+  }
+  const byLength = new Map<number, number[]>();
+  runs.forEach((run, position) => {
+    const list = byLength.get(run.length);
+    if (list === undefined) byLength.set(run.length, [position]);
+    else list.push(position);
+  });
+  const cursors = new Map<number, number>();
+  const ends = new Map<number, number>();
+  let position = 0;
+  while (position < runs.length) {
+    const run = runs[position] as { start: number; length: number; escaped: boolean };
+    // An escaped backslash consumes the first backtick only, so a longer run still
+    // opens a span, one backtick shorter and one offset later.
+    const openLength = run.escaped ? run.length - 1 : run.length;
+    const openStart = run.escaped ? run.start + 1 : run.start;
+    if (openLength === 0) {
+      position += 1;
+      continue;
+    }
+    const candidates = byLength.get(openLength) ?? [];
+    let cursor = cursors.get(openLength) ?? 0;
+    while (cursor < candidates.length && (candidates[cursor] as number) <= position) cursor += 1;
+    cursors.set(openLength, cursor);
+    if (cursor >= candidates.length) {
+      position += 1;
+      continue;
+    }
+    const closing = runs[candidates[cursor] as number] as { start: number; length: number };
+    ends.set(openStart, closing.start + closing.length);
+    position = (candidates[cursor] as number) + 1;
+  }
+  spanCacheText = text;
+  spanCacheEnds = ends;
+  return ends;
+}
+
+/**
+ * Whether a stop is still standing after this character.
+ *
+ * A terminator starts one, closing markup leaves it alone, and anything else ends it.
+ * Shared with the escape branch so an escaped character and a plain one cannot drift.
+ */
+function readTerminatorState(character: string, terminated: boolean): boolean {
+  if (TERMINATOR.has(character)) return true;
+  return CLOSING_MARKUP.has(character) ? terminated : false;
+}
+
+/**
+ * Where each sentence boundary starts, as a span of whitespace to drop.
+ *
+ * One forward pass, so a long run of closing markup costs what it should. A regex with a
+ * variable-length lookbehind rescanned that run instead, and 25,000 markers took two
+ * seconds. A closed code span is skipped whole, because a span in backticks is a term
+ * being named and its punctuation belongs to the name. An unmatched run is ordinary text
+ * and leaves the sentence before it alone.
+ */
+function boundarySpans(text: string): Array<{ at: number; length: number }> {
+  const ends = codeSpanEnds(text);
+  const spans: Array<{ at: number; length: number }> = [];
+  let terminated = false;
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index] as string;
+    if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1] as string)) {
+      // The escape renders as the bare character, so the reader sees a terminator or a
+      // closing marker and the state must follow it. Clearing the state outright was
+      // right only for an escaped backtick, and it lost every other boundary.
+      terminated = readTerminatorState(text[index + 1] as string, terminated);
+      index += 2;
+      continue;
+    }
+    if (character === "`") {
+      const closing = ends.get(index);
+      if (closing === undefined) {
+        // Not a span at all, so the run is literal and the stop before it still stands.
+        index += tickRun(text, index);
+        continue;
+      }
+      terminated = false;
+      index = closing;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      let end = index;
+      while (end < text.length && /\s/.test(text[end] as string)) end++;
+      if (terminated) spans.push({ at: index, length: end - index });
+      terminated = false;
+      index = end;
+      continue;
+    }
+    terminated = readTerminatorState(character, terminated);
+    index += 1;
+  }
+  return spans;
+}
+
+/** A sentence and where it starts in the text it came from. */
+export interface LocatedSentence {
+  text: string;
+  start: number;
+}
+
+function segment(text: string, ambiguous: "merge" | "split"): LocatedSentence[] {
+  const fragments: LocatedSentence[] = [];
+  let from = 0;
+  for (const span of boundarySpans(text)) {
+    fragments.push({ text: text.slice(from, span.at), start: from });
+    from = span.at + span.length;
+  }
+  fragments.push({ text: text.slice(from), start: from });
+
+  const sentences: LocatedSentence[] = [];
+  for (const fragment of fragments) {
     const previous = sentences.at(-1);
     if (previous !== undefined) {
-      const verdict = classifyBoundary(previous, fragment);
+      const verdict = classifyBoundary(previous.text, fragment.text);
       const decided = verdict === "ambiguous" ? ambiguous : verdict;
       if (decided === "merge") {
-        sentences[sentences.length - 1] = `${previous} ${fragment}`;
+        previous.text = `${previous.text} ${fragment.text}`;
         continue;
       }
     }
-    sentences.push(fragment);
+    sentences.push({ ...fragment });
   }
-  return sentences.map((s) => s.trim()).filter((s) => s.length > 0);
+  return sentences
+    .map((sentence) => {
+      const leading = sentence.text.length - sentence.text.trimStart().length;
+      return { text: sentence.text.trim(), start: sentence.start + leading };
+    })
+    .filter((sentence) => sentence.text.length > 0);
+}
+
+/**
+ * Each sentence with the offset it starts at. Callers that need to report a line use
+ * this, rather than rebuilding the sentence as a regular expression to find it again.
+ * That rebuild threw `regular expression too large` on a long enough sentence.
+ */
+export function locateSentences(text: string): LocatedSentence[] {
+  return segment(text, "split");
 }
 
 /**
@@ -890,7 +1324,7 @@ function segment(text: string, ambiguous: "merge" | "split"): string[] {
  * sentence into a violation.
  */
 export function splitSentences(text: string): string[] {
-  return segment(text, "split");
+  return segment(text, "split").map((sentence) => sentence.text);
 }
 
 /**
@@ -899,7 +1333,7 @@ export function splitSentences(text: string): string[] {
  * manufacture an extra sentence.
  */
 export function mergedSentences(text: string): string[] {
-  return segment(text, "merge");
+  return segment(text, "merge").map((sentence) => sentence.text);
 }
 
 export function wordCount(sentence: string): number {

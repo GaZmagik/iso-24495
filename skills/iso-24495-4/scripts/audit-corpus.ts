@@ -6,11 +6,12 @@ import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  markdownLinks,
   mergedSentences,
   normaliseReference,
   readerProseBlocks,
   readDocument,
-  splitSentences,
+  locateSentences,
   wordCount,
 } from "./lib/parse.ts";
 import {
@@ -200,9 +201,43 @@ export function configHash(
   return hash.toString(16).padStart(8, "0");
 }
 
-function lineAtOffset(blockLine: number, text: string, offset: number): number {
-  return blockLine + (text.slice(0, offset).match(/\n/g)?.length ?? 0);
+/** The last text asked about, because one block reports many findings in turn. */
+let lineCacheText: string | null = null;
+let lineCacheEnds: number[] | null = null;
+
+function lineEnds(text: string): number[] {
+  if (lineCacheText === text && lineCacheEnds !== null) return lineCacheEnds;
+  const ends: number[] = [];
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
+    ends.push(at);
+  }
+  lineCacheText = text;
+  lineCacheEnds = ends;
+  return ends;
 }
+
+/**
+ * The line an offset falls on, counted from the block's first line.
+ *
+ * The line endings are collected once and searched, because slicing the text from its
+ * start for every finding grew with the square of the block: 4,000 long sentences in one
+ * paragraph cost 10.8 seconds.
+ */
+function lineAtOffset(blockLine: number, text: string, offset: number): number {
+  const ends = lineEnds(text);
+  let low = 0;
+  let high = ends.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((ends[middle] as number) < offset) low = middle + 1;
+    else high = middle;
+  }
+  return blockLine + low;
+}
+
+// The shape the scan looks for admits at most six initials once its dots are removed, so
+// no more than six preceding words can ever spell one.
+const LONGEST_ACRONYM = 6;
 
 function acronymFromToken(raw: string): { display: string; key: string } | null {
   let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’\)\]}>,:;!?]+$/, "");
@@ -213,8 +248,27 @@ function acronymFromToken(raw: string): { display: string; key: string } | null 
   return { display: token, key };
 }
 
+function isLetter(character: string | undefined): boolean {
+  return character !== undefined && /[A-Za-z]/.test(character);
+}
+
+/**
+ * The token with its surrounding punctuation removed, keeping a trailing full stop
+ * because an acronym may be written "U.S.".
+ *
+ * Scanned from each end rather than trimmed with an anchored alternation, which retried
+ * the suffix at every position: one token of 100,000 markers cost about ten seconds.
+ */
+function lettersOnly(raw: string): string {
+  let start = 0;
+  while (start < raw.length && !isLetter(raw[start])) start += 1;
+  let end = raw.length;
+  while (end > start && !isLetter(raw[end - 1]) && raw[end - 1] !== ".") end -= 1;
+  return raw.slice(start, end);
+}
+
 function isAllCaps(raw: string): boolean {
-  const stripped = raw.replace(/^[^A-Za-z]+|[^A-Za-z.]+$/g, "");
+  const stripped = lettersOnly(raw);
   return ACRONYM_SHAPE.test(stripped) || /^[A-Z]{2,}$/.test(stripped);
 }
 
@@ -300,6 +354,43 @@ function expansionInitials(text: string): string {
     .join("");
 }
 
+/**
+ * What the bracket after an acronym spells, or null where nothing does.
+ *
+ * The bracket must open a token, no more than two tokens after the acronym, which is what
+ * the pattern this replaced allowed. The span then runs to the first token holding a
+ * closing bracket. A span carrying a different number of words from the key cannot spell
+ * it, and is refused without being read, which is what keeps a long one cheap.
+ */
+function expansionSpelling(
+  tokens: ReadonlyArray<{ raw: string }>,
+  from: number,
+  want: number,
+  carried: ReadonlyArray<number>,
+  initials: ReadonlyArray<string>,
+  nextClose: ReadonlyArray<number>,
+): string | null {
+  let open = -1;
+  const window = Math.min(from + ENGINE_THRESHOLDS.acronymDefinitionWindow, tokens.length);
+  for (let at = from; at < window; at++) {
+    if ((tokens[at] as { raw: string }).raw.startsWith("(")) {
+      open = at;
+      break;
+    }
+  }
+  if (open === -1) return null;
+  const close = nextClose[open] ?? tokens.length;
+  if (close >= tokens.length) return null;
+  const opener = (tokens[open] as { raw: string }).raw;
+  if (open === close) return expansionInitials(opener.slice(1, opener.indexOf(")")));
+  const closer = (tokens[close] as { raw: string }).raw;
+  const first = expansionInitials(opener.slice(1));
+  const last = expansionInitials(closer.slice(0, closer.indexOf(")")));
+  const between = (carried[close] as number) - (carried[open + 1] as number);
+  if (first.length + between + last.length !== want) return null;
+  return first + initials.slice(carried[open + 1], carried[close]).join("") + last;
+}
+
 function acronymViolations(text: string, known: ReadonlySet<string>): Violation[] {
   const violations: Violation[] = [];
   const defined = new Set<string>();
@@ -308,12 +399,21 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
   const document = readDocument(text);
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
-    for (const match of document.lines[i].matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
+    // Only the last few words before a parenthesis can spell the acronym inside it, so
+    // they are carried forward rather than recovered by slicing the line from its start
+    // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
+    const sourceLine = document.lines[i] as string;
+    const recent: string[] = [];
+    let scanned = 0;
+    for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");
-      const words = document.lines[i].slice(0, match.index).match(/[A-Za-z]+/g) ?? [];
-      const meaningful = words.filter((word) =>
-        !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word));
-      if (expansionInitials(meaningful.slice(-key.length).join(" ")) !== key) continue;
+      for (const word of sourceLine.slice(scanned, match.index).match(/[A-Za-z]+/g) ?? []) {
+        if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
+        recent.push(word);
+        if (recent.length > LONGEST_ACRONYM) recent.shift();
+      }
+      scanned = match.index;
+      if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
       if (!definitionLocations.has(key)) {
         definitionLocations.set(key, { line: i + 1, column: match.index });
       }
@@ -327,6 +427,23 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         column: match.index,
       })),
     );
+    // The words that carry an initial, in order, and how many precede each token. An
+    // expansion is judged against these rather than against the text it came from.
+    const carried: number[] = new Array(tokens.length + 1);
+    const initials: string[] = [];
+    carried[0] = 0;
+    for (let at = 0; at < tokens.length; at++) {
+      initials.push(...expansionInitials((tokens[at] as { raw: string }).raw));
+      carried[at + 1] = initials.length;
+    }
+
+    // The first token at or after each position that holds a closing bracket, built once
+    // for the block so no acronym has to search forward for one.
+    const nextClose: number[] = new Array(tokens.length);
+    for (let at = tokens.length - 1, closing = tokens.length; at >= 0; at--) {
+      if ((tokens[at] as { raw: string }).raw.includes(")")) closing = at;
+      nextClose[at] = closing;
+    }
     const shouted = shoutedPositions(tokens);
     for (let i = 0; i < tokens.length; i++) {
       const acronym = acronymFromToken(tokens[i].raw);
@@ -335,16 +452,13 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
         continue;
       }
-      const following = tokens.slice(i + 1).map((token) => token.raw).join(" ");
-      const opening = tokens
-        .slice(i + 1, i + 1 + ENGINE_THRESHOLDS.acronymDefinitionWindow)
-        .findIndex((token) => token.raw.includes("("));
-      const expansion = opening === -1
-        ? null
-        : /^\s*(?:\S+\s+){0,2}\(([^)]*)\)/.exec(following)?.[1] ?? null;
-      const parenthesisFollows = opening !== -1
-        && expansion !== null
-        && expansionInitials(expansion) === acronym.key;
+      // The expansion has to spell the key exactly, so a span carrying a different number
+      // of words that begin with a letter is refused before it is read. Reading each one
+      // was quadratic: 8,000 acronyms cost 8.8 seconds, and a document of discounted words
+      // defeated a guard that only refused spans carrying too many.
+      const expansion = expansionSpelling(tokens, i + 1, acronym.key.length, carried,
+        initials, nextClose);
+      const parenthesisFollows = expansion === acronym.key;
       if (parenthesisFollows) {
         defined.add(acronym.key);
         continue;
@@ -443,13 +557,27 @@ function linkTextViolations(text: string): Violation[] {
   const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
-    // Skip image syntax: the alt-text rule owns that.
-    for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\(([^)]+)\)/g)) {
-      const label = match[1].trim();
+    // One scan serves all three forms. Reading each with its own pattern was quadratic:
+    // a label pattern scans to the end of the line from every "[" and then gives the
+    // ground back one character at a time.
+    for (const link of markdownLinks(lines[i] as string)) {
+      // Skip image syntax: the alt-text rule owns that, and anything inside an alt
+      // text, which a reader never meets as a link of its own.
+      if (link.image || !link.rendered) continue;
+      const label = link.label.trim();
       const spoken = spokenText(label);
-      const target = match[2].trim();
       const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
+      let target = link.target.trim();
+      if (link.kind === "inline") {
+        if (target.length === 0) continue;
+      } else {
+        // A reference names its destination, and a bare label names its own.
+        target = link.kind === "reference" ? target || label : label;
+        if (!references.has(normaliseReference(target))) continue;
+      }
       if (spoken.length === 0) {
+        // A shortcut reference with no text is not a link at all.
+        if (link.kind === "shortcut") continue;
         violations.push({
           rule: "link-text",
           line: i + 1,
@@ -463,47 +591,26 @@ function linkTextViolations(text: string): Violation[] {
         });
       }
     }
-    for (const match of lines[i].matchAll(/(?<!!)\[([^\]]*)\]\[([^\]]*)\]/g)) {
-      const label = match[1].trim();
-      const spoken = spokenText(label);
-      const target = match[2].trim() || label;
-      if (!references.has(normaliseReference(target))) continue;
-      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
-      if (spoken.length === 0) {
-        violations.push({ rule: "link-text", line: i + 1, detail: "link has no text; say where it goes" });
-      } else if (UNINFORMATIVE_LINK.test(spoken) || bare) {
-        violations.push({
-          rule: "link-text",
-          line: i + 1,
-          detail: `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
-        });
-      }
-    }
-    for (const match of lines[i].matchAll(/(?<![!\]])\[([^\]]+)\](?![\[(])/g)) {
-      const label = match[1].trim();
-      if (!references.has(normaliseReference(label))) continue;
-      const spoken = spokenText(label);
-      const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
-      if (!UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
-      violations.push({
-        rule: "link-text",
-        line: i + 1,
-        detail: `link text "${spoken}" describes no destination (${label.slice(0, 40)})`,
-      });
-    }
   }
   const markup = markupLines.join("\n");
-  for (const match of markup.matchAll(/(?<!!)\[([^\]]*\n[^\]]*)\]\(([^)\n]+)\)/g)) {
-    if (/\n[ \t]*\n/.test(match[0])) continue;
-    const spoken = spokenText(match[1]);
+  // A link whose label runs over a line ending. The same scan finds it, filtered to the
+  // labels that hold one.
+  for (const link of markdownLinks(markup)) {
+    if (link.image || link.kind !== "inline" || !link.rendered) continue;
+    if (!link.label.includes("\n")) continue;
+    const target = link.target.trim();
+    if (target.length === 0 || link.target.includes("\n")) continue;
+    const whole = markup.slice(link.start, link.end);
+    if (/\n[ \t]*\n/.test(whole)) continue;
+    const spoken = spokenText(link.label);
     const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineAtOffset(1, markup, link.start),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
-        : `link text "${spoken}" describes no destination (${match[2].trim().slice(0, 40)})`,
+        : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
     });
   }
   for (const match of markup.matchAll(HTML_ANCHOR)) {
@@ -532,27 +639,21 @@ function imageAltViolations(text: string): Violation[] {
   const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
-    for (const match of lines[i].matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
-      const alt = match[1].trim();
-      if (alt.length > 0) continue;
-      // "decorative" as the title marks an image that carries no meaning.
-      // A filename containing the word does not express that decision.
-      if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(match[2])) continue;
+    // One scan finds both image forms, filtered to the ones with no alternative text.
+    for (const link of markdownLinks(lines[i] as string)) {
+      if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
+      if (link.label.trim().length > 0) continue;
+      const target = link.target.trim();
+      if (link.kind === "inline") {
+        if (target.length === 0) continue;
+        // "decorative" as the title marks an image that carries no meaning.
+        // A filename containing the word does not express that decision.
+        if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(link.target)) continue;
+      } else if (!references.has(normaliseReference(target))) continue;
       violations.push({
         rule: "image-alt",
         line: i + 1,
-        detail: `image has no alternative text (${match[2].slice(0, 40)})`,
-      });
-    }
-    for (const match of lines[i].matchAll(/!\[([^\]]*)\]\[([^\]]*)\]/g)) {
-      const alt = match[1].trim();
-      if (alt.length > 0) continue;
-      const target = match[2].trim() || alt;
-      if (!references.has(normaliseReference(target))) continue;
-      violations.push({
-        rule: "image-alt",
-        line: i + 1,
-        detail: `image has no alternative text (${target.slice(0, 40)})`,
+        detail: `image has no alternative text (${(link.kind === "inline" ? link.target : target).slice(0, 40)})`,
       });
     }
   }
@@ -781,24 +882,18 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   const mergedLengths: number[] = [];
   for (const block of readerProseBlocks(text)) {
     const paragraph = block.lines.join("\n");
-    const sentences = splitSentences(paragraph);
-    let searchAt = 0;
-    for (const sentence of sentences) {
-      const words = wordCount(sentence);
+    // The splitter reports where each sentence starts, so nothing needs locating twice.
+    // Rebuilding a sentence as a regular expression threw on a long one.
+    for (const sentence of locateSentences(paragraph)) {
+      const words = wordCount(sentence.text);
       if (words > 0) sentenceLengths.push(words);
-      const pattern = new RegExp(
-        sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"),
-      );
-      const found = pattern.exec(paragraph.slice(searchAt));
-      const start = searchAt + (found?.index ?? 0);
       if (words > SENTENCE_WORD_LIMIT) {
         violations.push({
           rule: "sentence-length",
-          line: lineAtOffset(block.line, paragraph, start),
+          line: lineAtOffset(block.line, paragraph, sentence.start),
           detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
         });
       }
-      searchAt = start + (found?.[0].length ?? sentence.length);
     }
     // Counted from the fewest sentences the paragraph can hold. An unresolved
     // full stop must never manufacture the sentence that breaks the limit.
