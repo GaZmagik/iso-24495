@@ -1,41 +1,43 @@
-#!/bin/bash
-# A record of what was run, not a script to run. Running this file does nothing: the body below
-# is a quoted here-document, so no line of it is executed.
+# A record of what was run, not a script to run.
 #
-# It carries the paths the battery used, with the home directory written as <home>. An earlier
-# version of this directory published the body directly. Bash read <home> as input redirection,
-# left BASE empty, and turned the rm -rf inside into one aimed at the root of the filesystem.
-: <<'END OF RECORD'
-BASE=<home>/.agent-runs/codestyle-codex
-LOG=$BASE/run.log
-SRC=<home>/.claude/jobs/7035b099/tmp/t3
-export CODEX_HOME=<home>/.claude/jobs/7035b099/tmp/cxhome
-Q="Read SPEC.md in this directory and implement it. Do not use any tools to write files. Output the complete contents of evaluate.ts in one TypeScript code block."
-{
-  echo "codex battery start $(date '+%H:%M:%S')  30 runs, model gpt-5.6-sol, isolated CODEX_HOME"
-  fails=0
-  for i in $(seq 1 10); do
-    for arm in control style code; do
-      d="$BASE/$arm-$i"
-      rm -rf "$d"; mkdir -p "$d"
-      cp "$SRC/hard/SPEC.md" "$d/"
-      [ "$arm" = style ] && cp "$SRC/style-body.md" "$d/AGENTS.md"
-      [ "$arm" = code ]  && cp "$SRC/style-plus-code.md" "$d/AGENTS.md"
-      ( cd "$d" && timeout 280 codex exec --skip-git-repo-check -m gpt-5.6-sol "$Q" < /dev/null ) > "$d/reply.md" 2>&1
-      if py -3 "$BASE/extract.py" "$d/reply.md" "$d/evaluate.ts"; then
-        cp "$SRC/hard/hidden.test.ts" "$d/"
-        ( cd "$d" && timeout 120 bun test hidden.test.ts 2>&1 | sed 's/\x1b\[[0-9;]*m//g' ) > "$d/tests.txt"
-        pass=$(grep -oE "[0-9]+ pass" "$d/tests.txt" | head -1 | grep -oE "^[0-9]+")
-        echo "  $(date '+%H:%M:%S')  $arm-$i  ok  tests=${pass:-0}/25"
-      else
-        fails=$((fails+1))
-        echo "  $(date '+%H:%M:%S')  $arm-$i  NO CODE BLOCK"
-      fi
-    done
-    echo "-- round $i of 10 complete --"
-  done
-  echo "codex battery end $(date '+%H:%M:%S'), runs with no code block: $fails"
-  py -3 "$BASE/analyse.py"
-} > "$LOG" 2>&1
-echo "EXIT:$?" >> "$LOG"
-END OF RECORD
+# Every line below is a comment, so nothing here can execute under any shell. Two weaker
+# attempts came before this one. A warning comment did not stop `bash runners/claude.sh`, and
+# the redaction left `BASE` empty, which turned the `rm -rf` inside into one aimed at the root.
+# Wrapping the body in a here-document fed to `:` was then defeated by aliasing `:` before
+# sourcing the file.
+#
+# The paths are the ones the battery used, with the home directory written as <home>.
+#
+# BASE=<home>/.agent-runs/codestyle-codex
+# LOG=$BASE/run.log
+# SRC=<home>/.claude/jobs/7035b099/tmp/t3
+# export CODEX_HOME=<home>/.claude/jobs/7035b099/tmp/cxhome
+# Q="Read SPEC.md in this directory and implement it. Do not use any tools to write files. Output the complete contents of evaluate.ts in one TypeScript code block."
+# {
+#   echo "codex battery start $(date '+%H:%M:%S')  30 runs, model gpt-5.6-sol, isolated CODEX_HOME"
+#   fails=0
+#   for i in $(seq 1 10); do
+#     for arm in control style code; do
+#       d="$BASE/$arm-$i"
+#       rm -rf "$d"; mkdir -p "$d"
+#       cp "$SRC/hard/SPEC.md" "$d/"
+#       [ "$arm" = style ] && cp "$SRC/style-body.md" "$d/AGENTS.md"
+#       [ "$arm" = code ]  && cp "$SRC/style-plus-code.md" "$d/AGENTS.md"
+#       ( cd "$d" && timeout 280 codex exec --skip-git-repo-check -m gpt-5.6-sol "$Q" < /dev/null ) > "$d/reply.md" 2>&1
+#       if py -3 "$BASE/extract.py" "$d/reply.md" "$d/evaluate.ts"; then
+#         cp "$SRC/hard/hidden.test.ts" "$d/"
+#         ( cd "$d" && timeout 120 bun test hidden.test.ts 2>&1 | sed 's/\x1b\[[0-9;]*m//g' ) > "$d/tests.txt"
+#         pass=$(grep -oE "[0-9]+ pass" "$d/tests.txt" | head -1 | grep -oE "^[0-9]+")
+#         echo "  $(date '+%H:%M:%S')  $arm-$i  ok  tests=${pass:-0}/25"
+#       else
+#         fails=$((fails+1))
+#         echo "  $(date '+%H:%M:%S')  $arm-$i  NO CODE BLOCK"
+#       fi
+#     done
+#     echo "-- round $i of 10 complete --"
+#   done
+#   echo "codex battery end $(date '+%H:%M:%S'), runs with no code block: $fails"
+#   py -3 "$BASE/analyse.py"
+# } > "$LOG" 2>&1
+# echo "EXIT:$?" >> "$LOG"
+#

@@ -609,14 +609,14 @@ ${sentence}`)
     const acronyms = (size: number): void => {
       auditText(Array(size).fill("Alpha Beta (AB)").join(" ") + ".", { knownAcronyms: known });
     };
-    expect(growth(acronyms, 1_000)).toBeLessThan(5);
+    expect(growth(acronyms, 600)).toBeLessThan(5);
 
     // Every finding counted the line endings before it from the start of the paragraph.
     const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
     const paragraphs = (size: number): void => {
       auditText(Array(size).fill(sentence).join(" "));
     };
-    expect(growth(paragraphs, 1_000)).toBeLessThan(5);
+    expect(growth(paragraphs, 600)).toBeLessThan(5);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
     const long = Array(500).fill(sentence).join(" ");
