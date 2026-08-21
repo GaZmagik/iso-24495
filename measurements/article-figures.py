@@ -89,6 +89,30 @@ def report_shape():
                       f"25 of 25 in {passed} of {total}")
 
 
+def report_across_arms():
+    """The cross-tool figures the article quotes in prose, over all thirty files of a tool.
+
+    Every other report here is per arm, so the aggregates the article uses when it compares one
+    tool with another could not be produced from this script at all. A reader had to take them on
+    trust, which is the fault this file exists to remove. The Gemini median is 64.5 rather than 65
+    because its middle two values are 64 and 65.
+    """
+    print("\nACROSS ALL THIRTY FILES OF EACH TOOL")
+    for tool in TOOLS:
+        longest, comments = [], []
+        for _, arm in ARMS:
+            for _, _, row in scored(tool, arm):
+                longest.append(row["longest_own"])
+                comments.append(row["comments"])
+        if not longest:
+            continue
+        with_comments = sum(1 for count in comments if count)
+        print(f"  {tool:7s} {len(longest):2d} files  "
+              f"longest own unit {summarise(longest):18s}  "
+              f"comment lines {sum(comments):3d} across {with_comments:2d} files, "
+              f"median {statistics.median(comments):g}")
+
+
 def report_named_files():
     print("\nTHE FILES THE ARTICLE NAMES")
     # control-7 is the run the code figure shows, so its line number is printed here too.
@@ -171,5 +195,6 @@ if __name__ == "__main__":
     report_positions()
     report_shape()
     report_preregistered()
+    report_across_arms()
     report_named_files()
     report_openings()
