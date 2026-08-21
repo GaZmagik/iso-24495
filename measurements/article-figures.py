@@ -6,7 +6,7 @@ Run it from the repository root:
 
 The prose counts come from count-review-replies.ts, which pins the parser and the replies by
 content. This script prints everything else: the entry positions, the unit and length medians,
-the comment counts, the test totals, and the two files the article names.
+the comment counts, the test totals, and the files the article names.
 
 It scores each run with `score` from analyse-implementations.py rather than measuring anything
 itself. A second definition of "named unit" or "file length" would disagree with the article by
@@ -121,31 +121,48 @@ def summarise(values):
 
 
 def report_preregistered():
-    """Every preregistered outcome, all three arms, with the ranges the medians need.
+    """The preregistered outcomes, all three arms, with the ranges the medians need.
 
-    Wrapper structure is the primary outcome and was the one prediction made in advance. The
-    report_shape summary above rounds its medians and prints comment lines as a total, so
+    The five are wrapper structure as the primary outcome, then named units, longest own unit,
+    comment lines and hidden tests. File length is printed below them and marked, because it is
+    not one of them: a table that mixes the two silently turns an exploratory measure into a
+    confirmatory one.
+
+    The report_shape summary above rounds its medians and prints comment lines as a total, so
     neither it nor the analyser could produce the exact figures the article quotes. A median
     without its range also makes overlapping distributions look separated, which is the thing
     the range exists to prevent: named units run 9 to 15 in two of the three arms.
     """
     print("\nPREREGISTERED OUTCOMES, CLAUDE, MEDIAN (RANGE) ACROSS TEN RUNS")
     measures = [("named units", "units"), ("longest own unit", "longest_own"),
-                ("comment lines", "comments"), ("file lines", "length")]
+                ("comment lines", "comments")]
     columns = {}
     for label, arm in ARMS:
-        rows = [row for _, _, row in scored("claude", arm)]
+        rows = list(scored("claude", arm))
         if not rows:
             continue
-        columns[label] = {"wrapper files (primary)": f"{sum(1 for r in rows if r['wrapper'])} of 10"}
+        scores = [row for _, _, row in rows]
+        column = {"wrapper files (primary)": f"{sum(1 for r in scores if r['wrapper'])} of 10"}
         for name, key in measures:
-            columns[label][name] = summarise([row[key] for row in rows])
+            column[name] = summarise([row[key] for row in scores])
+        passed = 0
+        for _, directory, _ in rows:
+            tests = os.path.join(directory, "tests.txt")
+            if os.path.isfile(tests):
+                found = PASSES.search(open(tests, encoding="utf-8", errors="replace").read())
+                if found and found.group(1) == "25":
+                    passed += 1
+        column["passed 25 of 25"] = f"{passed} of {len(rows)}"
+        column["file lines (not preregistered)"] = summarise([row["length"] for row in scores])
+        columns[label] = column
     if not columns:
         return
     labels = [label for label, _ in ARMS if label in columns]
-    print(f"  {'outcome':24s}" + "".join(f"{label:>20s}" for label in labels))
-    for name in ["wrapper files (primary)"] + [name for name, _ in measures]:
-        print(f"  {name:24s}" + "".join(f"{columns[label][name]:>20s}" for label in labels))
+    order = (["wrapper files (primary)"] + [name for name, _ in measures]
+             + ["passed 25 of 25", "file lines (not preregistered)"])
+    print(f"  {'outcome':31s}" + "".join(f"{label:>20s}" for label in labels))
+    for name in order:
+        print(f"  {name:31s}" + "".join(f"{columns[label][name]:>20s}" for label in labels))
 
 
 if __name__ == "__main__":
