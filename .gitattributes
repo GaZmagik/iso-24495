@@ -1,0 +1,8 @@
+# The measurement pin hashes these files byte for byte, and a published figure is only
+# reproducible if a clone gets the same bytes. Git rewrites line endings on checkout by
+# default, which would make every recorded hash fail on a fresh clone, so conversion is
+# turned off for the evidence and for the parser the evidence was measured with.
+measurements/** -text
+skills/iso-24495-4/scripts/lib/parse.ts -text
+skills/iso-24495-4/scripts/lib/lexicon.ts -text
+skills/iso-24495-4/scripts/lib/types.ts -text
