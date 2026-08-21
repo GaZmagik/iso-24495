@@ -12,8 +12,9 @@ the data they read.
 | Path | What it holds |
 |---|---|
 | `count-review-replies.ts` | Counts the prose in the six code-review replies |
-| `analyse-implementations.py` | Scores the ninety implementations |
-| `article-figures.py` | Prints every implementation figure the article quotes |
+| `score.ts` | Measures one implementation from a TypeScript syntax tree |
+| `analyse-implementations.ts` | Summarises one battery, arm by arm |
+| `article-figures.ts` | Prints every implementation figure the article quotes |
 | `rerun-tests.sh` | Reruns the 25 hidden tests against all ninety implementations |
 | `rerun-tests.txt` | What that rerun printed |
 | `superseded/` | The earlier draft of the article, the one its corrections are about |
@@ -55,11 +56,16 @@ use than a script that looks runnable and is not.
 From the repository root:
 
 ```
+bun install
 bun measurements/count-review-replies.ts
-python measurements/article-figures.py
-python measurements/analyse-implementations.py measurements/implementations/claude Claude
+bun measurements/article-figures.ts
+bun measurements/analyse-implementations.ts measurements/implementations/claude Claude
 bash measurements/rerun-tests.sh
 ```
+
+`bun install` is new. The scripts used to run with no setup, and now they pin a TypeScript
+parser, because measuring TypeScript by matching lines kept failing. The lockfile is
+committed, so the parser version is fixed rather than whatever is current.
 
 Between them the first two print every measured figure the article quotes. Four kinds of claim
 are checked another way, and saying so is the point:
@@ -75,38 +81,64 @@ are checked another way, and saying so is the point:
   shorter reply drops four minor observations, are readings rather than measurements. No script
   produces them. The six replies are in `review-replies/`, so a reader can disagree with me.
 
-`article-figures.py` prints the preregistered outcomes as a three-arm table, with the range beside
+`article-figures.ts` prints the preregistered outcomes as a three-arm table, with the range beside
 every median. It was extended to do that after a reviewer found the article reporting medians
-alone, and never reporting the primary outcome at all. The third command summarises one arm and
-rounds its medians, so it is the wrong place to check a figure like 26.5.
+alone, and never reporting the primary outcome at all.
 
-`article-figures.py` scores each run with `analyse-implementations.py`'s own `score` rather than
-measuring anything itself. A second definition of "named unit" would disagree with the article
-by a little. A script that reads as a check while contradicting what it checks is worse than no
-script at all.
+Both scripts measure with `score.ts` rather than defining anything themselves. A second
+definition of "named unit" would disagree with the article by a little. A script that reads as
+a check while contradicting what it checks is worse than no script at all.
 
 ## What "named unit" was taken to mean
 
-The preregistration says "top-level functions, top-level arrow constants, and class methods". Two
-readings of that were left to the code until a reviewer asked, so they are written down here.
+**The preregistration defines the term twice, and not identically.** A reviewer found this, and it
+is the sort of thing only a reader coming to the document cold would notice.
 
-- **A constructor counts as a class method.** It is a named member of the class and the wording
-  does not exclude it. Excluding it would take one unit off every file that has one, which is most
-  of them, and would not change any comparison.
-- **An arrow constant counts whether its body is a block or an expression**, and a declaration
-  counts whether or not its parameters fit on one line.
+- The primary-outcome section says: "A named unit is a function declaration, a class method, or a
+  const arrow function." It puts no restriction on where the unit sits. It cannot, because a file
+  is wrapper-style when three or more of its named units are declared *inside another function*.
+- The secondary-outcome section says: "Top-level functions, top-level arrow constants, and class
+  methods." That reading excludes closures.
 
-Those last two were not decisions at first. They were blind spots: the scorer matched one line at
-a time, so `const peek = (): string => text.charAt(at);` and any declaration whose parameters
-wrapped were invisible. Ten units across six of the ninety files went uncounted.
+`score.ts` follows the first, which is the only place the document sets out to define the term, and
+the only reading under which the primary outcome means anything. Under the second reading the
+Claude medians would be 11.5, 12 and 15 rather than 12, 13 and 15. The direction is the same. A
+reader who prefers that reading can run the scorer and see.
 
-Correcting it left the primary outcome untouched, at 3, 3 and 1 wrapper files. Four other figures
-moved. The prose-style median for named units went from 12.5 to 13, and that arm's longest own
-unit from 27 to 26.5. Two range floors rose by one.
+Two further judgements the wording leaves open:
 
-`tests/scorer.test.ts` now holds the scorer to these definitions on hand-counted fixtures, one per
-construct. It runs in the repository gate. It cannot prove the hand counts match what the
-preregistration meant, which is why the readings above are stated rather than left implied.
+- **A constructor counts as a class method.** It is a named member of the class and nothing
+  excludes it. Excluding it would take one unit off most files and change no comparison.
+- **An object-literal method does not.** The wording names class methods, and an object literal is
+  not a class.
+
+## Why this is a parse and not a pattern
+
+The scorer used to match declarations with line-anchored regular expressions. Three reviews in a
+row each found another construct it could not see:
+
+1. An arrow whose body is an expression, so `const peek = (): string => text.charAt(at);` was
+   invisible. Seven of these existed in the corpus.
+2. A declaration whose parameters wrap onto the next line. Three of these.
+3. A method with type parameters, `read<T>(value: T)`. Two of these.
+
+Each was repaired on its own and the next round found the next one. It now reads a TypeScript
+syntax tree, so the class of defect is closed rather than narrowed. That is what `bun install`
+buys.
+
+It is also why the scripts are no longer in Python. The gate runs `bun test`, so the one
+measurement written in another language sat outside it by construction, and went untested for as
+long as it existed.
+
+Correcting all of it left the **primary outcome untouched**, at 3, 3 and 1 wrapper files, and
+unchanged in all nine arms across the three tools. Of ninety files, three measure differently from
+the last regex version and six from the original. The published figures that moved are the
+prose-style median for named units, from 12.5 to 13, and two range floors by one.
+
+`tests/scorer.test.ts` holds the scorer to these definitions on hand-counted fixtures, one per
+construct above, including a wrapped call that must not count as a declaration. It runs in the
+repository gate. It cannot prove the hand counts match what the preregistration meant, which is
+why the readings above are stated rather than left implied.
 
 One wart is worth knowing. The entry-position ratio divides by a line count that includes the
 empty element a trailing newline produces, so it is a hundredth or so low. It is left alone

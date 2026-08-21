@@ -1,55 +1,35 @@
 /**
- * Hold `score()` to the preregistration's written definitions, on hand-counted fixtures.
+ * Hold the scorer to the preregistration's definitions, on hand-counted fixtures.
  *
- * The scorer produced every implementation figure in the article, and until now nothing checked
- * it. That was not an oversight of attention but of language: the gate runs `bun test`, and the
- * scorer is the only measurement written in Python, so it sat outside the gate by construction.
+ * The scorer produced every implementation figure in the article, and for a long time nothing
+ * checked it. That was not an oversight of attention but of language: the gate runs `bun test`,
+ * and the scorer was the only measurement written in Python, so it sat outside the gate by
+ * construction.
  *
- * A reviewer then found that its line-anchored patterns could not see two constructs, and ten
- * genuine units across the ninety published files went uncounted. Each fixture below is a
- * construct that was, or could be, missed. The counts are worked out by hand from the
- * preregistration's wording, not read off the scorer, which is the only way a test like this
- * says anything the implementation does not already say about itself.
+ * It then failed three reviews in a row, each finding another construct its line-anchored regular
+ * expressions could not see: an arrow whose body is an expression, a declaration whose parameters
+ * wrap, and a method with type parameters. Every case below is one of those, or a case a reviewer
+ * used to show the repair had over-matched. The scorer now reads a TypeScript syntax tree, which
+ * is why patching the next construct is not the plan.
  *
- * What this cannot do: prove the hand counts match the preregistration's intent. That gap is
- * unreachable by any test. What narrows it is the decision recorded in the README, naming each
- * judgement the wording leaves open, with the constructor first among them.
+ * The counts are worked out by hand from the preregistration's wording, not read off the scorer,
+ * which is the only way a test like this says anything the implementation does not already say
+ * about itself.
+ *
+ * What this cannot do: prove the hand counts match what the preregistration meant. That gap is
+ * unreachable by any test. It is narrowed by the decision recorded in the README, which names
+ * each judgement the wording leaves open, starting with the constructor.
  */
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { score } from "../score";
 
-const MEASUREMENTS = join(import.meta.dir, "..");
-const SCORER = join(MEASUREMENTS, "analyse-implementations.py");
-
-/** Score one snippet by importing the published scorer, exactly as the figure scripts do. */
-function score(source: string): Record<string, number | boolean> {
-  const directory = mkdtempSync(join(tmpdir(), "iso-scorer-"));
-  try {
-    const file = join(directory, "evaluate.ts");
-    writeFileSync(file, source);
-    const program = [
-      "import importlib.util, json, sys",
-      `spec = importlib.util.spec_from_file_location('s', r'${SCORER}')`,
-      "m = importlib.util.module_from_spec(spec)",
-      "sys.argv = ['s', '', '']",
-      "spec.loader.exec_module(m)",
-      `print(json.dumps(m.score(r'${file}')))`,
-    ].join("\n");
-    const run = spawnSync("py", ["-3", "-c", program], { encoding: "utf8" });
-    return JSON.parse(`${run.stdout}`.trim());
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
+const scoreOf = (source: string) => score("case.ts", source);
 
 describe("the scorer against the preregistered definitions", () => {
-  test("a top-level function and each class method is one named unit", () => {
+  test("a top-level function and each class member is one named unit", () => {
     // One function, plus a constructor and two methods. The constructor counts as a class
     // method: a judgement the wording leaves open, recorded in the README.
-    const source = `export function evaluate(text: string): number {
+    expect(scoreOf(`export function evaluate(text: string): number {
   return new Parser(text).parse();
 }
 
@@ -64,54 +44,75 @@ class Parser {
     return 0;
   }
 }
-`;
-    expect(score(source).units).toBe(4);
+`).units).toBe(4);
   });
 
   test("an arrow constant counts whether its body is a block or an expression", () => {
-    // Requiring a block body hid two units in the published corpus.
-    const source = `const withBlock = (value: number): number => {
+    // Requiring a block body hid seven units in the published corpus.
+    expect(scoreOf(`const withBlock = (value: number): number => {
   return value + 1;
 };
 
 const withExpression = (value: number): number => value + 1;
-`;
-    expect(score(source).units).toBe(2);
+`).units).toBe(2);
+  });
+
+  test("a one-line arrow occupies one line", () => {
+    // Measuring a unit's span by brace depth gave a one-line arrow the following line as well,
+    // which moved a published figure. The parse knows where the node ends.
+    expect(scoreOf(`const peek = (): string => text.charAt(at);
+
+const other = (): string => text.charAt(at);
+`).longest_own).toBe(1);
   });
 
   test("a declaration whose parameters wrap is still one named unit", () => {
-    // `[^)]*` cannot cross a line ending, which hid three declarations in the corpus.
-    const source = `export function evaluate(
+    expect(scoreOf(`export function evaluate(
   text: string,
   strict: boolean,
 ): number {
   return 0;
 }
-`;
-    expect(score(source).units).toBe(1);
+`).units).toBe(1);
+  });
+
+  test("a method with type parameters is a named unit", () => {
+    // Two class methods in the published corpus were invisible for this reason alone.
+    expect(scoreOf(`class Parser {
+  read<T>(value: T): T {
+    return value;
+  }
+}
+`).units).toBe(1);
   });
 
   test("a call whose arguments wrap is not a declaration", () => {
-    // The mirror of the case above, and the reason the repair checks for a following brace.
-    // One published file calls `syntaxError(` across two lines; counting it would be wrong.
-    const source = `export function evaluate(text: string): number {
-  if (text === "") {
-    fail(
-      text.length,
-    );
-  }
+    // The mirror of the wrapped declaration, and one published file does exactly this.
+    expect(scoreOf(`export function evaluate(text: string): number {
+  fail(
+    text.length,
+  );
   return 0;
 }
 
 function fail(at: number): void {
   throw new SyntaxError(String(at));
 }
-`;
-    expect(score(source).units).toBe(2);
+`).units).toBe(2);
+  });
+
+  test("an object-literal method is not a class method", () => {
+    // The definition names class methods. An object literal is not a class.
+    expect(scoreOf(`const parser = {
+  read() {
+    return 1;
+  },
+};
+`).units).toBe(0);
   });
 
   test("control-flow keywords are never named units", () => {
-    const source = `export function evaluate(text: string): number {
+    expect(scoreOf(`export function evaluate(text: string): number {
   let total = 0;
   for (let i = 0; i < text.length; i += 1) {
     if (text[i] === "1") {
@@ -123,8 +124,7 @@ function fail(at: number): void {
   }
   return total;
 }
-`;
-    expect(score(source).units).toBe(1);
+`).units).toBe(1);
   });
 
   test("wrapper style means three or more units declared inside a function body", () => {
@@ -152,13 +152,13 @@ function fail(at: number): void {
   return first() + second() + third();
 }
 `;
-    expect(score(two).wrapper).toBe(false);
-    expect(score(three).wrapper).toBe(true);
+    expect(scoreOf(two).wrapper).toBe(false);
+    expect(scoreOf(three).wrapper).toBe(true);
   });
 
   test("a unit declared as a class member is not nested for the wrapper test", () => {
     // Members of a class are not closures, which is the distinction wrapper style draws.
-    const source = `export function evaluate(text: string): number {
+    expect(scoreOf(`export function evaluate(text: string): number {
   return new Parser(text).parse();
 }
 
@@ -174,13 +174,12 @@ class Parser {
     return 0;
   }
 }
-`;
-    expect(score(source).wrapper).toBe(false);
+`).wrapper).toBe(false);
   });
 
   test("longest own unit excludes the lines of the units nested inside it", () => {
     // `evaluate` spans 8 lines and encloses a 3-line function, so its own lines are 5.
-    const source = `export function evaluate(text: string): number {
+    expect(scoreOf(`export function evaluate(text: string): number {
   function inner(): number {
     return 1;
   }
@@ -188,19 +187,33 @@ class Parser {
   const b = 2;
   return inner() + a + b;
 }
+`).longest_own).toBe(5);
+  });
+
+  test("a doubly nested unit is subtracted once, not twice", () => {
+    // Only the outermost nested units are taken off, or the enclosing span goes negative.
+    const source = `export function outer(): number {
+  function middle(): number {
+    function inner(): number {
+      return 1;
+    }
+    return inner();
+  }
+  return middle();
+}
 `;
-    expect(score(source).longest_own).toBe(5);
+    // outer spans 9 lines and encloses middle, which spans 6. Its own lines are 3.
+    expect(scoreOf(source).longest_own).toBe(3);
   });
 
   test("comment lines count every line that opens or continues a comment", () => {
-    const source = `/**
+    expect(scoreOf(`/**
  * A description.
  */
 // A single line.
 export function evaluate(text: string): number {
   return 0;
 }
-`;
-    expect(score(source).comments).toBe(4);
+`).comments).toBe(4);
   });
 });
