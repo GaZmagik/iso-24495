@@ -104,10 +104,8 @@ def report_named_files():
 
 def report_openings():
     print("\nTHE TWO OPENINGS THE ARTICLE SHOWS")
-    print("  Counted by measurements/count-review-replies.ts, which pins the parser.")
-    print("  Without the rules: 68 words over two sentences of 11 and 57.")
-    print("  With them: 15 words in one sentence.")
-    print("  Their source is implementations/claude/control-*/reply.md and code-*/reply.md.")
+    print("  Measured by count-review-replies.ts, which holds the parser this project uses.")
+    print("  Run: bun measurements/count-review-replies.ts")
 
 
 if __name__ == "__main__":

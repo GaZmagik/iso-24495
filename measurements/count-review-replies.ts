@@ -49,6 +49,18 @@ const REPLIES: Record<string, string> = {
 const ARMS = ["control", "style"] as const;
 const RUNS = [1, 2, 3];
 
+/**
+ * The two openings the article prints side by side.
+ *
+ * They are counted here rather than quoted from memory, because this is the script that holds
+ * the parser. An earlier version stated them as constants in a script that could not measure
+ * them, and attributed them to this one, which reads only the review replies.
+ */
+const OPENINGS: Array<{ label: string; path: string }> = [
+  { label: "without the rules", path: "./implementations/claude/control-7/reply.md" },
+  { label: "with them", path: "./implementations/claude/code-2/reply.md" },
+];
+
 const engineDirectory = new URL("../skills/iso-24495-4/scripts/lib/", import.meta.url);
 const replyDirectory = new URL("./review-replies/", import.meta.url);
 
@@ -133,6 +145,19 @@ for (const arm of ARMS) {
     const values = rows.map((row) => row[measure]);
     console.log(`  ${measure}: median ${median(values)}, range ${range(values)}`);
   }
+}
+
+console.log("\nTHE TWO OPENINGS THE ARTICLE PRINTS");
+for (const opening of OPENINGS) {
+  const path = fileURLToPath(new URL(opening.path, import.meta.url));
+  // The opening is the prose before the code block, which is the first block a reader meets.
+  const text = readFileSync(path, "utf8").split("```")[0] as string;
+  const sentences = splitSentences(text).filter((s: string) => wordCount(s) > 0);
+  const total = sentences.reduce((sum: number, s: string) => sum + wordCount(s), 0);
+  const each = sentences.map((s: string) => wordCount(s)).join(" and ");
+  console.log(`  ${opening.label}: ${total} words in ${sentences.length} sentence`
+    + `${sentences.length === 1 ? "" : "s"} of ${each}`);
+  console.log(`    ${opening.path.replace("./", "")}`);
 }
 
 const off = counted.get("control") as Counted[];

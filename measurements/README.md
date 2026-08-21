@@ -17,7 +17,7 @@ the data they read.
 | `PREREGISTRATION.md` | What was to be measured, written before the runs |
 | `task/` | The specification given to each model, and the 25 tests it never saw |
 | `instructions/` | The two instruction files, one per treated arm |
-| `run-battery.sh` | The runner, including the exact prompt |
+| `runners/` | The three batteries as run, one per tool, including the exact prompt |
 | `run.log` | What the battery recorded as it went, including the one failure |
 | `review-replies/` | Six replies about one buggy React component, three per arm |
 | `implementations/` | Ninety replies, implementations and test outputs, thirty per tool |
@@ -35,7 +35,13 @@ difference between the arms" is checkable rather than asserted:
 f44cc2379f604526dfb547f08a63af789c9955d97eed45cfe901e953292143e2  instructions/style-and-code.md
 ```
 
-`run-battery.sh` shows how they were placed and what each model was asked.
+`runners/` shows how they were placed and what each model was asked, one script per tool.
+
+**Those scripts are a record, not a recipe.** They carry the paths the batteries actually used,
+with the home directory replaced, and they will not run here. An earlier version of this
+directory rewrote those paths to look runnable, which pointed a `rm -rf` at the published
+evidence: following the instructions would have deleted it. A record of what happened is more
+use than a script that looks runnable and is not.
 
 ## Running them
 
@@ -43,8 +49,21 @@ From the repository root:
 
 ```
 bun measurements/count-review-replies.ts
+python measurements/article-figures.py
 python measurements/analyse-implementations.py measurements/implementations/claude Claude
 ```
+
+Between them the first two print every figure the article quotes.
+
+`article-figures.py` scores each run with `analyse-implementations.py`'s own `score` rather than
+measuring anything itself. A second definition of "named unit" would disagree with the article
+by a little. A script that reads as a check while contradicting what it checks is worse than no
+script at all.
+
+One wart is worth knowing. The entry-position ratio divides by a line count that includes the
+empty element a trailing newline produces, so it is a hundredth or so low. It is left alone
+because correcting it after seeing the results would move every published position, and the
+file-length median beside it uses the true count.
 
 The counting script refuses to run against a different engine or a changed reply. It hashes
 `parse.ts`, `lexicon.ts` and `types.ts`, and the six replies, before it reads anything. Two
