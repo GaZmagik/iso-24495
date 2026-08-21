@@ -4,16 +4,40 @@ import io, os, re, statistics, sys
 FUNC = re.compile(r"^\s*(?:export\s+)?(?:private |public |protected |static )*(?:function\s+)?"
                   r"([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{;]+)?\{")
 CLASS = re.compile(r"^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)")
+# The arrow body may be an expression rather than a block. Requiring `=> {` made
+# `const peek = (): string => expression.charAt(position);` invisible, and the preregistration
+# counts a top-level arrow constant whatever its body.
 ARROW = re.compile(r"^\s*(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*"
-                   r"(?:async\s*)?\([^)]*\)\s*(?::[^=]+)?=>\s*\{")
+                   r"(?:async\s*)?\([^)]*\)\s*(?::[^=]+)?=>")
 SKIP = {"if", "for", "while", "switch", "catch", "else", "try", "do", "return"}
+
+
+def logical(lines, index, span=4):
+    """One line, extended over the next few until its brackets balance.
+
+    A declaration whose parameters wrap was invisible, because `[^)]*` cannot cross a line
+    ending. Four such declarations and two expression arrows were missed across the ninety
+    published files. Matching is done against this joined text; brace tracking, line numbers
+    and every other measure still use the real lines, so nothing else shifts.
+    """
+    text = lines[index]
+    if text.count("(") <= text.count(")"):
+        return text
+    for extra in range(1, span + 1):
+        if index + extra >= len(lines):
+            break
+        text += " " + lines[index + extra].strip()
+        if text.count("(") <= text.count(")"):
+            break
+    return text
 
 
 def score(path):
     lines = io.open(path, encoding="utf-8").read().split("\n")
     stack, units, nested, spans = [], 0, 0, []
     for idx, l in enumerate(lines):
-        f, c, a = FUNC.match(l), CLASS.match(l), ARROW.match(l)
+        joined = logical(lines, idx)
+        f, c, a = FUNC.match(joined), CLASS.match(l), ARROW.match(joined)
         kind = None
         if c:
             kind = "class"

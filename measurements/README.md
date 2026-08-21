@@ -85,6 +85,29 @@ measuring anything itself. A second definition of "named unit" would disagree wi
 by a little. A script that reads as a check while contradicting what it checks is worse than no
 script at all.
 
+## What "named unit" was taken to mean
+
+The preregistration says "top-level functions, top-level arrow constants, and class methods". Two
+readings of that were left to the code until a reviewer asked, so they are written down here.
+
+- **A constructor counts as a class method.** It is a named member of the class and the wording
+  does not exclude it. Excluding it would take one unit off every file that has one, which is most
+  of them, and would not change any comparison.
+- **An arrow constant counts whether its body is a block or an expression**, and a declaration
+  counts whether or not its parameters fit on one line.
+
+Those last two were not decisions at first. They were blind spots: the scorer matched one line at
+a time, so `const peek = (): string => text.charAt(at);` and any declaration whose parameters
+wrapped were invisible. Ten units across six of the ninety files went uncounted.
+
+Correcting it left the primary outcome untouched, at 3, 3 and 1 wrapper files. Four other figures
+moved. The prose-style median for named units went from 12.5 to 13, and that arm's longest own
+unit from 27 to 26.5. Two range floors rose by one.
+
+`tests/scorer.test.ts` now holds the scorer to these definitions on hand-counted fixtures, one per
+construct. It runs in the repository gate. It cannot prove the hand counts match what the
+preregistration meant, which is why the readings above are stated rather than left implied.
+
 One wart is worth knowing. The entry-position ratio divides by a line count that includes the
 empty element a trailing newline produces, so it is a hundredth or so low. It is left alone
 because correcting it after seeing the results would move every published position, and the
