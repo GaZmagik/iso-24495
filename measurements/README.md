@@ -14,10 +14,27 @@ the data they read.
 | `count-review-replies.ts` | Counts the prose in the six code-review replies |
 | `analyse-implementations.py` | Scores the ninety implementations |
 | `PREREGISTRATION.md` | What was to be measured, written before the runs |
-| `SPEC.md` | The expression-evaluator task given to each model |
-| `hidden.test.ts` | The 25 tests the models never saw |
+| `task/` | The specification given to each model, and the 25 tests it never saw |
+| `instructions/` | The two instruction files, one per treated arm |
+| `run-battery.sh` | The runner, including the exact prompt |
+| `run.log` | What the battery recorded as it went, including the one failure |
 | `review-replies/` | Six replies about one buggy React component, three per arm |
-| `implementations/` | Ninety implementations with their test output, thirty per tool |
+| `implementations/` | Ninety replies, implementations and test outputs, thirty per tool |
+
+## The instruction files are the whole treatment
+
+`instructions/style.md` went to the `style` arm and `instructions/style-and-code.md` to the
+`code` arm. The `control` arm received no instruction file at all.
+
+Every tool received the same two files, byte for byte, so "the instruction file was the only
+difference between the arms" is checkable rather than asserted:
+
+```
+4d5ca09ebf34fd0a1ecbc198b8844a4a2e2213a94a88edac3acc9218826f223b  instructions/style.md
+f44cc2379f604526dfb547f08a63af789c9955d97eed45cfe901e953292143e2  instructions/style-and-code.md
+```
+
+`run-battery.sh` shows how they were placed and what each model was asked.
 
 ## Running them
 
@@ -52,6 +69,23 @@ model wrote its own absolute working directory into a link, so that prefix is no
 counts are identical before and after, because the engine reads a link's label rather than its
 destination.
 
-Nothing else was edited. Several implementations would fail this repository's own style checks,
-and the `code-8` run in the Claude arm replaced an earlier attempt that produced no code at all.
-Both facts are in the article.
+A tool also echoed its own working directory into some transcripts, and those prefixes are
+relative or `<home>` now. Nothing a model said about the code was touched.
+
+Nothing else was edited. Several implementations would fail this repository's own style checks.
+
+## The run that failed
+
+`run.log` line 32 records it:
+
+```
+17:38:58  code-8  NO CODE BLOCK
+```
+
+The preregistration says such a run is a failure of its arm rather than something to drop
+quietly, so it is here rather than tidied away. That run was repeated and the repeat is the
+`code-8` file published above. It is also the run nearest the boundary in the article's entry
+position figures, so the one result that had to be redone is the weakest of its ten.
+
+The original failing reply was overwritten by the repeat and is not recoverable. The log entry
+is the only record of it, which is a weakness of how the battery was written.

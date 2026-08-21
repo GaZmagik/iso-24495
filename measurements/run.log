@@ -1,0 +1,79 @@
+battery start 17:02:59  30 runs, 3 arms interleaved
+  17:04:11  control-1  ok  tests=25/25
+  17:05:05  style-1  ok  tests=25/25
+  17:06:57  code-1  ok  tests=25/25
+-- round 1 of 10 complete --
+  17:07:52  control-2  ok  tests=25/25
+  17:08:52  style-2  ok  tests=25/25
+  17:09:52  code-2  ok  tests=25/25
+-- round 2 of 10 complete --
+  17:10:48  control-3  ok  tests=25/25
+  17:11:47  style-3  ok  tests=25/25
+  17:14:48  code-3  ok  tests=25/25
+-- round 3 of 10 complete --
+  17:15:42  control-4  ok  tests=25/25
+  17:17:02  style-4  ok  tests=25/25
+  17:18:10  code-4  ok  tests=25/25
+-- round 4 of 10 complete --
+  17:19:10  control-5  ok  tests=25/25
+  17:20:08  style-5  ok  tests=25/25
+  17:21:24  code-5  ok  tests=25/25
+-- round 5 of 10 complete --
+  17:22:29  control-6  ok  tests=25/25
+  17:25:41  style-6  ok  tests=25/25
+  17:26:50  code-6  ok  tests=25/25
+-- round 6 of 10 complete --
+  17:27:53  control-7  ok  tests=25/25
+  17:30:33  style-7  ok  tests=25/25
+  17:31:50  code-7  ok  tests=25/25
+-- round 7 of 10 complete --
+  17:33:23  control-8  ok  tests=25/25
+  17:34:17  style-8  ok  tests=25/25
+  17:38:58  code-8  NO CODE BLOCK
+-- round 8 of 10 complete --
+  17:39:52  control-9  ok  tests=25/25
+  17:40:41  style-9  ok  tests=25/25
+  17:41:59  code-9  ok  tests=25/25
+-- round 9 of 10 complete --
+  17:42:51  control-10  ok  tests=25/25
+  17:43:53  style-10  ok  tests=25/25
+  17:45:01  code-10  ok  tests=25/25
+-- round 10 of 10 complete --
+battery end 17:45:01, runs with no code block: 1
+arm              n   wrapper    units med    longest own  comments   25/25  unparsed
+A control       10      3/10    12 [9-15]     21 [16-49]        16   10/10         0
+B style         10      3/10    12 [9-15]     27 [16-64]        26   10/10         0
+C style+code     9       0/9   15 [13-16]     18 [14-36]        18     9/9         1
+
+per-file detail
+  A control run 1: WRAPPER    closures= 9 units=15 longest_own= 35 tests=25/25 scan,peek,consume,peekOperator
+  A control run 2: decomposed closures= 0 units=12 longest_own= 18 tests=25/25 
+  A control run 3: decomposed closures= 0 units=14 longest_own= 16 tests=25/25 
+  A control run 4: WRAPPER    closures= 8 units= 9 longest_own= 20 tests=25/25 peek,fail,parseExpression,parseTerm
+  A control run 5: WRAPPER    closures= 9 units=10 longest_own= 21 tests=25/25 fail,skipWhitespace,peek,parseExpression
+  A control run 6: decomposed closures= 0 units=14 longest_own= 21 tests=25/25 
+  A control run 7: decomposed closures= 0 units=12 longest_own= 20 tests=25/25 
+  A control run 8: decomposed closures= 0 units=14 longest_own= 49 tests=25/25 
+  A control run 9: decomposed closures= 0 units=11 longest_own= 24 tests=25/25 
+  A control run10: decomposed closures= 0 units=11 longest_own= 28 tests=25/25 
+  B style run 1: decomposed closures= 0 units=13 longest_own= 28 tests=25/25 
+  B style run 2: decomposed closures= 0 units=13 longest_own= 16 tests=25/25 
+  B style run 3: decomposed closures= 0 units=12 longest_own= 21 tests=25/25 
+  B style run 4: decomposed closures= 0 units=13 longest_own= 23 tests=25/25 
+  B style run 5: decomposed closures= 0 units=12 longest_own= 28 tests=25/25 
+  B style run 6: WRAPPER    closures= 8 units=14 longest_own= 64 tests=25/25 peek,take,atOperator,parseSum
+  B style run 7: WRAPPER    closures= 9 units=10 longest_own= 34 tests=25/25 skipWhitespace,errorAt,unexpected,parseNumber
+  B style run 8: decomposed closures= 0 units=12 longest_own= 21 tests=25/25 
+  B style run 9: WRAPPER    closures= 8 units= 9 longest_own= 26 tests=25/25 skipWhitespace,peek,fail,parseExpression
+  B style run10: decomposed closures= 0 units=15 longest_own= 51 tests=25/25 
+  C style+code run 1: decomposed closures= 0 units=16 longest_own= 14 tests=25/25 
+  C style+code run 2: decomposed closures= 0 units=14 longest_own= 18 tests=25/25 
+  C style+code run 3: decomposed closures= 0 units=15 longest_own= 19 tests=25/25 
+  C style+code run 4: decomposed closures= 0 units=15 longest_own= 21 tests=25/25 
+  C style+code run 5: decomposed closures= 0 units=16 longest_own= 25 tests=25/25 
+  C style+code run 6: decomposed closures= 0 units=16 longest_own= 17 tests=25/25 
+  C style+code run 7: decomposed closures= 0 units=14 longest_own= 36 tests=25/25 
+  C style+code run 8: UNPARSED (no file)
+  C style+code run 9: decomposed closures= 0 units=15 longest_own= 16 tests=25/25 
+  C style+code run10: decomposed closures= 0 units=13 longest_own= 16 tests=25/25 
+EXIT:0

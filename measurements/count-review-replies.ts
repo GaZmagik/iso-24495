@@ -43,7 +43,7 @@ const REPLIES: Record<string, string> = {
   "control-3": "5619b180d9e218cff1d117af4ca9492952c9d0b21d4b8b2c43d9c6f907570961",
   "style-1": "7476030bc76e66a7649a0f9818dcbdd2809b8c1cebc3a8e3c23f6cf6e3a95a2a",
   "style-2": "404e41f5b5e5fc9609317f1e15e1d668e7e4fb4ef305a0674d688d0f468f1438",
-  "style-3": "eafa45f7dcc6b0fd17d6229fbbffa32957997cff67bd4ba2f88e5a0ed20a01b4",
+  "style-3": "3a1cf087bd0de911f2c6c1bf7887b7166378d76b52e8ca043ce0c930a7d5b5cc",
 };
 
 const ARMS = ["control", "style"] as const;
@@ -62,7 +62,7 @@ function refuse(what: string, path: string, expected: string, found: string): ne
     `  file     ${path}`,
     `  expected ${expected}`,
     `  found    ${found}`,
-    "Check out tag v0.6.0 and run this again.",
+    "Run this from a clean checkout of the commit the article links to.",
   ].join("\n"));
 }
 
