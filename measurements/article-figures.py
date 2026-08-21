@@ -64,6 +64,26 @@ def report_positions():
                 print(f"  {tool:7s} {label:13s} median {statistics.median(values):.2f}  {shown}")
 
 
+def report_positions_by_run():
+    """Every Claude run named beside its entry position, sorted.
+
+    report_positions sorts the values and drops the run names, so its output can show that a 0.21
+    and a 0.11 exist without showing which runs produced them. The article names both: code-8 as
+    the run nearest the boundary, and control-7 as the earliest control. code-8 is also the
+    disclosed rerun, so a mistaken identity there would misreport the deviation itself.
+    """
+    print("\nCLAUDE ENTRY POSITION, EVERY RUN NAMED AND SORTED")
+    for label, arm in ARMS:
+        rows = [(row["entry"], name) for name, _, row in scored("claude", arm)
+                if row["entry"] is not None]
+        if not rows:
+            continue
+        # Three decimals, because control-7 and control-3 are both 0.11 at two, and the
+        # article claims control-7 is strictly the earliest.
+        shown = ", ".join(f"{name} {value:.3f}" for value, name in sorted(rows))
+        print(f"  {label:13s} {shown}")
+
+
 def report_shape():
     print("\nFILE SHAPE AND CORRECTNESS, MEDIAN ACROSS TEN RUNS")
     for tool in TOOLS:
@@ -193,6 +213,7 @@ if __name__ == "__main__":
     if not os.path.isdir(IMPLEMENTATIONS):
         sys.exit(f"no implementations found at {IMPLEMENTATIONS}")
     report_positions()
+    report_positions_by_run()
     report_shape()
     report_preregistered()
     report_across_arms()
