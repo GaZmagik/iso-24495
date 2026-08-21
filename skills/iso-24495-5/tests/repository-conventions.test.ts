@@ -77,6 +77,10 @@ function isPreservedArtefact(relativePath: string): boolean {
   return relativePath.startsWith("measurements/review-replies/")
     || relativePath.startsWith("measurements/implementations/")
     || relativePath.startsWith("measurements/task/")
+    || relativePath.startsWith("measurements/runners/")
+    // A list of hashes is data, not writing. Reading it as prose reports one sentence of
+    // 180 words, which says nothing about whether the manifest is any good.
+    || relativePath === "measurements/instructions/per-run.txt"
     || relativePath === "measurements/PREREGISTRATION.md";
 }
 

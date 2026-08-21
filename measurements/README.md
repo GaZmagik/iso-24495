@@ -28,7 +28,11 @@ the data they read.
 `code` arm. The `control` arm received no instruction file at all.
 
 Every tool received the same two files, byte for byte, so "the instruction file was the only
-difference between the arms" is checkable rather than asserted:
+difference between the arms" is checkable rather than asserted.
+
+`instructions/per-run.txt` lists what each of the ninety runs received. It comes to a clean
+three-way split: thirty runs with no instruction file, thirty with the style, and thirty with
+the style and the code rules.
 
 ```
 4d5ca09ebf34fd0a1ecbc198b8844a4a2e2213a94a88edac3acc9218826f223b  instructions/style.md

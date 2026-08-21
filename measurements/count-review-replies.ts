@@ -56,9 +56,17 @@ const RUNS = [1, 2, 3];
  * the parser. An earlier version stated them as constants in a script that could not measure
  * them, and attributed them to this one, which reads only the review replies.
  */
-const OPENINGS: Array<{ label: string; path: string }> = [
-  { label: "without the rules", path: "./implementations/claude/control-7/reply.md" },
-  { label: "with them", path: "./implementations/claude/code-2/reply.md" },
+const OPENINGS: Array<{ label: string; path: string; sha256: string }> = [
+  {
+    label: "without the rules",
+    path: "./implementations/claude/control-7/reply.md",
+    sha256: "15c736e9fdd65ab193f41f32ef8c12e5452137c8015ede53d38633479ae693c9",
+  },
+  {
+    label: "with them",
+    path: "./implementations/claude/code-2/reply.md",
+    sha256: "0a247a9bd26b8bacee395b48b96d98fafa77a378c9a41c6a12b4db672607a53d",
+  },
 ];
 
 const engineDirectory = new URL("../skills/iso-24495-4/scripts/lib/", import.meta.url);
@@ -150,6 +158,8 @@ for (const arm of ARMS) {
 console.log("\nTHE TWO OPENINGS THE ARTICLE PRINTS");
 for (const opening of OPENINGS) {
   const path = fileURLToPath(new URL(opening.path, import.meta.url));
+  const found = sha256(path);
+  if (found !== opening.sha256) refuse("opening", path, opening.sha256, found);
   // The opening is the prose before the code block, which is the first block a reader meets.
   const text = readFileSync(path, "utf8").split("```")[0] as string;
   const sentences = splitSentences(text).filter((s: string) => wordCount(s) > 0);

@@ -1,10 +1,11 @@
-# This is a record of what was run, not a script to run.
-#
-# The paths below are the ones the battery used, with the home directory replaced. Running it
-# would need those directories, the three agent command-line tools, and a great deal of time.
-# It is published so the prompt, the arms and the placement of the instruction files can be
-# read, not so a reader can repeat forty hours of generation.
 #!/bin/bash
+# A record of what was run, not a script to run. Running this file does nothing: the body below
+# is a quoted here-document, so no line of it is executed.
+#
+# It carries the paths the battery used, with the home directory written as <home>. An earlier
+# version of this directory published the body directly. Bash read <home> as input redirection,
+# left BASE empty, and turned the rm -rf inside into one aimed at the root of the filesystem.
+: <<'END OF RECORD'
 sleep 3
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 AGY="$HOME/.local/bin/agy"
@@ -35,3 +36,4 @@ $SPEC"
   echo "agy battery end $(date '+%H:%M:%S')"
 } > "$LOG" 2>&1
 echo "EXIT:$?" >> "$LOG"
+END OF RECORD
