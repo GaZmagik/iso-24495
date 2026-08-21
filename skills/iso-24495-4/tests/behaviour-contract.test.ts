@@ -385,6 +385,27 @@ describe("reader-facing behaviour contracts", () => {
       .toBe("[[click here]] follows.");
   });
 
+  test("a linked badge is read, and an alt text is not read as elements", () => {
+    // The commonest nested link in a README is a badge: an image inside a reference
+    // link. The scan read on inside an inline label only, so a reference label hid
+    // whatever it held and the badge lost its finding.
+    const badge = "[![][badge]][link] here." + "\n\n" + "[badge]: /b.png\n[link]: /l";
+    expect(auditText(badge).map((v) => v.rule)).toContain("image-alt");
+    expect(readerProseBlocks(badge)[0]?.lines.join("")).toBe(" here.");
+
+    // What sits inside an alt text gives the alt its words and is never rendered on its
+    // own, so reading it as an element manufactured a finding about an image nobody
+    // ever sees. The words still count, because a reader hears them.
+    const inAlt = "![outer ![](inner.png)](outer.png) here.";
+    expect(auditText(inAlt).map((v) => v.rule)).not.toContain("image-alt");
+    expect(readerProseBlocks(inAlt)[0]?.lines.join("")).toBe("outer  here.");
+
+    // A square bracket may sit in a destination, where it is not label structure.
+    const bracketed = "[![](img.png)](https://example.com/a[b]) here.";
+    expect(auditText(bracketed).map((v) => v.rule)).toContain("image-alt");
+    expect(readerProseBlocks(bracketed)[0]?.lines.join("")).toBe(" here.");
+  });
+
   test("deep nesting is read once, not once per level", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.

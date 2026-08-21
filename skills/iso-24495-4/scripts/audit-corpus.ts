@@ -561,8 +561,9 @@ function linkTextViolations(text: string): Violation[] {
     // a label pattern scans to the end of the line from every "[" and then gives the
     // ground back one character at a time.
     for (const link of markdownLinks(lines[i] as string)) {
-      // Skip image syntax: the alt-text rule owns that.
-      if (link.image) continue;
+      // Skip image syntax: the alt-text rule owns that, and anything inside an alt
+      // text, which a reader never meets as a link of its own.
+      if (link.image || !link.rendered) continue;
       const label = link.label.trim();
       const spoken = spokenText(label);
       const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
@@ -595,7 +596,7 @@ function linkTextViolations(text: string): Violation[] {
   // A link whose label runs over a line ending. The same scan finds it, filtered to the
   // labels that hold one.
   for (const link of markdownLinks(markup)) {
-    if (link.image || link.kind !== "inline") continue;
+    if (link.image || link.kind !== "inline" || !link.rendered) continue;
     if (!link.label.includes("\n")) continue;
     const target = link.target.trim();
     if (target.length === 0 || link.target.includes("\n")) continue;
@@ -640,7 +641,7 @@ function imageAltViolations(text: string): Violation[] {
     if (hidden(i)) continue;
     // One scan finds both image forms, filtered to the ones with no alternative text.
     for (const link of markdownLinks(lines[i] as string)) {
-      if (!link.image || link.kind === "shortcut") continue;
+      if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
       if (link.label.trim().length > 0) continue;
       const target = link.target.trim();
       if (link.kind === "inline") {

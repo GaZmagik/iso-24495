@@ -774,7 +774,19 @@ function bracketPartners(text: string): Map<number, number> {
     if (text[index] === "[") open.push(index);
     else if (text[index] === "]") {
       const start = open.pop();
-      if (start !== undefined) partners.set(start, index);
+      if (start !== undefined) {
+        partners.set(start, index);
+        // CommonMark allows a square bracket inside a destination, where it is not
+        // label structure. Counting it let a destination close a label that opened
+        // before the link, and the link vanished from every rule.
+        if (text[index + 1] === "(") {
+          const paren = text.indexOf(")", index + 2);
+          if (paren !== -1) {
+            index = paren + 1;
+            continue;
+          }
+        }
+      }
     }
     index += 1;
   }
@@ -789,6 +801,13 @@ export interface MarkdownLink {
   label: string;
   target: string;
   kind: "inline" | "reference" | "shortcut";
+  /**
+   * Whether a reader meets this as an element in its own right.
+   *
+   * What sits inside an image's alt text contributes words to that alt and is never
+   * rendered separately, so the rules pass over it while the text still reads it.
+   */
+  rendered: boolean;
 }
 
 /**
@@ -812,6 +831,8 @@ export function markdownLinks(text: string): MarkdownLink[] {
   const links: MarkdownLink[] = [];
   // Where to carry on from, once the label being read inside comes to an end.
   const resume = new Map<number, number>();
+  // The ends of the alt texts currently being read inside, innermost last.
+  const withinAlt: number[] = [];
   let index = 0;
   let noClosingParen = false;
   while (index < text.length) {
@@ -829,6 +850,8 @@ export function markdownLinks(text: string): MarkdownLink[] {
       index = closing === undefined ? index + tickRun(text, index) : closing;
       continue;
     }
+    while (withinAlt.length > 0 && (withinAlt.at(-1) as number) <= index) withinAlt.pop();
+    const rendered = withinAlt.length === 0;
     const image = text[index] === "!" && text[index + 1] === "[";
     const opens = image ? index + 1 : index;
     const closes = text[opens] === "[" ? partners.get(opens) : undefined;
@@ -851,10 +874,14 @@ export function markdownLinks(text: string): MarkdownLink[] {
           label,
           target: text.slice(closes + 2, paren),
           kind: "inline",
+          rendered,
         });
-        // Read on inside the label, because CommonMark allows an image or a link there
-        // and jumping past the whole thing hid it from every rule. The destination is
-        // stepped over when the label ends, so no character is read twice.
+        // Read on inside a link label, because CommonMark allows an image or a link
+        // there and jumping past the whole thing hid it from every rule. The
+        // destination is stepped over when the label ends, so nothing is read twice.
+        // An image's alt text is read for the words it contributes, but nothing inside
+        // it is an element in its own right, so the rules are told to pass over it.
+        if (image) withinAlt.push(closes);
         resume.set(closes, paren + 1);
         index = opens + 1;
         continue;
@@ -871,8 +898,12 @@ export function markdownLinks(text: string): MarkdownLink[] {
           label,
           target: text.slice(closes + 2, targetEnd),
           kind: "reference",
+          rendered,
         });
-        index = targetEnd + 1;
+        // A reference link carries a label too, and a linked badge is written this way.
+        if (image) withinAlt.push(closes);
+        resume.set(closes, targetEnd + 1);
+        index = opens + 1;
         continue;
       }
     }
@@ -880,7 +911,7 @@ export function markdownLinks(text: string): MarkdownLink[] {
     // A label followed by "(" or "[" is a link whose other half is malformed, and reads
     // as literal text, exactly as the patterns this replaced concluded.
     if (after !== "(" && after !== "[") {
-      links.push({ start: index, end: closes + 1, image, label, target: "", kind: "shortcut" });
+      links.push({ start: index, end: closes + 1, image, label, target: "", kind: "shortcut", rendered });
       index = closes + 1;
       continue;
     }
