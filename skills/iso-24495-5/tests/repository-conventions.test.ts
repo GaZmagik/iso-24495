@@ -81,7 +81,12 @@ function isPreservedArtefact(relativePath: string): boolean {
     // A list of hashes is data, not writing. Reading it as prose reports one sentence of
     // 180 words, which says nothing about whether the manifest is any good.
     || relativePath === "measurements/instructions/per-run.txt"
-    || relativePath === "measurements/PREREGISTRATION.md";
+    || relativePath === "measurements/PREREGISTRATION.md"
+    // The draft the article's corrections are about. Editing it to pass today's audit would
+    // destroy the only thing it is for, which is showing what was corrected.
+    || relativePath.startsWith("measurements/superseded/")
+    // A recorded run, not writing. Its "RERAN:" label reads as an undefined acronym.
+    || relativePath === "measurements/rerun-tests.txt";
 }
 
 function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
