@@ -13,6 +13,7 @@ the data they read.
 |---|---|
 | `count-review-replies.ts` | Counts the prose in the six code-review replies |
 | `analyse-implementations.py` | Scores the ninety implementations |
+| `article-figures.py` | Prints every implementation figure the article quotes |
 | `PREREGISTRATION.md` | What was to be measured, written before the runs |
 | `task/` | The specification given to each model, and the 25 tests it never saw |
 | `instructions/` | The two instruction files, one per treated arm |

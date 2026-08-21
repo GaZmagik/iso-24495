@@ -37,6 +37,13 @@ def score(path):
     return dict(wrapper=nested >= 3, units=units,
                 longest_own=max(own) if own else 0,
                 entry=None if entry is None else entry / max(1, len(lines)),
+                # The article quotes a file-length median, so it is measured here rather than
+                # counted a second way somewhere else and quietly disagreeing. A file ending in
+                # a newline splits into one more element than it has lines, which is why this
+                # drops a trailing empty one. The `entry` ratio above keeps the original
+                # denominator: correcting it would silently move every published position, and
+                # the difference is under a hundredth.
+                length=len(lines) - (1 if lines and lines[-1] == "" else 0),
                 comments=len([l for l in lines if re.match(r"^\s*(//|/\*|\*)", l)]))
 
 
