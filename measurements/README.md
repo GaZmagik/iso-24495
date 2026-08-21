@@ -61,7 +61,7 @@ python measurements/analyse-implementations.py measurements/implementations/clau
 bash measurements/rerun-tests.sh
 ```
 
-Between them the first two print every measured figure the article quotes. Three kinds of claim
+Between them the first two print every measured figure the article quotes. Four kinds of claim
 are checked another way, and saying so is the point:
 
 - **The hidden tests.** `bash measurements/rerun-tests.sh` reruns all 25 tests against all ninety
@@ -71,6 +71,9 @@ are checked another way, and saying so is the point:
 - **The earlier draft.** The article confesses to getting several figures wrong: 52 per cent, and
   the counts 513, 417, 35 and 26. Those come from `superseded/medium-post-v1.md`, kept here so a
   reader can see the version being corrected rather than take the correction on trust.
+- **The judgements about the reviews.** That all six replies found three named bugs, and that the
+  shorter reply drops four minor observations, are readings rather than measurements. No script
+  produces them. The six replies are in `review-replies/`, so a reader can disagree with me.
 
 `article-figures.py` prints the preregistered outcomes as a three-arm table, with the range beside
 every median. It was extended to do that after a reviewer found the article reporting medians

@@ -2,3 +2,4 @@
 RERAN:  90
 PASSED: 90
 FAILED: none
+EXIT: 0

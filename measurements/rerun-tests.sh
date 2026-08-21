@@ -19,6 +19,13 @@
 #   It COUNTS the runs that passed rather than looking for failures. An empty result is not a
 #   negative finding: the first version of this script reported no failures across ninety runs
 #   that had never executed.
+#
+#   It reads bun's EXIT STATUS, captured before the output is filtered. A reviewer showed that
+#   the third version could be given a false pass: an implementation that prints ` 25 pass` and
+#   ` 0 fail` of its own accord satisfied the text check, while bun exited 1 having failed all
+#   25 tests. These implementations are model-generated code that this script executes, so their
+#   output is not trustworthy. The status is bun's own and the forged text cannot reach it.
+#   Piping bun into sed hid that status, because a pipeline reports its LAST command.
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -51,14 +58,20 @@ for tool in claude codex gemini; do
       mkdir -p "$directory"
       cp "$source_file" "$directory/evaluate.ts"
       cp "$HARNESS" "$directory/hidden.test.ts"
+      # bun's status is captured BEFORE the output is filtered. Piping into sed would report
+      # sed's status instead, and the text alone can be forged by the code under test.
+      out=$(cd "$directory" && bun test ./hidden.test.ts 2>&1)
+      status=$?
       # bun colours its summary, so the escape codes are stripped before anything is counted.
-      out=$(cd "$directory" && bun test ./hidden.test.ts 2>&1 | sed -r "s/\x1B\[[0-9;]*[mK]//g")
+      out=$(printf '%s' "$out" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
       total=$((total + 1))
-      if printf '%s' "$out" | grep -qE "^ 25 pass" && printf '%s' "$out" | grep -qE "^ 0 fail"; then
+      if [ "$status" -eq 0 ] \
+        && printf '%s' "$out" | grep -qE "^ 25 pass" \
+        && printf '%s' "$out" | grep -qE "^ 0 fail"; then
         passed=$((passed + 1))
       else
         failed="$failed $run"
-        echo "--- $run did not report 25 pass and 0 fail ---"
+        echo "--- $run did not pass: bun exited $status ---"
         printf '%s\n' "$out" | grep -E "pass|fail|error" | head -4
       fi
     done
@@ -69,4 +82,12 @@ echo
 echo "RERAN:  $total"
 echo "PASSED: $passed"
 echo "FAILED:${failed:- none}"
-[ "$passed" -eq "$total" ] && [ "$total" -eq 90 ]
+
+# The saved output must carry the verdict, not only the counts, so a reader of the recorded file
+# sees what the script decided rather than inferring it.
+if [ "$passed" -eq "$total" ] && [ "$total" -eq 90 ]; then
+  echo "EXIT: 0"
+  exit 0
+fi
+echo "EXIT: 1"
+exit 1
