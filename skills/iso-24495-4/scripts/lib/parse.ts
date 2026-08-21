@@ -876,9 +876,11 @@ export function markdownLinks(text: string): MarkdownLink[] {
           kind: "inline",
           rendered,
         });
-        // Read on inside a link label, because CommonMark allows an image or a link
-        // there and jumping past the whole thing hid it from every rule. The
-        // destination is stepped over when the label ends, so nothing is read twice.
+        // Read on inside a link label, because CommonMark allows an image there and
+        // jumping past the whole thing hid it from every rule. The destination is
+        // stepped over when the label ends, so nothing is read twice. A link inside a
+        // link label is a separate matter: CommonMark resolves those to the innermost
+        // link alone, and this scan reports both, which is a stated limitation.
         // An image's alt text is read for the words it contributes, but nothing inside
         // it is an element in its own right, so the rules are told to pass over it.
         if (image) withinAlt.push(closes);

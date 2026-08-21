@@ -20,6 +20,23 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - An abbreviation behind emphasis is still an abbreviation. `**e.g.**` split a sentence where `e.g.` did not, because the closing markup hid the stop from the classifier.
 - A code span is now one atom. `` `alpha. beta` `` split a sentence into three, so any text that quotes punctuation was miscounted. A span in backticks is a term being named, which the word rules already respected and the sentence splitter did not.
 
+- Every link and image is found by one scan rather than by a pattern per rule. Each pattern read a label by scanning to the end of the line from every `[`, so a document full of brackets cost each rule the square of its length. Ten thousand unmatched brackets took about nine seconds and now take 18 milliseconds.
+- A link label may hold balanced brackets, and what sits inside it is read. A pattern that stopped at the first `]` left the destination and title in place, so hidden text was counted as prose. A badge, written as an image inside a reference link, lost its `image-alt` finding entirely.
+- An escaped character is read as the character a reader sees. CommonMark renders `\!` as `!`, and the scanner cleared its state for every escape. An escaped terminator therefore lost its sentence boundary, and an abbreviation behind an escaped bracket stopped being an abbreviation.
+- An escaped backtick can still close a code span. CommonMark blocks an escape from opening one, but the search for a closer ignores backslashes, and discarding every escaped run merged two short sentences into one over-long one.
+- Markup that spans lines no longer moves the lines after it. A link destination or title may hold a line ending, and flattening the link deleted it, so later findings pointed one line early and a reader opened an innocent line.
+- An empty link measures as what a reader sees, which is nothing. Its destination and title were counted as prose beside the correct report of a link with no text.
+- A definition is judged by the words that spell the acronym, and the acronym decides how many that takes. A nine-letter dotted initialism was reported undefined although the text defined it on the spot.
+- Four more places that grew with the square of the document are now linear. They are the acronym scan, the expansion lookahead, the line-number lookup, and the reader of a sentence's last word. The worst cost 10.8 seconds on 4,000 long sentences in one paragraph and now costs 1.9.
+
+### Known limitations
+
+These are stated rather than fixed, and each needs Markdown a reader is unlikely to write.
+
+- A link destination ends at the first `)`. CommonMark allows balanced pairs of brackets inside one, so a destination holding both parentheses and a raw `]` is not read as a link.
+- A link inside a link label is reported as two links. CommonMark resolves those to the innermost link alone.
+- An image whose description is made only of another image with no description of its own is not reported. The released engine does not report it either.
+
 ## [0.5.0] - 2026-08-17
 
 ### Added
