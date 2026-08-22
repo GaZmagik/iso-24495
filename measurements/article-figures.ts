@@ -41,11 +41,20 @@ function scored(tool: string, arm: string): Run[] {
   for (let n = 1; n <= 10; n += 1) {
     const directory = join(IMPLEMENTATIONS, tool, `${arm}-${n}`);
     const file = join(directory, "evaluate.ts");
+    let text: string;
     try {
-      runs.push({ name: `${arm}-${n}`, directory, result: score(file, readFileSync(file, "utf8")) });
+      text = readFileSync(file, "utf8");
     } catch {
+      // A run with no file is absent, which is different from a run that cannot be measured.
       continue;
     }
+    const result = score(file, text);
+    if (result.unparsed) {
+      // The preregistration says a file that fails to parse is reported, never dropped.
+      console.error(`UNPARSED: ${tool}/${arm}-${n} did not parse cleanly`);
+      process.exit(1);
+    }
+    runs.push({ name: `${arm}-${n}`, directory, result });
   }
   return runs;
 }
@@ -116,7 +125,8 @@ function reportPreregistered(): void {
     const results = runs.map((run) => run.result);
     columns.push([label, {
       "wrapper files (primary)": `${results.filter((r) => r.wrapper).length} of 10`,
-      "named units": summarise(results.map((r) => r.units)),
+      "named units (registered)": summarise(results.map((r) => r.topLevelUnits)),
+      "named units, with nested": summarise(results.map((r) => r.units)),
       "longest own unit": summarise(results.map((r) => r.longest_own)),
       "comment lines": summarise(results.map((r) => r.comments)),
       "passed 25 of 25": `${passed(runs)} of ${runs.length}`,
@@ -124,7 +134,8 @@ function reportPreregistered(): void {
     }]);
   }
   if (columns.length === 0) return;
-  const order = ["wrapper files (primary)", "named units", "longest own unit", "comment lines",
+  const order = ["wrapper files (primary)", "named units (registered)",
+    "named units, with nested", "longest own unit", "comment lines",
     "passed 25 of 25", "file lines (not preregistered)"];
   console.log("  " + "outcome".padEnd(31) + columns.map(([label]) => label.padStart(20)).join(""));
   for (const name of order) {

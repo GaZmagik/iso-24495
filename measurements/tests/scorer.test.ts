@@ -206,6 +206,57 @@ class Parser {
     expect(scoreOf(source).longest_own).toBe(3);
   });
 
+  test("the registered count excludes units nested inside a function", () => {
+    // The reviewer's reproducer. The primary definition sees four units and calls the file
+    // wrapper style; the secondary outcome names top-level functions, so it counts one.
+    const source = `export function evaluate(): number {
+  const read = (): number => 1;
+  const parse = (): number => 2;
+  const write = (): number => 3;
+  return read() + parse() + write();
+}
+`;
+    expect(scoreOf(source).units).toBe(4);
+    expect(scoreOf(source).topLevelUnits).toBe(1);
+    expect(scoreOf(source).wrapper).toBe(true);
+  });
+
+  test("a class method counts in the registered count wherever its class sits", () => {
+    // A class is not a function body, so its members are top-level for this purpose.
+    expect(scoreOf(`class Parser {
+  parse(): number {
+    return 0;
+  }
+  private read(): number {
+    return 0;
+  }
+}
+`).topLevelUnits).toBe(2);
+  });
+
+  test("an overload signature is not a named unit", () => {
+    // A declaration without a body declares nothing that runs.
+    expect(scoreOf(`export function evaluate(text: string): number;
+export function evaluate(text: string, strict: boolean): number;
+export function evaluate(text: string, strict?: boolean): number {
+  return 0;
+}
+`).units).toBe(1);
+  });
+
+  test("a let-bound arrow is not a const arrow constant", () => {
+    // The wording says const. None exist in the corpus, so this holds the contract, not a figure.
+    expect(scoreOf(`const kept = (): number => 1;
+let other = (): number => 2;
+`).units).toBe(1);
+  });
+
+  test("a file that does not parse is reported rather than scored quietly", () => {
+    // The preregistration says an unparsable file is recorded and reported, never dropped.
+    expect(scoreOf("export function evaluate( {\n").unparsed).toBe(true);
+    expect(scoreOf("export function evaluate(): number {\n  return 0;\n}\n").unparsed).toBe(false);
+  });
+
   test("comment lines count every line that opens or continues a comment", () => {
     expect(scoreOf(`/**
  * A description.

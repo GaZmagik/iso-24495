@@ -91,19 +91,22 @@ a check while contradicting what it checks is worse than no script at all.
 
 ## What "named unit" was taken to mean
 
-**The preregistration defines the term twice, and not identically.** A reviewer found this, and it
-is the sort of thing only a reader coming to the document cold would notice.
+**The preregistration asks for two counts, and the article at first published only one.** A
+reviewer found this. I first read the two passages as contradicting each other, which was wrong:
+they scope differently.
 
 - The primary-outcome section says: "A named unit is a function declaration, a class method, or a
-  const arrow function." It puts no restriction on where the unit sits. It cannot, because a file
-  is wrapper-style when three or more of its named units are declared *inside another function*.
-- The secondary-outcome section says: "Top-level functions, top-level arrow constants, and class
-  methods." That reading excludes closures.
+  const arrow function." It has to be broad, because a file is wrapper-style when three or more of
+  its named units are declared *inside another function*. A narrow definition could not see them.
+- The secondary outcome then names what its own count includes: "Top-level functions, top-level
+  arrow constants, and class methods."
 
-`score.ts` follows the first, which is the only place the document sets out to define the term, and
-the only reading under which the primary outcome means anything. Under the second reading the
-Claude medians would be 11.5, 12 and 15 rather than 12, 13 and 15. The direction is the same. A
-reader who prefers that reading can run the scorer and see.
+So `score.ts` returns both. `units` counts everything, which is what the wrapper test needs.
+`topLevelUnits` counts what the secondary outcome names, and that is the registered figure.
+
+The table publishes both rows, because the gap between them is itself informative. A file whose
+top-level count collapses to 1 is a file that put everything inside `evaluate`, which is what
+wrapper style means.
 
 Two further judgements the wording leaves open:
 
