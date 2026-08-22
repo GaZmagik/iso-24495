@@ -126,8 +126,13 @@ row each found another construct it could not see:
 3. A method with type parameters, `read<T>(value: T)`. Two of these.
 
 Each was repaired on its own and the next round found the next one. It now reads a TypeScript
-syntax tree, so the class of defect is closed rather than narrowed. That is what `bun install`
-buys.
+syntax tree, which is a far better place to stand than a pattern. That is what `bun install` buys.
+
+It is not a guarantee, and the first draft of this paragraph claimed it was. Parsing removes the
+whole class of failure where a construct is invisible because it sits on the wrong line. It does
+not remove the judgement of which parsed nodes to count. A reviewer promptly found three the
+scorer was not looking through: an arrow wrapped in brackets, in an `as`, or in a `satisfies`.
+Those are counted now, and none of them occurs in the ninety files.
 
 It is also why the scripts are no longer in Python. The gate runs `bun test`, so the one
 measurement written in another language sat outside it by construction, and went untested for as

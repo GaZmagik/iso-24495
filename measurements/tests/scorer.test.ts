@@ -234,6 +234,15 @@ class Parser {
 `).registeredUnits).toBe(2);
   });
 
+  test("an arrow counts through the wrappers it can be dressed in", () => {
+    // A reviewer built these. None occurs in the ninety published files, so they hold the
+    // contract rather than a figure, and they were going to be the next surprise.
+    expect(scoreOf("const first = (() => 1);\n").units).toBe(1);
+    expect(scoreOf("const second = (() => 1) as () => number;\n").units).toBe(1);
+    expect(scoreOf("type Reader = () => number;\nconst third = (() => 1) satisfies Reader;\n")
+      .units).toBe(1);
+  });
+
   test("a function in a block or a namespace is not top-level", () => {
     // "Not inside a function" is not the same as top-level. Neither of these occurs in the
     // ninety published files, so this holds the contract rather than a figure.

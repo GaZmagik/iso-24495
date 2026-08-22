@@ -21,6 +21,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { score, type Score } from "./score";
+import { recordShowsAllPassing } from "./tests-record";
 
 const MEASUREMENTS = import.meta.dir;
 const IMPLEMENTATIONS = join(MEASUREMENTS, "implementations");
@@ -28,7 +29,6 @@ const TOOLS = ["claude", "codex", "gemini"] as const;
 const ARMS: Array<[string, string]> = [
   ["no rules", "control"], ["prose style", "style"], ["style + code", "code"],
 ];
-const PASSES = /(\d+) pass/;
 
 interface Run {
   name: string;
@@ -80,9 +80,9 @@ const summarise = (values: number[]): string =>
 const passed = (runs: Run[]): number =>
   runs.filter((run) => {
     try {
-      const found = PASSES.exec(readFileSync(join(run.directory, "tests.txt"), "utf8"));
-      return found !== null && found[1] === "25";
+      return recordShowsAllPassing(readFileSync(join(run.directory, "tests.txt"), "utf8"));
     } catch {
+      // A run with no saved record has not been shown to pass.
       return false;
     }
   }).length;

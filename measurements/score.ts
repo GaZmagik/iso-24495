@@ -57,11 +57,27 @@ function namedUnit(node: ts.Node): boolean {
        ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
       node.parent && ts.isClassLike(node.parent)) return node.body !== undefined;
   if (ts.isVariableDeclaration(node) && node.initializer &&
-      ts.isArrowFunction(node.initializer)) {
+      ts.isArrowFunction(unwrap(node.initializer))) {
     const list = node.parent;
     return ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
   }
   return false;
+}
+
+/** Look through the wrappers an arrow can be dressed in before it is bound to a name.
+ *
+ * `const f = (() => 1);` and `const f = (() => 1) as () => number;` both bind an arrow function.
+ * Testing the initialiser directly missed them. None occurs in the ninety published files, so no
+ * figure moves; a reviewer found them by construction and they would have been the next surprise.
+ */
+function unwrap(node: ts.Expression): ts.Expression {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) ||
+         ts.isSatisfiesExpression(current) || ts.isNonNullExpression(current) ||
+         ts.isTypeAssertionExpression(current)) {
+    current = current.expression;
+  }
+  return current;
 }
 
 /** Is this node a class member, which the secondary outcome counts wherever the class sits?

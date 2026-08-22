@@ -14,12 +14,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { score } from "./score";
+import { recordShowsAllPassing } from "./tests-record";
 
 const ARMS: Array<[string, string]> = [
   ["A control", "control"], ["B style", "style"],
   ["C code rules", "code"], ["D + iso-5055", "skills"],
 ];
-const PASSES = /(\d+) pass/;
 
 const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -51,6 +51,13 @@ for (const [name, key] of ARMS) {
     try {
       text = readFileSync(file, "utf8");
     } catch {
+      // The three published arms hold ten runs each. A missing file is reported, never divided
+      // away: this script used to drop it and print a smaller denominator, which reads as an arm
+      // that simply had fewer runs.
+      if (key !== "skills") {
+        console.error(`MISSING: ${key}-${n} has no evaluate.ts`);
+        process.exit(1);
+      }
       continue;
     }
     const result = score(file, text);
@@ -61,8 +68,7 @@ for (const [name, key] of ARMS) {
     }
     results.push(result);
     try {
-      const found = PASSES.exec(readFileSync(join(directory, "tests.txt"), "utf8"));
-      if (found !== null && found[1] === "25") passed += 1;
+      if (recordShowsAllPassing(readFileSync(join(directory, "tests.txt"), "utf8"))) passed += 1;
     } catch {
       // A run without a saved test output counts as not passing, never as absent.
     }
@@ -70,6 +76,10 @@ for (const [name, key] of ARMS) {
   if (results.length === 0) {
     console.log(name.padEnd(14) + "0".padStart(4) + "   (no files)");
     continue;
+  }
+  if (key !== "skills" && results.length !== 10) {
+    console.error(`SHORT ARM: ${key} measured ${results.length} runs, expected 10`);
+    process.exit(1);
   }
   const units = results.map((r) => r.units);
   const longest = results.map((r) => r.longest_own);
