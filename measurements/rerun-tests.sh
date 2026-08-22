@@ -114,7 +114,14 @@ failed=""
 # One line per run, holding the verdict this script reaches rather than the one a saved console
 # log claims. The reporting scripts read this instead of parsing model-adjacent text.
 MANIFEST="$MEASUREMENTS/rerun-results.txt"
-: > "$MANIFEST"
+# A verdict is about an implementation and the tests that judged it, so the header binds the rest
+# of the procedure. The bun version is recorded and NOT enforced: a reader on a later bun should
+# be able to reproduce this, and refusing them would make the manifest a lock rather than a record.
+{
+  echo "# harness $(sha256sum "$HARNESS" | cut -d' ' -f1)"
+  echo "# runner $(sha256sum "$0" | cut -d' ' -f1)"
+  echo "# bun $(bun --version)"
+} > "$MANIFEST"
 
 for tool in claude codex gemini; do
   for arm in control style code; do
@@ -131,9 +138,13 @@ for tool in claude codex gemini; do
       cp "$source_file" "$directory/evaluate.ts"
       cp "$HARNESS" "$directory/hidden.test.ts"
       total=$((total + 1))
-      # The verdict is bound to the bytes it was reached against, so replacing an
-      # implementation afterwards cannot leave a valid PASS behind.
-      digest=$(sha256sum "$source_file" | cut -d' ' -f1)
+      # The digest is taken from the copy bun actually read, then checked against the
+      # published source. Hashing the source alone left a gap between the copy and the hash.
+      digest=$(sha256sum "$directory/evaluate.ts" | cut -d' ' -f1)
+      if [ "$digest" != "$(sha256sum "$source_file" | cut -d' ' -f1)" ]; then
+        echo "COPY MISMATCH: $run changed between reading and testing"
+        exit 1
+      fi
       if check_run "$directory"; then
         passed=$((passed + 1))
         echo "PASS $run $digest" >> "$MANIFEST"

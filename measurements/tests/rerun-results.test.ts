@@ -18,6 +18,8 @@ const MEASUREMENTS = join(import.meta.dir, "..");
 const MANIFEST = join(MEASUREMENTS, "rerun-results.txt");
 const IMPLEMENTATIONS = join(MEASUREMENTS, "implementations");
 const REAL = join(IMPLEMENTATIONS, "claude", "control-1", "evaluate.ts");
+const HARNESS = join(MEASUREMENTS, "task", "hidden-tests.ts");
+const RUNNER = join(MEASUREMENTS, "rerun-tests.sh");
 
 const sha256 = (path: string): string =>
   new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex");
@@ -26,18 +28,23 @@ const sha256 = (path: string): string =>
  * Build a manifest and a matching tree in a temporary place, so no fixture touches the published
  * evidence. Returns a reader over them.
  */
-function withFixture(lines: string, source: string = REAL, expected = 1) {
+function withFixture(lines: string, source: string = REAL, expected = 1, header?: string) {
   const directory = mkdtempSync(join(tmpdir(), "iso-manifest-"));
   try {
     const runDirectory = join(directory, "impl", "claude", "control-1");
     mkdirSync(runDirectory, { recursive: true });
     copyFileSync(source, join(runDirectory, "evaluate.ts"));
     const manifest = join(directory, "rerun-results.txt");
-    writeFileSync(manifest, lines);
-    return readRerunResults(manifest, join(directory, "impl"), expected);
+    writeFileSync(manifest, (header ?? realHeader()) + lines);
+    return readRerunResults(manifest, join(directory, "impl"), expected, HARNESS, RUNNER);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+/** The header a manifest generated right now would carry. */
+function realHeader(): string {
+  return `# harness ${sha256(HARNESS)}\n# runner ${sha256(RUNNER)}\n# bun 1.3.14\n`;
 }
 
 describe("the committed rerun manifest", () => {
@@ -54,14 +61,24 @@ describe("the committed rerun manifest", () => {
   });
 
   test("holds nothing but PASS lines, so a failure cannot hide in it", () => {
-    const lines = readFileSync(MANIFEST, "utf8").split("\n").filter((line) => line.trim() !== "");
+    const lines = readFileSync(MANIFEST, "utf8").split("\n")
+      .filter((line) => line.trim() !== "" && !line.startsWith("# "));
     expect(lines.filter((line) => !line.startsWith("PASS "))).toEqual([]);
+  });
+
+  test("carries a procedure header naming the harness, runner and runtime", () => {
+    // A verdict is about an implementation and the tests that judged it. Without this the
+    // harness could change and every verdict would still stand.
+    const lines = readFileSync(MANIFEST, "utf8").split("\n");
+    expect(lines.filter((line) => /^# (harness|runner|bun) \S+$/.test(line)))
+      .toHaveLength(3);
   });
 
   test("every recorded digest matches the file it stands for", () => {
     // The whole point of the digest column. readRerunResults throws otherwise, so this asserts
     // the same property a second way, against the published tree rather than a fixture.
     for (const line of readFileSync(MANIFEST, "utf8").split("\n")) {
+      if (line.startsWith("# ")) continue;
       const parts = line.trim().split(" ");
       if (parts.length !== 3) continue;
       const [, run, digest] = parts as [string, string, string];
@@ -84,8 +101,7 @@ describe("reading a manifest", () => {
   });
 
   test("a run recorded as failing is not a passing run", () => {
-    // A FAIL carries a digest too, and is not checked against the file: it failed either way.
-    const results = withFixture(`FAIL claude/control-1 ${"0".repeat(64)}\n`);
+    const results = withFixture(`FAIL claude/control-1 ${sha256(REAL)}\n`);
     expect(results.passed("claude/control-1")).toBe(false);
     expect(results.known("claude/control-1")).toBe(true);
   });
@@ -101,6 +117,31 @@ describe("reading a manifest", () => {
     const digest = sha256(REAL);
     expect(() => withFixture(`PASS claude/control-1 ${digest}\nFAIL claude/control-1 ${digest}\n`, REAL, 2))
       .toThrow(/appears twice/);
+  });
+
+  test("a verdict does not survive the tests that judged it changing", () => {
+    // The reviewer replaced hidden-tests.ts and every verdict still stood, because the manifest
+    // bound the implementations and nothing else.
+    const wrong = `# harness ${"0".repeat(64)}\n# runner ${sha256(RUNNER)}\n# bun 1.3.14\n`;
+    expect(() => withFixture(`PASS claude/control-1 ${sha256(REAL)}\n`, REAL, 1, wrong))
+      .toThrow(/the harness has changed/);
+  });
+
+  test("a verdict does not survive the runner changing", () => {
+    const wrong = `# harness ${sha256(HARNESS)}\n# runner ${"0".repeat(64)}\n# bun 1.3.14\n`;
+    expect(() => withFixture(`PASS claude/control-1 ${sha256(REAL)}\n`, REAL, 1, wrong))
+      .toThrow(/the runner has changed/);
+  });
+
+  test("a manifest with no procedure header is refused", () => {
+    expect(() => withFixture(`PASS claude/control-1 ${sha256(REAL)}\n`, REAL, 1, ""))
+      .toThrow(/no harness hash recorded/);
+  });
+
+  test("a failing verdict is bound to its bytes too", () => {
+    // A FAIL attached to unknown bytes says as little as a PASS attached to them.
+    expect(() => withFixture(`FAIL claude/control-1 ${"0".repeat(64)}\n`))
+      .toThrow(/has changed since it was tested/);
   });
 
   test("a malformed line is refused rather than skipped", () => {
