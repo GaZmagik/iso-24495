@@ -1,0 +1,58 @@
+name: Traffic snapshot
+
+# GitHub keeps repository traffic for fourteen days and then discards it. This
+# job copies the figures into the traffic-data branch each day, so the series
+# survives. Because every run re-reads the whole fourteen-day window, a missed
+# day is recovered by the next successful run.
+#
+# The data lands on traffic-data rather than main for two reasons: a daily bot
+# commit would clutter the main history, and a push to main would run the test
+# workflow, whose checkout would then inflate the very clone figures this job
+# is recording.
+
+on:
+  schedule:
+    # Off the hour, because scheduled jobs queue behind the crowd at :00.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Check out the data branch
+        uses: actions/checkout@v4
+        with:
+          ref: traffic-data
+          path: traffic-data
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Read the traffic API and merge the rows
+        env:
+          # A fine-grained token with Administration (read) on this repository.
+          # GITHUB_TOKEN cannot hold that permission, so it will not do here.
+          GITHUB_TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: bun scripts/traffic-snapshot-cli.ts traffic-data/data
+
+      - name: Commit the day's rows
+        working-directory: traffic-data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "The figures have not moved since the last run."
+            exit 0
+          fi
+          git commit -m "Traffic snapshot $(date -u +%F)"
+          git push
