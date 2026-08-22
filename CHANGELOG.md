@@ -2,6 +2,20 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.6.1] - 2026-08-22
+
+### Fixed
+
+- `iso-24495-code` would not load. Its description was an unquoted YAML scalar holding a colon
+  and a space, in "the parts of code a person reads: the order units appear in". YAML reads that
+  as the start of a nested mapping, so a loader refused the file with "mapping values are not
+  allowed in this context at line 2 column 123". The skill has been unloadable since 0.6.0
+  shipped. The description is now quoted, so a later edit that adds a colon still parses.
+- Nothing had ever parsed a `SKILL.md` as YAML, which is why the gate did not catch it. The
+  other tests read these files as text, check the prose inside them and the files beside them,
+  and took the frontmatter on trust. Every skill's frontmatter is now parsed on each run, and
+  must carry a name matching its directory and a description that is not empty.
+
 ## [0.6.0] - 2026-08-20
 
 ### Added
