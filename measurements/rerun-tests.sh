@@ -86,6 +86,10 @@ fi
 total=0
 passed=0
 failed=""
+# One line per run, holding the verdict this script reaches rather than the one a saved console
+# log claims. The reporting scripts read this instead of parsing model-adjacent text.
+MANIFEST="$MEASUREMENTS/rerun-results.txt"
+: > "$MANIFEST"
 
 for tool in claude codex gemini; do
   for arm in control style code; do
@@ -94,6 +98,7 @@ for tool in claude codex gemini; do
       source_file="$MEASUREMENTS/implementations/$run/evaluate.ts"
       if [ ! -f "$source_file" ]; then
         failed="$failed $run(missing)"
+        echo "MISSING $run" >> "$MANIFEST"
         continue
       fi
       directory="$SCRATCH/$tool-$arm-$n"
@@ -103,7 +108,9 @@ for tool in claude codex gemini; do
       total=$((total + 1))
       if check_run "$directory"; then
         passed=$((passed + 1))
+        echo "PASS $run" >> "$MANIFEST"
       else
+        echo "FAIL $run" >> "$MANIFEST"
         failed="$failed $run"
         echo "--- $run did not pass: bun exited $CHECK_STATUS ---"
         [ -f "$directory/result.xml" ] \
@@ -115,6 +122,7 @@ for tool in claude codex gemini; do
 done
 
 echo
+echo "wrote measurements/rerun-results.txt"
 echo "bun $(bun --version)"
 echo "RERAN:  $total"
 echo "PASSED: $passed"

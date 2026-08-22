@@ -17,6 +17,8 @@ the data they read.
 | `article-figures.ts` | Prints every implementation figure the article quotes |
 | `rerun-tests.sh` | Reruns the 25 hidden tests against all ninety implementations |
 | `rerun-tests.txt` | What that rerun printed |
+| `rerun-results.txt` | Its verdict for each of the ninety runs |
+| `rerun-results.ts` | Reads that manifest for the reporting scripts |
 | `superseded/` | The earlier draft of the article, the one its corrections are about |
 | `PREREGISTRATION.md` | What was to be measured, written before the runs |
 | `task/` | The specification given to each model, and the 25 tests it never saw |
@@ -71,7 +73,15 @@ Between them the first two print every measured figure the article quotes. Four 
 are checked another way, and saying so is the point:
 
 - **The hidden tests.** `bash measurements/rerun-tests.sh` reruns all 25 tests against all ninety
-  published implementations and prints how many passed. `rerun-tests.txt` holds its output.
+  published implementations and prints how many passed. `rerun-tests.txt` holds its output, and
+  `rerun-results.txt` holds one line per run.
+
+  That manifest is what the table's "passed 25 of 25" row reads. It used to read each saved
+  `tests.txt`, and a reviewer defeated that twice. An implementation can print bun's summary lines
+  itself, because it runs while bun writes. Reading the last summary does not help either, since an
+  implementation that exits during import stops bun writing one at all. The manifest carries the
+  verdict the rerun reached from bun's exit status and its junit report, neither of which the code
+  under test can produce.
 - **The code extracts.** The ten-line and eight-line functions in the article's code figure are
   read from `implementations/claude/control-7` and `code-2`, which are published whole.
 - **The earlier draft.** The article confesses to getting several figures wrong: 52 per cent, and
@@ -102,7 +112,7 @@ they scope differently.
   arrow constants, and class methods."
 
 So `score.ts` returns both. `units` counts everything, which is what the wrapper test needs.
-`topLevelUnits` counts what the secondary outcome names, and that is the registered figure.
+`registeredUnits` counts what the secondary outcome names, and that is the registered figure.
 
 The table publishes both rows, because the gap between them is itself informative. A file whose
 top-level count collapses to 1 is a file that put everything inside `evaluate`, which is what

@@ -86,7 +86,10 @@ function isPreservedArtefact(relativePath: string): boolean {
     // destroy the only thing it is for, which is showing what was corrected.
     || relativePath.startsWith("measurements/superseded/")
     // A recorded run, not writing. Its "RERAN:" label reads as an undefined acronym.
-    || relativePath === "measurements/rerun-tests.txt";
+    || relativePath === "measurements/rerun-tests.txt"
+    // Ninety verdict lines. Read as prose that is one 180-word sentence, which says nothing
+    // about whether the manifest is any good, the same as the instruction manifest above.
+    || relativePath === "measurements/rerun-results.txt";
 }
 
 function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {

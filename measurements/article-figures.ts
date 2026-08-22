@@ -21,7 +21,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { score, type Score } from "./score";
-import { recordShowsAllPassing } from "./tests-record";
+import { readRerunResults } from "./rerun-results";
 
 const MEASUREMENTS = import.meta.dir;
 const IMPLEMENTATIONS = join(MEASUREMENTS, "implementations");
@@ -77,15 +77,16 @@ const median = (values: number[]): number => {
 const summarise = (values: number[]): string =>
   `${median(values)} (${Math.min(...values)} to ${Math.max(...values)})`;
 
-const passed = (runs: Run[]): number =>
-  runs.filter((run) => {
-    try {
-      return recordShowsAllPassing(readFileSync(join(run.directory, "tests.txt"), "utf8"));
-    } catch {
-      // A run with no saved record has not been shown to pass.
-      return false;
-    }
-  }).length;
+// The rerun's own verdicts, read once. A run absent from the manifest has not been shown to
+// pass, and a manifest short of ninety runs means the battery did not finish.
+const rerun = readRerunResults();
+if (rerun.size !== 90) {
+  console.error(`INCOMPLETE: rerun-results.txt holds ${rerun.size} runs, expected 90`);
+  process.exit(1);
+}
+
+const passed = (tool: string, runs: Run[]): number =>
+  runs.filter((run) => rerun.passed(`${tool}/${run.name}`)).length;
 
 function reportPositions(): void {
   console.log("\nENTRY POSITION, EVERY RUN SORTED (0.00 is the top of the file)");
@@ -132,7 +133,7 @@ function reportPreregistered(): void {
       "named units used by the wrapper rule (descriptive)": summarise(results.map((r) => r.units)),
       "longest own unit": summarise(results.map((r) => r.longest_own)),
       "comment lines": summarise(results.map((r) => r.comments)),
-      "passed 25 of 25": `${passed(runs)} of ${runs.length}`,
+      "passed 25 of 25": `${passed("claude", runs)} of ${runs.length}`,
       "file lines (not preregistered)": summarise(results.map((r) => r.length)),
     }]);
   }

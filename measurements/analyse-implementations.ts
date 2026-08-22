@@ -14,7 +14,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { score } from "./score";
-import { recordShowsAllPassing } from "./tests-record";
+import { basename } from "node:path";
+import { readRerunResults } from "./rerun-results";
 
 const ARMS: Array<[string, string]> = [
   ["A control", "control"], ["B style", "style"],
@@ -35,6 +36,10 @@ if (base === undefined || label === undefined) {
   console.error("usage: bun measurements/analyse-implementations.ts <directory> <label>");
   process.exit(2);
 }
+
+// The manifest is keyed by tool, which is the last part of the directory given.
+const tool = basename(base);
+const rerun = readRerunResults();
 
 console.log(`\n===== ${label} =====`);
 console.log("arm".padEnd(14) + "n".padStart(4) + "wrapper".padStart(9) + "units".padStart(13) +
@@ -67,11 +72,8 @@ for (const [name, key] of ARMS) {
       process.exit(1);
     }
     results.push(result);
-    try {
-      if (recordShowsAllPassing(readFileSync(join(directory, "tests.txt"), "utf8"))) passed += 1;
-    } catch {
-      // A run without a saved test output counts as not passing, never as absent.
-    }
+    // The rerun's verdict, not the saved console log, which the code under test can write.
+    if (rerun.passed(`${tool}/${key}-${n}`)) passed += 1;
   }
   if (results.length === 0) {
     console.log(name.padEnd(14) + "0".padStart(4) + "   (no files)");
