@@ -14,4 +14,9 @@ bun test
 echo "==> Shipped audit entry point against this repository"
 bun skills/iso-24495-4/scripts/audit-corpus-cli.ts .
 
+# Same reasoning as above: the suite tests the module, so this runs the shipped
+# entry file. The fixture keeps the gate offline and free of a token.
+echo "==> Traffic snapshot entry point against a fixture"
+bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json --dry-run data
+
 echo "==> All gates passed"
