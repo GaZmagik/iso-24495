@@ -24,10 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check out the data branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: traffic-data
           path: traffic-data
