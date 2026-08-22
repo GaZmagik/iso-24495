@@ -217,11 +217,11 @@ class Parser {
 }
 `;
     expect(scoreOf(source).units).toBe(4);
-    expect(scoreOf(source).topLevelUnits).toBe(1);
+    expect(scoreOf(source).registeredUnits).toBe(1);
     expect(scoreOf(source).wrapper).toBe(true);
   });
 
-  test("a class method counts in the registered count wherever its class sits", () => {
+  test("a class method counts wherever its class sits, including inside a function", () => {
     // A class is not a function body, so its members are top-level for this purpose.
     expect(scoreOf(`class Parser {
   parse(): number {
@@ -231,7 +231,24 @@ class Parser {
     return 0;
   }
 }
-`).topLevelUnits).toBe(2);
+`).registeredUnits).toBe(2);
+  });
+
+  test("a function in a block or a namespace is not top-level", () => {
+    // "Not inside a function" is not the same as top-level. Neither of these occurs in the
+    // ninety published files, so this holds the contract rather than a figure.
+    expect(scoreOf(`if (true) {
+  function helper(): number {
+    return 1;
+  }
+}
+`).registeredUnits).toBe(0);
+    expect(scoreOf(`namespace Local {
+  export function helper(): number {
+    return 1;
+  }
+}
+`).registeredUnits).toBe(0);
   });
 
   test("an overload signature is not a named unit", () => {

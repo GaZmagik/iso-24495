@@ -16,17 +16,18 @@
  * Its secondary outcome then names what its own count includes: "Top-level functions, top-level
  * arrow constants, and class methods". That is narrower, and it is the registered count.
  *
- * So `units` counts everything, which is what `wrapper` needs, and `topLevelUnits` counts what the
- * secondary outcome names. Reporting only the first, under the label of the second, is the defect
- * a reviewer found here. I had read the two definitions as contradicting each other; they do not,
- * they scope differently.
+ * So `units` counts everything, which is what `wrapper` needs, and `registeredUnits` counts what
+ * the secondary outcome names: top-level functions and arrow constants, plus class methods.
+ *
+ * Reporting only the first, under the label of the second, is the defect a reviewer found here. I
+ * had read the two definitions as contradicting each other; they do not, they scope differently.
  */
 import * as ts from "typescript";
 
 export interface Score {
   wrapper: boolean;
   units: number;
-  topLevelUnits: number;
+  registeredUnits: number;
   longest_own: number;
   entry: number | null;
   length: number;
@@ -63,11 +64,34 @@ function namedUnit(node: ts.Node): boolean {
   return false;
 }
 
-/** Is this node a class member, which the secondary outcome counts wherever the class sits? */
+/** Is this node a class member, which the secondary outcome counts wherever the class sits?
+ *
+ * The wording says "top-level" of functions and arrow constants and does not repeat it for class
+ * methods. Counting them wherever the class is declared is the better reading: the primary
+ * section separates class members from closures, and one published file declares a twelve-member
+ * class inside `evaluate`. Excluding those would put that arm's median at 1.
+ */
 function classMember(node: ts.Node): boolean {
   return (ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) ||
     ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
     node.parent !== undefined && ts.isClassLike(node.parent);
+}
+
+/** Is this declaration written directly in the file, rather than in a block, namespace or class?
+ *
+ * "Not inside a function" is not the same as top-level. A function declared in an `if` block or a
+ * namespace is neither. No such declaration occurs in the ninety published files, so this changes
+ * no figure; it makes the contract mean what it says.
+ */
+function atFileLevel(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (parent === undefined) return false;
+  if (ts.isSourceFile(parent)) return true;
+  // A const arrow reaches the file through its declaration list and statement.
+  if (ts.isVariableDeclarationList(parent) && parent.parent && ts.isVariableStatement(parent.parent)) {
+    return parent.parent.parent !== undefined && ts.isSourceFile(parent.parent.parent);
+  }
+  return false;
 }
 
 /** Does this node introduce a function body, for the purpose of "inside another function"? */
@@ -82,7 +106,7 @@ export function score(path: string, text: string): Score {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const lines = text.split("\n");
   const units: Unit[] = [];
-  let topLevel = 0;
+  let registered = 0;
 
   const walk = (node: ts.Node, insideFunction: boolean): void => {
     if (namedUnit(node)) {
@@ -91,9 +115,9 @@ export function score(path: string, text: string): Score {
         last: source.getLineAndCharacterOfPosition(node.getEnd()).line,
         closure: insideFunction,
       });
-      // The secondary outcome counts top-level functions and arrow constants, and class methods
-      // wherever their class is declared.
-      if (!insideFunction || classMember(node)) topLevel += 1;
+      // The secondary outcome counts top-level functions and arrow constants, plus class
+      // methods wherever their class is declared.
+      if (classMember(node) || atFileLevel(node)) registered += 1;
     }
     // A class body is not a function body, so its methods are members rather than closures.
     const deeper = functionScope(node) ? true : (ts.isClassLike(node) ? false : insideFunction);
@@ -125,7 +149,7 @@ export function score(path: string, text: string): Score {
   return {
     wrapper: units.filter((unit) => unit.closure).length >= 3,
     units: units.length,
-    topLevelUnits: topLevel,
+    registeredUnits: registered,
     longest_own: ownLines.length > 0 ? Math.max(...ownLines) : 0,
     entry: entryLine === -1 ? null : entryLine / Math.max(1, lines.length),
     length: lines.length - (lines.length > 0 && lines[lines.length - 1] === "" ? 1 : 0),

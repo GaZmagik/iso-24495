@@ -53,7 +53,13 @@ for (const [name, key] of ARMS) {
     } catch {
       continue;
     }
-    results.push(score(file, text));
+    const result = score(file, text);
+    if (result.unparsed) {
+      // A file that does not parse is reported, never scored as though it held nothing.
+      console.error(`UNPARSED: ${key}-${n} did not parse cleanly`);
+      process.exit(1);
+    }
+    results.push(result);
     try {
       const found = PASSES.exec(readFileSync(join(directory, "tests.txt"), "utf8"));
       if (found !== null && found[1] === "25") passed += 1;

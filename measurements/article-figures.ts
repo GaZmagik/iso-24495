@@ -37,6 +37,8 @@ interface Run {
 }
 
 function scored(tool: string, arm: string): Run[] {
+  // Every published arm holds ten runs. A short arm means a file went missing, which is reported
+  // rather than divided away.
   const runs: Run[] = [];
   for (let n = 1; n <= 10; n += 1) {
     const directory = join(IMPLEMENTATIONS, tool, `${arm}-${n}`);
@@ -45,12 +47,13 @@ function scored(tool: string, arm: string): Run[] {
     try {
       text = readFileSync(file, "utf8");
     } catch {
-      // A run with no file is absent, which is different from a run that cannot be measured.
-      continue;
+      // Every one of the thirty files is counted. A run this script cannot read is a failure to
+      // report, not a row to leave out of a denominator that still says ten.
+      console.error(`MISSING: ${tool}/${arm}-${n} has no evaluate.ts`);
+      process.exit(1);
     }
     const result = score(file, text);
     if (result.unparsed) {
-      // The preregistration says a file that fails to parse is reported, never dropped.
       console.error(`UNPARSED: ${tool}/${arm}-${n} did not parse cleanly`);
       process.exit(1);
     }
@@ -124,9 +127,9 @@ function reportPreregistered(): void {
     if (runs.length === 0) continue;
     const results = runs.map((run) => run.result);
     columns.push([label, {
-      "wrapper files (primary)": `${results.filter((r) => r.wrapper).length} of 10`,
-      "named units (registered)": summarise(results.map((r) => r.topLevelUnits)),
-      "named units, with nested": summarise(results.map((r) => r.units)),
+      "wrapper files (primary)": `${results.filter((r) => r.wrapper).length} of ${results.length}`,
+      "named units (registered)": summarise(results.map((r) => r.registeredUnits)),
+      "named units used by the wrapper rule (descriptive)": summarise(results.map((r) => r.units)),
       "longest own unit": summarise(results.map((r) => r.longest_own)),
       "comment lines": summarise(results.map((r) => r.comments)),
       "passed 25 of 25": `${passed(runs)} of ${runs.length}`,
@@ -135,11 +138,11 @@ function reportPreregistered(): void {
   }
   if (columns.length === 0) return;
   const order = ["wrapper files (primary)", "named units (registered)",
-    "named units, with nested", "longest own unit", "comment lines",
+    "named units used by the wrapper rule (descriptive)", "longest own unit", "comment lines",
     "passed 25 of 25", "file lines (not preregistered)"];
-  console.log("  " + "outcome".padEnd(31) + columns.map(([label]) => label.padStart(20)).join(""));
+  console.log("  " + "outcome".padEnd(52) + columns.map(([label]) => label.padStart(20)).join(""));
   for (const name of order) {
-    console.log("  " + name.padEnd(31) + columns.map(([, cells]) => (cells[name] ?? "").padStart(20)).join(""));
+    console.log("  " + name.padEnd(52) + columns.map(([, cells]) => (cells[name] ?? "").padStart(20)).join(""));
   }
 }
 
