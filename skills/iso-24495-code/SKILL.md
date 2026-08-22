@@ -1,6 +1,6 @@
 ---
 name: iso-24495-code
-description: Plain language applied to source code (ISO 24495-1:2023 principles). Governs the parts of code a person reads: the order units appear in, their names, comments, and error messages. Applied when writing or restructuring code, not when explaining it.
+description: "Plain language applied to source code (ISO 24495-1:2023 principles). Governs the parts of code a person reads: the order units appear in, their names, comments, and error messages. Applied when writing or restructuring code, not when explaining it."
 metadata:
   version: "0.6.0"
   iso-standard: "ISO 24495-1:2023"
