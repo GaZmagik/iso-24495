@@ -40,32 +40,57 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 MEASUREMENTS="$ROOT/measurements"
 HARNESS="$MEASUREMENTS/task/hidden-tests.ts"
 SCRATCH="${TMPDIR:-/tmp}/iso-24495-rerun-$$"
+# The witness reports are written here, not beside the implementation being run.
+WITNESS_DIR="${TMPDIR:-/tmp}/iso-24495-witness-$$"
 
 if [ ! -f "$HARNESS" ]; then
   echo "no harness at $HARNESS"
   exit 1
 fi
 
-trap 'rm -rf "$SCRATCH"' EXIT
-mkdir -p "$SCRATCH"
+trap 'rm -rf "$SCRATCH" "$WITNESS_DIR"' EXIT
+mkdir -p "$SCRATCH" "$WITNESS_DIR"
 
 # One run's verdict, so the loop below and the test that attacks this predicate exercise the
 # same code. A test that reimplements the check proves only that the copy agrees with itself.
 check_run() {
   local directory="$1"
-  local out status report
+  local out status report cases clean
+  # The report goes OUTSIDE the directory the implementation runs in. A reviewer wrote an
+  # implementation that created `result.xml` beside itself and exited zero, and the old predicate
+  # believed it. Removing it first means its presence proves bun wrote it during this run.
+  report="$WITNESS_DIR/witness-$RANDOM-$RANDOM.xml"
+  rm -f "$report"
   out=$(cd "$directory" && bun test ./hidden.test.ts \
-    --reporter=junit --reporter-outfile=result.xml 2>&1)
+    --reporter=junit --reporter-outfile="$report" 2>&1)
   status=$?
   # bun colours its summary, so the escape codes are stripped before anything is read.
   out=$(printf '%s' "$out" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
-  report="$directory/result.xml"
   CHECK_OUTPUT="$out"
   CHECK_STATUS="$status"
-  [ "$status" -eq 0 ] && [ -f "$report" ] \
-    && grep -q 'tests="25"' "$report" \
-    && grep -q 'failures="0"' "$report" \
-    && grep -q 'skipped="0"' "$report"
+  if [ ! -f "$report" ]; then
+    CHECK_REASON="no report: the tests did not run to completion"
+    return 1
+  fi
+  # Twenty-five test cases, not merely a summary claiming twenty-five.
+  cases=$(grep -c '<testcase' "$report" || true)
+  clean=0
+  if grep -q 'failures="0"' "$report" && grep -q 'skipped="0"' "$report"; then clean=1; fi
+  rm -f "$report"
+  if [ "$status" -ne 0 ]; then
+    CHECK_REASON="bun exited $status"
+    return 1
+  fi
+  if [ "$cases" -ne 25 ]; then
+    CHECK_REASON="report held $cases test cases, expected 25"
+    return 1
+  fi
+  if [ "$clean" -ne 1 ]; then
+    CHECK_REASON="report did not say failures=0 and skipped=0"
+    return 1
+  fi
+  CHECK_REASON="passed"
+  return 0
 }
 
 # `rerun-tests.sh --check-one <directory>` judges one prepared directory and says so. The
@@ -79,7 +104,7 @@ if [ "${1:-}" = "--check-one" ]; then
     echo "PASS"
     exit 0
   fi
-  echo "FAIL (bun exited $CHECK_STATUS)"
+  echo "FAIL (${CHECK_REASON:-unknown})"
   exit 1
 fi
 
@@ -98,7 +123,7 @@ for tool in claude codex gemini; do
       source_file="$MEASUREMENTS/implementations/$run/evaluate.ts"
       if [ ! -f "$source_file" ]; then
         failed="$failed $run(missing)"
-        echo "MISSING $run" >> "$MANIFEST"
+        echo "MISSING $run -" >> "$MANIFEST"
         continue
       fi
       directory="$SCRATCH/$tool-$arm-$n"
@@ -106,15 +131,16 @@ for tool in claude codex gemini; do
       cp "$source_file" "$directory/evaluate.ts"
       cp "$HARNESS" "$directory/hidden.test.ts"
       total=$((total + 1))
+      # The verdict is bound to the bytes it was reached against, so replacing an
+      # implementation afterwards cannot leave a valid PASS behind.
+      digest=$(sha256sum "$source_file" | cut -d' ' -f1)
       if check_run "$directory"; then
         passed=$((passed + 1))
-        echo "PASS $run" >> "$MANIFEST"
+        echo "PASS $run $digest" >> "$MANIFEST"
       else
-        echo "FAIL $run" >> "$MANIFEST"
+        echo "FAIL $run $digest" >> "$MANIFEST"
         failed="$failed $run"
-        echo "--- $run did not pass: bun exited $CHECK_STATUS ---"
-        [ -f "$directory/result.xml" ] \
-          || echo "    no result.xml: the tests did not run to completion"
+        echo "--- $run did not pass: ${CHECK_REASON:-unknown} ---"
         printf '%s\n' "$CHECK_OUTPUT" | grep -E "pass|fail|error" | head -4
       fi
     done

@@ -80,8 +80,19 @@ are checked another way, and saying so is the point:
   `tests.txt`, and a reviewer defeated that twice. An implementation can print bun's summary lines
   itself, because it runs while bun writes. Reading the last summary does not help either, since an
   implementation that exits during import stops bun writing one at all. The manifest carries the
-  verdict the rerun reached from bun's exit status and its junit report, neither of which the code
-  under test can produce.
+  verdict the rerun reached from bun's exit status and its junit report.
+
+  That report is written outside the directory the implementation runs in, deleted first, and
+  required to hold 25 test cases. An earlier version wrote it beside the implementation, and a
+  reviewer promptly wrote one that created the report itself and exited. Each manifest line also
+  carries the SHA-256 of the file its verdict was reached against. The same reviewer had replaced
+  an implementation after the rerun, and the PASS still stood.
+
+  **None of this makes the evidence self-authenticating, and an earlier draft of this paragraph
+  claimed it did.** A publisher can forge a committed manifest. A tag freezes bytes and proves
+  nothing about what was executed. What is on offer is reproducibility and binding: the manifest
+  says which bytes were tested, and `rerun-tests.sh` re-derives the verdict for anyone who would
+  rather not take it on trust.
 - **The code extracts.** The ten-line and eight-line functions in the article's code figure are
   read from `implementations/claude/control-7` and `code-2`, which are published whole.
 - **The earlier draft.** The article confesses to getting several figures wrong: 52 per cent, and

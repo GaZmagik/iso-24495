@@ -20,12 +20,11 @@
  * attribute that bun does not write, so it rejected every implementation including the real ones.
  * A predicate that fails everything catches every forgery and is useless.
  *
- * WHAT THIS FILE DOES NOT CATCH, established by breaking the script three ways and watching:
- * removing the junit checks fails these tests, and requiring an attribute bun never writes fails
- * them, but removing the exit-status check does not. Both demonstrated forgeries are caught by
- * the junit report alone, so no case here distinguishes the status check from it. The status
- * check is kept as a second line rather than because a test proves it necessary, and saying so
- * is better than implying coverage this file does not have.
+ * WHAT THESE TESTS CATCH, established by breaking the script and watching rather than by reading
+ * it. Removing the junit checks fails them. Requiring an attribute bun never writes fails them,
+ * which matters because a predicate that rejects everything catches every forgery and is useless.
+ * Removing the exit-status check fails them too, which was NOT true of an earlier version: that
+ * limit was recorded here and rechecked after the predicate changed, rather than left to rot.
  */
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -70,6 +69,19 @@ function verdictFor(implementation: string | null): string {
   }
 }
 
+const WRITES_ITS_OWN_REPORT = `import { writeFileSync } from "node:fs";
+
+writeFileSync(
+  "result.xml",
+  '<testsuites tests="25" failures="0" skipped="0"></testsuites>',
+);
+process.exit(0);
+
+export function evaluate(): number {
+  return -999;
+}
+`;
+
 describe("the rerun script's verdict", () => {
   test("a genuine implementation passes", () => {
     // Named first because a predicate that rejects everything would pass both attacks below.
@@ -78,6 +90,14 @@ describe("the rerun script's verdict", () => {
 
   test("an implementation that prints bun's summary does not pass", () => {
     expect(verdictFor(PRINTS_ITS_OWN_SUMMARY)).toStartWith("FAIL");
+  });
+
+  test("an implementation that writes the report itself does not pass", () => {
+    // A reviewer's third forgery, and the one that broke the witness. The report used to be
+    // written beside the implementation, so the implementation could write it and exit before
+    // any test ran. It is now written outside that directory, removed first, and required to
+    // hold 25 test cases rather than a summary claiming 25.
+    expect(verdictFor(WRITES_ITS_OWN_REPORT)).toStartWith("FAIL");
   });
 
   test("an implementation that exits before the tests run does not pass", () => {

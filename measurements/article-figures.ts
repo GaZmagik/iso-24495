@@ -79,11 +79,9 @@ const summarise = (values: number[]): string =>
 
 // The rerun's own verdicts, read once. A run absent from the manifest has not been shown to
 // pass, and a manifest short of ninety runs means the battery did not finish.
+// readRerunResults refuses an incomplete manifest, a repeated run, a malformed line, and any
+// verdict whose implementation no longer hashes to what was tested.
 const rerun = readRerunResults();
-if (rerun.size !== 90) {
-  console.error(`INCOMPLETE: rerun-results.txt holds ${rerun.size} runs, expected 90`);
-  process.exit(1);
-}
 
 const passed = (tool: string, runs: Run[]): number =>
   runs.filter((run) => rerun.passed(`${tool}/${run.name}`)).length;
