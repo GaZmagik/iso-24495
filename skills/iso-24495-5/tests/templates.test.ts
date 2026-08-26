@@ -131,47 +131,65 @@ describe("Part 5 document templates", () => {
     }
   });
 
-  // Round 13 asked for a gate on the heading repairs themselves, and on the
-  // meanings the opening block fields must carry. Both were reversible while green.
-  test("the heading repairs cannot be reverted unnoticed", () => {
-    const runbook = readTemplate("runbook-template.md").split("\n");
-    const headings = runbook.filter((line) => /^## /.test(line)).map((line) => line.trim());
-    for (const topic of ["## Prerequisites", "## Execution steps", "## Verification"]) {
-      expect(headings, `runbook no longer uses ${topic}`).not.toContain(topic);
-    }
-    expect(headings.length, "runbook still has its sections").toBeGreaterThanOrEqual(3);
-    // A task heading is a clause, a topic label is a noun or two. Word count is the
-    // readable proxy, and it rejects Requirements, Procedure and Results alike.
-    for (const heading of headings) {
-      const words = heading.replace("## ", "").trim().split(/ +/);
-      expect(words.length, `runbook heading "${heading}" states a task`).toBeGreaterThanOrEqual(3);
-    }
-    const adr = readTemplate("adr-template.md");
-    expect(adr, "the ADR names the publication its headings come from")
-      .toMatch(/Documenting Architecture Decisions/);
-    expect(adr, "the ADR does not head its own addition with a topic")
-      .not.toContain("## Options considered");
-    // A subsection of a sequential explanation cannot claim the reference case,
-    // so these five carry their message. Reverting one went unnoticed once.
-    const design = readTemplate("design-doc-template.md");
-    for (const topic of ["Component Diagram", "Interaction Flow", "Authentication Sequence",
-                         "Data Lifecycle", "Rollout and Rollback"]) {
-      expect(design, `the design document no longer heads a sequence "${topic}"`).not.toContain(topic);
+  // Rounds 10 to 16 defeated every proxy and every negation list here: a topic
+  // label three words long passed, and "need not cite" slipped a blacklist. The
+  // honest gate for a file this repository owns is the wording itself, so a
+  // deliberate edit updates the test and an accidental one turns it red.
+  const REQUIRED_WORDING: Record<string, string[]> = {
+    "adr-template.md": [
+      "## Context",
+      "## What each option offers and costs",
+      "## Decision",
+      "## Consequences",
+      "- **Status:**",
+      "Documenting Architecture Decisions",
+      "then read it back at that width",
+      "use labelled records instead",
+      "and what it covers",
+      "say when to read it",
+    ],
+    "runbook-template.md": [
+      "## Check these before you start",
+      "## Run these steps in order",
+      "## Confirm the task worked",
+      "and what the task covers",
+      "say when to use it",
+    ],
+    "design-doc-template.md": [
+      "## 1. Summary",
+      "### 2.1. What each component is responsible for",
+      "### 2.2. How a request flows through the system",
+      "#### 2.2.1. How a sign-in is checked",
+      "### 3.2. How data enters, changes and leaves",
+      "### 6.2. How the change ships and how it comes back",
+      "Reviewers cite these sections by number",
+      "from this contents list",
+      "then read them back at that width",
+      "and what it covers",
+      "say when to read it",
+      "qualification a reader must respect",
+    ],
+  };
+
+  test("every template keeps the wording its repairs put there", () => {
+    for (const [name, fragments] of Object.entries(REQUIRED_WORDING)) {
+      const body = readTemplate(name);
+      for (const fragment of fragments) {
+        expect(body, `${name} keeps "${fragment}"`).toContain(fragment);
+      }
     }
   });
 
-  test("the opening block fields carry their required meanings", () => {
+  test("no template heads a section with a label its rules reject", () => {
+    const rejected = ["## Prerequisites", "## Execution steps", "## Verification",
+                      "## Options considered", "## Requirements", "## Procedure", "## Results",
+                      "Component Diagram", "Interaction Flow", "Authentication Sequence",
+                      "Data Lifecycle", "Rollout and Rollback"];
     for (const name of TEMPLATE_NAMES) {
       const body = readTemplate(name);
-      const purpose = body.split("\n").find((line) => line.startsWith("- **Purpose:**")) ?? "";
-      expect(purpose, `${name} purpose names the reader's task`).toMatch(/reader|review|build|decide|do/i);
-      expect(purpose, `${name} purpose names the scope`).toMatch(/covers|scope|solve/i);
-      expect(purpose, `${name} purpose is not written in the negative`)
-        .not.toMatch(/nothing|no scope|(do|should|must|shall|can|will|need)( ?n.t| not)/i);
-      const referral = body.split("\n").find((line) => line.startsWith("- **Instead of this:**")) ?? "";
-      expect(referral, `${name} referral says when to use it`).toMatch(/when to/i);
-      expect(referral, `${name} referral is not written in the negative`)
-        .not.toMatch(/(do|should|must|shall|can|will|need)( ?n.t| not) (explain|say|name)/i);
+      for (const label of rejected) {
+        expect(body, `${name} does not use "${label}"`).not.toContain(label);
+      }
     }
   });
 

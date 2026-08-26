@@ -2,7 +2,7 @@
 
 - **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]
 - **For:** [Who needs this decision, and who must act on it.]
-- **Status:** [Proposed, accepted, deprecated or superseded, and by which decision.]
+- **Status:** [Proposed or accepted. Where deprecated or superseded, name the decision that replaces this one.]
 - **Version:** [Version or date.]
 - **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]
 
