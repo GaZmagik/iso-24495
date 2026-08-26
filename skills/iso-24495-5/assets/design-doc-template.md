@@ -7,6 +7,8 @@
 
 ## Contents
 
+[This template numbers its sections because reviewers cite them by number. Remove the numbers where yours are not cited.]
+
 - [1. Executive Summary](#1-executive-summary)
 - [2. System Architecture](#2-system-architecture)
 - [3. Data Model](#3-data-model)
@@ -16,7 +18,7 @@
 
 ## 1. Executive Summary
 
-[Summarise the reader need, proposed design, and expected outcome.]
+[Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next, and name any condition that changes the decision.]
 
 ## 2. System Architecture
 
@@ -36,7 +38,7 @@
 
 ### 3.1. Entities and Relationships
 
-[Name the narrowest width each table below must survive. Where none is known, use labelled records instead.]
+[Name the narrowest width each table must survive, then read them back at that width. Where no width is known, use labelled records instead.]
 
 | Entity | Purpose | Relationships |
 | :--- | :--- | :--- |

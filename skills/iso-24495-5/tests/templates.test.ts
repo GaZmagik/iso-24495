@@ -64,6 +64,41 @@ describe("Part 5 document templates", () => {
     }
   });
 
+  // Round 10 of the adversarial review found every template breaking a rule it
+  // exists to demonstrate, and no test able to see it. These check the parts of
+  // the Part 5 checklist a machine can read.
+  test("every template opens with the fields the opening block rule requires", () => {
+    for (const name of TEMPLATE_NAMES) {
+      const lines = readTemplate(name).split("\n");
+      const opening = lines.slice(0, 8).join("\n");
+      for (const field of ["**Purpose:**", "**For:**", "**Version:**"]) {
+        expect(opening, `${name} states ${field}`).toContain(field);
+      }
+      const purpose = lines.filter((line) => line.startsWith("- **Purpose:**"));
+      expect(purpose, `${name} gives one purpose line`).toHaveLength(1);
+    }
+  });
+
+  test("a template long enough to need an overview asks for what an overview must keep", () => {
+    for (const name of TEMPLATE_NAMES) {
+      const body = readTemplate(name);
+      const sections = body.split("\n").filter((line) => /^## /.test(line));
+      if (sections.length < 6) continue;
+      const summary = body.slice(body.indexOf("## 1."), body.indexOf("## 2."));
+      expect(summary, `${name} asks the overview for the required action`).toMatch(/must do|required action/);
+      expect(summary, `${name} asks the overview for its qualifications`).toMatch(/condition|qualification/);
+    }
+  });
+
+  test("every template holding a table tells the author to test its width", () => {
+    for (const name of TEMPLATE_NAMES) {
+      const body = readTemplate(name);
+      if (!body.includes("| :--- |")) continue;
+      expect(body, `${name} names a target width`).toContain("narrowest width");
+      expect(body, `${name} says to read the table back at it`).toMatch(/read it back|read them back/);
+    }
+  });
+
   test("Part 5 skill references every required template path", () => {
     const skill = readFileSync(join(SKILL_DIR, "SKILL.md"), "utf8");
     for (const name of TEMPLATE_NAMES) {

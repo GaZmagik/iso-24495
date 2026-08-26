@@ -11,7 +11,7 @@
 
 ## Options considered
 
-[Name the narrowest width this table must survive. Where none is known, use labelled records instead.]
+[Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]
 
 | Option | Pros | Cons | Estimated effort |
 | :--- | :--- | :--- | :--- |
