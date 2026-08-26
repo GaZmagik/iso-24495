@@ -1,9 +1,9 @@
 # [Project Name] Design Document
 
-- **Purpose:** [What this design sets out to solve, in one sentence.]
+- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]
 - **For:** [Who this design is written for.]
 - **Version:** [Version or date.]
-- **Instead of this:** [Link the design that may suit the reader better, or delete this line.]
+- **Instead of this:** [Link the design that may suit the reader better and say when to read it, or delete this line.]
 
 ## Contents
 
@@ -35,6 +35,8 @@
 ## 3. Data Model
 
 ### 3.1. Entities and Relationships
+
+[Name the narrowest width each table below must survive. Where none is known, use labelled records instead.]
 
 | Entity | Purpose | Relationships |
 | :--- | :--- | :--- |

@@ -61,6 +61,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 1. **Visual Hierarchy Limits:**
    - Use at most **3 heading levels** below the document title. Flatten deeper nesting into lists or tables.
    - Make headings state the section's message or task, not just its topic (*"Install the dependencies"* rather than *"Dependencies"*).
+   - A section name that readers of the genre already look for is the exception, such as the parts of a decision record. Keep the familiar word, because a reader hunting for it should find it.
    - Reject a heading that jokes, puns or plays with words. Reject one built on a term the document has not yet explained, because a reader skimming meets the heading first.
 
 2. **Navigation Aids:**
@@ -134,7 +135,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 Before outputting a complex document, audit against these checks:
 - [ ] **Hierarchy depth:** Are there 3 or fewer heading levels below the title?
-- [ ] **Heading quality:** Does each heading state its section's message, free of wordplay and of terms not yet explained?
+- [ ] **Heading quality:** Does each heading state its section's message, or a name its genre expects, free of wordplay and of terms not yet explained?
 - [ ] **Navigation:** Does a document with 6 or more sections carry a table of contents worded identically to its headings?
 - [ ] **Numbering:** Are headings numbered only where a reader must cite one by its identifier?
 - [ ] **Chunking:** Does each chunk carry one idea, separated from the next by a blank line?
@@ -148,7 +149,7 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Tables heard:** Does every table carry a header row, with headers that identify each value beneath them?
 - [ ] **Reading order:** Does document order match reading order, with each sidebar and displaced callout given its own heading?
 - [ ] **Opening block:** Does the document open with its title, a one-line purpose naming the reader's task and scope, the primary audience, and a version or date?
-- [ ] **Overview:** Where needed, is it labelled in words, does it hold when detail is removed, and has that detail moved to footnotes, an appendix or a collapsible block?
+- [ ] **Overview:** Where needed, is it labelled in words, does it keep the conclusion, the required action and every essential qualification, and has the detail moved out?
 - [ ] **Levels:** Are there 3 or fewer levels of detail, and is the optional detail still reachable?
 - [ ] **Signposting:** Is the referral near the top or ending the opening section, naming its destination and when to use it, and absent where nothing else exists?
 - [ ] **Preserved:** On a restructure, was every prose passage and content item kept, with no prose rewritten and no tone changed?

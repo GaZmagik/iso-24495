@@ -1,15 +1,17 @@
 # [Decision Title]
 
-- **Purpose:** [Why this decision is being recorded, in one sentence.]
+- **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]
 - **For:** [Who needs this decision, and who must act on it.]
 - **Version:** [Version or date.]
-- **Instead of this:** [Link the decision that may suit the reader better, or delete this line.]
+- **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]
 
 ## Context
 
 [One paragraph describing the problem or driving force.]
 
 ## Options considered
+
+[Name the narrowest width this table must survive. Where none is known, use labelled records instead.]
 
 | Option | Pros | Cons | Estimated effort |
 | :--- | :--- | :--- | :--- |

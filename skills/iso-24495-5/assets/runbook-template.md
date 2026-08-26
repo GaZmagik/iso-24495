@@ -1,9 +1,9 @@
 # [Task Title]
 
-- **Purpose:** [What this task achieves, in one sentence.]
+- **Purpose:** [What the reader will have done by the end, and what the task covers, in one sentence.]
 - **For:** [Who runs this task, and when.]
 - **Version:** [Version or date.]
-- **Instead of this:** [Link the runbook that may suit the reader better, or delete this line.]
+- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]
 
 ## Prerequisites
 
