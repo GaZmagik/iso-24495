@@ -163,11 +163,16 @@ describe("Part 5 document templates", () => {
     ],
   };
 
-  // Round 18 added "## Miscellaneous" and every predicate passed, because a list
-  // of required headings says nothing about the ones nobody listed. Round 19 found
-  // the scanner reading source lines, so a fenced example would have counted.
-  // Round 21 found only the text compared, so a heading could be demoted a level
-  // and slip through. The whole sequence is compared, level and text together.
+  // Twenty-three rounds of adversarial review found the same lesson in eight
+  // different disguises: a test that checks a fragment, a count, a label or a
+  // position leaves everything it does not name unprotected. Fragments fell to
+  // rewording, counts to moving, tables to hollowing out, and a verification
+  // section could be deleted whole while every assertion held.
+  //
+  // These three files are this repository's own canonical assets, so the honest
+  // guarantee is that no change to them is accidental. The whole text is the
+  // expectation. Editing a template means editing this list in the same commit,
+  // which is the point rather than a cost.
   const HEADING_SEQUENCE: Record<string, { level: number; text: string }[]> = {
     "adr-template.md": [
       { level: 1, text: "[Decision Title]" },
@@ -205,96 +210,172 @@ describe("Part 5 document templates", () => {
     ],
   };
 
-  test("every template keeps whole the lines its repairs wrote", () => {
-    for (const [name, required] of Object.entries(REQUIRED_LINES)) {
-      const present = readTemplate(name).split("\n").map((line) => line.trim());
-      for (const line of required) {
-        expect(present, `${name} keeps: ${line.slice(0, 40)}`).toContain(line);
-      }
-    }
-  });
-
-  // Round 20: checking which labels appear says nothing about what the reader
-  // sees. The block is compared line for line, in the position it occupies.
-  const OPENING_BLOCK: Record<string, string[]> = {
+  const TEMPLATE_SNAPSHOT: Record<string, string[]> = {
     "adr-template.md": [
+      "# [Decision Title]",
+      "",
       "- **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]",
       "- **For:** [Who needs this decision, and who must act on it.]",
       "- **Status:** [Proposed or accepted. Where deprecated or superseded, name the decision that replaces this one.]",
       "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]",
+      "",
+      "[Context, Decision and Consequences keep the names readers look for, from Michael Nygard's Documenting Architecture Decisions, 2011. The options heading is this template's own addition, so it states its message.]",
+      "",
+      "## Context",
+      "",
+      "[One paragraph describing the problem or driving force.]",
+      "",
+      "## What each option offers and costs",
+      "",
+      "[Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]",
+      "",
+      "| Option | Pros | Cons | Estimated effort |",
+      "| :--- | :--- | :--- | :--- |",
+      "| **[Option 1]** | [Advantage] | [Disadvantage] | [Estimate] |",
+      "| **[Option 2]** | [Advantage] | [Disadvantage] | [Estimate] |",
+      "",
+      "## Decision",
+      "",
+      "[State the chosen option and the deciding factor.]",
+      "",
+      "## Consequences",
+      "",
+      "- [Impact 1]",
+      "- [Impact 2]",
     ],
     "runbook-template.md": [
+      "# [Task Title]",
+      "",
       "- **Purpose:** [What the reader will have done by the end, and what the task covers, in one sentence.]",
       "- **For:** [Who runs this task, and when.]",
       "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
+      "",
+      "## Check these before you start",
+      "",
+      "- [ ] [Requirement 1]",
+      "- [ ] [Requirement 2]",
+      "",
+      "> [!CAUTION]",
+      "> [Critical risks or conditions, before any step runs.]",
+      "",
+      "## Run these steps in order",
+      "",
+      "1. [First action]",
+      "2. [Second action]",
+      "   > [!NOTE]",
+      "   > [Expected output for step 2]",
+      "3. [Third action]",
+      "",
+      "## Confirm the task worked",
+      "",
+      "- Run `[command]` and confirm the output contains `[expected state]`.",
     ],
     "design-doc-template.md": [
+      "# [Project Name] Design Document",
+      "",
       "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
       "- **For:** [Who this design is written for.]",
       "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the design that may suit the reader better and say when to read it, or delete this line.]",
+      "",
+      "## Contents",
+      "",
+      "[Reviewers cite these sections by number, which is why they are numbered. Where nobody cites yours, delete the numbers from the headings and from this contents list together.]",
+      "",
+      "- [1. Summary](#1-summary)",
+      "- [2. System Architecture](#2-system-architecture)",
+      "- [3. Data Model](#3-data-model)",
+      "- [4. API Design](#4-api-design)",
+      "- [5. Security Model](#5-security-model)",
+      "- [6. Deployment Plan](#6-deployment-plan)",
+      "",
+      "## 1. Summary",
+      "",
+      "[Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next. Name any condition that changes the decision, and any qualification a reader must respect, whether legal, financial or an approval.]",
+      "",
+      "## 2. System Architecture",
+      "",
+      "### 2.1. What each component is responsible for",
+      "",
+      "[Insert a diagram or describe each component and its responsibility.]",
+      "",
+      "### 2.2. How a request flows through the system",
+      "",
+      "[Describe the main request and response flow.]",
+      "",
+      "#### 2.2.1. How a sign-in is checked",
+      "",
+      "[Describe sign-in, token validation, and failure handling.]",
+      "",
+      "## 3. Data Model",
+      "",
+      "### 3.1. Entities and Relationships",
+      "",
+      "[Name the narrowest width each table must survive, then read them back at that width. Where no width is known, use labelled records instead.]",
+      "",
+      "| Entity | Purpose | Relationships |",
+      "| :--- | :--- | :--- |",
+      "| **[Entity]** | [Purpose] | [Related entities] |",
+      "",
+      "### 3.2. How data enters, changes and leaves",
+      "",
+      "[Describe how data enters, changes, persists, and leaves the system.]",
+      "",
+      "## 4. API Design",
+      "",
+      "### 4.1. Endpoints",
+      "",
+      "| Method | Path | Purpose | Request | Response |",
+      "| :--- | :--- | :--- | :--- | :--- |",
+      "| `[METHOD]` | `[path]` | [Purpose] | [Request shape] | [Response shape] |",
+      "",
+      "### 4.2. Error Handling",
+      "",
+      "[Define error categories, response shapes, and retry behaviour.]",
+      "",
+      "## 5. Security Model",
+      "",
+      "### 5.1. Threats and Controls",
+      "",
+      "| Threat | Control | Residual risk |",
+      "| :--- | :--- | :--- |",
+      "| **[Threat]** | [Control] | [Residual risk] |",
+      "",
+      "### 5.2. Access Control",
+      "",
+      "[Define roles, permissions, and enforcement points.]",
+      "",
+      "## 6. Deployment Plan",
+      "",
+      "### 6.1. Environments",
+      "",
+      "[Describe each environment and its release criteria.]",
+      "",
+      "### 6.2. How the change ships and how it comes back",
+      "",
+      "1. [Prepare and verify the release.]",
+      "2. [Deploy the change in controlled stages.]",
+      "3. [Verify success or follow the rollback procedure.]",
     ],
   };
 
-  test("every template keeps its opening block whole and in place", () => {
+  test("no template changes without this test changing with it", () => {
     for (const name of TEMPLATE_NAMES) {
-      const lines = readTemplate(name).split("\n").map((line) => line.trimEnd());
-      const expected = OPENING_BLOCK[name] ?? [];
-      expect(lines.slice(2, 2 + expected.length), `${name} opens as expected`).toEqual(expected);
-      expect(lines[1], `${name} leaves a blank line under its title`).toBe("");
-      expect(lines[2 + expected.length], `${name} closes the block`).toBe("");
+      const actual = readTemplate(name).replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n");
+      expect(actual, `${name} matches its recorded text`).toEqual(TEMPLATE_SNAPSHOT[name] ?? []);
     }
   });
 
+  // Kept beside the snapshot because it names the failure. A snapshot says the
+  // file differs; this says which heading moved.
   test("every template heads its sections exactly as its rules require", () => {
     for (const name of TEMPLATE_NAMES) {
       const found = headings(readTemplate(name))
         .map((heading) => ({ level: heading.level, text: heading.text.trim() }));
       expect(found, `${name} heads its sections as expected`).toEqual(HEADING_SEQUENCE[name] ?? []);
     }
-  });
-
-  // Round 21 moved a warning and emptied a procedure while every line assertion
-  // held. Round 22 then moved the steps into the wrong section and hollowed the
-  // table to a single empty column, and counting alone missed both. These check
-  // where a structure sits and what it holds, not merely that it exists.
-  //
-  // These guard this repository's canonical templates, not runbooks in general. A
-  // two-step runbook is perfectly legitimate; this one has three, and a change to
-  // that is a deliberate edit.
-  test("the runbook warns before its steps, and keeps them in their section", () => {
-    const lines = readTemplate("runbook-template.md").split("\n").map((line) => line.trimEnd());
-    const caution = lines.indexOf("> [!CAUTION]");
-    expect(caution, "the runbook carries a caution").toBeGreaterThan(-1);
-    expect(lines[caution + 1], "the caution names the risk")
-      .toBe("> [Critical risks or conditions, before any step runs.]");
-
-    const steps = lines.indexOf("## Run these steps in order");
-    const confirm = lines.indexOf("## Confirm the task worked");
-    expect(caution, "the caution comes before the steps it governs").toBeLessThan(steps);
-    expect(steps, "the steps come before the confirmation").toBeLessThan(confirm);
-
-    const inside = lines.slice(steps, confirm).filter((line) => /^[0-9]+[.] /.test(line));
-    const outside = lines.filter((line) => /^[0-9]+[.] /.test(line)).length - inside.length;
-    expect(inside.length, "the procedure sits inside its own section").toBe(3);
-    expect(outside, "no step has wandered out of it").toBe(0);
-
-    const note = lines.findIndex((line) => line.trim() === "> [!NOTE]");
-    expect(note, "the note sits between step 2 and step 3").toBeGreaterThan(lines.indexOf("2. [Second action]"));
-    expect(note, "the note sits between step 2 and step 3").toBeLessThan(lines.indexOf("3. [Third action]"));
-    expect(lines[note + 1].trim(), "the note names its expected output")
-      .toBe("> [Expected output for step 2]");
-  });
-
-  test("the decision record compares real options across shared attributes", () => {
-    const lines = readTemplate("adr-template.md").split("\n").map((line) => line.trim());
-    const header = lines.indexOf("| Option | Pros | Cons | Estimated effort |");
-    expect(header, "the record keeps its comparison header").toBeGreaterThan(-1);
-    expect(lines[header + 1], "a divider follows the header").toMatch(/^[|][\s:|-]*-{3,}[\s:|-]*$/);
-    const rows = lines.slice(header + 2).filter((line) => line.startsWith("|") && line.includes("[Option"));
-    expect(rows.length, "the record compares at least two options").toBeGreaterThanOrEqual(2);
   });
 
   test("Part 5 skill references every required template path", () => {
