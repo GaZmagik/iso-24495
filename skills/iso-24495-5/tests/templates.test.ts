@@ -149,7 +149,9 @@ describe("Part 5 document templates", () => {
       "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
       "> [!CAUTION]",
+      "> [Critical risks or conditions, before any step runs.]",
       "> [!NOTE]",
+      "> [Expected output for step 2]",
     ],
     "design-doc-template.md": [
       "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
@@ -212,18 +214,37 @@ describe("Part 5 document templates", () => {
     }
   });
 
-  // A line asserted anywhere can be moved anywhere, so the opening block is
-  // asserted as one run of lines directly beneath the title.
-  test("every template keeps its opening block directly under the title", () => {
+  // Round 20: checking which labels appear says nothing about what the reader
+  // sees. The block is compared line for line, in the position it occupies.
+  const OPENING_BLOCK: Record<string, string[]> = {
+    "adr-template.md": [
+      "- **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]",
+      "- **For:** [Who needs this decision, and who must act on it.]",
+      "- **Status:** [Proposed or accepted. Where deprecated or superseded, name the decision that replaces this one.]",
+      "- **Version:** [Version or date.]",
+      "- **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]",
+    ],
+    "runbook-template.md": [
+      "- **Purpose:** [What the reader will have done by the end, and what the task covers, in one sentence.]",
+      "- **For:** [Who runs this task, and when.]",
+      "- **Version:** [Version or date.]",
+      "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
+    ],
+    "design-doc-template.md": [
+      "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
+      "- **For:** [Who this design is written for.]",
+      "- **Version:** [Version or date.]",
+      "- **Instead of this:** [Link the design that may suit the reader better and say when to read it, or delete this line.]",
+    ],
+  };
+
+  test("every template keeps its opening block whole and in place", () => {
     for (const name of TEMPLATE_NAMES) {
       const lines = readTemplate(name).split("\n").map((line) => line.trimEnd());
-      const fields = lines.slice(2).filter((line, index) => index < 5 && line.startsWith("- **"));
-      const labels = fields.map((line) => line.slice(4, line.indexOf(":**")));
-      expect(labels[0], `${name} opens with its purpose`).toBe("Purpose");
-      expect(labels, `${name} names its reader`).toContain("For");
-      expect(labels, `${name} gives a version`).toContain("Version");
-      expect(labels[labels.length - 1], `${name} ends the block with its referral`)
-        .toBe("Instead of this");
+      const expected = OPENING_BLOCK[name] ?? [];
+      expect(lines.slice(2, 2 + expected.length), `${name} opens as expected`).toEqual(expected);
+      expect(lines[1], `${name} leaves a blank line under its title`).toBe("");
+      expect(lines[2 + expected.length], `${name} closes the block`).toBe("");
     }
   });
 
