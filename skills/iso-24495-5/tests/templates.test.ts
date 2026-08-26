@@ -94,6 +94,7 @@ describe("Part 5 document templates", () => {
       const sections = body.split("\n").filter((line) => /^## /.test(line));
       if (sections.length < 6) continue;
       const summary = body.slice(body.indexOf("## 1."), body.indexOf("## 2."));
+      expect(summary.split("\n")[0], `${name} labels its overview`).toMatch(/summary|overview|abstract/i);
       expect(summary, `${name} asks for the conclusion`).toMatch(/outcome|conclusion|recommend/i);
       expect(summary, `${name} asks for the required action`).toMatch(/must do|required action|do next/i);
       expect(summary, `${name} asks for the qualifications`).toMatch(/condition|qualification|caveat/i);
@@ -106,19 +107,23 @@ describe("Part 5 document templates", () => {
       const body = readTemplate(name);
       const hasTable = body.split("\n").some((line) => divider.test(line.trim()) && line.includes("-"));
       if (!hasTable) continue;
-      expect(body, `${name} names a target width`).toMatch(/narrowest width/);
+      expect(body, `${name} names a target width`).toMatch(/[[]Name the narrowest width/);
       expect(body, `${name} says to read the table back at it`).toMatch(/read (it|them) back at that width/);
       expect(body, `${name} offers the labelled-record fallback`).toMatch(/labelled records/);
     }
   });
 
-  test("a template that numbers its headings says why", () => {
+  test("a template that numbers its headings says why, and how to undo it", () => {
     for (const name of TEMPLATE_NAMES) {
       const body = readTemplate(name);
-      const numbered = body.split("\n").filter((line) => /^#{2,4} [0-9]+[.]/.test(line));
+      // Arabic, bracketed and Roman numbering all count as numbering.
+      const numbered = body.split("\n").filter((line) => /^#{2,4} ([0-9]+|[ivxIVX]+)[.)]/.test(line));
       if (numbered.length === 0) continue;
-      expect(body, `${name} justifies numbering`).toMatch(/cite them by number|cited/);
-      expect(body, `${name} tells an author when to drop it`).toMatch(/Remove the numbers/);
+      expect(body, `${name} justifies numbering`).toMatch(/cite these sections by number/);
+      // "Do not cite these sections by number" contains the phrase above, so refuse the negation.
+      expect(body, `${name} does not negate its own reason`).not.toMatch(/(do not|never|cannot) cite these sections/i);
+      // Removing numbers without the contents list breaks the anchors beneath it.
+      expect(body, `${name} says to update the contents too`).toMatch(/from this contents list/);
     }
   });
 

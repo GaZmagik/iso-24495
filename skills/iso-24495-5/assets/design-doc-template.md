@@ -7,16 +7,16 @@
 
 ## Contents
 
-[This template numbers its sections because reviewers cite them by number. Remove the numbers where yours are not cited.]
+[Reviewers cite these sections by number, which is why they are numbered. Where nobody cites yours, delete the numbers from the headings and from this contents list together.]
 
-- [1. Executive Summary](#1-executive-summary)
+- [1. Summary of what this design achieves](#1-summary-of-what-this-design-achieves)
 - [2. System Architecture](#2-system-architecture)
 - [3. Data Model](#3-data-model)
 - [4. API Design](#4-api-design)
 - [5. Security Model](#5-security-model)
 - [6. Deployment Plan](#6-deployment-plan)
 
-## 1. Executive Summary
+## 1. Summary of what this design achieves
 
 [Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next, and name any condition that changes the decision.]
 

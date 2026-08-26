@@ -5,6 +5,8 @@
 - **Version:** [Version or date.]
 - **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]
 
+[This record follows the published architecture decision record structure, so Context, Decision and Consequences keep the names its readers look for.]
+
 ## Context
 
 [One paragraph describing the problem or driving force.]

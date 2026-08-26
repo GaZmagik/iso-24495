@@ -150,7 +150,8 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Tables heard:** Does every table carry a header row, with headers that identify each value beneath them?
 - [ ] **Reading order:** Does document order match reading order, with each sidebar and displaced callout given its own heading?
 - [ ] **Opening block:** Does the document open with its title, a one-line purpose naming the reader's task and scope, the primary audience, and a version or date?
-- [ ] **Overview:** Where needed, is it labelled in words, does it keep the conclusion, the required action and every essential qualification, and has the detail moved out?
+- [ ] **Overview contents:** Where needed, does it keep the conclusion, the required action and every essential qualification?
+- [ ] **Overview label and detail:** Is it labelled in words, and has the detail moved to footnotes, an appendix or a collapsible block?
 - [ ] **Levels:** Are there 3 or fewer levels of detail, and is the optional detail still reachable?
 - [ ] **Signposting:** Is the referral near the top or ending the opening section, naming its destination and when to use it, and absent where nothing else exists?
 - [ ] **Preserved:** On a restructure, was every prose passage and content item kept, with no prose rewritten and no tone changed?
