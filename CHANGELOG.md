@@ -6,31 +6,42 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Added
 
-- `iso-24495-5` gains an opening block rule. Every document now states its title, its purpose, its
-  version or date, and the reader it is for. A reader who cannot tell whether a document is for
-  them cannot decide whether to read it.
-- A layering rule. The gist of a document must carry its argument alone, detail that only some
-  readers need moves to footnotes or an appendix, and three layers is the practical ceiling.
-- A signposting rule. A document tells a reader who needs something else where to go.
-- Headings that joke, pun or lean on an unexplained term are now named as failures. The engine
-  checks heading length and form, so this one is guidance rather than a gate.
-- Cautions on three structures that the skill previously required without limit. Tables read badly
-  on narrow screens, callouts stop registering once several share a screen, and step numbers must
-  stay findable for a reader returning from the task.
-- Bullet limits: a few lines per bullet, and no more than two levels of nesting.
-- All three templates now carry the opening block and the signpost, so they follow the rules the
-  skill states.
-
-These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
-van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
-Federation. No text is reproduced from it.
+- `iso-24495-5` gains an opening block rule. Every document states its title, its purpose, its
+  version or date, and the reader it is for. Part 1 still decides who that reader is. This rule
+  only decides where the answer appears.
+- A layering rule. The overview is labelled in words, keeps the document's conclusion and required
+  action when detail is stripped, and three levels is the ceiling. Part 3 governs the wording
+  across them.
+- A signposting rule. A document tells a reader who needs something else where to go, and leaves
+  the signpost out when no alternative exists.
+- A rule for branching procedures. A forking procedure gets a decision table or labelled
+  conditions, never one numbered list, with the same routes given in words.
+- Heading numbering guidance, for documents readers must cite or revisit.
+- Headings that joke, pun or lean on an unexplained term are named as failures. The engine checks
+  heading length and form, so this one is guidance rather than a gate.
+- Limits on three structures the skill previously required without any. Read a table back at its
+  narrowest intended width. Reserve callouts for what changes the reader's action. Keep sequences
+  as ordered lists, so they survive being heard.
+- Bullet limits: one paragraph carrying one idea, nested no deeper than two levels.
+- All three templates carry the opening block, as a list with a purpose line, so they follow the
+  rules the skill states.
 
 ### Fixed
 
+- Restructuring an existing document could have required inventing content. The workflow forbids
+  adding content, while the new opening block and signposting rules demand it. An agent asked to
+  restructure a document with no purpose statement had to fabricate one, or leave the document
+  non-compliant. Restructuring now builds those blocks only from sentences the document already
+  contains, and marks what is missing as a gap for the author. A wrong purpose sends a reader
+  confidently in the wrong direction, which is worse than no purpose at all.
 - The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1
   release bumped the marketplace, the Claude manifest and all eight skill files, and missed
   `.codex-plugin/plugin.json`, because nothing checks that the versions agree. A Codex user
   reading the manifest saw a version two releases behind the skills beside it.
+
+These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
+van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
+Federation. No substantial wording is copied from it.
 
 ## [0.6.1] - 2026-08-22
 

@@ -1,8 +1,9 @@
 # [Decision Title]
 
-**For:** [Who needs this decision, and who must act on it.]
-**Version:** [Version or date.]
-**If this is not the document you need:** [Link the neighbouring decisions, or name who to ask.]
+- **Purpose:** [Why this decision is being recorded, in one sentence.]
+- **For:** [Who needs this decision, and who must act on it.]
+- **Version:** [Version or date.]
+- **Instead of this:** [Link the decision that may suit the reader better, or delete this line.]
 
 ## Context
 

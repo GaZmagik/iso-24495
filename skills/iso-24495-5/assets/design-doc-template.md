@@ -1,8 +1,9 @@
 # [Project Name] Design Document
 
-**For:** [Who this design is written for.]
-**Version:** [Version or date.]
-**If this is not the document you need:** [Link the neighbouring designs, or name who to ask.]
+- **Purpose:** [What this design sets out to solve, in one sentence.]
+- **For:** [Who this design is written for.]
+- **Version:** [Version or date.]
+- **Instead of this:** [Link the design that may suit the reader better, or delete this line.]
 
 ## Contents
 

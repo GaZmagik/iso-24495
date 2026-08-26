@@ -1,8 +1,9 @@
 # [Task Title]
 
-**For:** [Who runs this task, and when.]
-**Version:** [Version or date.]
-**If this is not the document you need:** [Link the neighbouring runbooks, or name who to ask.]
+- **Purpose:** [What this task achieves, in one sentence.]
+- **For:** [Who runs this task, and when.]
+- **Version:** [Version or date.]
+- **Instead of this:** [Link the runbook that may suit the reader better, or delete this line.]
 
 ## Prerequisites
 
