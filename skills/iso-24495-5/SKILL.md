@@ -99,7 +99,8 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
    - Where the document cites this skill or ISO 24495-5, say in the document that the standard is an unpublished draft.
 
 8. **Layering the Detail:**
-   - Label the overview explicitly in any document with 6 or more sections, or one whose conclusion readers need before the detail. A reader who stops at the overview then knows what they hold. It keeps the document's conclusion, the action required, and any essential qualification.
+   - Label the overview explicitly in any document with 6 or more sections, or one whose conclusion readers need before the detail. A reader who stops at the overview then knows what they hold.
+   - That label is the section's heading, and it names the section rather than its message. This rule overrides the heading rule for that one heading, and for no other. It keeps the document's conclusion, the action required, and any essential qualification.
    - Give that label a heading or a word, never a visual treatment alone.
    - Move detail that only some readers need into footnotes, an appendix, or a collapsible block, and keep it reachable from the main path.
    - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs how a technical explanation is worded across them.

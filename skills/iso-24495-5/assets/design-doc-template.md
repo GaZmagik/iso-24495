@@ -9,14 +9,14 @@
 
 [Reviewers cite these sections by number, which is why they are numbered. Where nobody cites yours, delete the numbers from the headings and from this contents list together.]
 
-- [1. Summary of what this design achieves](#1-summary-of-what-this-design-achieves)
+- [1. Summary](#1-summary)
 - [2. System Architecture](#2-system-architecture)
 - [3. Data Model](#3-data-model)
 - [4. API Design](#4-api-design)
 - [5. Security Model](#5-security-model)
 - [6. Deployment Plan](#6-deployment-plan)
 
-## 1. Summary of what this design achieves
+## 1. Summary
 
 [Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next. Name any condition that changes the decision, and any qualification an implementer must respect.]
 

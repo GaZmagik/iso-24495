@@ -5,13 +5,13 @@
 - **Version:** [Version or date.]
 - **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]
 
-[This record follows the published architecture decision record structure, so Context, Decision and Consequences keep the names its readers look for.]
+[Context, Decision and Consequences keep the names readers look for, from Michael Nygard's Documenting Architecture Decisions, 2011. The options heading is this template's own addition, so it states its message.]
 
 ## Context
 
 [One paragraph describing the problem or driving force.]
 
-## Options considered
+## What each option would cost us
 
 [Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]
 

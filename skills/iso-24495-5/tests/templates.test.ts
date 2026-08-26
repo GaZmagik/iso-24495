@@ -98,6 +98,8 @@ describe("Part 5 document templates", () => {
       expect(summary, `${name} asks for the conclusion`).toMatch(/outcome|conclusion|recommend/i);
       expect(summary, `${name} asks for the required action`).toMatch(/must do|required action|do next/i);
       expect(summary, `${name} asks for the qualifications`).toMatch(/condition|qualification|caveat/i);
+      expect(summary, `${name} does not tell the author to omit them`)
+        .not.toMatch(/omit|leave out|deliberately omitted/i);
     }
   });
 
@@ -110,14 +112,16 @@ describe("Part 5 document templates", () => {
       expect(body, `${name} names a target width`).toMatch(/[[]Name the narrowest width/);
       expect(body, `${name} says to read the table back at it`).toMatch(/read (it|them) back at that width/);
       expect(body, `${name} offers the labelled-record fallback`).toMatch(/labelled records/);
+      expect(body, `${name} does not negate its width instruction`)
+        .not.toMatch(/(do|should|must|shall|can|will)( ?n.t| not) (read|use)|never (read|use)/i);
     }
   });
 
   test("a template that numbers its headings says why, and how to undo it", () => {
     for (const name of TEMPLATE_NAMES) {
       const body = readTemplate(name);
-      // Arabic, bracketed and Roman numbering all count as numbering.
-      const numbered = body.split("\n").filter((line) => /^#{2,4} ([0-9]+|[ivxIVX]+)[.)]/.test(line));
+      // Arabic, Roman, "1)", "(1)" and "[1]" all count as numbering.
+      const numbered = body.split("\n").filter((line) => /^#{2,4} [([]?([0-9]+|[ivxIVX]+)[.)\]]/.test(line));
       if (numbered.length === 0) continue;
       expect(body, `${name} justifies numbering`).toMatch(/cite these sections by number/);
       // "Do not cite these sections by number" contains the phrase above, so refuse the negation.
@@ -137,8 +141,10 @@ describe("Part 5 document templates", () => {
     }
     expect(headings.length, "runbook still has its sections").toBeGreaterThanOrEqual(3);
     const adr = readTemplate("adr-template.md");
-    expect(adr, "the ADR names the structure its headings rely on")
-      .toMatch(/published architecture decision record structure/);
+    expect(adr, "the ADR names the publication its headings come from")
+      .toMatch(/Documenting Architecture Decisions/);
+    expect(adr, "the ADR does not head its own addition with a topic")
+      .not.toContain("## Options considered");
     // A subsection of a sequential explanation cannot claim the reference case,
     // so these five carry their message. Reverting one went unnoticed once.
     const design = readTemplate("design-doc-template.md");
