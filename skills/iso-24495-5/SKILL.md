@@ -81,7 +81,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 5. **Consistent Visual Signalling:**
    - Give each visual device (bold, italics, blockquotes, code formatting, icons) **one meaning** per document and apply it consistently.
-   - Never use the same device for two different meanings, or two devices for the same meaning. A text alternative to a picture, a table or a diagram is exempt, because it reaches a reader the original cannot.
+   - Never use the same device for two different meanings, or two devices for the same meaning. A text alternative is exempt only where the original is a picture or a diagram, or is not exposed to a screen reader. A table with a header row already reaches that reader, so it needs no prose twin.
    - **Never let a visual device carry meaning on its own.** Bold, colour, an icon and a position on the page are all silent to a listener. State the meaning in words as well. "Required fields are marked in red" fails; "Required fields are marked with the word required" works.
 
 6. **Reaching Readers Who Cannot See the Page:**
@@ -93,6 +93,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 7. **The Opening Block:**
    - Open every document with its title, a one-line statement of its purpose, and its version or date.
    - Name the intended reader in that block. Part 1 decides who that reader is; this rule decides where the answer appears.
+   - Give each field its minimum. Purpose states the reader's task and the document's scope. The reader line names the primary audience. The referral names the alternative and when to use it.
 
 8. **Layering the Detail:**
    - Label the overview explicitly in any document with 6 or more sections, or one whose conclusion readers need before the detail. A reader who stops at the overview then knows what they hold. It keeps the document's conclusion, the action required, and any essential qualification.
@@ -132,13 +133,18 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 Before outputting a complex document, audit against these checks:
 - [ ] **Hierarchy depth:** Are there 3 or fewer heading levels below the title?
-- [ ] **Navigation:** Does a document with 6 or more sections have a table of contents?
-- [ ] **Structure fit:** Are comparisons in tables, sequences in numbered lists, and sets in bullets?
-- [ ] **Signal consistency:** Does each visual device carry exactly one meaning?
+- [ ] **Heading quality:** Does each heading state its section's message, free of wordplay and of terms not yet explained?
+- [ ] **Navigation:** Does a document with 6 or more sections carry a table of contents worded identically to its headings?
+- [ ] **Numbering:** Are headings numbered only where a reader must cite one by its identifier?
+- [ ] **Chunking:** Does each paragraph, list, table and callout carry one topic?
+- [ ] **Structure fit:** Are comparisons in tables or labelled records, sequences in ordered lists, sets in bullets, and forks in decision tables?
+- [ ] **Table width:** Does each table survive the narrowest presentation anyone has named for it?
+- [ ] **Restraint:** Is every bullet one paragraph on one idea, nested no deeper than 2 levels, and does each callout change what the reader does?
+- [ ] **Signal consistency:** Does each visual device carry exactly one meaning, and does no device carry a meaning alone?
+- [ ] **Heard, not seen:** Does link text name its destination, every meaningful image carry alternative text, every table carry a header row, and the reading order match the document order?
+- [ ] **Opening block:** Does the document state its purpose, its reader, and its version or date?
+- [ ] **Overview:** Where the document needs one, is it labelled in words, does it hold when the detail is removed, and is that detail still reachable?
+- [ ] **Signposting:** Can a reader who needs a different document tell where to go, and is the line absent where no alternative exists?
+- [ ] **Never invented:** On a restructure, did every promoted sentence come from the document or the author, unchanged?
 - [ ] **Evidence over aesthetics:** Does every design element serve a reader need?
 - [ ] **Provisional label:** Is the draft status of this standard acknowledged where the document cites it?
-- [ ] **Opening block:** Does the document state its purpose, its reader, and its version or date?
-- [ ] **Overview:** Where the document needs one, is it labelled in words and does it hold if the detail is removed?
-- [ ] **Never invented:** On a restructure, did every promoted sentence come from the document or the author, unchanged?
-- [ ] **Signposting:** Can a reader who needs a different document tell where to go?
-- [ ] **List restraint:** Is every bullet one paragraph on one idea, nested no deeper than 2 levels?
