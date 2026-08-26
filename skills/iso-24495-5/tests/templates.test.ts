@@ -361,7 +361,7 @@ describe("Part 5 document templates", () => {
     ],
   };
 
-  test("no template changes without this test changing with it", () => {
+  test("no reader-visible template change happens without this test changing too", () => {
     for (const name of TEMPLATE_NAMES) {
       const actual = readTemplate(name).replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n");
       expect(actual, `${name} matches its recorded text`).toEqual(TEMPLATE_SNAPSHOT[name] ?? []);
