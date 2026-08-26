@@ -163,45 +163,45 @@ describe("Part 5 document templates", () => {
     ],
   };
 
-  // Round 18 added "## Miscellaneous" and every predicate still passed, because a
-  // list of required headings says nothing about the ones nobody listed. Round 19
-  // then showed the scanner was reading source lines, so a fenced example would
-  // have counted as a heading. Both are fixed by parsing with the engine's own
-  // reader and comparing the whole sequence.
-  const HEADING_SEQUENCE: Record<string, string[]> = {
+  // Round 18 added "## Miscellaneous" and every predicate passed, because a list
+  // of required headings says nothing about the ones nobody listed. Round 19 found
+  // the scanner reading source lines, so a fenced example would have counted.
+  // Round 21 found only the text compared, so a heading could be demoted a level
+  // and slip through. The whole sequence is compared, level and text together.
+  const HEADING_SEQUENCE: Record<string, { level: number; text: string }[]> = {
     "adr-template.md": [
-      "[Decision Title]",
-      "Context",
-      "What each option offers and costs",
-      "Decision",
-      "Consequences",
+      { level: 1, text: "[Decision Title]" },
+      { level: 2, text: "Context" },
+      { level: 2, text: "What each option offers and costs" },
+      { level: 2, text: "Decision" },
+      { level: 2, text: "Consequences" },
     ],
     "runbook-template.md": [
-      "[Task Title]",
-      "Check these before you start",
-      "Run these steps in order",
-      "Confirm the task worked",
+      { level: 1, text: "[Task Title]" },
+      { level: 2, text: "Check these before you start" },
+      { level: 2, text: "Run these steps in order" },
+      { level: 2, text: "Confirm the task worked" },
     ],
     "design-doc-template.md": [
-      "[Project Name] Design Document",
-      "Contents",
-      "1. Summary",
-      "2. System Architecture",
-      "2.1. What each component is responsible for",
-      "2.2. How a request flows through the system",
-      "2.2.1. How a sign-in is checked",
-      "3. Data Model",
-      "3.1. Entities and Relationships",
-      "3.2. How data enters, changes and leaves",
-      "4. API Design",
-      "4.1. Endpoints",
-      "4.2. Error Handling",
-      "5. Security Model",
-      "5.1. Threats and Controls",
-      "5.2. Access Control",
-      "6. Deployment Plan",
-      "6.1. Environments",
-      "6.2. How the change ships and how it comes back",
+      { level: 1, text: "[Project Name] Design Document" },
+      { level: 2, text: "Contents" },
+      { level: 2, text: "1. Summary" },
+      { level: 2, text: "2. System Architecture" },
+      { level: 3, text: "2.1. What each component is responsible for" },
+      { level: 3, text: "2.2. How a request flows through the system" },
+      { level: 4, text: "2.2.1. How a sign-in is checked" },
+      { level: 2, text: "3. Data Model" },
+      { level: 3, text: "3.1. Entities and Relationships" },
+      { level: 3, text: "3.2. How data enters, changes and leaves" },
+      { level: 2, text: "4. API Design" },
+      { level: 3, text: "4.1. Endpoints" },
+      { level: 3, text: "4.2. Error Handling" },
+      { level: 2, text: "5. Security Model" },
+      { level: 3, text: "5.1. Threats and Controls" },
+      { level: 3, text: "5.2. Access Control" },
+      { level: 2, text: "6. Deployment Plan" },
+      { level: 3, text: "6.1. Environments" },
+      { level: 3, text: "6.2. How the change ships and how it comes back" },
     ],
   };
 
@@ -250,9 +250,36 @@ describe("Part 5 document templates", () => {
 
   test("every template heads its sections exactly as its rules require", () => {
     for (const name of TEMPLATE_NAMES) {
-      const found = headings(readTemplate(name)).map((heading) => heading.text.trim());
+      const found = headings(readTemplate(name))
+        .map((heading) => ({ level: heading.level, text: heading.text.trim() }));
       expect(found, `${name} heads its sections as expected`).toEqual(HEADING_SEQUENCE[name] ?? []);
     }
+  });
+
+  // Round 21 moved a warning and emptied a procedure while every line assertion
+  // held. A callout is checked as a block, in front of the steps it governs, and
+  // the structures a genre needs are counted.
+  test("the runbook warns before its steps, and still has steps", () => {
+    const lines = readTemplate("runbook-template.md").split("\n").map((line) => line.trimEnd());
+    const caution = lines.indexOf("> [!CAUTION]");
+    expect(caution, "the runbook carries a caution").toBeGreaterThan(-1);
+    expect(lines[caution + 1], "the caution names the risk")
+      .toBe("> [Critical risks or conditions, before any step runs.]");
+    const steps = lines.findIndex((line) => line === "## Run these steps in order");
+    expect(caution, "the caution comes before the steps it governs").toBeLessThan(steps);
+    const ordered = lines.filter((line) => /^[0-9]+[.] /.test(line));
+    expect(ordered.length, "the runbook keeps an ordered procedure").toBeGreaterThanOrEqual(3);
+    const note = lines.findIndex((line) => line.trim() === "> [!NOTE]");
+    expect(note, "the note sits inside the steps").toBeGreaterThan(steps);
+    expect(lines[note + 1].trim(), "the note names its expected output")
+      .toBe("> [Expected output for step 2]");
+  });
+
+  test("the decision record keeps the comparison its rules require", () => {
+    const lines = readTemplate("adr-template.md").split("\n").map((line) => line.trim());
+    const divider = lines.findIndex((line) => /^[|][\s:|-]*-{3,}[\s:|-]*$/.test(line));
+    expect(divider, "the record carries a comparison table").toBeGreaterThan(-1);
+    expect(lines[divider - 1], "the table carries a header row").toMatch(/^[|].+[|]$/);
   });
 
   test("Part 5 skill references every required template path", () => {
