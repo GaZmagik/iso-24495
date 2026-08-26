@@ -113,7 +113,7 @@ describe("Part 5 document templates", () => {
       expect(body, `${name} says to read the table back at it`).toMatch(/read (it|them) back at that width/);
       expect(body, `${name} offers the labelled-record fallback`).toMatch(/labelled records/);
       expect(body, `${name} does not negate its width instruction`)
-        .not.toMatch(/(do|should|must|shall|can|will)( ?n.t| not) (read|use)|never (read|use)/i);
+        .not.toMatch(/(do|should|must|shall|can|will|need)( ?n.t| not) (read|use)|never (read|use)/i);
     }
   });
 
@@ -125,7 +125,7 @@ describe("Part 5 document templates", () => {
       if (numbered.length === 0) continue;
       expect(body, `${name} justifies numbering`).toMatch(/cite these sections by number/);
       // "Do not cite these sections by number" contains the phrase above, so refuse the negation.
-      expect(body, `${name} does not negate its own reason`).not.toMatch(/(do|should|must|shall|can|will)( ?n.t| not) cite these sections/i);
+      expect(body, `${name} does not negate its own reason`).not.toMatch(/(do|should|must|shall|can|will|need)( ?n.t| not) cite these sections|no need to cite/i);
       // Removing numbers without the contents list breaks the anchors beneath it.
       expect(body, `${name} says to update the contents too`).toMatch(/from this contents list/);
     }
@@ -140,6 +140,12 @@ describe("Part 5 document templates", () => {
       expect(headings, `runbook no longer uses ${topic}`).not.toContain(topic);
     }
     expect(headings.length, "runbook still has its sections").toBeGreaterThanOrEqual(3);
+    // A task heading is a clause, a topic label is a noun or two. Word count is the
+    // readable proxy, and it rejects Requirements, Procedure and Results alike.
+    for (const heading of headings) {
+      const words = heading.replace("## ", "").trim().split(/ +/);
+      expect(words.length, `runbook heading "${heading}" states a task`).toBeGreaterThanOrEqual(3);
+    }
     const adr = readTemplate("adr-template.md");
     expect(adr, "the ADR names the publication its headings come from")
       .toMatch(/Documenting Architecture Decisions/);
@@ -160,8 +166,12 @@ describe("Part 5 document templates", () => {
       const purpose = body.split("\n").find((line) => line.startsWith("- **Purpose:**")) ?? "";
       expect(purpose, `${name} purpose names the reader's task`).toMatch(/reader|review|build|decide|do/i);
       expect(purpose, `${name} purpose names the scope`).toMatch(/covers|scope|solve/i);
+      expect(purpose, `${name} purpose is not written in the negative`)
+        .not.toMatch(/nothing|no scope|(do|should|must|shall|can|will|need)( ?n.t| not)/i);
       const referral = body.split("\n").find((line) => line.startsWith("- **Instead of this:**")) ?? "";
       expect(referral, `${name} referral says when to use it`).toMatch(/when to/i);
+      expect(referral, `${name} referral is not written in the negative`)
+        .not.toMatch(/(do|should|must|shall|can|will|need)( ?n.t| not) (explain|say|name)/i);
     }
   });
 

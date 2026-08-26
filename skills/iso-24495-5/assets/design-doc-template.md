@@ -18,7 +18,7 @@
 
 ## 1. Summary
 
-[Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next. Name any condition that changes the decision, and any qualification an implementer must respect.]
+[Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next. Name any condition that changes the decision, and any qualification a reader must respect, whether legal, financial or an approval.]
 
 ## 2. System Architecture
 

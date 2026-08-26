@@ -2,6 +2,7 @@
 
 - **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]
 - **For:** [Who needs this decision, and who must act on it.]
+- **Status:** [Proposed, accepted, deprecated or superseded, and by which decision.]
 - **Version:** [Version or date.]
 - **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]
 
@@ -11,7 +12,7 @@
 
 [One paragraph describing the problem or driving force.]
 
-## What each option would cost us
+## What each option offers and costs
 
 [Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]
 
