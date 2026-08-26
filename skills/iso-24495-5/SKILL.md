@@ -47,9 +47,9 @@ When asked to restructure an existing document:
 
 1. Identify the reader tasks, current hierarchy, and navigation needs.
 2. Preserve every prose passage and content item.
-3. Change headings, list types, table structure and visual formatting. You may also move a whole sentence or a whole block to another position, unchanged.
-4. Build the opening block, the overview label and the signposts from sentences the document already holds, or from wording the author gives you in the request. Promote a sentence only when it states the field directly and stays true away from the paragraph it came from.
-5. Where nothing serves, leave a marked slot such as `[Author needed: purpose]` and report it as a gap. Never supply the missing wording yourself.
+3. Change headings, list types, table structure and visual formatting. You may also move a whole sentence or block, unchanged. Move it only where its dependencies, its order against neighbouring steps, and the claim it qualifies all survive.
+4. Build the opening block, the overview and the signposts from sentences the document already holds, or from wording the author gives you in the request. Promote a sentence only when it states the field directly, and stays both true and complete enough for that field once away from the paragraph it came from. Where the author's wording contradicts the document, promote neither and report the mismatch.
+5. Where nothing serves, leave a marked slot such as `[Author needed: purpose]` and report it as a gap. This covers the overview's content as much as its label. Never supply the missing wording yourself.
 6. Check the result against the hierarchy, navigation, structure, and signalling rules below.
 
 Do not rewrite prose, change tone, or remove content. Those changes belong to Parts 1 to 3, and so does rewording a sentence to make it fit a slot. A wrong purpose sends a reader confidently in the wrong direction, which is worse than no purpose at all.
@@ -73,7 +73,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
    - Never run two unrelated topics together in one paragraph or one table.
 
 4. **Choosing the Right Structure:**
-   - **Comparisons:** Use a table when readers must compare 2 or more items across shared attributes. Name the narrowest presentation the table must survive, then read it back at that width. Where nobody has named one, give a single-column alternative rather than assume the table holds.
+   - **Comparisons:** Use a table when readers must compare 2 or more items across shared attributes. Name the narrowest presentation the table must survive, then read it back at that width. Where nobody has named one, use repeated labelled records instead of a table, rather than shipping both.
    - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard.
    - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest no deeper than 2 levels. Promote longer material to a subsection.
    - **Branching routes:** When a procedure forks, use a decision table or a labelled set of conditions rather than one numbered list. A decision table with labelled routes is already the written form. Add prose only where the routes are drawn as a picture.
@@ -81,7 +81,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 5. **Consistent Visual Signalling:**
    - Give each visual device (bold, italics, blockquotes, code formatting, icons) **one meaning** per document and apply it consistently.
-   - Never use the same device for two different meanings, or two devices for the same meaning.
+   - Never use the same device for two different meanings, or two devices for the same meaning. A text alternative to a picture, a table or a diagram is exempt, because it reaches a reader the original cannot.
    - **Never let a visual device carry meaning on its own.** Bold, colour, an icon and a position on the page are all silent to a listener. State the meaning in words as well. "Required fields are marked in red" fails; "Required fields are marked with the word required" works.
 
 6. **Reaching Readers Who Cannot See the Page:**
@@ -95,7 +95,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
    - Name the intended reader in that block. Part 1 decides who that reader is; this rule decides where the answer appears.
 
 8. **Layering the Detail:**
-   - Label the overview explicitly, in any document long enough to need one, so a reader who stops there knows what they hold. It keeps the document's conclusion, the action required, and any essential qualification.
+   - Label the overview explicitly in any document with 6 or more sections, or one whose conclusion readers need before the detail. A reader who stops at the overview then knows what they hold. It keeps the document's conclusion, the action required, and any essential qualification.
    - Give that label a heading or a word, never a visual treatment alone.
    - Move detail that only some readers need into footnotes, an appendix, or a collapsible block, and keep it reachable from the main path.
    - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs how a technical explanation is worded across them.
@@ -138,7 +138,7 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Evidence over aesthetics:** Does every design element serve a reader need?
 - [ ] **Provisional label:** Is the draft status of this standard acknowledged where the document cites it?
 - [ ] **Opening block:** Does the document state its purpose, its reader, and its version or date?
-- [ ] **Overview:** Is it labelled in words, and does it hold if the detail is removed?
-- [ ] **Never invented:** On a restructure, did every promoted sentence already exist in the document?
+- [ ] **Overview:** Where the document needs one, is it labelled in words and does it hold if the detail is removed?
+- [ ] **Never invented:** On a restructure, did every promoted sentence come from the document or the author, unchanged?
 - [ ] **Signposting:** Can a reader who needs a different document tell where to go?
 - [ ] **List restraint:** Is every bullet one paragraph on one idea, nested no deeper than 2 levels?

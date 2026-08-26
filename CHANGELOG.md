@@ -16,7 +16,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   the signpost out when no alternative exists.
 - A rule for branching procedures. A forking procedure gets a decision table or labelled
   conditions, never one numbered list, with the same routes given in words.
-- Heading numbering guidance, for documents readers must cite or revisit.
+- Heading numbering guidance, for documents whose sections a reader must cite by identifier.
 - Headings that joke, pun or lean on an unexplained term are named as failures. The engine checks
   heading length and form, so this one is guidance rather than a gate.
 - Limits on three structures the skill previously required without any. Read a table back at its
@@ -32,7 +32,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   adding content, while the new opening block and signposting rules demand it. An agent asked to
   restructure a document with no purpose statement had to fabricate one, or leave the document
   non-compliant. Restructuring now builds those blocks only from sentences the document already
-  contains, and marks what is missing as a gap for the author. A wrong purpose sends a reader
+  contains, or from wording the author supplies, and marks what is missing as a gap. A wrong purpose sends a reader
   confidently in the wrong direction, which is worse than no purpose at all.
 - The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1
   release bumped the marketplace, the Claude manifest and all eight skill files, and missed
