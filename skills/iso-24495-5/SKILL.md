@@ -61,7 +61,8 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 1. **Visual Hierarchy Limits:**
    - Use at most **3 heading levels** below the document title. Flatten deeper nesting into lists or tables.
    - Make headings state the section's message or task, not just its topic (*"Install the dependencies"* rather than *"Dependencies"*).
-   - A section name that readers of the genre already look for is the exception, such as the parts of a decision record. Keep the familiar word, because a reader hunting for it should find it.
+   - Two exceptions, and no others. A document type with a published structure keeps that structure's section names, as a decision record keeps Context and Decision.
+   - A reference section a reader jumps to by subject keeps the subject as its name, as a specification keeps Data Model. A section read in sequence gets a message or a task.
    - Reject a heading that jokes, puns or plays with words. Reject one built on a term the document has not yet explained, because a reader skimming meets the heading first.
 
 2. **Navigation Aids:**

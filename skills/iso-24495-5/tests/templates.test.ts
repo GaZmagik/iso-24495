@@ -64,38 +64,61 @@ describe("Part 5 document templates", () => {
     }
   });
 
-  // Round 10 of the adversarial review found every template breaking a rule it
-  // exists to demonstrate, and no test able to see it. These check the parts of
-  // the Part 5 checklist a machine can read.
-  test("every template opens with the fields the opening block rule requires", () => {
+  // Round 10 found every template breaking a rule it exists to demonstrate, and
+  // no test able to see it. Round 11 then defeated the first version of these
+  // gates by mutating the templates, so each one now tests content, not labels.
+  test("every template opens with a title and a filled opening block", () => {
     for (const name of TEMPLATE_NAMES) {
-      const lines = readTemplate(name).split("\n");
-      const opening = lines.slice(0, 8).join("\n");
-      for (const field of ["**Purpose:**", "**For:**", "**Version:**"]) {
-        expect(opening, `${name} states ${field}`).toContain(field);
+      const lines = readTemplate(name).split("\n").map((line) => line.trimEnd());
+      expect(lines[0], `${name} opens with a title`).toMatch(/^# .+/);
+      const fields = new Map(
+        lines.slice(0, 10)
+          .filter((line) => /^- [*][*][A-Za-z ]+:[*][*]/.test(line))
+          .map((line) => [line.slice(4, line.indexOf(":**")), line.slice(line.indexOf(":**") + 3).trim()]),
+      );
+      for (const field of ["Purpose", "For", "Version"]) {
+        expect([...fields.keys()], `${name} states ${field}`).toContain(field);
+        expect((fields.get(field) ?? "").length, `${name} fills ${field}`).toBeGreaterThan(10);
       }
-      const purpose = lines.filter((line) => line.startsWith("- **Purpose:**"));
-      expect(purpose, `${name} gives one purpose line`).toHaveLength(1);
+      const purposeLines = lines.filter((line) => line.startsWith("- **Purpose:**"));
+      expect(purposeLines, `${name} keeps purpose to one line`).toHaveLength(1);
+      // A continuation line under the purpose would make it two lines in fact.
+      const after = lines[lines.indexOf(purposeLines[0] as string) + 1] ?? "";
+      expect(after === "" || after.startsWith("- "), `${name} does not continue purpose`).toBe(true);
     }
   });
 
-  test("a template long enough to need an overview asks for what an overview must keep", () => {
+  test("a template needing an overview asks for all three things an overview keeps", () => {
     for (const name of TEMPLATE_NAMES) {
       const body = readTemplate(name);
       const sections = body.split("\n").filter((line) => /^## /.test(line));
       if (sections.length < 6) continue;
       const summary = body.slice(body.indexOf("## 1."), body.indexOf("## 2."));
-      expect(summary, `${name} asks the overview for the required action`).toMatch(/must do|required action/);
-      expect(summary, `${name} asks the overview for its qualifications`).toMatch(/condition|qualification/);
+      expect(summary, `${name} asks for the conclusion`).toMatch(/outcome|conclusion|recommend/i);
+      expect(summary, `${name} asks for the required action`).toMatch(/must do|required action|do next/i);
+      expect(summary, `${name} asks for the qualifications`).toMatch(/condition|qualification|caveat/i);
     }
   });
 
-  test("every template holding a table tells the author to test its width", () => {
+  test("every template holding a table tells the author to name a width and test it", () => {
+    const divider = /^[|\s:-]*[|][\s:-]*-{3,}[\s:-]*[|]?[\s:-]*$/;
     for (const name of TEMPLATE_NAMES) {
       const body = readTemplate(name);
-      if (!body.includes("| :--- |")) continue;
-      expect(body, `${name} names a target width`).toContain("narrowest width");
-      expect(body, `${name} says to read the table back at it`).toMatch(/read it back|read them back/);
+      const hasTable = body.split("\n").some((line) => divider.test(line.trim()) && line.includes("-"));
+      if (!hasTable) continue;
+      expect(body, `${name} names a target width`).toMatch(/narrowest width/);
+      expect(body, `${name} says to read the table back at it`).toMatch(/read (it|them) back at that width/);
+      expect(body, `${name} offers the labelled-record fallback`).toMatch(/labelled records/);
+    }
+  });
+
+  test("a template that numbers its headings says why", () => {
+    for (const name of TEMPLATE_NAMES) {
+      const body = readTemplate(name);
+      const numbered = body.split("\n").filter((line) => /^#{2,4} [0-9]+[.]/.test(line));
+      if (numbered.length === 0) continue;
+      expect(body, `${name} justifies numbering`).toMatch(/cite them by number|cited/);
+      expect(body, `${name} tells an author when to drop it`).toMatch(/Remove the numbers/);
     }
   });
 
