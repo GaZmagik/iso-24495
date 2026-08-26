@@ -23,8 +23,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   narrowest intended width. Reserve callouts for what changes the reader's action. Keep sequences
   as ordered lists, so they survive being heard.
 - Bullet limits: one paragraph carrying one idea, nested no deeper than two levels.
-- All three templates carry the opening block, as a list with a purpose line, so they follow the
-  rules the skill states.
+- All three templates carry the opening block, as a list with a purpose line. That covers the
+  opening block rule only, not every rule in the skill.
 
 ### Fixed
 

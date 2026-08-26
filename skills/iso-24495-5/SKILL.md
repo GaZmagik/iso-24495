@@ -47,9 +47,9 @@ When asked to restructure an existing document:
 
 1. Identify the reader tasks, current hierarchy, and navigation needs.
 2. Preserve every prose passage and content item.
-3. Change only headings, list types, table structure, and visual formatting.
-4. Build the opening block and the signposts from sentences the document already contains, moved whole. Choosing which sentence to promote is structural work, so it belongs here.
-5. Where no existing sentence will serve, leave a marked slot such as `[Author needed: purpose]` and report it as a gap. Never supply the missing sentence yourself.
+3. Change headings, list types, table structure and visual formatting. You may also move a whole sentence or a whole block to another position, unchanged.
+4. Build the opening block, the overview label and the signposts from sentences the document already holds, or from wording the author gives you in the request. Promote a sentence only when it states the field directly and stays true away from the paragraph it came from.
+5. Where nothing serves, leave a marked slot such as `[Author needed: purpose]` and report it as a gap. Never supply the missing wording yourself.
 6. Check the result against the hierarchy, navigation, structure, and signalling rules below.
 
 Do not rewrite prose, change tone, or remove content. Those changes belong to Parts 1 to 3, and so does rewording a sentence to make it fit a slot. A wrong purpose sends a reader confidently in the wrong direction, which is worse than no purpose at all.
@@ -66,17 +66,17 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 2. **Navigation Aids:**
    - Add a table of contents or link list to any document with **6 or more sections**.
    - Keep heading wording identical between the table of contents and the section it points to.
-   - Number headings when readers must cite or revisit a section, and never below the depth limit above.
+   - Number headings when a reader must cite one by its identifier, and never below the depth limit above.
 
 3. **Chunking & White Space:**
    - Present one idea per visual chunk (paragraph, list, table, or callout). Separate chunks with blank lines.
    - Never run two unrelated topics together in one paragraph or one table.
 
 4. **Choosing the Right Structure:**
-   - **Comparisons:** Use a table when readers must compare 2 or more items across shared attributes. Read the table back at its narrowest intended width, then split or transpose one that forces sideways scrolling.
+   - **Comparisons:** Use a table when readers must compare 2 or more items across shared attributes. Name the narrowest presentation the table must survive, then read it back at that width. Where nobody has named one, give a single-column alternative rather than assume the table holds.
    - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard.
    - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest no deeper than 2 levels. Promote longer material to a subsection.
-   - **Branching routes:** When a procedure forks, use a decision table or a labelled set of conditions rather than one numbered list. Give the same routes in words, in document order.
+   - **Branching routes:** When a procedure forks, use a decision table or a labelled set of conditions rather than one numbered list. A decision table with labelled routes is already the written form. Add prose only where the routes are drawn as a picture.
    - **Warnings and conditions:** Reserve a callout for a warning or condition that changes what the reader does. Merge adjacent callouts serving one purpose, and give each a word naming what it is.
 
 5. **Consistent Visual Signalling:**
@@ -95,7 +95,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
    - Name the intended reader in that block. Part 1 decides who that reader is; this rule decides where the answer appears.
 
 8. **Layering the Detail:**
-   - Label the overview explicitly, so a reader who stops there knows what they hold. It keeps the document's conclusion, the action required, and any essential qualification.
+   - Label the overview explicitly, in any document long enough to need one, so a reader who stops there knows what they hold. It keeps the document's conclusion, the action required, and any essential qualification.
    - Give that label a heading or a word, never a visual treatment alone.
    - Move detail that only some readers need into footnotes, an appendix, or a collapsible block, and keep it reachable from the main path.
    - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs how a technical explanation is worded across them.
