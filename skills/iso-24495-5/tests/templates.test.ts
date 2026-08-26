@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { auditText } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { headings } from "../../iso-24495-4/scripts/lib/parse.ts";
 
 const SKILL_DIR = join(import.meta.dir, "..");
 const ASSETS_DIR = join(SKILL_DIR, "assets");
@@ -147,6 +148,8 @@ describe("Part 5 document templates", () => {
       "- **For:** [Who runs this task, and when.]",
       "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
+      "> [!CAUTION]",
+      "> [!NOTE]",
     ],
     "design-doc-template.md": [
       "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
@@ -159,42 +162,44 @@ describe("Part 5 document templates", () => {
   };
 
   // Round 18 added "## Miscellaneous" and every predicate still passed, because a
-  // list of required headings says nothing about the ones nobody listed. The whole
-  // sequence is compared instead, so an addition, a removal and a reorder all fail.
+  // list of required headings says nothing about the ones nobody listed. Round 19
+  // then showed the scanner was reading source lines, so a fenced example would
+  // have counted as a heading. Both are fixed by parsing with the engine's own
+  // reader and comparing the whole sequence.
   const HEADING_SEQUENCE: Record<string, string[]> = {
     "adr-template.md": [
-      "# [Decision Title]",
-      "## Context",
-      "## What each option offers and costs",
-      "## Decision",
-      "## Consequences",
+      "[Decision Title]",
+      "Context",
+      "What each option offers and costs",
+      "Decision",
+      "Consequences",
     ],
     "runbook-template.md": [
-      "# [Task Title]",
-      "## Check these before you start",
-      "## Run these steps in order",
-      "## Confirm the task worked",
+      "[Task Title]",
+      "Check these before you start",
+      "Run these steps in order",
+      "Confirm the task worked",
     ],
     "design-doc-template.md": [
-      "# [Project Name] Design Document",
-      "## Contents",
-      "## 1. Summary",
-      "## 2. System Architecture",
-      "### 2.1. What each component is responsible for",
-      "### 2.2. How a request flows through the system",
-      "#### 2.2.1. How a sign-in is checked",
-      "## 3. Data Model",
-      "### 3.1. Entities and Relationships",
-      "### 3.2. How data enters, changes and leaves",
-      "## 4. API Design",
-      "### 4.1. Endpoints",
-      "### 4.2. Error Handling",
-      "## 5. Security Model",
-      "### 5.1. Threats and Controls",
-      "### 5.2. Access Control",
-      "## 6. Deployment Plan",
-      "### 6.1. Environments",
-      "### 6.2. How the change ships and how it comes back",
+      "[Project Name] Design Document",
+      "Contents",
+      "1. Summary",
+      "2. System Architecture",
+      "2.1. What each component is responsible for",
+      "2.2. How a request flows through the system",
+      "2.2.1. How a sign-in is checked",
+      "3. Data Model",
+      "3.1. Entities and Relationships",
+      "3.2. How data enters, changes and leaves",
+      "4. API Design",
+      "4.1. Endpoints",
+      "4.2. Error Handling",
+      "5. Security Model",
+      "5.1. Threats and Controls",
+      "5.2. Access Control",
+      "6. Deployment Plan",
+      "6.1. Environments",
+      "6.2. How the change ships and how it comes back",
     ],
   };
 
@@ -207,11 +212,24 @@ describe("Part 5 document templates", () => {
     }
   });
 
+  // A line asserted anywhere can be moved anywhere, so the opening block is
+  // asserted as one run of lines directly beneath the title.
+  test("every template keeps its opening block directly under the title", () => {
+    for (const name of TEMPLATE_NAMES) {
+      const lines = readTemplate(name).split("\n").map((line) => line.trimEnd());
+      const fields = lines.slice(2).filter((line, index) => index < 5 && line.startsWith("- **"));
+      const labels = fields.map((line) => line.slice(4, line.indexOf(":**")));
+      expect(labels[0], `${name} opens with its purpose`).toBe("Purpose");
+      expect(labels, `${name} names its reader`).toContain("For");
+      expect(labels, `${name} gives a version`).toContain("Version");
+      expect(labels[labels.length - 1], `${name} ends the block with its referral`)
+        .toBe("Instead of this");
+    }
+  });
+
   test("every template heads its sections exactly as its rules require", () => {
     for (const name of TEMPLATE_NAMES) {
-      const found = readTemplate(name).split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.startsWith("#"));
+      const found = headings(readTemplate(name)).map((heading) => heading.text.trim());
       expect(found, `${name} heads its sections as expected`).toEqual(HEADING_SEQUENCE[name] ?? []);
     }
   });
