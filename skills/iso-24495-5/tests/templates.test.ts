@@ -136,42 +136,64 @@ describe("Part 5 document templates", () => {
   const REQUIRED_LINES: Record<string, string[]> = {
     "adr-template.md": [
       "- **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]",
+      "- **For:** [Who needs this decision, and who must act on it.]",
+      "- **Version:** [Version or date.]",
       "- **Status:** [Proposed or accepted. Where deprecated or superseded, name the decision that replaces this one.]",
       "- **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]",
       "[Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]",
     ],
     "runbook-template.md": [
       "- **Purpose:** [What the reader will have done by the end, and what the task covers, in one sentence.]",
+      "- **For:** [Who runs this task, and when.]",
+      "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
     ],
     "design-doc-template.md": [
       "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
+      "- **For:** [Who this design is written for.]",
+      "- **Version:** [Version or date.]",
       "- **Instead of this:** [Link the design that may suit the reader better and say when to read it, or delete this line.]",
       "[Reviewers cite these sections by number, which is why they are numbered. Where nobody cites yours, delete the numbers from the headings and from this contents list together.]",
       "[Name the narrowest width each table must survive, then read them back at that width. Where no width is known, use labelled records instead.]",
     ],
   };
 
-  // Heading text is compared whole, and only against heading lines, so prose that
-  // merely mentions a rejected label is not a failure.
-  const REQUIRED_HEADINGS: Record<string, string[]> = {
+  // Round 18 added "## Miscellaneous" and every predicate still passed, because a
+  // list of required headings says nothing about the ones nobody listed. The whole
+  // sequence is compared instead, so an addition, a removal and a reorder all fail.
+  const HEADING_SEQUENCE: Record<string, string[]> = {
     "adr-template.md": [
+      "# [Decision Title]",
       "## Context",
       "## What each option offers and costs",
       "## Decision",
       "## Consequences",
     ],
     "runbook-template.md": [
+      "# [Task Title]",
       "## Check these before you start",
       "## Run these steps in order",
       "## Confirm the task worked",
     ],
     "design-doc-template.md": [
+      "# [Project Name] Design Document",
+      "## Contents",
       "## 1. Summary",
+      "## 2. System Architecture",
       "### 2.1. What each component is responsible for",
       "### 2.2. How a request flows through the system",
       "#### 2.2.1. How a sign-in is checked",
+      "## 3. Data Model",
+      "### 3.1. Entities and Relationships",
       "### 3.2. How data enters, changes and leaves",
+      "## 4. API Design",
+      "### 4.1. Endpoints",
+      "### 4.2. Error Handling",
+      "## 5. Security Model",
+      "### 5.1. Threats and Controls",
+      "### 5.2. Access Control",
+      "## 6. Deployment Plan",
+      "### 6.1. Environments",
       "### 6.2. How the change ships and how it comes back",
     ],
   };
@@ -186,21 +208,11 @@ describe("Part 5 document templates", () => {
   });
 
   test("every template heads its sections exactly as its rules require", () => {
-    const rejected = ["## Prerequisites", "## Execution steps", "## Verification",
-                      "## Options considered", "## Requirements", "## Procedure", "## Results",
-                      "### 2.1. Component Diagram", "### 2.2. Interaction Flow",
-                      "#### 2.2.1. Authentication Sequence", "### 3.2. Data Lifecycle",
-                      "### 6.2. Rollout and Rollback"];
     for (const name of TEMPLATE_NAMES) {
       const found = readTemplate(name).split("\n")
         .map((line) => line.trim())
         .filter((line) => line.startsWith("#"));
-      for (const heading of REQUIRED_HEADINGS[name] ?? []) {
-        expect(found, `${name} heads a section "${heading}"`).toContain(heading);
-      }
-      for (const heading of rejected) {
-        expect(found, `${name} does not head a section "${heading}"`).not.toContain(heading);
-      }
+      expect(found, `${name} heads its sections as expected`).toEqual(HEADING_SEQUENCE[name] ?? []);
     }
   });
 
