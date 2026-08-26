@@ -257,29 +257,44 @@ describe("Part 5 document templates", () => {
   });
 
   // Round 21 moved a warning and emptied a procedure while every line assertion
-  // held. A callout is checked as a block, in front of the steps it governs, and
-  // the structures a genre needs are counted.
-  test("the runbook warns before its steps, and still has steps", () => {
+  // held. Round 22 then moved the steps into the wrong section and hollowed the
+  // table to a single empty column, and counting alone missed both. These check
+  // where a structure sits and what it holds, not merely that it exists.
+  //
+  // These guard this repository's canonical templates, not runbooks in general. A
+  // two-step runbook is perfectly legitimate; this one has three, and a change to
+  // that is a deliberate edit.
+  test("the runbook warns before its steps, and keeps them in their section", () => {
     const lines = readTemplate("runbook-template.md").split("\n").map((line) => line.trimEnd());
     const caution = lines.indexOf("> [!CAUTION]");
     expect(caution, "the runbook carries a caution").toBeGreaterThan(-1);
     expect(lines[caution + 1], "the caution names the risk")
       .toBe("> [Critical risks or conditions, before any step runs.]");
-    const steps = lines.findIndex((line) => line === "## Run these steps in order");
+
+    const steps = lines.indexOf("## Run these steps in order");
+    const confirm = lines.indexOf("## Confirm the task worked");
     expect(caution, "the caution comes before the steps it governs").toBeLessThan(steps);
-    const ordered = lines.filter((line) => /^[0-9]+[.] /.test(line));
-    expect(ordered.length, "the runbook keeps an ordered procedure").toBeGreaterThanOrEqual(3);
+    expect(steps, "the steps come before the confirmation").toBeLessThan(confirm);
+
+    const inside = lines.slice(steps, confirm).filter((line) => /^[0-9]+[.] /.test(line));
+    const outside = lines.filter((line) => /^[0-9]+[.] /.test(line)).length - inside.length;
+    expect(inside.length, "the procedure sits inside its own section").toBe(3);
+    expect(outside, "no step has wandered out of it").toBe(0);
+
     const note = lines.findIndex((line) => line.trim() === "> [!NOTE]");
-    expect(note, "the note sits inside the steps").toBeGreaterThan(steps);
+    expect(note, "the note sits between step 2 and step 3").toBeGreaterThan(lines.indexOf("2. [Second action]"));
+    expect(note, "the note sits between step 2 and step 3").toBeLessThan(lines.indexOf("3. [Third action]"));
     expect(lines[note + 1].trim(), "the note names its expected output")
       .toBe("> [Expected output for step 2]");
   });
 
-  test("the decision record keeps the comparison its rules require", () => {
+  test("the decision record compares real options across shared attributes", () => {
     const lines = readTemplate("adr-template.md").split("\n").map((line) => line.trim());
-    const divider = lines.findIndex((line) => /^[|][\s:|-]*-{3,}[\s:|-]*$/.test(line));
-    expect(divider, "the record carries a comparison table").toBeGreaterThan(-1);
-    expect(lines[divider - 1], "the table carries a header row").toMatch(/^[|].+[|]$/);
+    const header = lines.indexOf("| Option | Pros | Cons | Estimated effort |");
+    expect(header, "the record keeps its comparison header").toBeGreaterThan(-1);
+    expect(lines[header + 1], "a divider follows the header").toMatch(/^[|][\s:|-]*-{3,}[\s:|-]*$/);
+    const rows = lines.slice(header + 2).filter((line) => line.startsWith("|") && line.includes("[Option"));
+    expect(rows.length, "the record compares at least two options").toBeGreaterThanOrEqual(2);
   });
 
   test("Part 5 skill references every required template path", () => {
