@@ -1,5 +1,9 @@
 # [Project Name] Design Document
 
+**For:** [Who this design is written for.]
+**Version:** [Version or date.]
+**If this is not the document you need:** [Link the neighbouring designs, or name who to ask.]
+
 ## Contents
 
 - [1. Executive Summary](#1-executive-summary)

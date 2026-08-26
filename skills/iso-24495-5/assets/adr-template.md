@@ -1,5 +1,9 @@
 # [Decision Title]
 
+**For:** [Who needs this decision, and who must act on it.]
+**Version:** [Version or date.]
+**If this is not the document you need:** [Link the neighbouring decisions, or name who to ask.]
+
 ## Context
 
 [One paragraph describing the problem or driving force.]

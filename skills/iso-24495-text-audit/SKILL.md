@@ -4,7 +4,7 @@ description: Audit user-selected Markdown or text files for deterministic plain-
 disable-model-invocation: true
 argument-hint: "[file-or-directory]"
 metadata:
-  version: "0.6.1"
+  version: "0.6.2"
 ---
 
 # ISO 24495 Text Audit

@@ -1,7 +1,7 @@
 {
   "name": "iso-24495-plain-language",
   "displayName": "ISO 24495 Plain Language",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Seven skills that apply plain language principles inspired by the ISO 24495 series, covering prose, code, and a user-invoked text audit.",
   "author": {
     "name": "Gareth Williams"

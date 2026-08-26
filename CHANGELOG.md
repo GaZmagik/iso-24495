@@ -2,6 +2,36 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.6.2] - 2026-08-26
+
+### Added
+
+- `iso-24495-5` gains an opening block rule. Every document now states its title, its purpose, its
+  version or date, and the reader it is for. A reader who cannot tell whether a document is for
+  them cannot decide whether to read it.
+- A layering rule. The gist of a document must carry its argument alone, detail that only some
+  readers need moves to footnotes or an appendix, and three layers is the practical ceiling.
+- A signposting rule. A document tells a reader who needs something else where to go.
+- Headings that joke, pun or lean on an unexplained term are now named as failures. The engine
+  checks heading length and form, so this one is guidance rather than a gate.
+- Cautions on three structures that the skill previously required without limit. Tables read badly
+  on narrow screens, callouts stop registering once several share a screen, and step numbers must
+  stay findable for a reader returning from the task.
+- Bullet limits: a few lines per bullet, and no more than two levels of nesting.
+- All three templates now carry the opening block and the signpost, so they follow the rules the
+  skill states.
+
+These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
+van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
+Federation. No text is reproduced from it.
+
+### Fixed
+
+- The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1
+  release bumped the marketplace, the Claude manifest and all eight skill files, and missed
+  `.codex-plugin/plugin.json`, because nothing checks that the versions agree. A Codex user
+  reading the manifest saw a version two releases behind the skills beside it.
+
 ## [0.6.1] - 2026-08-22
 
 ### Fixed
