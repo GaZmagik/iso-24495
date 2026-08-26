@@ -18,19 +18,19 @@
 
 ## 1. Summary of what this design achieves
 
-[Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next, and name any condition that changes the decision.]
+[Summarise the reader need, the proposed design and the expected outcome. Say what the reader must do next. Name any condition that changes the decision, and any qualification an implementer must respect.]
 
 ## 2. System Architecture
 
-### 2.1. Component Diagram
+### 2.1. What each component is responsible for
 
 [Insert a diagram or describe each component and its responsibility.]
 
-### 2.2. Interaction Flow
+### 2.2. How a request flows through the system
 
 [Describe the main request and response flow.]
 
-#### 2.2.1. Authentication Sequence
+#### 2.2.1. How a sign-in is checked
 
 [Describe sign-in, token validation, and failure handling.]
 
@@ -44,7 +44,7 @@
 | :--- | :--- | :--- |
 | **[Entity]** | [Purpose] | [Related entities] |
 
-### 3.2. Data Lifecycle
+### 3.2. How data enters, changes and leaves
 
 [Describe how data enters, changes, persists, and leaves the system.]
 
@@ -78,7 +78,7 @@
 
 [Describe each environment and its release criteria.]
 
-### 6.2. Rollout and Rollback
+### 6.2. How the change ships and how it comes back
 
 1. [Prepare and verify the release.]
 2. [Deploy the change in controlled stages.]

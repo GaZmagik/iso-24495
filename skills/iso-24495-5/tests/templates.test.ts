@@ -121,9 +121,41 @@ describe("Part 5 document templates", () => {
       if (numbered.length === 0) continue;
       expect(body, `${name} justifies numbering`).toMatch(/cite these sections by number/);
       // "Do not cite these sections by number" contains the phrase above, so refuse the negation.
-      expect(body, `${name} does not negate its own reason`).not.toMatch(/(do not|never|cannot) cite these sections/i);
+      expect(body, `${name} does not negate its own reason`).not.toMatch(/(do|should|must|shall|can|will)( ?n.t| not) cite these sections/i);
       // Removing numbers without the contents list breaks the anchors beneath it.
       expect(body, `${name} says to update the contents too`).toMatch(/from this contents list/);
+    }
+  });
+
+  // Round 13 asked for a gate on the heading repairs themselves, and on the
+  // meanings the opening block fields must carry. Both were reversible while green.
+  test("the heading repairs cannot be reverted unnoticed", () => {
+    const runbook = readTemplate("runbook-template.md").split("\n");
+    const headings = runbook.filter((line) => /^## /.test(line)).map((line) => line.trim());
+    for (const topic of ["## Prerequisites", "## Execution steps", "## Verification"]) {
+      expect(headings, `runbook no longer uses ${topic}`).not.toContain(topic);
+    }
+    expect(headings.length, "runbook still has its sections").toBeGreaterThanOrEqual(3);
+    const adr = readTemplate("adr-template.md");
+    expect(adr, "the ADR names the structure its headings rely on")
+      .toMatch(/published architecture decision record structure/);
+    // A subsection of a sequential explanation cannot claim the reference case,
+    // so these five carry their message. Reverting one went unnoticed once.
+    const design = readTemplate("design-doc-template.md");
+    for (const topic of ["Component Diagram", "Interaction Flow", "Authentication Sequence",
+                         "Data Lifecycle", "Rollout and Rollback"]) {
+      expect(design, `the design document no longer heads a sequence "${topic}"`).not.toContain(topic);
+    }
+  });
+
+  test("the opening block fields carry their required meanings", () => {
+    for (const name of TEMPLATE_NAMES) {
+      const body = readTemplate(name);
+      const purpose = body.split("\n").find((line) => line.startsWith("- **Purpose:**")) ?? "";
+      expect(purpose, `${name} purpose names the reader's task`).toMatch(/reader|review|build|decide|do/i);
+      expect(purpose, `${name} purpose names the scope`).toMatch(/covers|scope|solve/i);
+      const referral = body.split("\n").find((line) => line.startsWith("- **Instead of this:**")) ?? "";
+      expect(referral, `${name} referral says when to use it`).toMatch(/when to/i);
     }
   });
 
