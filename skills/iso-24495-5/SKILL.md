@@ -147,12 +147,13 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Links and images:** Does link text name its destination, does a meaningful image say what it shows, and is a decorative one marked as decorative?
 - [ ] **Tables heard:** Does every table carry a header row, with headers that identify each value beneath them?
 - [ ] **Reading order:** Does document order match reading order, with each sidebar and displaced callout given its own heading?
-- [ ] **Opening block:** Does the document open with its title, a purpose naming the reader's task and scope, the primary audience, and a version or date?
+- [ ] **Opening block:** Does the document open with its title, a one-line purpose naming the reader's task and scope, the primary audience, and a version or date?
 - [ ] **Overview:** Where needed, is it labelled in words, does it hold when detail is removed, and has that detail moved to footnotes, an appendix or a collapsible block?
 - [ ] **Levels:** Are there 3 or fewer levels of detail, and is the optional detail still reachable?
 - [ ] **Signposting:** Is the referral near the top or ending the opening section, naming its destination and when to use it, and absent where nothing else exists?
 - [ ] **Preserved:** On a restructure, was every prose passage and content item kept, with no prose rewritten and no tone changed?
 - [ ] **Safe moves:** Did every moved sentence or block keep its dependencies, its order against neighbouring steps, and the claim it qualifies?
-- [ ] **Never invented:** Did every promoted sentence come unchanged from the document or the author, true and complete for its field, with mismatches reported and gaps marked?
+- [ ] **Never invented:** Did every promoted sentence come unchanged from the document or the author, state its field directly, stay true and complete, with mismatches reported and gaps marked?
+- [ ] **Content primacy:** Did accuracy and completeness survive every structural choice, with nothing cut or distorted to fit a layout?
 - [ ] **Evidence over aesthetics:** Does every design element serve a reader need?
 - [ ] **Provisional label:** Where the document cites Part 5, does it say the standard is an unpublished draft?
