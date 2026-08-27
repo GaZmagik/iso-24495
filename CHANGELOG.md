@@ -2,6 +2,90 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.6.2] - 2026-08-27
+
+### Added
+
+- **An opening block.** Every document states its title, a one-line purpose, its version or date,
+  and the reader it is for. Each field carries a minimum. Purpose gives the reader's task and the
+  document's scope, the reader line names the primary audience, and the referral names the
+  alternative and when to use it. Part 1 still decides who the reader is, and this rule decides
+  only where the answer appears.
+- **A layering rule.** A document with 6 or more sections labels its overview, as does one whose
+  conclusion readers need before the detail. That overview keeps the conclusion, the required
+  action and every essential qualification. Detail only some readers need moves to footnotes, an
+  appendix or a collapsible block, and stays reachable. Three levels is the ceiling, and Part 3
+  governs the wording across them.
+- **A signposting rule.** A document tells a reader who needs something else where to go, naming
+  the alternative and when to use it. It leaves the signpost out where no alternative exists,
+  rather than shipping an empty heading.
+- **Two exceptions to the heading rule, and no others.** A document type with a published structure
+  keeps that structure's section names, as a decision record keeps Context and Decision. A
+  reference section a reader jumps to by subject keeps the subject. A section read in sequence
+  gets a message or a task.
+- **One override.** The overview's label names its section rather than its message, so the layering
+  rule overrides the heading rule for that heading and no other.
+- **Branching routes.** A forking procedure gets a decision table or labelled conditions, never one
+  numbered list. A labelled decision table is already the written form, so prose is added only
+  where the routes are drawn as a picture.
+- **Heading numbering**, for documents whose sections a reader must cite by identifier.
+- **Named heading failures.** Reject a heading that jokes, puns or plays with words, and one built
+  on a term the document has not yet explained. The engine checks heading length and form, so this
+  is guidance rather than a gate.
+- **Limits on structures the skill required without any.** Name the narrowest presentation a table
+  must survive and read it back at that width, or use labelled records where nobody has named one.
+  Reserve a callout for what changes the reader's action, and merge adjacent ones. Keep a sequence
+  an ordered list, so it survives being heard.
+- **Bullet limits**: one paragraph carrying one idea, nested no deeper than two levels, with longer
+  material promoted to a subsection.
+- **An accessibility exemption** from the ban on two devices carrying one meaning. A text
+  alternative is exempt beside a picture or diagram, or where the original is not exposed to a
+  screen reader. A table is excluded only where its headers identify every value and its reading
+  order keeps the comparison intact.
+- **A provisional-label rule.** A document citing this skill, or ISO 24495-5 itself, says that
+  Part 5 is an unpublished draft.
+
+### Changed
+
+- **The self-audit checklist grows from 6 checks to 25**, so every rule above it has one. The new
+  checks cover heading quality and numbering, chunking, table width, callout restraint and
+  branching. They also cover link text, alternative text, table headers, reading order, the opening
+  block, the overview, and the three restructuring guarantees.
+- **All three templates carry the opening block**, as a list with a purpose line and a conditional
+  referral. Every table in them tells the author to name a width or use labelled records.
+- **The runbook's headings state their task**: check these before you start, run these steps in
+  order, confirm the task worked. Topic labels do not survive the heading rule on sections read in
+  sequence.
+- **The design document names what its sequential subsections explain**, while its reference
+  sections keep their subjects. It also says why it numbers its sections, and tells an author to
+  remove the numbers from the headings and the contents list together.
+- **The decision record gains a status**, being proposed, accepted, deprecated or superseded, and
+  names Michael Nygard's Documenting Architecture Decisions, 2011, as the structure its headings
+  come from. Its options heading states its message, because that section is this template's own
+  addition rather than part of that structure.
+
+### Fixed
+
+- Restructuring an existing document could have required inventing content. The workflow forbids
+  adding content, while the new opening block and signposting rules demand it. An agent asked to
+  restructure a document with no purpose statement had to fabricate one, or leave the document
+  non-compliant. Restructuring now builds those blocks only from sentences the document already
+  holds, or from wording the author supplies, and marks what is missing as a gap. A wrong purpose
+  sends a reader confidently in the wrong direction, which is worse than no purpose at all.
+- A promoted sentence can now move only where its dependencies, its order against neighbouring
+  steps and the claim it qualifies all survive. Every word can survive a move while the meaning
+  does not, as a warning parted from its procedure shows.
+- The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1
+  release bumped the marketplace, the Claude manifest and all eight skill files, and missed
+  `.codex-plugin/plugin.json`, because nothing checks that the versions agree. A Codex user
+  reading the manifest saw a version one release behind the skills beside it.
+- The three templates are now compared against their recorded text, so no reader-visible change to
+  them can happen without the test changing in the same commit.
+
+These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
+van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
+Federation. No substantial wording is copied from it.
+
 ## [0.6.1] - 2026-08-22
 
 ### Fixed

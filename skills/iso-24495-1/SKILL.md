@@ -2,7 +2,7 @@
 name: iso-24495-1
 description: Core Plain Language standard (ISO 24495-1:2023). Governs all user-facing responses to ensure clear, structured, findable, understandable, and actionable output.
 metadata:
-  version: "0.6.1"
+  version: "0.6.2"
   iso-standard: "ISO 24495-1:2023"
   iso-status: "published"
 ---
