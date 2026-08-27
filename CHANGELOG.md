@@ -42,15 +42,15 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   alternative is exempt beside a picture or diagram, or where the original is not exposed to a
   screen reader. A table is excluded only where its headers identify every value and its reading
   order keeps the comparison intact.
-- **A provisional-label rule.** A document citing this skill says that Part 5 is an unpublished
-  draft.
-- **The self-audit checklist grows from 6 checks to 24**, so every rule above it has one. The new checks
-  cover heading quality and numbering, chunking, table width, callout restraint and branching.
-  They also cover link text, alternative text, table headers, reading order, the opening block, the
-  overview, and the three restructuring guarantees.
+- **A provisional-label rule.** A document citing this skill, or ISO 24495-5 itself, says that
+  Part 5 is an unpublished draft.
 
 ### Changed
 
+- **The self-audit checklist grows from 6 checks to 25**, so every rule above it has one. The new
+  checks cover heading quality and numbering, chunking, table width, callout restraint and
+  branching. They also cover link text, alternative text, table headers, reading order, the opening
+  block, the overview, and the three restructuring guarantees.
 - **All three templates carry the opening block**, as a list with a purpose line and a conditional
   referral. Every table in them tells the author to name a width or use labelled records.
 - **The runbook's headings state their task**: check these before you start, run these steps in
