@@ -78,7 +78,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1
   release bumped the marketplace, the Claude manifest and all eight skill files, and missed
   `.codex-plugin/plugin.json`, because nothing checks that the versions agree. A Codex user
-  reading the manifest saw a version two releases behind the skills beside it.
+  reading the manifest saw a version one release behind the skills beside it.
 - The three templates are now compared against their recorded text, so no reader-visible change to
   them can happen without the test changing in the same commit.
 
