@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -664,6 +665,103 @@ describe("repository writing conventions", () => {
       expect(examples).toContain("token.length");
       const bareValue = new RegExp("\\$\\{\\s*[A-Za-z_\\$][\\w\\$]*\\s*}");
       expect(bareValue.test(examples), examples).toBe(false);
+    });
+  });
+
+  // Twelve places carry the release version between them, and moving some but
+  // not all of them has already reached users. The 0.6.1 release bumped the
+  // marketplace, the Claude manifest and all eight skill files, and missed
+  // `.codex-plugin/plugin.json`, so a Codex user read a version one release
+  // behind the skills beside it. The changelog names the cause: nothing
+  // checked that the versions agree. This does.
+  describe("release versions", () => {
+    const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+    const FRONTMATTER_VERSION = /^\s*version:\s*"([^"]+)"/m;
+
+    /** The version the rest of the repository has to match. */
+    function declaredVersion(): string {
+      const manifest = JSON.parse(
+        readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "plugin.json"), "utf8"),
+      ) as { version: string };
+      return manifest.version;
+    }
+
+    /** A dotted version as numbers, so 0.10.0 sorts above 0.9.0 rather than below. */
+    function ordered(version: string): number[] {
+      return version.split(".").map(Number);
+    }
+
+    /** True when `candidate` is a later release than `existing`. */
+    function isLater(candidate: number[], existing: number[]): boolean {
+      for (let part = 0; part < 3; part += 1) {
+        if (candidate[part] !== existing[part]) return candidate[part] > existing[part];
+      }
+      return false;
+    }
+
+    test("every manifest and every skill names the same version", () => {
+      const version = declaredVersion();
+      expect(version, "the Claude manifest states a dotted version").toMatch(/^\d+\.\d+\.\d+$/);
+
+      const codex = JSON.parse(
+        readFileSync(join(REPOSITORY_ROOT, ".codex-plugin", "plugin.json"), "utf8"),
+      ) as { version: string };
+      expect(codex.version, ".codex-plugin/plugin.json").toBe(version);
+
+      const marketplace = JSON.parse(
+        readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "marketplace.json"), "utf8"),
+      ) as { plugins: Array<{ version: string; source: { ref: string } }> };
+      expect(marketplace.plugins[0].version, "marketplace version").toBe(version);
+      // The ref is the half that gets forgotten, because it reads as a
+      // separate fact rather than as the same number wearing a "v".
+      expect(marketplace.plugins[0].source.ref, "marketplace source.ref").toBe(`v${version}`);
+
+      const skills = everySkillDirectory();
+      expect(skills.length, "seven skills and the Codex style skill").toBe(8);
+      for (const { name, path: directory } of skills) {
+        const frontmatter = readFileSync(join(directory, "SKILL.md"), "utf8").split("---")[1] ?? "";
+        const stated = FRONTMATTER_VERSION.exec(frontmatter);
+        expect(stated, `${name} states metadata.version`).not.toBeNull();
+        expect(stated?.[1], `${name} metadata.version`).toBe(version);
+      }
+    });
+
+    // Matching the whole file would print all 36 KB of it on a failure, which
+    // buries the one line the reader needs. The headings alone are the answer.
+    test("the changelog records the version being shipped", () => {
+      const recorded = readFileSync(join(REPOSITORY_ROOT, "CHANGELOG.md"), "utf8")
+        .split("\n")
+        .map((line) => /^## \[([^\]]+)\]/.exec(line))
+        .filter((match): match is RegExpExecArray => match !== null)
+        .map((match) => match[1]);
+
+      expect(recorded, `the changelog holds ${recorded.length} release headings`).toContain(
+        declaredVersion(),
+      );
+    });
+
+    // Agreement alone passes when nobody touched the version at all, so this
+    // asks the harder question: is the working version ahead of what has
+    // already been released? Continuous integration must fetch tags for it,
+    // which is why the workflow sets `fetch-depth: 0`.
+    test("the version is ahead of every release already tagged", () => {
+      const released = execSync("git tag --list", { cwd: REPOSITORY_ROOT, encoding: "utf8" })
+        .split("\n")
+        .map((tag) => RELEASE_TAG.exec(tag.trim()))
+        .filter((match): match is RegExpExecArray => match !== null)
+        .map((match) => match.slice(1, 4).map(Number));
+
+      // An empty list means the tags were never fetched, not that nothing has
+      // been released. Saying so beats passing a check that examined nothing.
+      expect(released.length, "release tags are present; CI needs fetch-depth: 0").toBeGreaterThan(0);
+
+      const working = ordered(declaredVersion());
+      for (const tag of released) {
+        expect(
+          isLater(working, tag),
+          `${working.join(".")} must be later than the released ${tag.join(".")}`,
+        ).toBe(true);
+      }
     });
   });
 });
