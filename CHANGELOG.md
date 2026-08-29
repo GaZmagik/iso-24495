@@ -81,6 +81,13 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   reading the manifest saw a version one release behind the skills beside it.
 - The three templates are now compared against their recorded text, so no reader-visible change to
   them can happen without the test changing in the same commit.
+- The release version is now checked rather than trusted. Twelve places carry it: both plugin
+  manifests, the marketplace version, the marketplace `source.ref`, and all eight skill files. A
+  test asserts they agree, that the changelog records the version, and that the version is later
+  than every release already tagged. The entry two above is what this catches, a Codex manifest
+  left a release behind because nothing compared the versions. Continuous integration now checks
+  out with `fetch-depth: 0`, because a checkout without tags would let the last of those three
+  checks pass having examined nothing.
 
 These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
 van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
