@@ -669,6 +669,15 @@ describe("repository writing conventions", () => {
     "- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions, with a legal document's clause identifiers exempt?",
   ];
 
+  const CORE_ROUTING_LINES = [
+    "- **`iso-24495-2` (Legal & Compliance):** Activate when handling contracts, licenses, terms of service, privacy policies, or statutory rules. Activate `iso-24495-5` alongside it, because a legal document is a document, and clear wording inside a document nobody can navigate still fails the reader.",
+    "- **`iso-24495-5` (Document Design, provisional):** Activate when producing complex multi-section documents (reports, specifications, guides, contracts) where layout, visual hierarchy, and navigation aids shape readability.",
+  ];
+
+  const STYLE_ROUTING_LINES = [
+    "- **`iso-24495-2`:** Legal writing: contracts, licences, compliance text. Invoke `iso-24495-5` with it, because a legal document must be navigable as well as readable.",
+    "- **`iso-24495-5`:** Document design (provisional): structuring complex multi-section documents, contracts included.",
+  ];
   const README_LINES = [
     "| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses, defined terms, cross-references that name what they point at, stable clause identifiers, a summary layer over the operative text, and section names a reader can navigate by. |",
     "The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents, legal ones included. The text audit never activates automatically.",
@@ -700,6 +709,30 @@ describe("repository writing conventions", () => {
     for (const line of README_LINES) {
       expect(readme, `the README must keep this line unchanged: ${line.slice(0, 40)}`)
         .toContain(line);
+    }
+
+    // The three routing lists. Their instructions were pinned by phrase, and a
+    // review deleted the reason this change gave on each while the suite
+    // stayed green. A reader who is told to do a thing and not why drops it
+    // first, so the reason is part of the line.
+    const core = readFileSync(join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"), "utf8")
+      .split(/\r?\n/);
+    for (const line of CORE_ROUTING_LINES) {
+      expect(core, `the core skill must keep this trigger unchanged: ${line.slice(0, 40)}`)
+        .toContain(line);
+    }
+    // The Codex skill holds the output style body word for word, and a
+    // separate test enforces that. Both are checked here, so deleting the same
+    // text from both at once cannot slip through the pair being identical.
+    for (const file of [
+      join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"),
+      join(CODEX_SKILLS_ROOT, "iso-24495-style", "SKILL.md"),
+    ]) {
+      const lines = readFileSync(file, "utf8").split(/\r?\n/);
+      for (const line of STYLE_ROUTING_LINES) {
+        expect(lines, `${relative(REPOSITORY_ROOT, file)} must keep: ${line.slice(0, 40)}`)
+          .toContain(line);
+      }
     }
   });
 
