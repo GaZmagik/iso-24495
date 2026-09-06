@@ -37,6 +37,14 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   whether they had complied. An operative clause imposes, permits or prohibits an action, and
   recitals, definitions and schedules are numbered by the document's conventions instead.
 
+### Known limits
+
+- **The audit engine does not measure the new rules.** It checks sentence length, paragraph length,
+  acronyms, legalese and headings, and has no proxy for a missing summary layer, an undefined term
+  or a bare cross-reference. A document breaking those rules still reports zero findings, so a zero
+  is not a pass for them. The organisational Measurement dimension is fed by that same engine, so
+  it does not move when the new structure is absent.
+
 ### Changed
 
 - **A technical task now reaches the document design skill too**, whenever its output is a

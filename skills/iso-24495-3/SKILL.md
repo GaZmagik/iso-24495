@@ -36,7 +36,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
    3. **Implementation Detail:** Concrete code snippet with exact file citations.
 
    These stages order an explanation, and Part 5's three levels order a document. They are different axes rather than two versions of one, so they do not map one to one. Where the explanation is a document:
-   - The purpose sentence supplies the purpose line of Part 5's opening block, and opens its overview where Part 5 calls for one. The block's title, version and named reader are not its to supply. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.
+   - The purpose sentence supplies the purpose line of Part 5's opening block, and opens its overview where Part 5 calls for one. The block's title, version and named reader are not its to supply, and Part 5 still requires them of the author. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.
    - Stages 2 and 3 sit in the main body, in that order.
    - Part 5's optional detail holds what a reader can skip and still act on. No stage covers it, so nothing is demoted there by default.
 
