@@ -2,6 +2,30 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.7.0] - 2026-09-06
+
+### Added
+
+- **Document-level rules for legal writing.** `iso-24495-2` governed wording alone, so a contract
+  came out clearly worded inside a structure nobody could navigate. It now carries four rules the
+  wording rules could not reach. Those are defined terms, cross-references that name what they
+  point at, clause identifiers that survive an amendment, and a summary layer over the operative
+  text.
+- **A summary that cannot be mistaken for the agreement.** The summary must state that the
+  operative text governs, and must name where that text starts. It must not add, qualify or remove
+  an obligation, because a summary a reader acts on instead of the contract changes their rights.
+- **A worked summary example**, showing the governing statement that a bare summary leaves out.
+
+### Changed
+
+- **A legal task now reaches the document design skill.** The Part 5 trigger named reports,
+  specifications and guides, and stopped there, so nothing routed a contract or a licence to the
+  design rules. The core skill, the output style and the Codex style skill now send legal work to
+  `iso-24495-5` as well as `iso-24495-2`.
+- **Part 5 names the one carve-out to its nesting cap.** A clause tree numbered 4.2.1 is three
+  levels deep, and the bullet cap is two. That cap governs bulleted lists, and `iso-24495-2`
+  governs a numbered clause tree, whose depth is fixed by the citations readers already use.
+
 ## [0.6.2] - 2026-08-27
 
 ### Added

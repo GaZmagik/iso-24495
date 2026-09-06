@@ -2,7 +2,7 @@
 name: iso-24495-1
 description: Core Plain Language standard (ISO 24495-1:2023). Governs all user-facing responses to ensure clear, structured, findable, understandable, and actionable output.
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
   iso-standard: "ISO 24495-1:2023"
   iso-status: "published"
 ---
@@ -98,8 +98,8 @@ Before outputting user-facing text, audit against these checks:
 ## Domain Extension Triggers
 
 Automatically activate and combine the appropriate domain extension alongside ISO 24495-1:
-- **`iso-24495-2` (Legal & Compliance):** Activate when handling contracts, licenses, terms of service, privacy policies, or statutory rules.
+- **`iso-24495-2` (Legal & Compliance):** Activate when handling contracts, licenses, terms of service, privacy policies, or statutory rules. Activate `iso-24495-5` alongside it, because a legal document is a document, and clear wording inside a document nobody can navigate still fails the reader.
 - **`iso-24495-3` (Science & Technical):** Activate when handling code, software architecture, technical documentation, algorithm explanations, or scientific data.
 - **`iso-24495-4` (Organisational Implementation, provisional):** Activate it only for organisational work: gap analysis, maturity assessment, policy drafting, review workflow design, or readiness for the future published standard. Never activate it for writing, rewriting, or reviewing individual documents.
-- **`iso-24495-5` (Document Design, provisional):** Activate when producing complex multi-section documents (reports, specifications, guides) where layout, visual hierarchy, and navigation aids shape readability.
+- **`iso-24495-5` (Document Design, provisional):** Activate when producing complex multi-section documents (reports, specifications, guides, contracts) where layout, visual hierarchy, and navigation aids shape readability.
 - **`iso-24495-text-audit` (Text Audit):** Never activate automatically. The user invokes it to audit one selected text file or directory.

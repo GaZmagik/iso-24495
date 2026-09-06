@@ -2,7 +2,7 @@
 name: iso-24495-5
 description: Provisional sector-specific Plain Language standard for document design (based on ISO/WD 24495-5, under development). Applied when structuring complex documents so readers can find and navigate content through layout, visual hierarchy, and navigation aids.
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
   iso-standard: "ISO/WD 24495-5"
   iso-status: "working-draft"
 ---
@@ -77,7 +77,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 4. **Choosing the Right Structure:**
    - **Comparisons:** Use a table when readers must compare 2 or more items across shared attributes. Name the narrowest presentation the table must survive, then read it back at that width. Where nobody has named one, use repeated labelled records instead of a table, rather than shipping both.
    - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard.
-   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest no deeper than 2 levels. Promote longer material to a subsection.
+   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest bulleted lists no deeper than 2 levels. A numbered clause tree in a legal document is the one exception. Its depth is fixed by the citations readers and courts already use, and `iso-24495-2` governs it. Promote longer material to a subsection.
    - **Branching routes:** When a procedure forks, use a decision table or a labelled set of conditions rather than one numbered list. A decision table with labelled routes is already the written form. Add prose only where the routes are drawn as a picture.
    - **Warnings and conditions:** Reserve a callout for a warning or condition that changes what the reader does. Merge adjacent callouts serving one purpose, and give each a word naming what it is.
 

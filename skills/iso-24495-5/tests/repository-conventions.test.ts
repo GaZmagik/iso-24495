@@ -475,6 +475,66 @@ describe("repository writing conventions", () => {
     }
   });
 
+  // A legal document is a document, and Part 2 governed wording alone. So a
+  // contract drafted through this plugin came out clearly worded inside a
+  // structure nobody could navigate, which is the failure the findable
+  // principle names. These pin the four document-level rules.
+  test("the legal skill carries its document-level rules", () => {
+    const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
+    for (const rule of [
+      "4. **Defined Terms:**",
+      "5. **Cross-References:**",
+      "6. **Clause Identifiers:**",
+      "7. **The Summary Layer:**",
+    ]) {
+      expect(legal, `Part 2 must open the rule: ${rule}`).toContain(rule);
+    }
+    // Every label survives an inverted body, so each rule also pins a phrase
+    // that carries its meaning.
+    for (const requirement of [
+      "Define each term once, and use it unchanged everywhere after",
+      "Name what the referenced clause says, alongside its identifier",
+      "Number every operative clause",
+      "leaves every existing number where it is",
+      "The summary **must** state that the operative text governs",
+      "The summary **must not** add, qualify or remove an obligation",
+    ]) {
+      expect(legal, `Part 2 must keep: ${requirement}`).toContain(requirement);
+    }
+  });
+
+  // Both skills load on a contract, so their limits have to agree in writing.
+  // Clause 4.2.1 is three levels deep, which Part 5's nesting cap forbids if
+  // that cap is read as covering every list rather than bulleted ones.
+  test("the legal and design skills name their shared boundary", () => {
+    const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
+    const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8");
+    expect(legal, "Part 2 must send the reader to Part 5").toContain(
+      "`iso-24495-5` loads alongside this skill");
+    expect(legal, "clause numbers must not count as heading levels").toContain(
+      "Treat clause numbers as list numbering rather than heading nesting");
+    expect(design, "Part 5 must name the clause-tree carve-out").toContain(
+      "A numbered clause tree in a legal document is the one exception");
+  });
+
+  // Wording rules were all a contract task could reach. The Part 5 trigger
+  // named reports, specifications and guides, and stopped there, so the design
+  // rules existed and nothing routed a licence or a contract to them.
+  test("a legal task reaches the document design skill", () => {
+    const core = readFileSync(join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"), "utf8");
+    const lines = core.split("\n");
+    const legalTrigger = lines.find((line) => line.includes("`iso-24495-2` (Legal")) ?? "";
+    expect(legalTrigger, "the legal trigger must activate Part 5 too").toContain(
+      "Activate `iso-24495-5` alongside it");
+    const designTrigger = lines.find((line) => line.includes("`iso-24495-5` (Document Design")) ?? "";
+    expect(designTrigger, "the design trigger must name contracts").toContain("contracts");
+
+    // The Codex style skill holds this body word for word, so one check covers both.
+    const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
+    expect(style, "the style must route a legal task to Part 5").toContain(
+      "Invoke `iso-24495-5` with it");
+  });
+
   test("the output style keeps a send-time check", () => {
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
     expect(style).toMatch(/^## Check before you send$/m);

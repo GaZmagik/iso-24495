@@ -2,7 +2,7 @@
 name: iso-24495-style
 description: Hold every response to the ISO 24495 plain-language rules, and route to the sector skills. Codex has no output style, so these rules are a skill.
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
 ---
 
 # ISO 24495 Response Style
@@ -27,10 +27,10 @@ two identical, so neither can drift from the other.
 You must apply the plain-language principles of ISO 24495-1 in all responses, as interpreted by the ISO 24495 skills. Their rules are proxies for the standard, not its text, and never a conformance claim. Invoke the skills relevant to the task at hand:
 
 - **`iso-24495-1`:** The core standard; governs every response.
-- **`iso-24495-2`:** Legal writing: contracts, licences, compliance text.
+- **`iso-24495-2`:** Legal writing: contracts, licences, compliance text. Invoke `iso-24495-5` with it, because a legal document must be navigable as well as readable.
 - **`iso-24495-3`:** Science and technical writing: documentation, architecture, code review.
 - **`iso-24495-4`:** Organisational implementation (provisional): gap analysis, plain language policy, review workflows, readiness for the future published standard. Never for writing individual documents.
-- **`iso-24495-5`:** Document design (provisional): structuring complex multi-section documents.
+- **`iso-24495-5`:** Document design (provisional): structuring complex multi-section documents, contracts included.
 - **`iso-24495-text-audit`:** User-invoked text audit. Never invoke it automatically.
 
 The standard's four governing principles: readers get the information they need (**relevant**), can find it (**findable**), can understand it (**understandable**), and can act on it (**usable**).

@@ -2,7 +2,7 @@
 name: iso-24495-2
 description: Sector-specific Plain Language standard for legal communication (ISO 24495-2:2025). Applied during contract drafting, license review, and legal/compliance writing.
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
   iso-standard: "ISO 24495-2:2025"
   iso-status: "published"
 ---
@@ -19,6 +19,11 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 
 2. **Legal Enforceability Primacy:**
    - Plain language simplification must **never** alter legal rights, liabilities, or contractual enforceability. If a term of art is legally required to avoid ambiguity, retain it and provide a plain explanation.
+
+3. **Document Design Applies Here Too:**
+   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.
+   - This skill adds only what Part 5 leaves uncovered: defined terms, cross-references, clause identifiers, and the summary layer.
+   - Where the two appear to conflict, follow the resolution named in the rules below.
 
 ---
 
@@ -39,6 +44,28 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
      - **Obligation / Action:** What action must or may be taken.
      - **Consequence:** What occurs upon non-compliance.
 
+4. **Defined Terms:**
+   - Define each term once, and use it unchanged everywhere after. Two words for one concept invite an argument that they mean two things.
+   - Put the definition where the reader first meets the term. Where a term runs throughout, collect the definitions in one section and point the first use at it.
+   - Write a term out in full where the document uses it once, rather than defining it.
+   - Say in words that a term is defined, and where. Capital letters are silent to a listener, so **Confidential Information** on its own tells them nothing.
+
+5. **Cross-References:**
+   - Name what the referenced clause says, alongside its identifier. Write *"the notice deadline in clause 4.2"* rather than *"clause 4.2"*.
+   - Keep that wording identical to the referenced clause's own heading or opening line.
+   - Point at the clause carrying the obligation, never at one that only points somewhere else.
+
+6. **Clause Identifiers:**
+   - Number every operative clause, because a reader must be able to cite one. This is the case Part 5's numbering rule names.
+   - Treat clause numbers as list numbering rather than heading nesting, so they never count against Part 5's limit of three heading levels.
+   - Keep an identifier for the life of the document. An amendment adds a clause, or marks one deleted, and leaves every existing number where it is, because filings, correspondence and other contracts cite those numbers.
+
+7. **The Summary Layer:**
+   - Open the document with a plain summary of the terms the reader must act on. Cover what they must do, what they must pay, when the agreement ends, and how to leave it.
+   - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
+   - The summary **must not** add, qualify or remove an obligation. Where a term cannot be stated plainly without qualifying it, leave it out and point to its clause.
+   - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.
+
 ---
 
 ## Contrastive Examples
@@ -55,6 +82,18 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
   > 1. **Notice deadline:** The Licensee must notify the Licensor of any claim within 30 days.
   > 2. **Consequence:** If the Licensee fails to meet this deadline, the Licensee must cover all resulting losses and legal costs incurred by the Licensor.
 
+### Example 2: The Summary Layer
+* ❌ **Not aligned (a summary a reader could mistake for the agreement):**
+  ```text
+  Summary: You can cancel at any time and we will refund the current month.
+  ```
+* ✅ **ISO 24495-2 Aligned:**
+  > **Summary of your main terms**
+  >
+  > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.
+  >
+  > - **Cancelling:** You may cancel at any time. The notice period and the refund are in clause 7.
+
 ---
 
 ## Pre-Output Self-Audit Checklist
@@ -65,3 +104,8 @@ Before outputting legal text, audit against these checks:
 - [ ] **Explicit subjects:** Is every obligation attached to a clearly named actor?
 - [ ] **Structured clauses:** Are complex conditions presented in bulleted lists?
 - [ ] **Legal accuracy:** Is legal enforceability preserved?
+- [ ] **Defined terms:** Is each term defined once, used unchanged, and reachable from its first use?
+- [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?
+- [ ] **Identifiers:** Is every operative clause numbered, with existing numbers untouched by amendment?
+- [ ] **Summary:** Does it name the governing text, and add, qualify and remove nothing?
+- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?
