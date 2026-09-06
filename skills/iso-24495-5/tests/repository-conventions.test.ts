@@ -663,14 +663,6 @@ describe("repository writing conventions", () => {
   //
   // These are whole lines and whole blocks. Editing one means editing it here
   // in the same commit, which is the point rather than a cost.
-  // The lesson the rules block already learned, applied to every line this
-  // branch wrote in the other files. Pinning a phrase leaves every other
-  // phrase of the same sentence deletable: a review kept the pinned tail of
-  // the README's routing sentence and deleted its main clause, so the file
-  // stopped saying that legal content triggers this skill at all.
-  //
-  // These are whole lines and whole blocks. Editing one means editing it here
-  // in the same commit, which is the point rather than a cost.
   const PART_2_SCOPE_BOUNDARY = [
     "3. **Document Design Applies Here Too:**",
     "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
@@ -689,7 +681,7 @@ describe("repository writing conventions", () => {
     "1. **Progressive Disclosure Ordering:**",
     "   Structure every technical explanation in these stages, in this order:",
     "   1. **System Purpose:** High-level operational intent (1 sentence).",
-    "   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table, each with a text alternative. Required where the explanation covers more than one component or step. A single-mechanism explanation goes from purpose to implementation, because a diagram nobody needs is the decoration Part 5 forbids.",
+    "   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table. Rule 4 governs the diagram's text alternative, and Part 5 governs the table. Required where the explanation covers more than one component or step. A single-mechanism explanation goes from purpose to implementation, because a diagram nobody needs is the decoration Part 5 forbids.",
     "   3. **Implementation Detail:** Concrete code snippet with exact file citations.",
     "",
     "   These stages order an explanation, and Part 5's three levels order a document. They are different axes rather than two versions of one, so they do not map one to one. Where the explanation is a document:",
@@ -710,11 +702,31 @@ describe("repository writing conventions", () => {
     "   - A Mermaid diagram reaches a listener as its source text, which is not an explanation. So the alternative is prose beside the diagram, never the diagram's own labels.",
   ];
 
+  const PART_3_EXAMPLE = [
+    "### Example 1: Concurrency Control Explanation",
+    "* ❌ **Not aligned (Dense & Abstract):**",
+    "  ```text",
+    "  In order to prevent race conditions during concurrent state mutations",
+    "  within the execution pipeline, a mutex lock mechanism is introduced prior",
+    "  to updating the shared buffer allocation in memory.",
+    "  ```",
+    "* ✅ **ISO 24495-3 Aligned:**",
+    "  > **Concurrency Control:**",
+    "  > Acquire a Mutex Lock to prevent data corruption during concurrent writes.",
+    "  > ",
+    "  > **Implementation:**",
+    "  > The locking logic is implemented in [`state_manager.rs:L45-L52`](file:///src/state_manager.rs#L45-L52):",
+    "  > ```rust",
+    "  > let _guard = self.mutex.lock().unwrap();",
+    "  > self.buffer.update(data);",
+    "  > ```",
+  ];
+
   const PART_3_CHECKLIST = [
     "- [ ] **Progressive structure:** Is system purpose stated before architecture and code?",
     "- [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?",
     "- [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?",
-    "- [ ] **Visual aids:** Are diagrams or tables used to explain multi-step flows?",
+    "- [ ] **Visual aids:** Is a diagram or table used wherever more than one component or step is explained?",
     "- [ ] **Code immunity:** Are code snippets and commands intact and un-mangled?",
     "- [ ] **Text alternatives:** Does every diagram carry prose saying what it shows?",
     "- [ ] **Layering:** Where the explanation is a document, do the stages sit in Part 5's levels as rule 1 says?",
@@ -766,6 +778,10 @@ describe("repository writing conventions", () => {
       .toEqual(PART_3_SCOPE_BOUNDARY);
     expect(blockOf(tech, "1. **Progressive Disclosure Ordering:**", "\n---", "iso-24495-3"))
       .toEqual(PART_3_RULES);
+    // The rule was relaxed because this example was compliant, so the
+    // justification for that change rests on the example staying as it is.
+    expect(blockOf(tech, "### Example 1: Concurrency Control Explanation", "\n---",
+      "iso-24495-3")).toEqual(PART_3_EXAMPLE);
     const checklist = tech.slice(tech.indexOf("- [ ] **Progressive structure:**"));
     expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_3_CHECKLIST);
 

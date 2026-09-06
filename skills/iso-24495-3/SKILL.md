@@ -32,7 +32,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
 1. **Progressive Disclosure Ordering:**
    Structure every technical explanation in these stages, in this order:
    1. **System Purpose:** High-level operational intent (1 sentence).
-   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table, each with a text alternative. Required where the explanation covers more than one component or step. A single-mechanism explanation goes from purpose to implementation, because a diagram nobody needs is the decoration Part 5 forbids.
+   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table. Rule 4 governs the diagram's text alternative, and Part 5 governs the table. Required where the explanation covers more than one component or step. A single-mechanism explanation goes from purpose to implementation, because a diagram nobody needs is the decoration Part 5 forbids.
    3. **Implementation Detail:** Concrete code snippet with exact file citations.
 
    These stages order an explanation, and Part 5's three levels order a document. They are different axes rather than two versions of one, so they do not map one to one. Where the explanation is a document:
@@ -82,7 +82,7 @@ Before outputting technical text, audit against these checks:
 - [ ] **Progressive structure:** Is system purpose stated before architecture and code?
 - [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?
 - [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?
-- [ ] **Visual aids:** Are diagrams or tables used to explain multi-step flows?
+- [ ] **Visual aids:** Is a diagram or table used wherever more than one component or step is explained?
 - [ ] **Code immunity:** Are code snippets and commands intact and un-mangled?
 - [ ] **Text alternatives:** Does every diagram carry prose saying what it shows?
 - [ ] **Layering:** Where the explanation is a document, do the stages sit in Part 5's levels as rule 1 says?

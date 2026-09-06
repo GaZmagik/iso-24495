@@ -24,7 +24,7 @@
 
 ### 2.1. What each component is responsible for
 
-[Insert a diagram with a text alternative, or describe each component and its responsibility.]
+[Insert a diagram with a text alternative, or a summary table naming each component and its responsibility.]
 
 ### 2.2. How a request flows through the system
 
