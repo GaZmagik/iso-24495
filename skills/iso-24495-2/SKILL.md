@@ -63,7 +63,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
    - Keep an identifier for the life of the document. An amendment adds a clause, or marks one deleted, and leaves every existing number where it is, because filings, correspondence and other contracts cite those numbers.
 
 7. **The Summary Layer:**
-   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Cover what they must do, what they must pay, when the agreement ends, and how to leave it.
+   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Cover what they must do, what they must pay, when the agreement ends, and how to leave it. A document without one of those, such as a privacy policy with no payment, covers the rest.
    - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
    - The summary **must not** add, qualify or remove an obligation. State a term together with every qualification Part 5 requires the overview to keep. Where that cannot be done plainly, leave the term out and point to its clause.
    - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.
