@@ -533,6 +533,7 @@ describe("repository writing conventions", () => {
         "Number every operative clause, because a reader, a court and a counterparty must all cite",
         "Write the identifier into the clause text rather than as list markup",
         "A clause identifier is neither a heading nor list numbering",
+        "This is the one place a legal document departs from Part 5's rule that a sequence stays",
         "leaves every existing number where it is",
       ]],
       ["7. **The Summary Layer:**", [
@@ -602,6 +603,22 @@ describe("repository writing conventions", () => {
     // self-audit rejects a document the rule permits.
     expect(design, "the Part 5 checklist must carry the same exception").toContain(
       "clause identifiers exempt");
+
+    // The boundary says the skill adds "only" these, so a rule missing from it
+    // makes the sentence false and sends a writer to the wrong skill. Carving
+    // section names out of the summary rule did exactly that.
+    const boundary = legal.split("3. **Document Design Applies Here Too:**")[1]
+      ?.split("---")[0] ?? "";
+    for (const addition of [
+      "defined terms",
+      "cross-references",
+      "clause identifiers",
+      "summary layer",
+      "section names",
+    ]) {
+      expect(boundary, `the boundary must name what the skill adds: ${addition}`)
+        .toContain(addition);
+    }
   });
 
   // Wording rules were all a contract task could reach. The Part 5 trigger

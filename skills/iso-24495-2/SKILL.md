@@ -22,7 +22,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 
 3. **Document Design Applies Here Too:**
    - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.
-   - This skill adds only what Part 5 leaves uncovered: defined terms, cross-references, clause identifiers, and the summary layer.
+   - This skill adds only what Part 5 leaves uncovered: defined terms, cross-references, clause identifiers, the summary layer, and section names.
    - Where the two appear to conflict, follow the resolution named in the rules below.
 
 ---
