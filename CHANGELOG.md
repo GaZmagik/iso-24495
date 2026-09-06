@@ -21,9 +21,9 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **A worked summary example**, showing the governing statement that a bare summary leaves out.
 - **A mapping between a technical explanation and a technical document.** `iso-24495-3` orders an
   explanation in three stages, and `iso-24495-5` orders a document in three levels. They are
-  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the
-  opening block and opens the overview, stages 2 and 3 are the main body, and nothing is demoted to
-  optional detail by default.
+  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the purpose
+  line of the opening block and opens the overview. Stages 2 and 3 are the main body, and nothing
+  is demoted to optional detail by default.
 - **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table and
   never mentioned alternative text, so a document passing its own checklist could hand a listener
   nothing. A Mermaid diagram reaches a listener as its source, which is not an explanation, so the

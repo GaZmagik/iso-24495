@@ -663,6 +663,14 @@ describe("repository writing conventions", () => {
   //
   // These are whole lines and whole blocks. Editing one means editing it here
   // in the same commit, which is the point rather than a cost.
+  // The lesson the rules block already learned, applied to every line this
+  // branch wrote in the other files. Pinning a phrase leaves every other
+  // phrase of the same sentence deletable: a review kept the pinned tail of
+  // the README's routing sentence and deleted its main clause, so the file
+  // stopped saying that legal content triggers this skill at all.
+  //
+  // These are whole lines and whole blocks. Editing one means editing it here
+  // in the same commit, which is the point rather than a cost.
   const PART_2_SCOPE_BOUNDARY = [
     "3. **Document Design Applies Here Too:**",
     "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
@@ -679,13 +687,13 @@ describe("repository writing conventions", () => {
 
   const PART_3_RULES = [
     "1. **Progressive Disclosure Ordering:**",
-    "   Structure all technical explanations in three strict sequential stages:",
+    "   Structure every technical explanation in these stages, in this order:",
     "   1. **System Purpose:** High-level operational intent (1 sentence).",
-    "   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table, each with a text alternative.",
+    "   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table, each with a text alternative. Required where the explanation covers more than one component or step. A single-mechanism explanation goes from purpose to implementation, because a diagram nobody needs is the decoration Part 5 forbids.",
     "   3. **Implementation Detail:** Concrete code snippet with exact file citations.",
     "",
     "   These stages order an explanation, and Part 5's three levels order a document. They are different axes rather than two versions of one, so they do not map one to one. Where the explanation is a document:",
-    "   - The purpose sentence supplies Part 5's opening block, and opens its overview. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.",
+    "   - The purpose sentence supplies the purpose line of Part 5's opening block, and opens its overview. The block's title, version and named reader are not its to supply. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.",
     "   - Stages 2 and 3 sit in the main body, in that order.",
     "   - Part 5's optional detail holds what a reader can skip and still act on. No stage covers it, so nothing is demoted there by default.",
     "",
