@@ -56,15 +56,18 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
    - Point at the clause carrying the obligation, never at one that only points somewhere else.
 
 6. **Clause Identifiers:**
-   - Number every operative clause, because a reader must be able to cite one. This is the case Part 5's numbering rule names.
-   - Treat clause numbers as list numbering rather than heading nesting, so they never count against Part 5's limit of three heading levels.
+   - Number every operative clause, because a reader, a court and a counterparty must all cite the same thing.
+   - Write the identifier into the clause text rather than as list markup. Markdown numbers an ordered list 1, 2, 3, so a compound identifier such as 4.2.1 survives only when it is written in the text.
+   - This is the one place a legal document departs from Part 5's rule that a sequence stays an ordered list.
+   - A clause identifier is neither a heading nor list numbering. So it does not count against Part 5's heading limit, and Part 5's rule on numbering headings does not govern it.
    - Keep an identifier for the life of the document. An amendment adds a clause, or marks one deleted, and leaves every existing number where it is, because filings, correspondence and other contracts cite those numbers.
 
 7. **The Summary Layer:**
-   - Open the document with a plain summary of the terms the reader must act on. Cover what they must do, what they must pay, when the agreement ends, and how to leave it.
+   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Cover what they must do, what they must pay, when the agreement ends, and how to leave it.
    - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
    - The summary **must not** add, qualify or remove an obligation. Where a term cannot be stated plainly without qualifying it, leave it out and point to its clause.
    - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.
+   - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.
 
 ---
 
@@ -83,7 +86,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
   > 2. **Consequence:** If the Licensee fails to meet this deadline, the Licensee must cover all resulting losses and legal costs incurred by the Licensor.
 
 ### Example 2: The Summary Layer
-* ❌ **Not aligned (a summary a reader could mistake for the agreement):**
+* ❌ **Not aligned (no governing text named, and an obligation stated without its qualification):**
   ```text
   Summary: You can cancel at any time and we will refund the current month.
   ```
@@ -92,7 +95,10 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
   >
   > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.
   >
-  > - **Cancelling:** You may cancel at any time. The notice period and the refund are in clause 7.
+  > - **What you pay:** £15 each month, in advance. Clause 3 covers late payment.
+  > - **What you must do:** Keep your account details current. Clause 5 lists your other obligations.
+  > - **When it ends:** After 12 months, unless you renew. Clause 6 has the renewal terms.
+  > - **How to leave:** You may cancel, giving the notice set out in clause 7.
 
 ---
 
@@ -102,7 +108,7 @@ Before outputting legal text, audit against these checks:
 - [ ] **No legalese:** Are terms like *"shall"*, *"hereinafter"*, and *"hereby"* eliminated?
 - [ ] **Modal verbs:** Are obligations expressed using only *must*, *must not*, or *may*?
 - [ ] **Explicit subjects:** Is every obligation attached to a clearly named actor?
-- [ ] **Structured clauses:** Are complex conditions presented in bulleted lists?
+- [ ] **Structured clauses:** Are complex conditions presented as itemised lists?
 - [ ] **Legal accuracy:** Is legal enforceability preserved?
 - [ ] **Defined terms:** Is each term defined once, used unchanged, and reachable from its first use?
 - [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?

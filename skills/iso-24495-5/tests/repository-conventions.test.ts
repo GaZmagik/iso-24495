@@ -478,43 +478,89 @@ describe("repository writing conventions", () => {
   // A legal document is a document, and Part 2 governed wording alone. So a
   // contract drafted through this plugin came out clearly worded inside a
   // structure nobody could navigate, which is the failure the findable
-  // principle names. These pin the four document-level rules.
+  // principle names.
+  //
+  // The first version of this pinned one phrase per rule. A review showed that
+  // deleting most of a rule body, weakening a `must` to a `should`, reordering
+  // the rules, and deleting every new checklist item all passed it. Each rule
+  // now pins several phrases, the order is pinned by position, and the
+  // checklist and the worked example are pinned too.
   test("the legal skill carries its document-level rules", () => {
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
-    for (const rule of [
+    const rules = [
       "4. **Defined Terms:**",
       "5. **Cross-References:**",
       "6. **Clause Identifiers:**",
       "7. **The Summary Layer:**",
-    ]) {
-      expect(legal, `Part 2 must open the rule: ${rule}`).toContain(rule);
+    ];
+    // Position, not just presence: a shuffled file keeps every label.
+    const positions = rules.map((rule) => {
+      const at = legal.indexOf(rule);
+      expect(at, `Part 2 must open the rule: ${rule}`).toBeGreaterThan(-1);
+      return at;
+    });
+    for (let index = 1; index < positions.length; index += 1) {
+      expect(
+        positions[index] as number,
+        `${rules[index]} must follow ${rules[index - 1]}`,
+      ).toBeGreaterThan(positions[index - 1] as number);
     }
-    // Every label survives an inverted body, so each rule also pins a phrase
-    // that carries its meaning.
+
+    // Several phrases per rule, so deleting most of a body still fails, and the
+    // full modal wording, so weakening a must to a should fails too.
     for (const requirement of [
       "Define each term once, and use it unchanged everywhere after",
+      "Put the definition where the reader first meets the term",
+      "Capital letters are silent to a listener",
       "Name what the referenced clause says, alongside its identifier",
-      "Number every operative clause",
+      "Keep that wording identical to the referenced clause's own heading or opening line",
+      "Point at the clause carrying the obligation",
+      "Number every operative clause, because a reader, a court and a counterparty must all cite",
+      "Write the identifier into the clause text rather than as list markup",
+      "A clause identifier is neither a heading nor list numbering",
       "leaves every existing number where it is",
+      "directly after Part 5's opening block",
       "The summary **must** state that the operative text governs",
       "The summary **must not** add, qualify or remove an obligation",
     ]) {
       expect(legal, `Part 2 must keep: ${requirement}`).toContain(requirement);
     }
+
+    // A rule nothing checks at the point of use is a rule that gets skipped.
+    for (const item of [
+      "- [ ] **Defined terms:**",
+      "- [ ] **Cross-references:**",
+      "- [ ] **Identifiers:**",
+      "- [ ] **Summary:**",
+      "- [ ] **Design applied:**",
+    ]) {
+      expect(legal, `Part 2 checklist must keep: ${item}`).toContain(item);
+    }
+
+    // The worked summary must model the governing statement it teaches. An
+    // earlier version said "You may cancel at any time" over a clause carrying
+    // a notice period, which is the unqualified obligation the rule forbids.
+    expect(legal, "the worked summary must name its governing text").toContain(
+      "The agreement itself, starting at clause 1, is what governs.");
   });
 
   // Both skills load on a contract, so their limits have to agree in writing.
-  // Clause 4.2.1 is three levels deep, which Part 5's nesting cap forbids if
-  // that cap is read as covering every list rather than bulleted ones.
+  // Clause 4.2.1 is a compound identifier, and no ordered list renders one, so
+  // Part 5's rule that a sequence stays an ordered list needs the exception
+  // stated where that rule is stated.
   test("the legal and design skills name their shared boundary", () => {
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
     const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8");
     expect(legal, "Part 2 must send the reader to Part 5").toContain(
       "`iso-24495-5` loads alongside this skill");
-    expect(legal, "clause numbers must not count as heading levels").toContain(
-      "Treat clause numbers as list numbering rather than heading nesting");
-    expect(design, "Part 5 must name the clause-tree carve-out").toContain(
-      "A numbered clause tree in a legal document is the one exception");
+    expect(legal, "a contract's headings must use an exception Part 5 already allows").toContain(
+      "A contract's section names are the reference case Part 5 already allows");
+    expect(design, "Part 5 must name the clause-identifier exception").toContain(
+      "A legal document's clause identifiers are the one exception");
+    // The rule body and the checklist have to carry the same exception, or the
+    // self-audit rejects a document the rule permits.
+    expect(design, "the Part 5 checklist must carry the same exception").toContain(
+      "clause identifiers exempt");
   });
 
   // Wording rules were all a contract task could reach. The Part 5 trigger
@@ -529,10 +575,17 @@ describe("repository writing conventions", () => {
     const designTrigger = lines.find((line) => line.includes("`iso-24495-5` (Document Design")) ?? "";
     expect(designTrigger, "the design trigger must name contracts").toContain("contracts");
 
-    // The Codex style skill holds this body word for word, so one check covers both.
+    // The Codex style skill holds this body word for word, so one check covers
+    // both. Both halves are pinned: the legal entry that reaches Part 5, and
+    // the Part 5 entry that admits a contract.
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
-    expect(style, "the style must route a legal task to Part 5").toContain(
+    const styleLines = style.split("\n");
+    const styleLegal = styleLines.find((line) => line.includes("**`iso-24495-2`:**")) ?? "";
+    expect(styleLegal, "the style must route a legal task to Part 5").toContain(
       "Invoke `iso-24495-5` with it");
+    const styleDesign = styleLines.find((line) => line.includes("**`iso-24495-5`:**")) ?? "";
+    expect(styleDesign, "the style's design entry must admit a contract").toContain(
+      "contracts included");
   });
 
   test("the output style keeps a send-time check", () => {

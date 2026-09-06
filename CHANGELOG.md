@@ -11,8 +11,9 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   wording rules could not reach. Those are defined terms, cross-references that name what they
   point at, clause identifiers that survive an amendment, and a summary layer over the operative
   text.
-- **A summary that cannot be mistaken for the agreement.** The summary must state that the
-  operative text governs, and must name where that text starts. It must not add, qualify or remove
+- **A summary that cannot be mistaken for the agreement.** It sits directly after Part 5's
+  opening block. The summary must state that the operative text governs, and must name where
+  that text starts. It must not add, qualify or remove
   an obligation, because a summary a reader acts on instead of the contract changes their rights.
 - **A worked summary example**, showing the governing statement that a bare summary leaves out.
 
@@ -22,9 +23,10 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   specifications and guides, and stopped there, so nothing routed a contract or a licence to the
   design rules. The core skill, the output style and the Codex style skill now send legal work to
   `iso-24495-5` as well as `iso-24495-2`.
-- **Part 5 names the one carve-out to its nesting cap.** A clause tree numbered 4.2.1 is three
-  levels deep, and the bullet cap is two. That cap governs bulleted lists, and `iso-24495-2`
-  governs a numbered clause tree, whose depth is fixed by the citations readers already use.
+- **Part 5 names the one exception to its ordered-list rule.** No ordered list renders a
+  compound identifier such as 4.2.1, so a legal document writes its clause identifiers into the
+  clause text. Part 5 states that exception where the rule itself is stated, and its self-audit
+  checklist carries the same exception.
 
 ## [0.6.2] - 2026-08-27
 
