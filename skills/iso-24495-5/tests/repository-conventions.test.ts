@@ -526,7 +526,7 @@ describe("repository writing conventions", () => {
     "7. **The Summary Layer:**",
     "   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Give it the overview's own heading, which Part 5 requires so a listener can find it. Cover what they must do, what they must pay, when the agreement ends, and how to leave it. A document without one or more of those, such as a privacy policy with no payment, covers the rest. A document with no terms the reader must act on needs no summary of this shape, and Part 5 still decides whether it has an overview.",
     "   - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.",
-    "   - The summary **must not** add, remove or newly qualify an obligation. Where the operative text already qualifies a term, state the term together with that qualification, which Part 5 requires the overview to keep. Where that cannot be done plainly, leave the term out and point to its clause.",
+    "   - The summary **must not** add an obligation, newly qualify one, or leave a reader believing an obligation is gone. Where the operative text already qualifies a term, state the term together with that qualification, which Part 5 requires the overview to keep. Where stating it would take more words than the clause itself, leave the term out and point to its clause. A pointer keeps the obligation reachable, so it is not a removal.",
     "   - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.",
     "",
     "8. **Section Names:**",
@@ -713,10 +713,10 @@ describe("repository writing conventions", () => {
     "  to updating the shared buffer allocation in memory.",
     "  ```",
     "* ✅ **ISO 24495-3 Aligned:**",
-    "  > **Concurrency Control:**",
+    "  > **System Purpose:**",
     "  > Acquire a Mutex Lock to prevent data corruption during concurrent writes.",
     "  > ",
-    "  > **Implementation:**",
+    "  > **Implementation Detail:**",
     "  > The locking logic is implemented in [`state_manager.rs:L45-L52`](file:///src/state_manager.rs#L45-L52):",
     "  > ```rust",
     "  > let _guard = self.mutex.lock().unwrap();",
@@ -741,6 +741,11 @@ describe("repository writing conventions", () => {
     "- [ ] **Restraint:** Is every bulleted item one paragraph on one idea, nested no deeper than 2 levels, with longer material promoted to a subsection?",
     "- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions, with a legal document's clause identifiers exempt?",
     "   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs a technical explanation's stages, and states where each one lands in these levels.",
+    "   - Two exceptions here, one override in rule 8, and no others. A document type with a published structure keeps that structure's section names, as a decision record keeps Context and Decision.",
+  ];
+
+  const PROXY_NOTE_LINES = [
+    "> **Proxy status:** These rules are this project's own proxies for the standard's principles, not its text. Following them is never a claim of ISO conformance.",
   ];
 
   const CORE_ROUTING_LINES = [
@@ -786,6 +791,15 @@ describe("repository writing conventions", () => {
       "iso-24495-3")).toEqual(PART_3_EXAMPLE);
     const checklist = tech.slice(tech.indexOf("- [ ] **Progressive structure:**"));
     expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_3_CHECKLIST);
+
+    // Both skills whose title names a published standard carry the same note,
+    // because a title read alone can look like the standard itself.
+    for (const skill of ["iso-24495-2", "iso-24495-3"]) {
+      const lines = readFileSync(join(SKILLS_ROOT, skill, "SKILL.md"), "utf8").split(/\r?\n/);
+      for (const line of PROXY_NOTE_LINES) {
+        expect(lines, `${skill} must keep its proxy note`).toContain(line);
+      }
+    }
 
     const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8")
       .split(/\r?\n/);

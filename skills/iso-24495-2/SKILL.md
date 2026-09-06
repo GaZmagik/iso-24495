@@ -9,6 +9,8 @@ metadata:
 
 # ISO 24495-2:2025 - Plain Language (Legal Communication)
 
+> **Proxy status:** These rules are this project's own proxies for the standard's principles, not its text. Following them is never a claim of ISO conformance.
+
 Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, and regulatory compliance.
 
 ## Scope & Execution Boundaries
@@ -65,7 +67,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 7. **The Summary Layer:**
    - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Give it the overview's own heading, which Part 5 requires so a listener can find it. Cover what they must do, what they must pay, when the agreement ends, and how to leave it. A document without one or more of those, such as a privacy policy with no payment, covers the rest. A document with no terms the reader must act on needs no summary of this shape, and Part 5 still decides whether it has an overview.
    - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
-   - The summary **must not** add, remove or newly qualify an obligation. Where the operative text already qualifies a term, state the term together with that qualification, which Part 5 requires the overview to keep. Where that cannot be done plainly, leave the term out and point to its clause.
+   - The summary **must not** add an obligation, newly qualify one, or leave a reader believing an obligation is gone. Where the operative text already qualifies a term, state the term together with that qualification, which Part 5 requires the overview to keep. Where stating it would take more words than the clause itself, leave the term out and point to its clause. A pointer keeps the obligation reachable, so it is not a removal.
    - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.
 
 8. **Section Names:**

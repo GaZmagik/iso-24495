@@ -39,11 +39,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Known limits
 
-- **The audit engine does not measure the new rules.** It checks sentence length, paragraph length,
-  acronyms, legalese and headings, and has no proxy for a missing summary layer, an undefined term
-  or a bare cross-reference. A document breaking those rules still reports zero findings, so a zero
-  is not a pass for them. The organisational Measurement dimension is fed by that same engine, so
-  it does not move when the new structure is absent.
+- **The audit engine does not measure the new rules.** Its seventeen checks are mechanical
+  proxies over prose, and none reads the structure this release adds. A document with no
+  summary, undefined terms, unnumbered clauses or a misplaced stage still reports zero
+  findings. A zero is not a pass for any of them, and the organisational Measurement
+  dimension does not move when that structure is absent.
 
 ### Changed
 

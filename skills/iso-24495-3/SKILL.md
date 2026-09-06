@@ -9,6 +9,8 @@ metadata:
 
 # ISO 24495-3:2026 - Plain Language (Science and Technical Communication)
 
+> **Proxy status:** These rules are this project's own proxies for the standard's principles, not its text. Following them is never a claim of ISO conformance.
+
 Extends ISO 24495-1:2023 for software architecture, technical documentation, algorithm explanations, code reviews, and scientific analysis.
 
 ## Scope & Execution Boundaries
@@ -66,10 +68,10 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
   to updating the shared buffer allocation in memory.
   ```
 * ✅ **ISO 24495-3 Aligned:**
-  > **Concurrency Control:**
+  > **System Purpose:**
   > Acquire a Mutex Lock to prevent data corruption during concurrent writes.
   > 
-  > **Implementation:**
+  > **Implementation Detail:**
   > The locking logic is implemented in [`state_manager.rs:L45-L52`](file:///src/state_manager.rs#L45-L52):
   > ```rust
   > let _guard = self.mutex.lock().unwrap();
