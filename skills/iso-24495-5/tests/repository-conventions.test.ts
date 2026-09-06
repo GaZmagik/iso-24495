@@ -604,20 +604,29 @@ describe("repository writing conventions", () => {
     expect(design, "the Part 5 checklist must carry the same exception").toContain(
       "clause identifiers exempt");
 
-    // The boundary says the skill adds "only" these, so a rule missing from it
-    // makes the sentence false and sends a writer to the wrong skill. Carving
-    // section names out of the summary rule did exactly that.
-    const boundary = legal.split("3. **Document Design Applies Here Too:**")[1]
-      ?.split("---")[0] ?? "";
-    for (const addition of [
-      "defined terms",
-      "cross-references",
-      "clause identifiers",
-      "summary layer",
-      "section names",
-    ]) {
-      expect(boundary, `the boundary must name what the skill adds: ${addition}`)
-        .toContain(addition);
+    // The boundary says the skill adds "only" these, so a rule the sentence
+    // does not name makes it false and sends a writer to the wrong skill.
+    // Carving section names out of the summary rule did exactly that.
+    //
+    // The list is derived from the rules rather than written out here, for two
+    // reasons a review demonstrated against the written-out version. A fixed
+    // list is blind to the direction rules actually grow: a sixth rule was
+    // added and the check passed. And searching the whole boundary section
+    // passes on words appearing anywhere in it, so the enumeration was emptied
+    // into a neighbouring bullet and the check still passed. This reads the
+    // enumerating sentence alone, and asks it about every rule that exists.
+    const enumeration = /adds only what Part 5 leaves uncovered:([^.]*)\./.exec(legal)?.[1]
+      ?? "";
+    expect(enumeration, "the boundary must carry an enumeration").not.toBe("");
+    // Rules 1 to 3 govern wording, which Part 5 never covered. The boundary
+    // enumerates the document-level rules, which start at 4.
+    const added = [...legal.matchAll(/^(\d+)\. \*\*(.+?):\*\*/gm)]
+      .filter((match) => Number(match[1]) >= 4)
+      .map((match) => (match[2] as string).toLowerCase().replace(/^the /, ""));
+    expect(added.length, "the skill must carry document-level rules").toBeGreaterThan(0);
+    for (const rule of added) {
+      expect(enumeration, `the boundary must name the rule it adds: ${rule}`)
+        .toContain(rule);
     }
   });
 
