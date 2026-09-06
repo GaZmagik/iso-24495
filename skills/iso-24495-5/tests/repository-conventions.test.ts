@@ -506,24 +506,49 @@ describe("repository writing conventions", () => {
       ).toBeGreaterThan(positions[index - 1] as number);
     }
 
-    // Several phrases per rule, so deleting most of a body still fails, and the
-    // full modal wording, so weakening a must to a should fails too.
-    for (const requirement of [
-      "Define each term once, and use it unchanged everywhere after",
-      "Put the definition where the reader first meets the term",
-      "Capital letters are silent to a listener",
-      "Name what the referenced clause says, alongside its identifier",
-      "Keep that wording identical to the referenced clause's own heading or opening line",
-      "Point at the clause carrying the obligation",
-      "Number every operative clause, because a reader, a court and a counterparty must all cite",
-      "Write the identifier into the clause text rather than as list markup",
-      "A clause identifier is neither a heading nor list numbering",
-      "leaves every existing number where it is",
-      "directly after Part 5's opening block",
-      "The summary **must** state that the operative text governs",
-      "The summary **must not** add, qualify or remove an obligation",
-    ]) {
-      expect(legal, `Part 2 must keep: ${requirement}`).toContain(requirement);
+    // Each phrase is checked inside its own rule's slice of the file, because a
+    // review swapped two rule bodies under their correct labels and every
+    // phrase was still present somewhere. Several phrases per rule, so deleting
+    // most of a body fails, and the full modal wording, so weakening a must to
+    // a should fails too.
+    const bodies = new Map<string, string>();
+    for (let index = 0; index < rules.length; index += 1) {
+      const from = positions[index] as number;
+      const to = index + 1 < rules.length ? (positions[index + 1] as number) : legal.length;
+      bodies.set(rules[index] as string, legal.slice(from, to));
+    }
+    const required: Array<[string, string[]]> = [
+      ["4. **Defined Terms:**", [
+        "Define each term once, and use it unchanged everywhere after",
+        "Put the definition where the reader first meets the term",
+        "Capital letters are silent to a listener",
+      ]],
+      ["5. **Cross-References:**", [
+        "Name what the referenced clause says, alongside its identifier",
+        "Keep that wording identical to the referenced clause's own heading or opening line",
+        "Point at the clause carrying the obligation",
+      ]],
+      ["6. **Clause Identifiers:**", [
+        "Number every operative clause, because a reader, a court and a counterparty must all cite",
+        "Write the identifier into the clause text rather than as list markup",
+        "A clause identifier is neither a heading nor list numbering",
+        "leaves every existing number where it is",
+      ]],
+      ["7. **The Summary Layer:**", [
+        "directly after Part 5's opening block",
+        "The summary **must** state that the operative text governs",
+        "The summary **must not** add, qualify or remove an obligation",
+        // Part 5 orders the overview to keep every essential qualification, so
+        // Part 2 may not tell a writer to drop one.
+        "every qualification Part 5 requires the overview to keep",
+        "A contract's section names are the reference case Part 5 already allows",
+      ]],
+    ];
+    for (const [rule, phrases] of required) {
+      const body = bodies.get(rule) ?? "";
+      for (const phrase of phrases) {
+        expect(body, `${rule} must keep: ${phrase}`).toContain(phrase);
+      }
     }
 
     // A rule nothing checks at the point of use is a rule that gets skipped.

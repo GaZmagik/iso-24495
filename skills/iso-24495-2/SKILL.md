@@ -65,7 +65,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 7. **The Summary Layer:**
    - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Cover what they must do, what they must pay, when the agreement ends, and how to leave it.
    - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
-   - The summary **must not** add, qualify or remove an obligation. Where a term cannot be stated plainly without qualifying it, leave it out and point to its clause.
+   - The summary **must not** add, qualify or remove an obligation. State a term together with every qualification Part 5 requires the overview to keep. Where that cannot be done plainly, leave the term out and point to its clause.
    - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.
    - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.
 
