@@ -492,6 +492,7 @@ describe("repository writing conventions", () => {
       "5. **Cross-References:**",
       "6. **Clause Identifiers:**",
       "7. **The Summary Layer:**",
+      "8. **Section Names:**",
     ];
     // Position, not just presence: a shuffled file keeps every label.
     const positions = rules.map((rule) => {
@@ -541,7 +542,10 @@ describe("repository writing conventions", () => {
         // Part 5 orders the overview to keep every essential qualification, so
         // Part 2 may not tell a writer to drop one.
         "every qualification Part 5 requires the overview to keep",
+      ]],
+      ["8. **Section Names:**", [
         "A contract's section names are the reference case Part 5 already allows",
+        "A reader jumps to Payment, Termination or Liability by subject",
       ]],
     ];
     for (const [rule, phrases] of required) {
@@ -553,11 +557,12 @@ describe("repository writing conventions", () => {
 
     // A rule nothing checks at the point of use is a rule that gets skipped.
     for (const item of [
-      "- [ ] **Defined terms:**",
-      "- [ ] **Cross-references:**",
-      "- [ ] **Identifiers:**",
-      "- [ ] **Summary:**",
-      "- [ ] **Design applied:**",
+      "- [ ] **Defined terms:** Is each term defined once, used unchanged, and reachable from its first use?",
+      "- [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?",
+      "- [ ] **Identifiers:** Is every operative clause numbered, with existing numbers untouched by amendment?",
+      "- [ ] **Summary:** Does it name the governing text, and add, qualify and remove nothing?",
+      "- [ ] **Section names:** Does each name the subject a reader would look for?",
+      "- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?",
     ]) {
       expect(legal, `Part 2 checklist must keep: ${item}`).toContain(item);
     }
@@ -567,6 +572,17 @@ describe("repository writing conventions", () => {
     // a notice period, which is the unqualified obligation the rule forbids.
     expect(legal, "the worked summary must name its governing text").toContain(
       "The agreement itself, starting at clause 1, is what governs.");
+    // Rule 7 mandates four coverage fields, and the example must show all four.
+    // Each is pinned with its obligation worded as the skill's own modal-verb
+    // and named-actor rules require, because a bare imperative broke both.
+    for (const field of [
+      "**What you pay:** You must pay",
+      "**What you must do:** You must keep",
+      "**When it ends:** The agreement ends",
+      "**How to leave:** You may cancel",
+    ]) {
+      expect(legal, `the worked summary must cover: ${field}`).toContain(field);
+    }
   });
 
   // Both skills load on a contract, so their limits have to agree in writing.

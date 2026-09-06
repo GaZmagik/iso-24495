@@ -7,14 +7,17 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Added
 
 - **Document-level rules for legal writing.** `iso-24495-2` governed wording alone, so a contract
-  came out clearly worded inside a structure nobody could navigate. It now carries four rules the
-  wording rules could not reach. Those are defined terms, cross-references that name what they
-  point at, clause identifiers that survive an amendment, and a summary layer over the operative
-  text.
+  came out clearly worded inside a structure nobody could navigate. It now carries five rules the
+  wording rules could not reach: defined terms, cross-references, clause identifiers, a summary
+  layer, and section names. Cross-references name what they point at, clause identifiers survive
+  an amendment, and section names use the reference case Part 5 already allows.
 - **A summary that cannot be mistaken for the agreement.** It sits directly after Part 5's
   opening block. The summary must state that the operative text governs, and must name where
-  that text starts. It must not add, qualify or remove
-  an obligation, because a summary a reader acts on instead of the contract changes their rights.
+  that text starts. It must not add, qualify or remove an obligation, because a summary a
+  reader acts on instead of the contract changes their rights.
+- **A qualification that travels with its term.** Part 5 requires an overview to keep every
+  essential qualification, so the summary states a term together with every one of them.
+  Where that cannot be done plainly, the term is left out and its clause named instead.
 - **A worked summary example**, showing the governing statement that a bare summary leaves out.
 
 ### Changed

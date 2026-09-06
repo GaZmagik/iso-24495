@@ -67,6 +67,8 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
    - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
    - The summary **must not** add, qualify or remove an obligation. State a term together with every qualification Part 5 requires the overview to keep. Where that cannot be done plainly, leave the term out and point to its clause.
    - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.
+
+8. **Section Names:**
    - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.
 
 ---
@@ -95,9 +97,9 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
   >
   > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.
   >
-  > - **What you pay:** £15 each month, in advance. Clause 3 covers late payment.
-  > - **What you must do:** Keep your account details current. Clause 5 lists your other obligations.
-  > - **When it ends:** After 12 months, unless you renew. Clause 6 has the renewal terms.
+  > - **What you pay:** You must pay £15 each month, in advance. Clause 3 covers late payment.
+  > - **What you must do:** You must keep your account details current. Clause 5 lists your other obligations.
+  > - **When it ends:** The agreement ends after 12 months, unless you renew it. Clause 6 has the renewal terms.
   > - **How to leave:** You may cancel, giving the notice set out in clause 7.
 
 ---
@@ -114,4 +116,5 @@ Before outputting legal text, audit against these checks:
 - [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?
 - [ ] **Identifiers:** Is every operative clause numbered, with existing numbers untouched by amendment?
 - [ ] **Summary:** Does it name the governing text, and add, qualify and remove nothing?
+- [ ] **Section names:** Does each name the subject a reader would look for?
 - [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?
