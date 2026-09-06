@@ -103,7 +103,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
    - That label is the section's heading, and it names the section rather than its message. This rule overrides the heading rule for that one heading, and for no other. It keeps the document's conclusion, the action required, and any essential qualification.
    - Give that label a heading or a word, never a visual treatment alone.
    - Move detail that only some readers need into footnotes, an appendix, or a collapsible block, and keep it reachable from the main path.
-   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs how a technical explanation is worded across them.
+   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs a technical explanation's stages, and states where each one lands in these levels.
 
 9. **Readers Who Have the Wrong Document:**
    - Tell a reader who needs something else where to go. Link the related documents, the other language versions, or a person to ask.

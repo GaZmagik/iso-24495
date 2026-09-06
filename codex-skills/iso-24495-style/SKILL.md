@@ -28,7 +28,7 @@ You must apply the plain-language principles of ISO 24495-1 in all responses, as
 
 - **`iso-24495-1`:** The core standard; governs every response.
 - **`iso-24495-2`:** Legal writing: contracts, licences, compliance text. Invoke `iso-24495-5` with it, because a legal document must be navigable as well as readable.
-- **`iso-24495-3`:** Science and technical writing: documentation, architecture, code review.
+- **`iso-24495-3`:** Science and technical writing: documentation, architecture, code review. Invoke `iso-24495-5` with it whenever the output is a document.
 - **`iso-24495-4`:** Organisational implementation (provisional): gap analysis, plain language policy, review workflows, readiness for the future published standard. Never for writing individual documents.
 - **`iso-24495-5`:** Document design (provisional): structuring complex multi-section documents, contracts included.
 - **`iso-24495-text-audit`:** User-invoked text audit. Never invoke it automatically.

@@ -19,9 +19,25 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   essential qualification, so the summary states a term together with every one of them.
   Where that cannot be done plainly, the term is left out and its clause named instead.
 - **A worked summary example**, showing the governing statement that a bare summary leaves out.
+- **A mapping between a technical explanation and a technical document.** `iso-24495-3` orders an
+  explanation in three stages, and `iso-24495-5` orders a document in three levels. They are
+  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the
+  opening block and opens the overview, stages 2 and 3 are the main body, and nothing is demoted to
+  optional detail by default.
+- **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table and
+  never mentioned alternative text, so a document passing its own checklist could hand a listener
+  nothing. A Mermaid diagram reaches a listener as its source, which is not an explanation, so the
+  alternative is prose beside it.
 
 ### Changed
 
+- **A technical task now reaches the document design skill too**, whenever its output is a
+  document. A code review comment and a chat answer are explanations rather than documents, so the
+  pairing is conditional where the legal one is not.
+- **Part 5 says what Part 3 governs.** It claimed Part 3 governed the wording across its levels.
+  Part 3 governs the stages, and now states where each one lands.
+- **The design document template requires a text alternative** beside a diagram. It offered a
+  diagram or a description, and so permitted a diagram with neither.
 - **A legal task now reaches the document design skill.** The Part 5 trigger named reports,
   specifications and guides, and stopped there, so nothing routed a contract or a licence to the
   design rules. The core skill, the output style and the Codex style skill now send legal work to

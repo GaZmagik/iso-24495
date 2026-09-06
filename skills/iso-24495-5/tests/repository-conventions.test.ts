@@ -655,6 +655,14 @@ describe("repository writing conventions", () => {
 
   });
 
+  // The lesson the rules block already learned, applied to every line this
+  // branch wrote in the other files. Pinning a phrase leaves every other
+  // phrase of the same sentence deletable: a review kept the pinned tail of
+  // the README's routing sentence and deleted its main clause, so the file
+  // stopped saying that legal content triggers this skill at all.
+  //
+  // These are whole lines and whole blocks. Editing one means editing it here
+  // in the same commit, which is the point rather than a cost.
   const PART_2_SCOPE_BOUNDARY = [
     "3. **Document Design Applies Here Too:**",
     "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
@@ -662,45 +670,100 @@ describe("repository writing conventions", () => {
     "   - Where the two appear to conflict, follow the resolution named in the rules below.",
   ];
 
-  const PART_5_LEGAL_LINES = [
+  const PART_3_SCOPE_BOUNDARY = [
+    "3. **Document Design Applies Here Too:**",
+    "   - A technical document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
+    "   - It loads for a document, not for every explanation. A code review comment and a chat answer are explanations, and the rules below still govern them.",
+    "   - Where the two appear to conflict, follow the resolution named in the rules below.",
+  ];
+
+  const PART_3_RULES = [
+    "1. **Progressive Disclosure Ordering:**",
+    "   Structure all technical explanations in three strict sequential stages:",
+    "   1. **System Purpose:** High-level operational intent (1 sentence).",
+    "   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table, each with a text alternative.",
+    "   3. **Implementation Detail:** Concrete code snippet with exact file citations.",
+    "",
+    "   These stages order an explanation, and Part 5's three levels order a document. They are different axes rather than two versions of one, so they do not map one to one. Where the explanation is a document:",
+    "   - The purpose sentence supplies Part 5's opening block, and opens its overview. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.",
+    "   - Stages 2 and 3 sit in the main body, in that order.",
+    "   - Part 5's optional detail holds what a reader can skip and still act on. No stage covers it, so nothing is demoted there by default.",
+    "",
+    "2. **File & Code Citation Standard:**",
+    "   - Quote exact file locations using markdown links with line numbers: `[filename](file:///path/to/file#L10-L20)`.",
+    "   - Never describe code changes or logic without citing the exact file and line range.",
+    "",
+    "3. **Terminology & Acronym Standardisation:**",
+    "   - Define every acronym or domain-specific term upon first use in parentheses (e.g. *\"Abstract Syntax Tree (AST)\"*).",
+    "   - Use consistent symbol names across text, code snippets, and diagrams.",
+    "",
+    "4. **Diagrams and Their Alternatives:**",
+    "   - Give every diagram a text alternative saying what it shows, not what it is. Part 5 requires that of any image carrying meaning, and stage 2 above mandates a diagram, so this rule says where the alternative goes.",
+    "   - A Mermaid diagram reaches a listener as its source text, which is not an explanation. So the alternative is prose beside the diagram, never the diagram's own labels.",
+  ];
+
+  const PART_3_CHECKLIST = [
+    "- [ ] **Progressive structure:** Is system purpose stated before architecture and code?",
+    "- [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?",
+    "- [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?",
+    "- [ ] **Visual aids:** Are diagrams or tables used to explain multi-step flows?",
+    "- [ ] **Code immunity:** Are code snippets and commands intact and un-mangled?",
+    "- [ ] **Text alternatives:** Does every diagram carry prose saying what it shows?",
+    "- [ ] **Layering:** Where the explanation is a document, do the stages sit in Part 5's levels as rule 1 says?",
+    "- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?",
+  ];
+
+  const PART_5_TOUCHED_LINES = [
     "   - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard. A legal document's clause identifiers are the one exception, because no ordered list renders a compound identifier such as 4.2.1, and `iso-24495-2` governs them.",
     "   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest bulleted lists no deeper than 2 levels. Promote longer material to a subsection.",
     "- [ ] **Restraint:** Is every bulleted item one paragraph on one idea, nested no deeper than 2 levels, with longer material promoted to a subsection?",
     "- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions, with a legal document's clause identifiers exempt?",
+    "   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs a technical explanation's stages, and states where each one lands in these levels.",
   ];
 
   const CORE_ROUTING_LINES = [
     "- **`iso-24495-2` (Legal & Compliance):** Activate when handling contracts, licenses, terms of service, privacy policies, or statutory rules. Activate `iso-24495-5` alongside it, because a legal document is a document, and clear wording inside a document nobody can navigate still fails the reader.",
+    "- **`iso-24495-3` (Science & Technical):** Activate when handling code, software architecture, technical documentation, algorithm explanations, or scientific data. Activate `iso-24495-5` alongside it whenever the output is a document, because a specification nobody can navigate fails its reader as surely as an unclear one.",
     "- **`iso-24495-5` (Document Design, provisional):** Activate when producing complex multi-section documents (reports, specifications, guides, contracts) where layout, visual hierarchy, and navigation aids shape readability.",
   ];
 
   const STYLE_ROUTING_LINES = [
     "- **`iso-24495-2`:** Legal writing: contracts, licences, compliance text. Invoke `iso-24495-5` with it, because a legal document must be navigable as well as readable.",
+    "- **`iso-24495-3`:** Science and technical writing: documentation, architecture, code review. Invoke `iso-24495-5` with it whenever the output is a document.",
     "- **`iso-24495-5`:** Document design (provisional): structuring complex multi-section documents, contracts included.",
   ];
+
   const README_LINES = [
     "| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses, defined terms, cross-references that name what they point at, stable clause identifiers, a summary layer over the operative text, and section names a reader can navigate by. |",
-    "The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents, legal ones included. The text audit never activates automatically.",
+    "| `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms, text alternatives for diagrams, and the stages placed inside the document levels of `iso-24495-5`. |",
+    "The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents, legal and technical ones included. The text audit never activates automatically.",
   ];
-  // The lesson the rules block already learned, applied to the lines this
-  // change wrote in the other files. Pinning a phrase leaves every other
-  // phrase of the same sentence deletable: a review kept the pinned tail of
-  // the README's routing sentence and deleted its main clause, so the file
-  // stopped saying that legal content triggers this skill at all.
-  //
-  // These are whole lines. Editing one means editing it here in the same
-  // commit, which is the point rather than a cost.
-  test("the lines this change wrote elsewhere are exactly this text", () => {
+  test("the lines this branch wrote elsewhere are exactly this text", () => {
+    const blockOf = (text: string, start: string, end: string, what: string): string[] => {
+      const from = text.indexOf(start);
+      expect(from, `${what} must contain ${start}`).toBeGreaterThan(-1);
+      const to = text.indexOf(end, from);
+      expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
+      return text.slice(from, to).trimEnd().split(/\r?\n/);
+    };
+
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
-    const from = legal.indexOf("3. **Document Design Applies Here Too:**");
-    expect(from, "iso-24495-2 must carry the design boundary").toBeGreaterThan(-1);
-    const to = legal.indexOf("\n---", from);
-    expect(to, "the boundary must end at a rule").toBeGreaterThan(from);
-    expect(legal.slice(from, to).trimEnd().split(/\r?\n/)).toEqual(PART_2_SCOPE_BOUNDARY);
+    expect(blockOf(legal, "3. **Document Design Applies Here Too:**", "\n---", "iso-24495-2"))
+      .toEqual(PART_2_SCOPE_BOUNDARY);
+
+    // Part 3 is held to the same standard from its first commit, rather than
+    // after a review demonstrates the hole. Nine rounds on Part 2 earned that.
+    const tech = readFileSync(join(SKILLS_ROOT, "iso-24495-3", "SKILL.md"), "utf8");
+    expect(blockOf(tech, "3. **Document Design Applies Here Too:**", "\n---", "iso-24495-3"))
+      .toEqual(PART_3_SCOPE_BOUNDARY);
+    expect(blockOf(tech, "1. **Progressive Disclosure Ordering:**", "\n---", "iso-24495-3"))
+      .toEqual(PART_3_RULES);
+    const checklist = tech.slice(tech.indexOf("- [ ] **Progressive structure:**"));
+    expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_3_CHECKLIST);
 
     const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8")
       .split(/\r?\n/);
-    for (const line of PART_5_LEGAL_LINES) {
+    for (const line of PART_5_TOUCHED_LINES) {
       expect(design, `Part 5 must keep this line unchanged: ${line.slice(0, 40)}`)
         .toContain(line);
     }
