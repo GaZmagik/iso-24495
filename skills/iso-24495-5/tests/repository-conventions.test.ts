@@ -653,15 +653,54 @@ describe("repository writing conventions", () => {
     expect(styleDesign, "the style's design entry must admit a contract").toContain(
       "contracts included");
 
-    // The fourth routing surface. A review reverted this sentence to its
-    // pre-change wording and every test passed, so the change's own purpose
-    // could be undocumented without a red test.
-    const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
-    const routing = readme.split(/\r?\n/)
-      .find((line) => line.includes("The core skill activates the relevant writing skills")) ?? "";
-    expect(routing, "the README must describe automatic activation").not.toBe("");
-    expect(routing, "the README must say a legal task reaches Part 5").toContain(
-      "legal ones included");
+  });
+
+  const PART_2_SCOPE_BOUNDARY = [
+    "3. **Document Design Applies Here Too:**",
+    "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
+    "   - This skill adds only what Part 5 leaves uncovered: defined terms, cross-references, clause identifiers, the summary layer, and section names.",
+    "   - Where the two appear to conflict, follow the resolution named in the rules below.",
+  ];
+
+  const PART_5_LEGAL_LINES = [
+    "   - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard. A legal document's clause identifiers are the one exception, because no ordered list renders a compound identifier such as 4.2.1, and `iso-24495-2` governs them.",
+    "   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest bulleted lists no deeper than 2 levels. Promote longer material to a subsection.",
+    "- [ ] **Restraint:** Is every bulleted item one paragraph on one idea, nested no deeper than 2 levels, with longer material promoted to a subsection?",
+    "- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions, with a legal document's clause identifiers exempt?",
+  ];
+
+  const README_LINES = [
+    "| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses, defined terms, cross-references that name what they point at, stable clause identifiers, a summary layer over the operative text, and section names a reader can navigate by. |",
+    "The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents, legal ones included. The text audit never activates automatically.",
+  ];
+  // The lesson the rules block already learned, applied to the lines this
+  // change wrote in the other files. Pinning a phrase leaves every other
+  // phrase of the same sentence deletable: a review kept the pinned tail of
+  // the README's routing sentence and deleted its main clause, so the file
+  // stopped saying that legal content triggers this skill at all.
+  //
+  // These are whole lines. Editing one means editing it here in the same
+  // commit, which is the point rather than a cost.
+  test("the lines this change wrote elsewhere are exactly this text", () => {
+    const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
+    const from = legal.indexOf("3. **Document Design Applies Here Too:**");
+    expect(from, "iso-24495-2 must carry the design boundary").toBeGreaterThan(-1);
+    const to = legal.indexOf("\n---", from);
+    expect(to, "the boundary must end at a rule").toBeGreaterThan(from);
+    expect(legal.slice(from, to).trimEnd().split(/\r?\n/)).toEqual(PART_2_SCOPE_BOUNDARY);
+
+    const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8")
+      .split(/\r?\n/);
+    for (const line of PART_5_LEGAL_LINES) {
+      expect(design, `Part 5 must keep this line unchanged: ${line.slice(0, 40)}`)
+        .toContain(line);
+    }
+
+    const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8").split(/\r?\n/);
+    for (const line of README_LINES) {
+      expect(readme, `the README must keep this line unchanged: ${line.slice(0, 40)}`)
+        .toContain(line);
+    }
   });
 
   test("the output style keeps a send-time check", () => {
