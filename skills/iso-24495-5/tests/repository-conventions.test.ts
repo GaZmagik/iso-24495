@@ -480,110 +480,89 @@ describe("repository writing conventions", () => {
   // structure nobody could navigate, which is the failure the findable
   // principle names.
   //
-  // The first version of this pinned one phrase per rule. A review showed that
-  // deleting most of a rule body, weakening a `must` to a `should`, reordering
-  // the rules, and deleting every new checklist item all passed it. Each rule
-  // now pins several phrases, the order is pinned by position, and the
-  // checklist and the worked example are pinned too.
-  test("the legal skill carries its document-level rules", () => {
+  // Five rounds of review found here the lesson the templates found in eight
+  // disguises: a pinned phrase leaves every sentence it does not name
+  // unprotected. Three separate rounds each deleted a different unpinned
+  // sentence and the suite stayed green, including the layering resolution the
+  // whole change was built on, and a rule added under an unbolded heading was
+  // invisible to every check that existed.
+  //
+  // So these three blocks are the expectation as whole text. Editing a rule,
+  // the worked example or the checklist means editing this list in the same
+  // commit, which is the point rather than a cost.
+  const PART_2_DOCUMENT_RULES = [
+    "4. **Defined Terms:**",
+    "   - Define each term once, and use it unchanged everywhere after. Two words for one concept invite an argument that they mean two things.",
+    "   - Put the definition where the reader first meets the term. Where a term runs throughout, collect the definitions in one section and point the first use at it.",
+    "   - Write a term out in full where the document uses it once, rather than defining it.",
+    "   - Say in words that a term is defined, and where. Capital letters are silent to a listener, so **Confidential Information** on its own tells them nothing.",
+    "",
+    "5. **Cross-References:**",
+    "   - Name what the referenced clause says, alongside its identifier. Write *\"the notice deadline in clause 4.2\"* rather than *\"clause 4.2\"*.",
+    "   - Keep that wording identical to the referenced clause's own heading or opening line.",
+    "   - Point at the clause carrying the obligation, never at one that only points somewhere else.",
+    "",
+    "6. **Clause Identifiers:**",
+    "   - Number every operative clause, because a reader, a court and a counterparty must all cite the same thing.",
+    "   - Write the identifier into the clause text rather than as list markup. Markdown numbers an ordered list 1, 2, 3, so a compound identifier such as 4.2.1 survives only when it is written in the text.",
+    "   - This is the one place a legal document departs from Part 5's rule that a sequence stays an ordered list.",
+    "   - A clause identifier is neither a heading nor list numbering. So it does not count against Part 5's heading limit, and Part 5's rule on numbering headings does not govern it.",
+    "   - Keep an identifier for the life of the document. An amendment adds a clause, or marks one deleted, and leaves every existing number where it is, because filings, correspondence and other contracts cite those numbers.",
+    "",
+    "7. **The Summary Layer:**",
+    "   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Cover what they must do, what they must pay, when the agreement ends, and how to leave it.",
+    "   - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.",
+    "   - The summary **must not** add, qualify or remove an obligation. State a term together with every qualification Part 5 requires the overview to keep. Where that cannot be done plainly, leave the term out and point to its clause.",
+    "   - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.",
+    "",
+    "8. **Section Names:**",
+    "   - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.",
+  ];
+
+  const PART_2_SUMMARY_EXAMPLE = [
+    "### Example 2: The Summary Layer",
+    "* ❌ **Not aligned (no governing text named, and an obligation stated without its qualification):**",
+    "  ```text",
+    "  Summary: You can cancel at any time and we will refund the current month.",
+    "  ```",
+    "* ✅ **ISO 24495-2 Aligned:**",
+    "  > **Summary of your main terms**",
+    "  >",
+    "  > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.",
+    "  >",
+    "  > - **What you pay:** You must pay £15 each month, in advance. Clause 3 covers late payment.",
+    "  > - **What you must do:** You must keep your account details current. Clause 5 lists your other obligations.",
+    "  > - **When it ends:** The agreement ends after 12 months, unless you renew it. Clause 6 has the renewal terms.",
+    "  > - **How to leave:** You may cancel, giving the notice set out in clause 7.",
+  ];
+
+  const PART_2_CHECKLIST = [
+    "- [ ] **No legalese:** Are terms like *\"shall\"*, *\"hereinafter\"*, and *\"hereby\"* eliminated?",
+    "- [ ] **Modal verbs:** Are obligations expressed using only *must*, *must not*, or *may*?",
+    "- [ ] **Explicit subjects:** Is every obligation attached to a clearly named actor?",
+    "- [ ] **Structured clauses:** Are complex conditions presented as itemised lists?",
+    "- [ ] **Legal accuracy:** Is legal enforceability preserved?",
+    "- [ ] **Defined terms:** Is each term defined once, used unchanged, and reachable from its first use?",
+    "- [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?",
+    "- [ ] **Identifiers:** Is every operative clause numbered, with existing numbers untouched by amendment?",
+    "- [ ] **Summary:** Does it name the governing text, and add, qualify and remove nothing?",
+    "- [ ] **Section names:** Does each name the subject a reader would look for?",
+    "- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?",
+  ];
+
+  test("the legal skill's rules, example and checklist are exactly this text", () => {
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
-    const rules = [
-      "4. **Defined Terms:**",
-      "5. **Cross-References:**",
-      "6. **Clause Identifiers:**",
-      "7. **The Summary Layer:**",
-      "8. **Section Names:**",
-    ];
-    // Position, not just presence: a shuffled file keeps every label.
-    const positions = rules.map((rule) => {
-      const at = legal.indexOf(rule);
-      expect(at, `Part 2 must open the rule: ${rule}`).toBeGreaterThan(-1);
-      return at;
-    });
-    for (let index = 1; index < positions.length; index += 1) {
-      expect(
-        positions[index] as number,
-        `${rules[index]} must follow ${rules[index - 1]}`,
-      ).toBeGreaterThan(positions[index - 1] as number);
-    }
-
-    // Each phrase is checked inside its own rule's slice of the file, because a
-    // review swapped two rule bodies under their correct labels and every
-    // phrase was still present somewhere. Several phrases per rule, so deleting
-    // most of a body fails, and the full modal wording, so weakening a must to
-    // a should fails too.
-    const bodies = new Map<string, string>();
-    for (let index = 0; index < rules.length; index += 1) {
-      const from = positions[index] as number;
-      const to = index + 1 < rules.length ? (positions[index + 1] as number) : legal.length;
-      bodies.set(rules[index] as string, legal.slice(from, to));
-    }
-    const required: Array<[string, string[]]> = [
-      ["4. **Defined Terms:**", [
-        "Define each term once, and use it unchanged everywhere after",
-        "Put the definition where the reader first meets the term",
-        "Capital letters are silent to a listener",
-      ]],
-      ["5. **Cross-References:**", [
-        "Name what the referenced clause says, alongside its identifier",
-        "Keep that wording identical to the referenced clause's own heading or opening line",
-        "Point at the clause carrying the obligation",
-      ]],
-      ["6. **Clause Identifiers:**", [
-        "Number every operative clause, because a reader, a court and a counterparty must all cite",
-        "Write the identifier into the clause text rather than as list markup",
-        "A clause identifier is neither a heading nor list numbering",
-        "This is the one place a legal document departs from Part 5's rule that a sequence stays",
-        "leaves every existing number where it is",
-      ]],
-      ["7. **The Summary Layer:**", [
-        "directly after Part 5's opening block",
-        "The summary **must** state that the operative text governs",
-        "The summary **must not** add, qualify or remove an obligation",
-        // Part 5 orders the overview to keep every essential qualification, so
-        // Part 2 may not tell a writer to drop one.
-        "every qualification Part 5 requires the overview to keep",
-      ]],
-      ["8. **Section Names:**", [
-        "A contract's section names are the reference case Part 5 already allows",
-        "A reader jumps to Payment, Termination or Liability by subject",
-      ]],
-    ];
-    for (const [rule, phrases] of required) {
-      const body = bodies.get(rule) ?? "";
-      for (const phrase of phrases) {
-        expect(body, `${rule} must keep: ${phrase}`).toContain(phrase);
-      }
-    }
-
-    // A rule nothing checks at the point of use is a rule that gets skipped.
-    for (const item of [
-      "- [ ] **Defined terms:** Is each term defined once, used unchanged, and reachable from its first use?",
-      "- [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?",
-      "- [ ] **Identifiers:** Is every operative clause numbered, with existing numbers untouched by amendment?",
-      "- [ ] **Summary:** Does it name the governing text, and add, qualify and remove nothing?",
-      "- [ ] **Section names:** Does each name the subject a reader would look for?",
-      "- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?",
-    ]) {
-      expect(legal, `Part 2 checklist must keep: ${item}`).toContain(item);
-    }
-
-    // The worked summary must model the governing statement it teaches. An
-    // earlier version said "You may cancel at any time" over a clause carrying
-    // a notice period, which is the unqualified obligation the rule forbids.
-    expect(legal, "the worked summary must name its governing text").toContain(
-      "The agreement itself, starting at clause 1, is what governs.");
-    // Rule 7 mandates four coverage fields, and the example must show all four.
-    // Each is pinned with its obligation worded as the skill's own modal-verb
-    // and named-actor rules require, because a bare imperative broke both.
-    for (const field of [
-      "**What you pay:** You must pay",
-      "**What you must do:** You must keep",
-      "**When it ends:** The agreement ends",
-      "**How to leave:** You may cancel",
-    ]) {
-      expect(legal, `the worked summary must cover: ${field}`).toContain(field);
-    }
+    const between = (start: string, end: string): string[] => {
+      const from = legal.indexOf(start);
+      expect(from, `iso-24495-2 must contain ${start}`).toBeGreaterThan(-1);
+      const to = legal.indexOf(end, from);
+      expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
+      return legal.slice(from, to).trimEnd().split(/\r?\n/);
+    };
+    expect(between("4. **Defined Terms:**", "\n---")).toEqual(PART_2_DOCUMENT_RULES);
+    expect(between("### Example 2:", "\n---")).toEqual(PART_2_SUMMARY_EXAMPLE);
+    const checklist = legal.slice(legal.indexOf("- [ ] **No legalese:**"));
+    expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_2_CHECKLIST);
   });
 
   // Both skills load on a contract, so their limits have to agree in writing.
