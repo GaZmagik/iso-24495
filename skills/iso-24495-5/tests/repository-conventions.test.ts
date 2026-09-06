@@ -67,6 +67,20 @@ interface StyleViolation {
   rule: string;
 }
 
+/**
+ * The document-level rules Part 2 adds, named as their own headings name them.
+ *
+ * Derived rather than written out, because a fixed list is blind to the
+ * direction rules grow: a review added a sixth rule and every check passed.
+ * Rules 1 to 3 govern wording, which Part 5 never covered, so the
+ * document-level rules start at 4.
+ */
+function documentRuleNames(legal: string): string[] {
+  return [...legal.matchAll(/^(\d+)\. \*\*(.+?):\*\*/gm)]
+    .filter((match) => Number(match[1]) >= 4)
+    .map((match) => (match[2] as string).toLowerCase().replace(/^the /, ""));
+}
+
 function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -597,15 +611,21 @@ describe("repository writing conventions", () => {
     const enumeration = /adds only what Part 5 leaves uncovered:([^.]*)\./.exec(legal)?.[1]
       ?? "";
     expect(enumeration, "the boundary must carry an enumeration").not.toBe("");
-    // Rules 1 to 3 govern wording, which Part 5 never covered. The boundary
-    // enumerates the document-level rules, which start at 4.
-    const added = [...legal.matchAll(/^(\d+)\. \*\*(.+?):\*\*/gm)]
-      .filter((match) => Number(match[1]) >= 4)
-      .map((match) => (match[2] as string).toLowerCase().replace(/^the /, ""));
+    const added = documentRuleNames(legal);
     expect(added.length, "the skill must carry document-level rules").toBeGreaterThan(0);
     for (const rule of added) {
       expect(enumeration, `the boundary must name the rule it adds: ${rule}`)
         .toContain(rule);
+    }
+
+    // The README row is living documentation of what this skill carries, and a
+    // snapshot of the skill cannot see it. A review deleted the section-names
+    // clause from that row and every test passed.
+    const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
+    const row = readme.split(/\r?\n/).find((line) => line.startsWith("| `iso-24495-2` |")) ?? "";
+    expect(row, "the README must carry a row for the legal skill").not.toBe("");
+    for (const rule of added) {
+      expect(row.toLowerCase(), `the README row must name: ${rule}`).toContain(rule);
     }
   });
 
@@ -632,6 +652,16 @@ describe("repository writing conventions", () => {
     const styleDesign = styleLines.find((line) => line.includes("**`iso-24495-5`:**")) ?? "";
     expect(styleDesign, "the style's design entry must admit a contract").toContain(
       "contracts included");
+
+    // The fourth routing surface. A review reverted this sentence to its
+    // pre-change wording and every test passed, so the change's own purpose
+    // could be undocumented without a red test.
+    const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
+    const routing = readme.split(/\r?\n/)
+      .find((line) => line.includes("The core skill activates the relevant writing skills")) ?? "";
+    expect(routing, "the README must describe automatic activation").not.toBe("");
+    expect(routing, "the README must say a legal task reaches Part 5").toContain(
+      "legal ones included");
   });
 
   test("the output style keeps a send-time check", () => {
