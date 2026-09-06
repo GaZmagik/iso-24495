@@ -32,17 +32,19 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
 1. **Progressive Disclosure Ordering:**
    Structure every technical explanation in these stages, in this order:
    1. **System Purpose:** High-level operational intent (1 sentence).
-   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table. Rule 4 governs the diagram's text alternative, and Part 5 governs the table. Required where the explanation covers more than one component or step. A single-mechanism explanation goes from purpose to implementation, because a diagram nobody needs is the decoration Part 5 forbids.
+   2. **Architecture & Data Flow:** Diagram (Mermaid) or summary table. Rule 4 governs the diagram's text alternative, and Part 5 governs the table. Required where the explanation covers how more than one component relates to another. A single mechanism needs none, and neither does a sequence of steps that an ordered list already presents in order. A diagram nobody needs is the decoration Part 5 forbids.
    3. **Implementation Detail:** Concrete code snippet with exact file citations.
 
    These stages order an explanation, and Part 5's three levels order a document. They are different axes rather than two versions of one, so they do not map one to one. Where the explanation is a document:
-   - The purpose sentence supplies the purpose line of Part 5's opening block, and opens its overview. The block's title, version and named reader are not its to supply. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.
+   - The purpose sentence supplies the purpose line of Part 5's opening block, and opens its overview where Part 5 calls for one. The block's title, version and named reader are not its to supply. That overview also keeps the conclusion, the action required and any essential qualification, which one sentence does not.
    - Stages 2 and 3 sit in the main body, in that order.
    - Part 5's optional detail holds what a reader can skip and still act on. No stage covers it, so nothing is demoted there by default.
 
+   A stage covers what the explanation contains. A runbook explains what to do and a decision record explains a choice, so neither needs stage 2's diagram of components nor stage 3's code. Omit a stage the explanation has no content for, and keep the order of those it has.
+
 2. **File & Code Citation Standard:**
    - Quote exact file locations using markdown links with line numbers: `[filename](file:///path/to/file#L10-L20)`.
-   - Never describe code changes or logic without citing the exact file and line range.
+   - Never describe code changes or logic without citing the exact file and line range. This governs an explanation of code. A guide describing what a user does needs no citation.
 
 3. **Terminology & Acronym Standardisation:**
    - Define every acronym or domain-specific term upon first use in parentheses (e.g. *"Abstract Syntax Tree (AST)"*).
@@ -82,7 +84,7 @@ Before outputting technical text, audit against these checks:
 - [ ] **Progressive structure:** Is system purpose stated before architecture and code?
 - [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?
 - [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?
-- [ ] **Visual aids:** Is a diagram or table used wherever more than one component or step is explained?
+- [ ] **Visual aids:** Is a diagram or table used wherever the explanation covers how more than one component relates to another?
 - [ ] **Code immunity:** Are code snippets and commands intact and un-mangled?
 - [ ] **Text alternatives:** Does every diagram carry prose saying what it shows?
 - [ ] **Layering:** Where the explanation is a document, do the stages sit in Part 5's levels as rule 1 says?

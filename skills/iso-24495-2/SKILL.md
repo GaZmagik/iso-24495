@@ -46,7 +46,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 
 4. **Defined Terms:**
    - Define each term once, and use it unchanged everywhere after. Two words for one concept invite an argument that they mean two things.
-   - Put the definition where the reader first meets the term. Where a term runs throughout, collect the definitions in one section and point the first use at it.
+   - Put the definition where the reader first meets the term. Where a term appears in more than one section, collect the definitions in one section and point the first use at it.
    - Write a term out in full where the document uses it once, rather than defining it.
    - Say in words that a term is defined, and where. Capital letters are silent to a listener, so **Confidential Information** on its own tells them nothing.
 
@@ -56,7 +56,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
    - Point at the clause carrying the obligation, never at one that only points somewhere else.
 
 6. **Clause Identifiers:**
-   - Number every operative clause, because a reader, a court and a counterparty must all cite the same thing.
+   - Number every operative clause, because a reader, a court and a counterparty must all cite the same thing. An operative clause imposes, permits or prohibits an action. Recitals, definitions and schedules are numbered by the conventions of the document, not by this rule.
    - Write the identifier into the clause text rather than as list markup. Markdown numbers an ordered list 1, 2, 3, so a compound identifier such as 4.2.1 survives only when it is written in the text.
    - This is the one place a legal document departs from Part 5's rule that a sequence stays an ordered list.
    - A clause identifier is neither a heading nor list numbering. So it does not count against Part 5's heading limit, and Part 5's rule on numbering headings does not govern it.
