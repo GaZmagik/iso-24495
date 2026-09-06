@@ -21,13 +21,21 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **A worked summary example**, showing the governing statement that a bare summary leaves out.
 - **A mapping between a technical explanation and a technical document.** `iso-24495-3` orders an
   explanation in three stages, and `iso-24495-5` orders a document in three levels. They are
-  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the purpose
-  line of the opening block and opens the overview. Stages 2 and 3 are the main body, and nothing
-  is demoted to optional detail by default.
-- **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table and
-  never mentioned alternative text, so a document passing its own checklist could hand a listener
-  nothing. A Mermaid diagram reaches a listener as its source, which is not an explanation, so the
+  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the
+  purpose line of the opening block, and opens the overview where Part 5 calls for one. Stages 2
+  and 3 are the main body, and nothing is demoted to optional detail by default.
+- **A stage covers what the explanation contains.** Every stage was mandatory, so a runbook needed
+  a diagram of its own step list and a decision record needed a code snippet it has no code for.
+  A stage with no content is omitted, and the order of the rest holds.
+- **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table
+  where an explanation covers how more than one component relates to another. It never mentioned
+  alternative text, so a document passing its own checklist could hand a listener nothing. A
+  Mermaid diagram reaches a listener as its source, which is not an explanation, so the
   alternative is prose beside it.
+- **A definition of the clause the numbering rule means.** "Number every operative clause" never
+  said what operative means, and the checklist repeated the term, so a non-lawyer could not tell
+  whether they had complied. An operative clause imposes, permits or prohibits an action, and
+  recitals, definitions and schedules are numbered by the document's conventions instead.
 
 ### Changed
 
@@ -36,6 +44,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   pairing is conditional where the legal one is not.
 - **Part 5 says what Part 3 governs.** It claimed Part 3 governed the wording across its levels.
   Part 3 governs the stages, and now states where each one lands.
+- **The citation rule governs an explanation of code.** It read on any logic at all, so a user
+  guide describing what happens after a click would have carried file and line references its
+  reader cannot use.
+- **A defined term is collected where it appears in more than one section.** The rule said "where
+  a term runs throughout", which two writers would not apply the same way.
 - **The design document template requires a text alternative** beside a diagram. It offered a
   diagram or a description, and so permitted a diagram with neither.
 - **A legal task now reaches the document design skill.** The Part 5 trigger named reports,
