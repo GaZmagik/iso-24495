@@ -47,11 +47,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   findings. A zero is not a pass for any of them, and the organisational Measurement
   dimension does not move when that structure is absent.
 
-- **The check that a rule reaches the reader trusts this project's own parser.** It compares
-  each pinned line with what that parser says the line renders as, so it catches text hidden
-  by a comment or a code fence. Where the parser and a reader's renderer disagree, it would
-  not. Three candidate disagreements were tested against a reference renderer and none hid
-  any pinned text, which is evidence rather than proof.
+- **Seven documents are now pinned whole, and editing one means rebuilding its fixture.**
+  Guarding the words was not enough: a review left every pinned rule intact and wrapped the
+  block in image syntax, so the page showed alternative text instead. Only the whole file
+  guards the space around a block. The builder is checked in beside the fixture, and the
+  templates under `assets` have been held this way since 0.6.2.
 
 ### Changed
 

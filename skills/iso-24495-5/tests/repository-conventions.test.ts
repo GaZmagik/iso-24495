@@ -10,6 +10,7 @@ import {
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
+import { PINNED_DOCUMENT_TEXT } from "./fixtures/pinned-documents.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -37,15 +38,7 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * A reader meets these as rendered pages, so what they say and what a browser
  * shows have to stay the same thing.
  */
-const PINNED_DOCUMENTS = [
-  "skills/iso-24495-1/SKILL.md",
-  "skills/iso-24495-2/SKILL.md",
-  "skills/iso-24495-3/SKILL.md",
-  "skills/iso-24495-5/SKILL.md",
-  "output-styles/iso-24495.md",
-  "codex-skills/iso-24495-style/SKILL.md",
-  "README.md",
-];
+const PINNED_DOCUMENTS = Object.keys(PINNED_DOCUMENT_TEXT);
 const ENTRY_FILES = [
   "skills/iso-24495-text-audit/scripts/audit-text-cli.ts",
   "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
@@ -939,43 +932,38 @@ describe("repository writing conventions", () => {
     }
   });
 
-  // Markup a reader's browser would act on. Four rounds of review defeated
-  // four versions of this check, and the fifth stops trying to win that way.
+  // Five checks tried to name what a document may not contain, and five
+  // reviews walked past them. A tag at a line start, then anywhere, then
+  // code spans and autolinks exempted, then a tokeniser, then the character
+  // itself. The last one failed on its own premise: a paragraph wrapped in
+  // image syntax renders as alternative text, and one wrapped in a link
+  // title renders as an attribute, and neither needs a less-than sign. The
+  // pinned text was intact, the gate was green, and a browser showed no
+  // paragraph.
   //
-  // Each earlier version decided which less-than signs were safe, and each
-  // decision was a reimplementation of CommonMark: a tag only at a line
-  // start, then a tag anywhere, then exempt code spans and autolinks, then a
-  // tokeniser removing escapes and matching backtick runs. Every one was
-  // defeated, and always the same way, by finding a case where the
-  // reimplementation and the renderer disagreed. A code span that crossed a
-  // blank line, which CommonMark will not do. A backslash inside a code span,
-  // which is literal there and not an escape. A mismatched delimiter run. An
-  // opener the email pattern read as an autolink. Each left the gate green
-  // while Chromium showed no rules at all.
+  // Each of those checks guarded the text and left the space around it open,
+  // which is the same defect the block expectations already learned once.
+  // Pinning a phrase left the rest of its sentence free; pinning a block
+  // leaves the lines on either side of it free. Nothing short of the whole
+  // file closes that, and the whole file needs no grammar to check.
   //
-  // The mistake was answering the question at all. A document that contains
-  // no less-than sign cannot hand markup to any renderer, whatever the
-  // renderer does, so there is nothing left to get right and nothing left to
-  // disagree about. This check parses nothing.
-  //
-  // The cost is a house rule, and it is the whole cost: these documents
-  // cannot contain a less-than sign. Four lines named a tag in a code span
-  // and now name it without brackets, which reads better anyway. Prose that
-  // needs the character writes the entity for it, which a browser shows as
-  // text and cannot read as a tag. A specimen that needs one belongs in a
-  // file this rule does not cover, such as a template under assets.
-  test("no markup can reach the reader and hide a rule", () => {
-    const offenders = PINNED_DOCUMENTS.flatMap((file) =>
-      readFileSync(join(REPOSITORY_ROOT, file), "utf8")
-        .split(/\r?\n/)
-        .map((line, index) => ({ line, number: index + 1 }))
-        .filter((entry) => entry.line.includes("<"))
-        .map((entry) => `${file}:${entry.number}: ${entry.line.trim().slice(0, 60)}`));
+  // So these documents are held entire, the way the three templates are.
+  // The cost is that editing one means running the builder in the same
+  // commit, and that cost is the point: the fixture's diff is the record of
+  // what a reader's page gained or lost.
+  test("no line of a pinned document changes without its fixture changing", () => {
+    for (const file of PINNED_DOCUMENTS) {
+      const actual = readFileSync(join(REPOSITORY_ROOT, file), "utf8").split(/\r?\n/);
+      const expected = PINNED_DOCUMENT_TEXT[file] ?? [];
 
-    expect(
-      offenders,
-      "write the entity for a less-than sign, or name a tag without brackets",
-    ).toEqual([]);
+      // Named line by line rather than as one blob, because a failure saying
+      // only that a 209 line file differs sends the reader to a diff tool.
+      const reach = Math.max(actual.length, expected.length);
+      for (let line = 0; line < reach; line += 1) {
+        expect(actual[line], `${file}:${line + 1} changed, so rebuild the fixture`)
+          .toBe(expected[line] as string);
+      }
+    }
   });
 
   test("every shipped skill is routed, so a new one cannot arrive unrouted", () => {
