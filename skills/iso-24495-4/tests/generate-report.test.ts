@@ -65,20 +65,25 @@ describe("generateReport", () => {
 
   // Containing a sentence is not showing it. A review wrapped the whole report
   // in an HTML comment, and every check above passed while a browser rendered
-  // an empty page. So the report must begin as a report, and must carry no
-  // comment opener anywhere in it.
+  // an empty page. So the report must begin as a report and carry no markup.
   test("the report reaches the reader rather than merely containing its words", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
     expect(report.split(/\r?\n/)[0], "the report must open with its own heading")
       .toBe("# Plain Language Gap Analysis");
-    expect(report, "a report inside a comment shows a reader nothing")
-      .not.toContain("<!--");
+    // Not merely a comment. A review wrapped the body in a hidden div instead
+    // and the page showed only the title. A report carries no markup at all,
+    // which needs no list of the wrappers anyone might reach for.
+    expect(report, "markup in a report can hide the report").not.toContain("<");
   });
 
-  // Every number the report prints, checked against the numbers it was handed.
-  // A review replaced each maturity level with a literal 4, and the rows still
-  // appeared, so a reader was told the organisation had reached the top level
-  // whatever its evidence said.
+  // The maturity levels, checked against the levels the report was handed. A
+  // review replaced each with a literal 4, and the rows still appeared, so a
+  // reader was told the organisation had reached the top level whatever its
+  // evidence said.
+  //
+  // The trend totals are not checked here, and a review showed they can be
+  // replaced by a literal zero. That renderer and the test that reads only its
+  // heading both predate this branch.
   test("the maturity rows carry the levels they were scored", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
     for (const [dimension, result] of Object.entries(maturity.dimensions)) {

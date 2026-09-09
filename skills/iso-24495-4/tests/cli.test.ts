@@ -6,6 +6,7 @@ import { runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
 import { runCli as runEvidenceCli } from "../scripts/audit-evidence.ts";
 import { runCli as runReportCli } from "../scripts/generate-report.ts";
 import { runCli as runMaturityCli } from "../scripts/score-maturity.ts";
+import { runCli as runTextAuditCli } from "../../iso-24495-text-audit/scripts/audit-text.ts";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const CORPUS = join(FIXTURES, "corpus");
@@ -377,58 +378,126 @@ describe("command line entry files", () => {
     expect(results.map((result) => result.exitCode)).toEqual(entries.map(() => 2));
   }, ENTRY_TIMEOUT_MS);
 
-  // What a command saves must be what it would have shown. A review changed
-  // each writing call so that the file differed from the terminal: the saved
-  // report claimed certification, the saved findings recommended the legalese
-  // they had banned, and the saved evidence listed artefacts with no paths.
-  // Every test stayed green, because each one read only one of the two.
+  // What a command saves must be what it would have shown.
   //
-  // A reader keeps the file. It is the copy that gets circulated, and the one
-  // nobody re-runs to check.
+  // A review changed each writing call so the file differed from the
+  // terminal: a saved report claiming certification, saved findings
+  // recommending the legalese they had banned, saved evidence inventing
+  // paths, saved maturity levels raised to the top. My first attempt at this
+  // test read one side only, or looked for a shape rather than a value, and
+  // four of those mutations walked straight past it.
+  //
+  // So each command runs twice on the same input, once to a file and once to
+  // the terminal, and the two are compared whole. A reader keeps the file:
+  // it is the copy that gets circulated and the one nobody re-runs.
   test("what a command writes is what it would have printed", () => {
     const workspace = mkdtempSync(join(tmpdir(), "iso-write-through-"));
     try {
+      // A command prints a table and saves JSON, so the two are compared
+      // value by value rather than as the same text. What matters is that
+      // the file and the terminal say the same thing about the same run.
       const findingsPath = join(workspace, "findings.json");
-      const evidencePath = join(workspace, "evidence.json");
-      const maturityPath = join(workspace, "maturity.json");
-
       const printedCorpus = capture();
       runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findingsPath],
         () => {}, () => {});
       runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS], printedCorpus.writeOut, () => {});
       const savedFindings = JSON.parse(readFileSync(findingsPath, "utf8"));
       for (const [rule, count] of Object.entries(savedFindings.totals)) {
-        expect(printedCorpus.stdout.join(""), `the saved count for ${rule} must be the printed one`)
+        expect(printedCorpus.stdout.join(""), `the saved count for ${rule} must be printed`)
           .toContain(`| ${rule} | ${count} |`);
       }
 
+      const evidencePath = join(workspace, "evidence.json");
+      const printedEvidence = capture();
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidencePath],
         () => {}, () => {});
-      const savedEvidence = readFileSync(evidencePath, "utf8");
-      expect(savedEvidence.includes('"paths": ['), "saved evidence must carry its paths").toBe(true);
-      expect(/"paths": \[\s*\]/.test(savedEvidence) && !/"paths": \[\s*"/.test(savedEvidence),
-        "saved evidence must not empty every path").toBe(false);
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY],
+        printedEvidence.writeOut, () => {});
+      const savedEvidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+      const evidenceShown = printedEvidence.stdout.join("\n");
+      for (const [category, entry] of Object.entries(savedEvidence)) {
+        const record = entry as { found: boolean; paths: string[] };
+        if (typeof record?.found !== "boolean") continue;
+        expect(evidenceShown, `the saved row for ${category} must be printed`)
+          .toContain(
+            `| ${category} | ${record.found ? "yes" : "no"} | ` + `${record.paths.join("<br>") || "-"} |`,
+          );
+      }
 
+      const maturityPath = join(workspace, "maturity.json");
+      const printedMaturity = capture();
       runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", maturityPath],
         () => {}, () => {});
-
-      // The report twice on the same clock, once saved and once printed, with
-      // no state so neither run changes what the other would produce.
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS],
+        printedMaturity.writeOut, () => {});
+      const savedMaturity = JSON.parse(readFileSync(maturityPath, "utf8"));
+      const maturityShown = printedMaturity.stdout.join("\n");
+      for (const [dimension, result] of Object.entries(savedMaturity.dimensions)) {
+        const scored = result as { level: number };
+        expect(maturityShown, `the saved level for ${dimension} must be printed`)
+          .toContain(`| ${dimension} | ${scored.level} |`);
+      }
+      expect(maturityShown, "the saved overall level must be printed")
+        .toContain(`Overall (weakest dimension): ${savedMaturity.overall}`);
+      // The report, on a fixed clock and with no state, so neither run
+      // changes what the other would produce.
       const reportPath = join(workspace, "report.md");
       const printedReport = capture();
+      const reportArgv = ["bun", "generate-report-cli.ts", findingsPath, evidencePath,
+        maturityPath];
       runReportCli(
-        ["bun", "generate-report-cli.ts", findingsPath, evidencePath, maturityPath,
-          "--out", reportPath],
+        [...reportArgv, "--out", reportPath],
         () => {}, () => {}, () => "2026-08-13T12:00:00.000Z",
       );
       runReportCli(
-        ["bun", "generate-report-cli.ts", findingsPath, evidencePath, maturityPath],
+        reportArgv,
         printedReport.writeOut, () => {}, () => "2026-08-13T12:00:00.000Z",
       );
-      expect(readFileSync(reportPath, "utf8"), "the saved report must be the report it prints")
-        .toBe(printedReport.stdout.join(""));
+      expect(readFileSync(reportPath, "utf8").trim(),
+        "the saved report must be the report it prints")
+        .toBe(printedReport.stdout.join("").trim());
+
+      // And again with state, because a review made the saved copy differ
+      // only when a state file was asked for.
+      const statePath = join(workspace, "state.json");
+      const withState = [...reportArgv, "--state", statePath];
+      const statefulPath = join(workspace, "stateful.md");
+      const printedStateful = capture();
+      runReportCli(
+        [...withState, "--out", statefulPath],
+        () => {}, () => {}, () => "2026-08-14T12:00:00.000Z",
+      );
+      rmSync(statePath, { force: true });
+      runReportCli(
+        withState,
+        printedStateful.writeOut, () => {}, () => "2026-08-14T12:00:00.000Z",
+      );
+      expect(readFileSync(statefulPath, "utf8").trim(),
+        "saving with a state file must not change the report")
+        .toBe(printedStateful.stdout.join("").trim());
+
+      // The text audit saves JSON and prints a table, so its findings are
+      // compared through the details they share.
+      const auditTarget = join(workspace, "notice.md");
+      writeFileSync(auditTarget, "The party shall comply with the terms herein.\n");
+      const auditJson = join(workspace, "audit.json");
+      const printedAudit = capture();
+      runTextAuditCli(
+        ["bun", "audit-text-cli.ts", auditTarget, "--json", auditJson],
+        () => {}, () => {},
+      );
+      runTextAuditCli(
+        ["bun", "audit-text-cli.ts", auditTarget],
+        printedAudit.writeOut, () => {},
+      );
+      const savedAudit = readFileSync(auditJson, "utf8");
+      expect(savedAudit, "saved findings must ban what the printed ones ban")
+        .toContain("banned term");
+      expect(printedAudit.stdout.join(""), "printed findings must ban it too")
+        .toContain("legalese");
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
 });
+

@@ -321,10 +321,14 @@ describe("reader-facing behaviour contracts", () => {
         .toContain(`"${lean}"`);
     }
 
+    // Matched whole. A review changed "end" to "extend", and a check reading
+    // for a substring accepted it, so the engine advised replacing "terminate"
+    // with a word meaning its opposite.
     for (const [word, plain] of complexWords) {
       const detail = auditText(`We ${word} the report today.`)
         .find((violation) => violation.rule === "complex-word")?.detail ?? "";
-      expect(detail, `"${word}" must be offered "${plain}"`).toContain(plain);
+      expect(detail, `"${word}" must be offered "${plain}" and nothing else`)
+        .toBe(`"${word}" where "${plain}" would do`);
     }
   });
 

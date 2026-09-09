@@ -11,7 +11,7 @@ export interface PinnedDocument {
 
 export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
   ".claude-plugin/marketplace.json": {
-    digest: "3fcc94d43bac5079b2589cf40eb13a960693ea2b01cfae2e834b3e5bc8810145",
+    digest: "f92829734723f89b112b3ad6223588c7fe58cac942e5d3dcfeab78d829417b54",
     lines: [
       "{",
       "  \"name\": \"iso-24495\",",
@@ -49,7 +49,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   ".claude-plugin/plugin.json": {
-    digest: "805f4348a7466323334edf99ecb9edbe9d920338b1e6b4ffc7b839544f2d97b5",
+    digest: "56743e41c1bd8a724d837e70c2a98ecd1447014fa4c5fb7c0a72455417ccdfea",
     lines: [
       "{",
       "  \"name\": \"iso-24495-plain-language\",",
@@ -74,7 +74,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   ".codex-plugin/plugin.json": {
-    digest: "c99dce74388f1e91ad9ce1a0a564261bfbd8f7c5773846d93a91444c52d57d98",
+    digest: "af2be14f48227ecc79df6ae4ad545b267105dc4c00deab63829d42dcff184207",
     lines: [
       "{",
       "  \"name\": \"iso-24495-plain-language\",",
@@ -104,7 +104,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   ".github/workflows/tests.yml": {
-    digest: "8bdecb6c1e3b5d68717dd119f0809f4f3e3ee101b353df10cf15dd9fe6f56705",
+    digest: "f759e4c282afcafa9559c967b72094c9ac3e76205dc62e9b5fbe01b5cc5dc1cc",
     lines: [
       "name: Tests",
       "",
@@ -197,14 +197,14 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   ".gitignore": {
-    digest: "035848c56173a1d1fde589b73133e42c5645f7baefeefc359038f676a423dc74",
+    digest: "f2ecf84a3eba443ae877883f951b25a53005a71ab5a14f15a4027b88b41c77b3",
     lines: [
       ".claude/settings.local.json",
       "",
     ],
   },
   "CHANGELOG.md": {
-    digest: "7d1688a268567d8d8bfcad6b6c9c455d72b0eee1d29b560ca85d536fb01af041",
+    digest: "cf81f2ffcf8ed0270959eed93dec6693f2943daaa10457f7cfb4dd40c9677c60",
     lines: [
       "# Changelog",
       "",
@@ -571,7 +571,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "LICENSE": {
-    digest: "3d9d0dc4d8c77cc2c4fdbf52dc1969195ba6307e8c3dd623d40353061ee7794b",
+    digest: "615f0ec12aca663ad54b97cb8b2766fbdd386127a2d9066bf32bbdc07a41e230",
     lines: [
       "MIT License",
       "",
@@ -598,7 +598,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "README.md": {
-    digest: "6977b86e9f0b5b4458e1af86534b624862e57bd63754d6f0f6e5fb57fad4491a",
+    digest: "a5a4fc81543b151c0748588df36f82d45aa121da4c86c76b29103b121db4f283",
     lines: [
       "# ISO 24495 Plain Language Skills",
       "",
@@ -812,7 +812,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "bunfig.toml": {
-    digest: "ddebd0bf414c61397f8455c8cf7935b2f87f93ead2a4401de9aa840c061b7c50",
+    digest: "7bf80640263c6a5656c04974d07da58b8a16756f829dbc309364fd25401b5f17",
     lines: [
       "[test]",
       "coverage = true",
@@ -822,7 +822,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "codex-skills/iso-24495-style/SKILL.md": {
-    digest: "fa1226b1f3ddcf9a15d164db98c8dbfa3c91010869f08626560298bc9bb2fc46",
+    digest: "5141f7cb0ebb0d9f6d3319d316fc673ee3e5736d08be2ae61e4128eb870df58c",
     lines: [
       "---",
       "name: iso-24495-style",
@@ -915,7 +915,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "codex-skills/iso-24495-style/agents/openai.yaml": {
-    digest: "e6a73cf1fb3f0d973191a8221c908f2cbe071c24e991a6641f92141bcf552b18",
+    digest: "8b118d08acb3679ca559e822143103ef925736be274e49d96f624345dd16180d",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495 Response Style\"",
@@ -925,7 +925,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "output-styles/iso-24495.md": {
-    digest: "556797ecda6f76774fc772c1c0855945e6c7ca721a61985b3536bea887e223a1",
+    digest: "5c9a34b6652ee300086ab927f3c7429d70030641affcbf3a36f4084578f9dfe8",
     lines: [
       "---",
       "name: ISO 24495",
@@ -998,7 +998,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "scripts/check.sh": {
-    digest: "36057326443d37f4ab42fd7a9d612cbb09674bf981a41572657ef76bac6ba9bc",
+    digest: "55019f7c935ec85219d26ff699cc362e984ebe56fd02e91d12e3d886827468c9",
     lines: [
       "#!/usr/bin/env bash",
       "# The one gate for this repository. Continuous integration runs this file and",
@@ -1049,7 +1049,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-1/SKILL.md": {
-    digest: "dd8a5baebfaeb370fe1f4e6bc235d493464ca78c58032b62bc7f80361b1ba423",
+    digest: "4a1a41d793f4133e5acdb363f85ddd12ba288c90334497dad72b87df53cf71a0",
     lines: [
       "---",
       "name: iso-24495-1",
@@ -1160,7 +1160,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-1/agents/openai.yaml": {
-    digest: "71f2da548c42e03ef28858d9e93a885e29aad30eecd8aca11d7c26e1471ed908",
+    digest: "674540607313957ff2412635fb40155ce763c8f86893e6b80d5c46b5d21f9fc7",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495-1 Plain Language\"",
@@ -1170,7 +1170,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-2/SKILL.md": {
-    digest: "f15c4b738fcbf36b070094ebc247be9f1daf402d27f6010c2c64a067bcaa7f1b",
+    digest: "35410a6afc25aadcf01827e08fdaf40c3bb8ac5691344b209ca704dfd0c8fc46",
     lines: [
       "---",
       "name: iso-24495-2",
@@ -1298,7 +1298,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-2/agents/openai.yaml": {
-    digest: "eacbe795681ccc49c94e4cac073d902a2260d7fa4534e7c4ade5677db9f962b7",
+    digest: "c85773ffa6099e6acbe320db2ab13fd0edf4e400ee8aee473f7f034817fd3ab3",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495-2 Legal Writing\"",
@@ -1308,7 +1308,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-3/SKILL.md": {
-    digest: "c8cd43423bb755369bdd1201c150ecb8cce046148f6f039e72c592ee302ff5f6",
+    digest: "40588fa914d8892666247665e8ef8ca3fc0de52bff144461509f8e20c16205a3",
     lines: [
       "---",
       "name: iso-24495-3",
@@ -1407,7 +1407,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-3/agents/openai.yaml": {
-    digest: "22c2dd770255f31932af691786828d8f5ab6226d03573ad71a5d30ca8761f8d6",
+    digest: "f834f6009084473d59e46f24cc031079951971aa108acf5d117a86468c863250",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495-3 Technical Writing\"",
@@ -1417,7 +1417,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/SKILL.md": {
-    digest: "3e5711ddffce7112e5e6f1c72d6938cc7d8948a1fe6366c9d6ed1d68a947e079",
+    digest: "a9a629da210cca20c5f50de389fb9e3f55d010f8b22cad17f0112ceb073d7cd2",
     lines: [
       "---",
       "name: iso-24495-4",
@@ -1495,7 +1495,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/agents/openai.yaml": {
-    digest: "0f6c7cffd67770c5247bfbddc66f9a1b6d228c4edeff73220a487a605726c14c",
+    digest: "c6636a1b2b84e48d7794a8b1f97c49991559adc8495af9666345d39c8d5e2390",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495-4 Organisational Implementation\"",
@@ -1505,7 +1505,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/assets/gap-report-template.md": {
-    digest: "45c56060d03f70eb7f8cc2a89dc9a03d25c70d78d59c49cbf9ef9aeab9a22ba6",
+    digest: "22b0c0632c644081fe69fc41cb3982ea23fbcb9db445084877bcd19d014ab123",
     lines: [
       "# Plain Language Gap Analysis - {{organisation}}",
       "",
@@ -1545,7 +1545,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/references/evidence-map.md": {
-    digest: "7a396b53c29d7ea390724d68d69dd70cc633386ab37bd41d1adcf6de0c4d77fb",
+    digest: "7cd181f292c9adaa2eb5c67d0eff76cd50732f8d3d11cc6ec397267710ab3e40",
     lines: [
       "# Evidence Map",
       "",
@@ -1564,7 +1564,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/references/interview-guide.md": {
-    digest: "8dfd87a1c4edec3a099b3418b271398f619df7b109d19bccf9a5cb5e276bc8e3",
+    digest: "2e0a99fe182eca8b860cc755a03e9aca97e80293dd5c7a8b63a31bd7361e8d04",
     lines: [
       "# Interview Guide",
       "",
@@ -1590,7 +1590,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/references/maturity-model.md": {
-    digest: "2ca09fdd0ffaa5a0a06b0d213b8d99771a88b34ba27d26f7cd06ed1bbdb9456b",
+    digest: "26ce2880fe136747079952d302ee20ea9e298971e84ec5bfcf131b9e2e261586",
     lines: [
       "# Maturity Model - Organisational Plain Language",
       "",
@@ -1617,7 +1617,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/answers.sample.json": {
-    digest: "4f3f92de67e9effe6431cd2dbd7ba2c88bfbc0b1538109e212e76f23129f8ec3",
+    digest: "e251afc974ae11b9b8eaa6d919a603bb9b97189d9d698a57f50d23d7a020973d",
     lines: [
       "{",
       "  \"organisation\": \"Example Ltd\",",
@@ -1658,7 +1658,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/average-heavy.md": {
-    digest: "dec5d6930d1e561405fff33d82f8f29e3e83f866b5cab63c825723ce989b0a73",
+    digest: "3036e12d0bbe8c71ef96edec4687f145c69992589332c9516f8dd6fe27be13ab",
     lines: [
       "# Sample With A High Average But No Single Offender",
       "",
@@ -1671,7 +1671,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/code-fenced.md": {
-    digest: "7135a51223aae899ed527f07541c81b050547056593919e272f95fe49f3b1d1a",
+    digest: "5a004710c8bc5ce184b7b858c5ab401467af6a09daecee14d52b3acdb0041d37",
     lines: [
       "# Code Blocks Are Immune",
       "",
@@ -1687,7 +1687,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/dense-paragraphs.md": {
-    digest: "cce94f440fe3899984432396f3050a91c6131eef8328da9179bc496947ced38b",
+    digest: "32c36049b70f0fe53d8d70f5c02c883734d3c4ba6a3736fd0f3e4fb8faeecd7b",
     lines: [
       "# Sample With Dense Paragraphs",
       "",
@@ -1700,7 +1700,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/good-policy.md": {
-    digest: "e3f9f40e468e3f594b0b5557971c861ab2dd905a6d170d8002edb11396f8297a",
+    digest: "7be0a4878467109f8121f25349966c5d2c171a205dbf3a7477e8fe50548337a8",
     lines: [
       "# Plain Language Policy",
       "",
@@ -1715,7 +1715,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/headings-broken.md": {
-    digest: "9ea7bfb1b6847625a16a4cf29d2248c98a38b45bb7265456821fdb27ea3135b2",
+    digest: "5447857c98eb52849b9ab00f4582accb93cb400d5c25c96f6cec1e718b282268",
     lines: [
       "# Title",
       "",
@@ -1734,7 +1734,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/legalese-sample.md": {
-    digest: "2a8310cdf09f0c9dd50b01cfd1ce79e20b91b2a95a13b64afb12af2f49f1c6e3",
+    digest: "5d0a1c1d89d1bfcbea6d2e94791617430076049b5eff391757d2366ed309852f",
     lines: [
       "# Sample With Legalese",
       "",
@@ -1745,7 +1745,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/corpus/long-sentences.md": {
-    digest: "982acd1e8852f2b8b33dfd3e83e9ecb3d657c4943e45488885ccfbaf9042fe54",
+    digest: "4fc12f8e995a5fb0249489b81890e2cefcfb03a99a73bab96513498f549d9204",
     lines: [
       "# Sample With Long Sentences",
       "",
@@ -1758,7 +1758,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/difficult/every-rule.md": {
-    digest: "9d9eac4ce0edb202fcab4b88bfa8fc0230ae4d07ec4ea0378b240768f69136e2",
+    digest: "630e177ab40ffbf09f4705680fb7c7524aab95b3f34dfcc4d21917c43ff84413",
     lines: [
       "Certainly! This document exists so that an engine which stops reporting fails loudly.",
       "",
@@ -1785,7 +1785,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/difficult/us-foia-statute.md": {
-    digest: "37356ed98da43a9e6b81d2d6bc81d5dcf7b630e840792078536f6e8f4ba94cc3",
+    digest: "376bedda559a76016a7985d5a5e00204691e564bb847a7b57dbe668affe8f999",
     lines: [
       "# Freedom of Information Act",
       "",
@@ -1800,7 +1800,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/SOURCES.md": {
-    digest: "d894fac8e9c2e1562535ea797e2d2b0f85974c72ea6257aaf8640f6f4f0ec536",
+    digest: "48d46bae15337c0d30ed034643ec493690ab9c3d89a84f1fc52c9397a31336ba",
     lines: [
       "# Where these documents come from",
       "",
@@ -1883,7 +1883,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/consumer-rights.md": {
-    digest: "90d532bdb3c69c7d1d754a124f3d4eb85d595507cf7d54e529a3c4c27f2b7912",
+    digest: "836299d735d715ca7a44dbb70a57ac45cd223b6e741fbf237d729f5b9f1c1037",
     lines: [
       "# Ask for a refund",
       "",
@@ -1894,7 +1894,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/govuk-universal-credit.md": {
-    digest: "c685ea232ad00b86cf47251a3d90f2fa7f73482090e3c6c0df93e9e4a52a2c45",
+    digest: "9274f8c40a3f57064d2a83f88eba5ea7904e9f1cb7b2b314abc8962692d44a22",
     lines: [
       "# Universal Credit",
       "",
@@ -1909,7 +1909,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/international-english.md": {
-    digest: "3f4df205199da3500d0d7c2d5b3d24e0c71e5b42076a9a432bd035fa7dcd1171",
+    digest: "a6a23f95e7371f225bf2aabb174d5e6e1081c1bd29086581f66de413274f9fb9",
     lines: [
       "# International English",
       "",
@@ -1920,7 +1920,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/names-and-measures.md": {
-    digest: "bd5bf5c04c676f7d9c66ed94bdbd7ea06c3121bcbee6e8d3548847e93a330021",
+    digest: "224b43719b3a597618b0039603abf190187ee65bbb014ab891f2b89e015db6f5",
     lines: [
       "# Measurements and names",
       "",
@@ -1931,7 +1931,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/public-service.md": {
-    digest: "0e740f6307a514d81946bd156f58d4ff5e496f1c01ddb0fb44b42af52aade468",
+    digest: "6e55804178be8cbbd96f04e0c44e2a2dde2460c9258a3307d36ede511e033ecf",
     lines: [
       "# Apply for support",
       "",
@@ -1946,7 +1946,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/technical-guide.md": {
-    digest: "1174ab5c9da752cdd8d9f0f50b7ef75d78718f12f79396a9532f922ea51c49ee",
+    digest: "bfe4e640ec6718c0ffd87faf1fb1122081fa549a5682892960f31b0c3949bf87",
     lines: [
       "# Configure sign-in",
       "",
@@ -1957,7 +1957,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/known-good/warning.md": {
-    digest: "ef83b02db31abf3db0a4f0985a3d77b554758aa10385bf3e3b8946875a43beaa",
+    digest: "d78ba29cffc458eb6af575bf3c06e092c20b0f1911c9ef448f8321c6f65da194",
     lines: [
       "# Before you continue",
       "",
@@ -1969,7 +1969,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/repo-level0/docs/notes.md": {
-    digest: "863c4bc874711f7ea445e59084157ddbe4a483ba144771d4aefb3864d5328a41",
+    digest: "32d9ee96958ac5dd535fc466aadb34f55e94962c8075129c8d770f13fde7744f",
     lines: [
       "# Team Notes",
       "",
@@ -1978,7 +1978,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/repo-level2/.github/PULL_REQUEST_TEMPLATE.md": {
-    digest: "e3b915e244d4be5ce7f92ae5f4401626e24877bfe00316292a840dcb65713db4",
+    digest: "30c9b0cab612f62632f3fa0e552698cd71ca70ecc4b408af992f656a1b76836b",
     lines: [
       "# Pull Request",
       "",
@@ -1987,7 +1987,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/repo-level2/.github/workflows/text-lint.yml": {
-    digest: "fa6a7a34ef777212343cae41b0b71c5bd2ba49b1aa3b49e9acaaa5e57c868479",
+    digest: "0bd314c40f6b3f4d6ea9fa0110d96419c4111d7ffaaf717dafd2feeb725d5a58",
     lines: [
       "name: text-lint",
       "on: [pull_request]",
@@ -2002,7 +2002,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/repo-level2/docs/plain-language-policy.md": {
-    digest: "3a46fe12479bf515c8d0742387a326f4074568f2906b0b0247955b1340de1eda",
+    digest: "674e17ac2e013d7207fa39159a6720b7d96fc2a23cd9fc4d45bd513255befed7",
     lines: [
       "# Plain Language Policy",
       "",
@@ -2011,7 +2011,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/repo-level2/glossary.md": {
-    digest: "a87f8597aa57c6eb6e7e600e276e02229f371e568e5ac351e5ad43e7ca201477",
+    digest: "7eb4df390acfb7514010b8e0eefb2e8242bbb790e2e25ee4e30f8cb168bdcac7",
     lines: [
       "# Glossary",
       "",
@@ -2020,7 +2020,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/fixtures/repo-level2/training/introduction.md": {
-    digest: "cea8d40a52cbbb08bdc710af1cc00ccbd8ede3c2a48ec6566d8d9cd6e6981caa",
+    digest: "cf85c3dfb6cc36951676734874b50146da57cf8e689adbfc8aeed484f52ab1a3",
     lines: [
       "# Plain Language Training: Introduction",
       "",
@@ -2029,7 +2029,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-4/tests/reference/README.md": {
-    digest: "023ce3e2dbbbcf2991d3d7afbcdc9032c41d22c977519f258c5d0cdee3b6f5b5",
+    digest: "f2cebb79f586d62925ceb20b98b9b6bec8fc95afabd813e8497eaaf69aec686b",
     lines: [
       "# Comparing this parser with the CommonMark reference",
       "",
@@ -2070,7 +2070,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-5/SKILL.md": {
-    digest: "15573f29cc9f1a9a86bb65811b2f33154f43af6ef22050240af28d115ad5b308",
+    digest: "20c6e8f0f5ff582b905ae2ba5a8b62d48aa32d17fc0eecd0eea31a55c1b88de4",
     lines: [
       "---",
       "name: iso-24495-5",
@@ -2239,7 +2239,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-5/agents/openai.yaml": {
-    digest: "e10e208d80de867ddc919bce7b3b5bfd6b8022a4a7e9d645ac59035bb43a0e8e",
+    digest: "b51a6aab68b22d2126272758ae0c1e906990b1749ea968ea3e02d4ef720d4773",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495-5 Document Design\"",
@@ -2249,7 +2249,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-5/assets/adr-template.md": {
-    digest: "915e4829642ff68bb8903d4fcbd49510c1e2088d833020fb7751e49b489267ad",
+    digest: "4a31fb1417b9002a4ac4ddfa3376046552af323f38e2dd644d041b745c1f5845",
     lines: [
       "# [Decision Title]",
       "",
@@ -2286,7 +2286,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-5/assets/design-doc-template.md": {
-    digest: "640d91ebdba7137678ed75195c0a16eb98e6df4e4f9853b844748e028d25e60b",
+    digest: "a6d44a7c6ac3090492d7f32db9eba2ab6b97512ab295eea999dd7e7cd751247a",
     lines: [
       "# [Project Name] Design Document",
       "",
@@ -2382,7 +2382,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-5/assets/runbook-template.md": {
-    digest: "b6288c70cc560c2158fdc9dd11a732f25ab77b6988be50a66e9b16b7829b2c8e",
+    digest: "5aceae40e1841f61f0467563f3da2444ce53d18b598ff9b9dc4f2455d87b39f3",
     lines: [
       "# [Task Title]",
       "",
@@ -2414,7 +2414,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-code/SKILL.md": {
-    digest: "2ad37ac1c465ae3b901d6c13f72a803d175c407b31c30c7555e39b0dbf45da63",
+    digest: "6b6a1399b4a6ad1f1c6fbce4fb6270ffb4793d88e98edb9498f51b2536925b7c",
     lines: [
       "---",
       "name: iso-24495-code",
@@ -2542,7 +2542,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-code/agents/openai.yaml": {
-    digest: "1f32c5e34f481bd96bbc0cdf56e90ff8d9047c54b6e0efa6444cbd7beff7a9d9",
+    digest: "75d347c40345b246f34c9930c5fdc84b47df78231f89d11b4ee3d37a345e9432",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495 Plain Language in Code\"",
@@ -2552,7 +2552,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-text-audit/SKILL.md": {
-    digest: "810f31e698068b9e65fca6a7e234fe4ab51368d212f5e8dec7d311ea8760a748",
+    digest: "06dde690c7e521d0940ed6a0c52e8b01a422a6fd1e8fef4a0a4a1e0502758ce7",
     lines: [
       "---",
       "name: iso-24495-text-audit",
@@ -2597,7 +2597,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, PinnedDocument> = {
     ],
   },
   "skills/iso-24495-text-audit/agents/openai.yaml": {
-    digest: "906caa572ee3945c181bbc6d551a20f88052b0ccd8e4248090f15c16dca4b1f1",
+    digest: "54a0628f399ba0fcf9141ebb9c2f5d8013253f8c22af37f2d417756090e1d4a1",
     lines: [
       "interface:",
       "  display_name: \"ISO 24495 Text Audit\"",

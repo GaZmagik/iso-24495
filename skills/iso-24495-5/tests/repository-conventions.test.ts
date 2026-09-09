@@ -70,7 +70,66 @@ function documentsThatShip(): string[] {
     }
   };
 
+  /** The same walk without the skip list, for a directory a manifest names. */
+  const walkEverything = (directory: string): void => {
+    const base = join(REPOSITORY_ROOT, directory);
+    for (const entry of readdirSync(base)) {
+      const here = `${directory}/${entry}`;
+      if (statSync(join(base, entry)).isDirectory()) {
+        walkEverything(here);
+      } else if (!entry.toLowerCase().endsWith(".ts")) {
+        found.add(here);
+      }
+    }
+  };
+
+  // A manifest may point a component anywhere, including inside a directory
+  // this walk skips. A review declared an output style in two skipped names
+  // in turn, and both shipped unpinned.
+  //
+  // The fields are listed again here rather than borrowed, because borrowing
+  // was the hole: deleting one name from the builder's list satisfied both
+  // computations at once, and a review did exactly that.
+  const declared = (): string[] => {
+    const named: string[] = [];
+    for (const directory of [".claude-plugin", ".codex-plugin"]) {
+      const base = join(REPOSITORY_ROOT, directory);
+      if (!existsSync(base)) continue;
+      for (const entry of readdirSync(base)) {
+        if (!entry.toLowerCase().endsWith(".json")) continue;
+        let manifest: Record<string, unknown>;
+        try {
+          manifest = JSON.parse(readFileSync(join(base, entry), "utf8"));
+        } catch {
+          continue;
+        }
+        const holders = [manifest, ...((manifest.plugins as Record<string, unknown>[]) ?? [])];
+        for (const holder of holders) {
+          for (const field of ["skills", "outputStyles", "commands", "agents", "hooks"]) {
+            const value = holder?.[field];
+            const paths = Array.isArray(value)
+              ? value.filter((item) => typeof item === "string") as string[]
+              : typeof value === "string" ? [value] : [];
+            named.push(...paths.map((path) => path.replace(/^\.\//, "").replace(/\/+$/, "")));
+          }
+        }
+      }
+    }
+    return named;
+  };
+
   walk("");
+
+  for (const path of declared()) {
+    const full = join(REPOSITORY_ROOT, path);
+    if (!existsSync(full)) continue;
+    if (statSync(full).isDirectory()) {
+      walkEverything(path);
+    } else if (!path.toLowerCase().endsWith(".ts")) {
+      found.add(path);
+    }
+  }
+
   return [...found].sort();
 }
 
@@ -941,7 +1000,9 @@ describe("repository writing conventions", () => {
       // changed from pounds to yen, both bytes decoded to the same replacement
       // character, and every line still matched. The digest sees the bytes.
       expect(
-        createHash("sha256").update(bytes).digest("hex"),
+        createHash("sha256")
+          .update(bytes.toString("latin1").replace(/\r\n/g, "\n"), "latin1")
+          .digest("hex"),
         `${file} changed in bytes its lines cannot show. ${REBUILD}`,
       ).toBe(pinned?.digest ?? "");
 
