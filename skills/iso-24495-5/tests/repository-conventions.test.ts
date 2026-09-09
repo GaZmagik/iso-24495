@@ -9,6 +9,7 @@ import {
   isAuditedDocument,
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -836,6 +837,80 @@ describe("repository writing conventions", () => {
         expect(lines, `${relative(REPOSITORY_ROOT, file)} must keep: ${line.slice(0, 40)}`)
           .toContain(line);
       }
+    }
+  });
+
+  // Matching raw bytes is not enough. Wrapping a rule in an HTML comment or a
+  // code fence keeps every byte and takes the rule out of the document. A
+  // review made four such edits, to the proxy note, to the legal routing
+  // bullet and to both rule sections, and the expectations above accepted all
+  // four while the gate reported 211 pass and 0 fail.
+  //
+  // So each expectation is also read as the reader reads it. The parser the
+  // engine already uses reports what survives of a line once markup is
+  // resolved, and a commented or fenced line survives as nothing.
+  //
+  // The expectation supplies its own answer: parsing the canonical text alone
+  // gives what that text should render as. This matters because the worked
+  // examples legitimately carry fenced specimens, which render as nothing too.
+  // A flat rule against invisible lines would fail on them, whereas comparing
+  // each expectation with its own rendering needs no exemption list, and a new
+  // specimen brings its own permission with it.
+  //
+  // One condition makes the comparison sound and is asserted rather than
+  // assumed: an index means the same line to the file and to the raw split.
+  test("a reader sees every line these expectations pin", () => {
+    const pinnedIn = (path: string, units: string[][], what: string): void => {
+      const text = readFileSync(path, "utf8");
+      const raw = text.split(/\r?\n/);
+      const file = readDocument(text);
+      expect(file.lines.length, `${what}: an index must mean the same line to both`)
+        .toBe(raw.length);
+
+      for (const unit of units) {
+        const opening = unit[0] as string;
+        const at = raw.indexOf(opening);
+        expect(at, `${what} must contain ${opening.slice(0, 40)}`).toBeGreaterThan(-1);
+        const canonical = readDocument(unit.join("\n"));
+        for (let index = 0; index < unit.length; index += 1) {
+          expect(
+            file.lines[at + index],
+            `${what}:${at + index + 1} must reach a reader as the expectation renders it: ${unit[index]?.slice(0, 50)}`,
+          ).toBe(canonical.lines[index] as string);
+        }
+      }
+    };
+
+    const eachLine = (lines: string[]): string[][] => lines.map((line) => [line]);
+
+    pinnedIn(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), [
+      PART_2_SCOPE_BOUNDARY,
+      PART_2_DOCUMENT_RULES,
+      PART_2_SUMMARY_EXAMPLE,
+      PART_2_CHECKLIST,
+      ...eachLine(PROXY_NOTE_LINES),
+    ], "iso-24495-2");
+
+    pinnedIn(join(SKILLS_ROOT, "iso-24495-3", "SKILL.md"), [
+      PART_3_SCOPE_BOUNDARY,
+      PART_3_RULES,
+      PART_3_EXAMPLE,
+      PART_3_CHECKLIST,
+      ...eachLine(PROXY_NOTE_LINES),
+    ], "iso-24495-3");
+
+    pinnedIn(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"),
+      eachLine(PART_5_TOUCHED_LINES), "iso-24495-5");
+    pinnedIn(join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"),
+      eachLine(CORE_ROUTING_LINES), "iso-24495-1");
+    pinnedIn(join(REPOSITORY_ROOT, "README.md"),
+      eachLine(README_LINES), "README.md");
+
+    for (const file of [
+      join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"),
+      join(CODEX_SKILLS_ROOT, "iso-24495-style", "SKILL.md"),
+    ]) {
+      pinnedIn(file, eachLine(STYLE_ROUTING_LINES), relative(REPOSITORY_ROOT, file));
     }
   });
 
