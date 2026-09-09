@@ -38,13 +38,11 @@ const entries = shippedDocuments(REPOSITORY_ROOT).map((file) => {
   // matched while a browser showed different money. A digest of the bytes
   // notices what decoding throws away, and the lines still name what changed.
   const bytes = readFileSync(join(REPOSITORY_ROOT, file));
-  // Normalised first, because a checkout decides line endings and this file
-  // is committed. Hashing the raw bytes recorded one machine's carriage
-  // returns in 59 of 61 entries, which would have failed the build on the
-  // Linux runner while passing here. Normalising costs nothing that matters:
-  // a change no decoder can show still changes these bytes.
+  // Text has its line endings normalised and binary does not, because a
+  // checkout decides the first and a browser depends on the second. The
+  // helper says which is which, and why the question is asked per file.
   const digest = createHash("sha256")
-    .update(bytes.toString("latin1").replace(/\r\n/g, "\n"), "latin1")
+    .update(normalisedForHashing(bytes), "latin1")
     .digest("hex");
   const lines = bytes.toString("utf8").split(/\r?\n/);
   console.log(`${file}: ${lines.length} lines`);

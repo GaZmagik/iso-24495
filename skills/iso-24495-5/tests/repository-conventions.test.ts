@@ -12,6 +12,7 @@ import {
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
 import { PINNED_DOCUMENT_TEXT } from "./fixtures/pinned-documents.ts";
+import { normalisedForHashing } from "./reference/hashable-bytes.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -84,40 +85,48 @@ function documentsThatShip(): string[] {
   };
 
   // A manifest may point a component anywhere, including inside a directory
-  // this walk skips. A review declared an output style in two skipped names
-  // in turn, and both shipped unpinned.
+  // this walk skips. Three reviews attacked a list of the fields that can
+  // hold such a path, and each time the list was short: the array form, then
+  // MCP servers, then language servers.
   //
-  // The fields are listed again here rather than borrowed, because borrowing
-  // was the hole: deleting one name from the builder's list satisfied both
-  // computations at once, and a review did exactly that.
+  // So no field names are read. Every string in a manifest that resolves to
+  // something in this repository is a path this repository ships, whichever
+  // key holds it, and a key the host invents tomorrow is covered today.
   const declared = (): string[] => {
     const named: string[] = [];
+
+    const strings = (node: unknown, into: string[]): void => {
+      if (typeof node === "string") {
+        into.push(node);
+      } else if (Array.isArray(node)) {
+        for (const item of node) { strings(item, into); }
+      } else if (node !== null && typeof node === "object") {
+        for (const value of Object.values(node)) { strings(value, into); }
+      }
+    };
+
     for (const directory of [".claude-plugin", ".codex-plugin"]) {
       const base = join(REPOSITORY_ROOT, directory);
       if (!existsSync(base)) continue;
       for (const entry of readdirSync(base)) {
         if (!entry.toLowerCase().endsWith(".json")) continue;
-        let manifest: Record<string, unknown>;
+        let manifest: unknown;
         try {
           manifest = JSON.parse(readFileSync(join(base, entry), "utf8"));
         } catch {
           continue;
         }
-        const holders = [manifest, ...((manifest.plugins as Record<string, unknown>[]) ?? [])];
-        for (const holder of holders) {
-          for (const field of ["skills", "outputStyles", "commands", "agents", "hooks"]) {
-            const value = holder?.[field];
-            const paths = Array.isArray(value)
-              ? value.filter((item) => typeof item === "string") as string[]
-              : typeof value === "string" ? [value] : [];
-            named.push(...paths.map((path) => path.replace(/^\.\//, "").replace(/\/+$/, "")));
-          }
+        const candidates: string[] = [];
+        strings(manifest, candidates);
+        for (const candidate of candidates) {
+          const path = candidate.replace(/^\.\//, "").replace(/\/+$/, "");
+          if (path === "" || path.includes("..")) continue;
+          if (existsSync(join(REPOSITORY_ROOT, path))) named.push(path);
         }
       }
     }
     return named;
   };
-
   walk("");
 
   for (const path of declared()) {
@@ -1001,7 +1010,7 @@ describe("repository writing conventions", () => {
       // character, and every line still matched. The digest sees the bytes.
       expect(
         createHash("sha256")
-          .update(bytes.toString("latin1").replace(/\r\n/g, "\n"), "latin1")
+          .update(normalisedForHashing(bytes), "latin1")
           .digest("hex"),
         `${file} changed in bytes its lines cannot show. ${REBUILD}`,
       ).toBe(pinned?.digest ?? "");

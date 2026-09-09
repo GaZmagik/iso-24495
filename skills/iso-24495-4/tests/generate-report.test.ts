@@ -39,10 +39,18 @@ describe("generateReport", () => {
   // word is not what they mean.
   test("the report keeps the two sentences that limit what it claims", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
-    expect(report, "the report must confer no certification").toContain(
-      "It is not a compliance statement and confers no certification.");
-    expect(report, "the report must require a human reviewer").toContain(
-      "A human reviewer must validate this report before the organisation acts on it.");
+    // Found on a line of their own, not merely somewhere in the text. A review
+    // turned the provisional paragraph into a caption for an image, so the page
+    // showed a picture and the sentence survived only inside its alternative
+    // text. Containing it and showing it are still different things.
+    const shown = report.split(/\r?\n/);
+    const carries = (sentence: string): boolean =>
+      shown.some((line) => line.includes(sentence)
+        && !line.includes("![") && !line.includes("]("));
+    expect(carries("It is not a compliance statement and confers no certification."),
+      "the report must confer no certification, on a line a reader sees").toBe(true);
+    expect(carries("A human reviewer must validate this report before the organisation acts on it."),
+      "the report must require a human reviewer, on a line a reader sees").toBe(true);
   });
 
   // A review replaced the expression that renders these counts with a literal
@@ -74,6 +82,11 @@ describe("generateReport", () => {
     // and the page showed only the title. A report carries no markup at all,
     // which needs no list of the wrappers anyone might reach for.
     expect(report, "markup in a report can hide the report").not.toContain("<");
+    // Markdown hides text without any markup: an image caption and a link
+    // title both do it. The two sentences above are checked for the line
+    // they sit on, which is what that costs.
+    expect(report, "an image can carry a whole report as its caption")
+      .not.toContain("![");
   });
 
   // The maturity levels, checked against the levels the report was handed. A

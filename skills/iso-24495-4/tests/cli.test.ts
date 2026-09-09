@@ -415,9 +415,13 @@ describe("command line entry files", () => {
         printedEvidence.writeOut, () => {});
       const savedEvidence = JSON.parse(readFileSync(evidencePath, "utf8"));
       const evidenceShown = printedEvidence.stdout.join("\n");
-      for (const [category, entry] of Object.entries(savedEvidence)) {
+      // The categories sit under artefacts. Reading the outer object compared
+      // nothing at all, and a review proved it by inventing every path in the
+      // saved copy while the terminal kept the real ones.
+      const categories = Object.entries(savedEvidence.artefacts ?? {});
+      expect(categories.length, "the fixture must produce artefact rows").toBeGreaterThan(0);
+      for (const [category, entry] of categories) {
         const record = entry as { found: boolean; paths: string[] };
-        if (typeof record?.found !== "boolean") continue;
         expect(evidenceShown, `the saved row for ${category} must be printed`)
           .toContain(
             `| ${category} | ${record.found ? "yes" : "no"} | ` + `${record.paths.join("<br>") || "-"} |`,
@@ -432,10 +436,12 @@ describe("command line entry files", () => {
         printedMaturity.writeOut, () => {});
       const savedMaturity = JSON.parse(readFileSync(maturityPath, "utf8"));
       const maturityShown = printedMaturity.stdout.join("\n");
+      // The blocking criteria as well as the level, because a review emptied
+      // them in the saved copy alone and the levels still matched.
       for (const [dimension, result] of Object.entries(savedMaturity.dimensions)) {
-        const scored = result as { level: number };
-        expect(maturityShown, `the saved level for ${dimension} must be printed`)
-          .toContain(`| ${dimension} | ${scored.level} |`);
+        const scored = result as { level: number; missing: string[] };
+        expect(maturityShown, `the saved row for ${dimension} must be printed`)
+          .toContain(`| ${dimension} | ${scored.level} | ${scored.missing.join(", ") || "-"} |`);
       }
       expect(maturityShown, "the saved overall level must be printed")
         .toContain(`Overall (weakest dimension): ${savedMaturity.overall}`);
@@ -453,9 +459,9 @@ describe("command line entry files", () => {
         reportArgv,
         printedReport.writeOut, () => {}, () => "2026-08-13T12:00:00.000Z",
       );
-      expect(readFileSync(reportPath, "utf8").trim(),
+      expect(readFileSync(reportPath, "utf8"),
         "the saved report must be the report it prints")
-        .toBe(printedReport.stdout.join("").trim());
+        .toBe(printedReport.stdout.join(""));
 
       // And again with state, because a review made the saved copy differ
       // only when a state file was asked for.
@@ -472,9 +478,9 @@ describe("command line entry files", () => {
         withState,
         printedStateful.writeOut, () => {}, () => "2026-08-14T12:00:00.000Z",
       );
-      expect(readFileSync(statefulPath, "utf8").trim(),
+      expect(readFileSync(statefulPath, "utf8"),
         "saving with a state file must not change the report")
-        .toBe(printedStateful.stdout.join("").trim());
+        .toBe(printedStateful.stdout.join(""));
 
       // The text audit saves JSON and prints a table, so its findings are
       // compared through the details they share.
@@ -490,11 +496,19 @@ describe("command line entry files", () => {
         ["bun", "audit-text-cli.ts", auditTarget],
         printedAudit.writeOut, () => {},
       );
-      const savedAudit = readFileSync(auditJson, "utf8");
-      expect(savedAudit, "saved findings must ban what the printed ones ban")
-        .toContain("banned term");
-      expect(printedAudit.stdout.join(""), "printed findings must ban it too")
-        .toContain("legalese");
+      // Every finding compared, rather than a word from one and a word from the
+      // other. A review renamed a term in the saved copy alone, so the file
+      // called "shall" something the terminal had not.
+      const savedAudit = JSON.parse(readFileSync(auditJson, "utf8"));
+      const auditShown = printedAudit.stdout.join("\n");
+      const savedViolations = Object.values(savedAudit.files as Record<string, {
+        violations: Array<{ rule: string; line: number; detail: string }>;
+      }>).flatMap((file) => file.violations);
+      expect(savedViolations.length, "the probe must produce findings").toBeGreaterThan(0);
+      for (const violation of savedViolations) {
+        expect(auditShown, `the saved finding "${violation.detail}" must be printed`)
+          .toContain(`| ${violation.line} | ${violation.rule} | ${violation.detail} |`);
+      }
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
