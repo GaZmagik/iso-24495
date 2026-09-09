@@ -82,4 +82,9 @@
 
 1. [Prepare and verify the release.]
 2. [Deploy the change in controlled stages.]
-3. [Verify success or follow the rollback procedure.]
+3. [Check the release against the criteria in 6.1.]
+
+| Check result | What to do |
+| :--- | :--- |
+| **[Criteria met]** | [Finish the release and record it.] |
+| **[Criteria not met]** | [Follow the rollback procedure.] |

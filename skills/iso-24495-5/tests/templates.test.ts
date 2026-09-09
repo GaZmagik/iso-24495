@@ -151,7 +151,7 @@ describe("Part 5 document templates", () => {
       "> [!CAUTION]",
       "> [Critical risks or conditions, before any step runs.]",
       "> [!NOTE]",
-      "> [Expected output for step 2]",
+      "> [Expected output for step 2. Where it differs, stop and do not run step 3.]",
     ],
     "design-doc-template.md": [
       "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
@@ -265,7 +265,7 @@ describe("Part 5 document templates", () => {
       "1. [First action]",
       "2. [Second action]",
       "   > [!NOTE]",
-      "   > [Expected output for step 2]",
+      "   > [Expected output for step 2. Where it differs, stop and do not run step 3.]",
       "3. [Third action]",
       "",
       "## Confirm the task worked",
@@ -357,7 +357,12 @@ describe("Part 5 document templates", () => {
       "",
       "1. [Prepare and verify the release.]",
       "2. [Deploy the change in controlled stages.]",
-      "3. [Verify success or follow the rollback procedure.]",
+      "3. [Check the release against the criteria in 6.1.]",
+      "",
+      "| Check result | What to do |",
+      "| :--- | :--- |",
+      "| **[Criteria met]** | [Finish the release and record it.] |",
+      "| **[Criteria not met]** | [Follow the rollback procedure.] |",
     ],
   };
 

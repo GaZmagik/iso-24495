@@ -18,7 +18,7 @@
 1. [First action]
 2. [Second action]
    > [!NOTE]
-   > [Expected output for step 2]
+   > [Expected output for step 2. Where it differs, stop and do not run step 3.]
 3. [Third action]
 
 ## Confirm the task worked
