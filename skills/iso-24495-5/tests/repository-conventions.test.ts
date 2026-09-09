@@ -995,6 +995,14 @@ describe("repository writing conventions", () => {
       );
       const inlineBunCalls = workflow.match(/^\s*run:\s*bun\b/gm) ?? [];
       expect(inlineBunCalls, "the workflow must not run its own bun commands").toEqual([]);
+
+      // The version test reads git tags, and a default checkout fetches none.
+      // It already refuses an empty tag list, so a shallow checkout fails the
+      // build rather than passing quietly. This says so here instead, where
+      // the cause is one line away from the reader, because a run that dies
+      // in the version test names the symptom and not this setting.
+      expect(workflow, "a shallow checkout leaves the version test no tags to read")
+        .toMatch(/^\s*fetch-depth:\s*0\s*$/m);
     });
 
     test("the README tells a contributor to run the same script", () => {
