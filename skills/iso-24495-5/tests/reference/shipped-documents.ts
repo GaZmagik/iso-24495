@@ -1,86 +1,59 @@
-// Every file in this repository that is not TypeScript, plus anything a
-// manifest points at wherever it lives.
+// The documents this repository pins, named rather than discovered.
 //
-// The boundary has moved outward five times, and each move was a review showing
-// that the previous one was drawn around what I had in mind rather than around
-// what a reader receives. Skills, then the manifests that decide which skills
-// arrive, then the references and templates a skill hands over, then the
-// licence and a command hidden in a directory named for code, and then an
-// output style declared inside a directory this file skips.
+// Six versions of this file tried to work the set out: from the skills, then
+// the manifests, then every component directory, then the whole repository,
+// then any string in a manifest that resolved to a path. A review defeated
+// each one, and the last two failed in both directions at once, missing a
+// declared style whose name held two dots while pulling one machine's local
+// settings into the fixture because a description happened to name a folder.
 //
-// That last one is why the skip list is no longer the last word. A manifest can
-// name a path anywhere, and a named path ships whatever it holds, so every
-// declared path is followed even into a directory otherwise passed over.
+// The reviewer's own advice, asked for and taken: keep whole-text fixtures for
+// an explicitly reviewed set, and stop reproducing packaging behaviour,
+// filesystem semantics and file-format decisions. Those attempts were reaching
+// past their evidence, and each repair cost about as much as it bought.
 //
-// Two things are left out, and both are named rather than described, because a
-// description is a shape an attacker can stand outside of.
-//
-// TypeScript is left out because it changes constantly and has its own suites
-// and a coverage floor. That is not a claim that code is harmless: a review
-// reversed the report's certification disclaimer in code and the gate stayed
-// green, so the sentences the engine prints are pinned by their own tests.
-//
-// The rest is machinery that no reader receives, unless a manifest names it.
-//
-// The suite works the same set out for itself, without importing this module.
-// Sharing it was a hole of its own: emptying one array here once satisfied both
-// sides at once.
+// So this is a list. A list can be short, and a review proved that by
+// shortening one. What answers that is not a cleverer derivation but a floor
+// checked separately: every skill and every manifest present must appear here,
+// which fails when something arrives unlisted. The list says what is covered,
+// the floor says nothing has slipped out of it, and neither pretends to know
+// what a host will load.
 
-import { readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+/** Every document whose text is pinned, in a stable order. */
+export const SHIPPED_DOCUMENTS: readonly string[] = [
+  ".claude-plugin/marketplace.json",
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  "CHANGELOG.md",
+  "LICENSE",
+  "README.md",
+  "codex-skills/iso-24495-style/SKILL.md",
+  "codex-skills/iso-24495-style/agents/openai.yaml",
+  "output-styles/iso-24495.md",
+  "skills/iso-24495-1/SKILL.md",
+  "skills/iso-24495-1/agents/openai.yaml",
+  "skills/iso-24495-2/SKILL.md",
+  "skills/iso-24495-2/agents/openai.yaml",
+  "skills/iso-24495-3/SKILL.md",
+  "skills/iso-24495-3/agents/openai.yaml",
+  "skills/iso-24495-4/SKILL.md",
+  "skills/iso-24495-4/agents/openai.yaml",
+  "skills/iso-24495-4/assets/gap-report-template.md",
+  "skills/iso-24495-4/references/evidence-map.md",
+  "skills/iso-24495-4/references/interview-guide.md",
+  "skills/iso-24495-4/references/maturity-model.md",
+  "skills/iso-24495-5/SKILL.md",
+  "skills/iso-24495-5/agents/openai.yaml",
+  "skills/iso-24495-5/assets/adr-template.md",
+  "skills/iso-24495-5/assets/design-doc-template.md",
+  "skills/iso-24495-5/assets/runbook-template.md",
+  "skills/iso-24495-code/SKILL.md",
+  "skills/iso-24495-code/agents/openai.yaml",
+  "skills/iso-24495-text-audit/SKILL.md",
+  "skills/iso-24495-text-audit/agents/openai.yaml",
+];
 
-import { pathsManifestsName } from "./manifest-paths.ts";
-
-/** Names holding machinery, skipped unless a manifest names inside them. */
-const NOT_SHIPPED = new Set([".git", ".claude", ".iso-24495-4", "node_modules"]);
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function relativePosix(root: string, path: string): string {
-  return relative(root, path).split("\\").join("/");
-}
-
-function walk(root: string, directory: string, found: Set<string>, skip: boolean): void {
-  const base = directory === "" ? root : join(root, directory);
-  for (const entry of readdirSync(base)) {
-    if (skip && NOT_SHIPPED.has(entry)) continue;
-    const path = join(base, entry);
-    if (isDirectory(path)) {
-      walk(root, directory === "" ? entry : `${directory}/${entry}`, found, skip);
-    } else if (!entry.toLowerCase().endsWith(".ts")) {
-      found.add(relativePosix(root, path));
-    }
-  }
-}
-
-/** Every shipped file, in a stable order. */
-export function shippedDocuments(root: string): string[] {
-  const found = new Set<string>();
-  walk(root, "", found, true);
-
-  // A declared path is followed whether or not the walk would have gone there.
-  for (const declared of pathsManifestsName(root)) {
-    const path = join(root, declared);
-    if (isFile(path)) {
-      found.add(relativePosix(root, path));
-    } else if (isDirectory(path)) {
-      walk(root, relativePosix(root, path), found, false);
-    }
-  }
-
-  return [...found].sort();
+/** The same list, for a builder that wants it as an array it can walk. */
+export function shippedDocuments(): string[] {
+  return [...SHIPPED_DOCUMENTS];
 }

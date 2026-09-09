@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
+import { auditCorpus, runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
 import { runCli as runEvidenceCli } from "../scripts/audit-evidence.ts";
 import { runCli as runReportCli } from "../scripts/generate-report.ts";
 import { runCli as runMaturityCli } from "../scripts/score-maturity.ts";
@@ -394,18 +394,41 @@ describe("command line entry files", () => {
     const workspace = mkdtempSync(join(tmpdir(), "iso-write-through-"));
     try {
       // A command prints a table and saves JSON, so the two are compared
-      // value by value rather than as the same text. What matters is that
-      // the file and the terminal say the same thing about the same run.
+      // by rebuilding the table the saved file implies and requiring the
+      // printed one to be exactly that.
+      //
+      // Reading the saved file and looking for its entries in the terminal
+      // was not enough, and a review proved it four ways: dropping every
+      // category but one, emptying the dimensions, renaming the file a
+      // finding belonged to, and keeping only the first finding of each. A
+      // check that walks what survived cannot see what did not.
+      const rows = (text: string): string[] => text.split(/\r?\n/)
+        .filter((line) => line.startsWith("| ") && !line.startsWith("|--"));
+
       const findingsPath = join(workspace, "findings.json");
       const printedCorpus = capture();
       runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findingsPath],
         () => {}, () => {});
       runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS], printedCorpus.writeOut, () => {});
       const savedFindings = JSON.parse(readFileSync(findingsPath, "utf8"));
-      for (const [rule, count] of Object.entries(savedFindings.totals)) {
-        expect(printedCorpus.stdout.join(""), `the saved count for ${rule} must be printed`)
-          .toContain(`| ${rule} | ${count} |`);
-      }
+      expect(
+        rows(printedCorpus.stdout.join("\n")),
+        "the printed table must be exactly the saved totals",
+      ).toEqual([
+        "| Rule | Violations |",
+        ...Object.entries(savedFindings.totals as Record<string, number>)
+          .map(([rule, count]) => `| ${rule} | ${count} |`),
+      ]);
+
+      // The printed table carries counts, not details, so the saved detail has
+      // nowhere to be compared against. A review used that to reverse the
+      // advice in the file alone. It is compared against the library instead,
+      // which is what the command is supposed to be writing down.
+      const expectedCorpus = auditCorpus(CORPUS);
+      expect(
+        savedFindings.files,
+        "the saved findings must be the findings the engine produced",
+      ).toEqual(expectedCorpus.files);
 
       const evidencePath = join(workspace, "evidence.json");
       const printedEvidence = capture();
@@ -414,19 +437,17 @@ describe("command line entry files", () => {
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY],
         printedEvidence.writeOut, () => {});
       const savedEvidence = JSON.parse(readFileSync(evidencePath, "utf8"));
-      const evidenceShown = printedEvidence.stdout.join("\n");
-      // The categories sit under artefacts. Reading the outer object compared
-      // nothing at all, and a review proved it by inventing every path in the
-      // saved copy while the terminal kept the real ones.
-      const categories = Object.entries(savedEvidence.artefacts ?? {});
-      expect(categories.length, "the fixture must produce artefact rows").toBeGreaterThan(0);
-      for (const [category, entry] of categories) {
-        const record = entry as { found: boolean; paths: string[] };
-        expect(evidenceShown, `the saved row for ${category} must be printed`)
-          .toContain(
-            `| ${category} | ${record.found ? "yes" : "no"} | ` + `${record.paths.join("<br>") || "-"} |`,
-          );
-      }
+      expect(
+        rows(printedEvidence.stdout.join("\n")),
+        "the printed table must be exactly the saved artefacts",
+      ).toEqual([
+        "| Artefact category | Found | Paths |",
+        ...Object.entries(savedEvidence.artefacts as Record<string, {
+          found: boolean; paths: string[];
+        }>).map(([category, record]) =>
+          `| ${category} | ${record.found ? "yes" : "no"} | `
+          + `${record.paths.join("<br>") || "-"} |`),
+      ]);
 
       const maturityPath = join(workspace, "maturity.json");
       const printedMaturity = capture();
@@ -435,15 +456,18 @@ describe("command line entry files", () => {
       runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS],
         printedMaturity.writeOut, () => {});
       const savedMaturity = JSON.parse(readFileSync(maturityPath, "utf8"));
-      const maturityShown = printedMaturity.stdout.join("\n");
-      // The blocking criteria as well as the level, because a review emptied
-      // them in the saved copy alone and the levels still matched.
-      for (const [dimension, result] of Object.entries(savedMaturity.dimensions)) {
-        const scored = result as { level: number; missing: string[] };
-        expect(maturityShown, `the saved row for ${dimension} must be printed`)
-          .toContain(`| ${dimension} | ${scored.level} | ${scored.missing.join(", ") || "-"} |`);
-      }
-      expect(maturityShown, "the saved overall level must be printed")
+      expect(
+        rows(printedMaturity.stdout.join("\n")),
+        "the printed table must be exactly the saved dimensions",
+      ).toEqual([
+        "| Dimension | Level | Blocking criteria |",
+        ...Object.entries(savedMaturity.dimensions as Record<string, {
+          level: number; missing: string[];
+        }>).map(([dimension, scored]) =>
+          `| ${dimension} | ${scored.level} | ${scored.missing.join(", ") || "-"} |`),
+      ]);
+      expect(printedMaturity.stdout.join("\n"),
+        "the saved overall level must be printed")
         .toContain(`Overall (weakest dimension): ${savedMaturity.overall}`);
       // The report, on a fixed clock and with no state, so neither run
       // changes what the other would produce.
@@ -496,19 +520,23 @@ describe("command line entry files", () => {
         ["bun", "audit-text-cli.ts", auditTarget],
         printedAudit.writeOut, () => {},
       );
-      // Every finding compared, rather than a word from one and a word from the
-      // other. A review renamed a term in the saved copy alone, so the file
-      // called "shall" something the terminal had not.
+      // Every finding, with the file it belongs to, compared as the table.
+      // A review renamed the saved file key and kept only the first finding
+      // of each, and a check that walked the saved side saw neither.
       const savedAudit = JSON.parse(readFileSync(auditJson, "utf8"));
-      const auditShown = printedAudit.stdout.join("\n");
-      const savedViolations = Object.values(savedAudit.files as Record<string, {
+      const savedRows = Object.entries(savedAudit.files as Record<string, {
         violations: Array<{ rule: string; line: number; detail: string }>;
-      }>).flatMap((file) => file.violations);
-      expect(savedViolations.length, "the probe must produce findings").toBeGreaterThan(0);
-      for (const violation of savedViolations) {
-        expect(auditShown, `the saved finding "${violation.detail}" must be printed`)
-          .toContain(`| ${violation.line} | ${violation.rule} | ${violation.detail} |`);
-      }
+      }>).flatMap(([file, record]) => record.violations
+        .map((violation) =>
+          `| ${file} | ${violation.line} | ${violation.rule} | ${violation.detail} |`));
+      expect(savedRows.length, "the probe must produce findings").toBeGreaterThan(0);
+      expect(
+        rows(printedAudit.stdout.join("\n")),
+        "the printed table must be exactly the saved findings",
+      ).toEqual([
+        "| File | Line | Rule | Finding |",
+        ...savedRows,
+      ]);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

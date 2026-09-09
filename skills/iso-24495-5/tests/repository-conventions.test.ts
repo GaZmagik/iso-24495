@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -12,7 +11,7 @@ import {
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
 import { PINNED_DOCUMENT_TEXT } from "./fixtures/pinned-documents.ts";
-import { normalisedForHashing } from "./reference/hashable-bytes.ts";
+import { SHIPPED_DOCUMENTS } from "./reference/shipped-documents.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -40,109 +39,7 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * A reader meets these as rendered pages, so what they say and what a browser
  * shows have to stay the same thing.
  */
-/**
- * Every file that is not TypeScript, walked here rather than asked for.
- *
- * The builder walks the same repository, and sharing that walk with this
- * file was itself a hole: a review emptied one array in the shared module,
- * and both sides then agreed that the README needed no cover. These two
- * cannot see each other, so shortening one no longer lets it agree with
- * itself.
- *
- * Four boundaries were drawn before this one and a review stood outside
- * each. So there is no boundary now: everything is covered except
- * TypeScript, whose printed sentences are pinned by their own test, and
- * machinery no reader receives.
- */
-function documentsThatShip(): string[] {
-  const machinery = new Set([".git", ".claude", ".iso-24495-4", "node_modules"]);
-  const found = new Set<string>();
-
-  const walk = (directory: string): void => {
-    const base = directory === "" ? REPOSITORY_ROOT : join(REPOSITORY_ROOT, directory);
-    for (const entry of readdirSync(base)) {
-      if (machinery.has(entry)) continue;
-      const here = directory === "" ? entry : `${directory}/${entry}`;
-      if (statSync(join(base, entry)).isDirectory()) {
-        walk(here);
-      } else if (!entry.toLowerCase().endsWith(".ts")) {
-        found.add(here);
-      }
-    }
-  };
-
-  /** The same walk without the skip list, for a directory a manifest names. */
-  const walkEverything = (directory: string): void => {
-    const base = join(REPOSITORY_ROOT, directory);
-    for (const entry of readdirSync(base)) {
-      const here = `${directory}/${entry}`;
-      if (statSync(join(base, entry)).isDirectory()) {
-        walkEverything(here);
-      } else if (!entry.toLowerCase().endsWith(".ts")) {
-        found.add(here);
-      }
-    }
-  };
-
-  // A manifest may point a component anywhere, including inside a directory
-  // this walk skips. Three reviews attacked a list of the fields that can
-  // hold such a path, and each time the list was short: the array form, then
-  // MCP servers, then language servers.
-  //
-  // So no field names are read. Every string in a manifest that resolves to
-  // something in this repository is a path this repository ships, whichever
-  // key holds it, and a key the host invents tomorrow is covered today.
-  const declared = (): string[] => {
-    const named: string[] = [];
-
-    const strings = (node: unknown, into: string[]): void => {
-      if (typeof node === "string") {
-        into.push(node);
-      } else if (Array.isArray(node)) {
-        for (const item of node) { strings(item, into); }
-      } else if (node !== null && typeof node === "object") {
-        for (const value of Object.values(node)) { strings(value, into); }
-      }
-    };
-
-    for (const directory of [".claude-plugin", ".codex-plugin"]) {
-      const base = join(REPOSITORY_ROOT, directory);
-      if (!existsSync(base)) continue;
-      for (const entry of readdirSync(base)) {
-        if (!entry.toLowerCase().endsWith(".json")) continue;
-        let manifest: unknown;
-        try {
-          manifest = JSON.parse(readFileSync(join(base, entry), "utf8"));
-        } catch {
-          continue;
-        }
-        const candidates: string[] = [];
-        strings(manifest, candidates);
-        for (const candidate of candidates) {
-          const path = candidate.replace(/^\.\//, "").replace(/\/+$/, "");
-          if (path === "" || path.includes("..")) continue;
-          if (existsSync(join(REPOSITORY_ROOT, path))) named.push(path);
-        }
-      }
-    }
-    return named;
-  };
-  walk("");
-
-  for (const path of declared()) {
-    const full = join(REPOSITORY_ROOT, path);
-    if (!existsSync(full)) continue;
-    if (statSync(full).isDirectory()) {
-      walkEverything(path);
-    } else if (!path.toLowerCase().endsWith(".ts")) {
-      found.add(path);
-    }
-  }
-
-  return [...found].sort();
-}
-
-const PINNED_DOCUMENTS = documentsThatShip();
+const PINNED_DOCUMENTS = [...SHIPPED_DOCUMENTS];
 /** Named in every failure here, because a diff cannot say what to run. */
 const REBUILD =
   "rebuild with: bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts";
@@ -992,6 +889,92 @@ describe("repository writing conventions", () => {
   // shortening one no longer lets it agree with itself. Removing a skill
   // from a manifest stops it
   // shipping, which is a visible act rather than a quiet one.
+  // A list can be short, and a review proved that by shortening one. This
+  // is the floor beneath it: everything of a kind this repository is known
+  // to ship must be listed, so a skill or a manifest cannot arrive unnoticed.
+  //
+  // It checks kinds it can name rather than trying to work out what a host
+  // will load. Five attempts at that inference were defeated in turn, and
+  // the reviewer who defeated them advised stopping. A narrow floor that
+  // holds beats a broad one that does not.
+  test("every skill and manifest present is on the pinned list", () => {
+    const listed = new Set(SHIPPED_DOCUMENTS);
+    const missing: string[] = [];
+
+    for (const root of ["skills", "codex-skills"]) {
+      const base = join(REPOSITORY_ROOT, root);
+      if (!existsSync(base)) continue;
+      for (const entry of readdirSync(base)) {
+        for (const file of ["SKILL.md", "agents/openai.yaml"]) {
+          const path = `${root}/${entry}/${file}`;
+          if (!existsSync(join(REPOSITORY_ROOT, path))) continue;
+          if (!listed.has(path)) missing.push(path);
+        }
+      }
+    }
+
+    for (const root of [".claude-plugin", ".codex-plugin"]) {
+      const base = join(REPOSITORY_ROOT, root);
+      if (!existsSync(base)) continue;
+      for (const entry of readdirSync(base)) {
+        if (!entry.toLowerCase().endsWith(".json")) continue;
+        const path = `${root}/${entry}`;
+        if (!listed.has(path)) missing.push(path);
+      }
+    }
+
+    // The other kinds this repository is known to ship: what a skill hands a
+    // reader, the output style, and the three documents at the root. Removing
+    // one line from the list passed until these were counted too.
+    for (const root of ["skills", "codex-skills"]) {
+      const base = join(REPOSITORY_ROOT, root);
+      if (!existsSync(base)) continue;
+      for (const skill of readdirSync(base)) {
+        for (const kind of ["assets", "references"]) {
+          const directory = join(base, skill, kind);
+          if (!existsSync(directory)) continue;
+          for (const entry of readdirSync(directory)) {
+            const path = `${root}/${skill}/${kind}/${entry}`;
+            if (!listed.has(path)) missing.push(path);
+          }
+        }
+      }
+    }
+
+    const styles = join(REPOSITORY_ROOT, "output-styles");
+    if (existsSync(styles)) {
+      for (const entry of readdirSync(styles)) {
+        if (!listed.has(`output-styles/${entry}`)) missing.push(`output-styles/${entry}`);
+      }
+    }
+
+    for (const file of ["README.md", "LICENSE", "CHANGELOG.md"]) {
+      if (!existsSync(join(REPOSITORY_ROOT, file))) continue;
+      if (!listed.has(file)) missing.push(file);
+    }
+
+    expect(missing, `these ship but are not pinned. ${REBUILD}`).toEqual([]);
+
+    // And nothing listed has quietly left the repository.
+    const absent = SHIPPED_DOCUMENTS
+      .filter((file) => !existsSync(join(REPOSITORY_ROOT, file)));
+    expect(absent, "these are pinned but missing from the repository").toEqual([]);
+  });
+
+  // The builder is a documented command, and a review found it broken by a
+  // missing import while every test stayed green. A command nobody runs is a
+  // command nobody knows the state of, so this runs it.
+  test("the documented rebuild command runs and changes nothing", () => {
+    const fixture = join(import.meta.dir, "fixtures", "pinned-documents.ts");
+    const before = readFileSync(fixture, "utf8");
+    execSync(
+      "bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts",
+      { cwd: REPOSITORY_ROOT, stdio: "pipe" },
+    );
+    expect(readFileSync(fixture, "utf8"),
+      "a rebuild on an unchanged tree must reproduce the fixture exactly")
+      .toBe(before);
+  });
   test("the fixture covers every document the manifests ship", () => {
     expect(Object.keys(PINNED_DOCUMENT_TEXT).sort(), REBUILD)
       .toEqual(PINNED_DOCUMENTS);
@@ -1000,21 +983,24 @@ describe("repository writing conventions", () => {
   test("no line of a pinned document changes without its fixture changing", () => {
 
     for (const file of PINNED_DOCUMENTS) {
+      // Read as text, and required to be text. A review changed a price
+      // written in UTF-16 from pounds to yen and every line still matched,
+      // because both bytes decode to the same replacement character. Refusing
+      // a file that does not survive the round trip closes that without a
+      // digest, and without this suite deciding what a file format is.
       const bytes = readFileSync(join(REPOSITORY_ROOT, file));
-      const pinned = PINNED_DOCUMENT_TEXT[file];
-      const actual = bytes.toString("utf8").split(/\r?\n/);
-      const expected = pinned?.lines ?? [];
+      const text = bytes.toString("utf8");
+      expect(
+        Buffer.from(text, "utf8").equals(bytes),
+        `${file} must be UTF-8 text. ${REBUILD}`,
+      ).toBe(true);
+
+      const actual = text.split(/\r?\n/);
+      const expected = PINNED_DOCUMENT_TEXT[file] ?? [];
 
       // Decoding is lossy, and a review used that: a price written in UTF-16
       // changed from pounds to yen, both bytes decoded to the same replacement
       // character, and every line still matched. The digest sees the bytes.
-      expect(
-        createHash("sha256")
-          .update(normalisedForHashing(bytes), "latin1")
-          .digest("hex"),
-        `${file} changed in bytes its lines cannot show. ${REBUILD}`,
-      ).toBe(pinned?.digest ?? "");
-
       // Named line by line rather than as one blob, because a failure saying
       // only that a 209 line file differs sends the reader to a diff tool.
       const reach = Math.max(actual.length, expected.length);
