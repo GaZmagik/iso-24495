@@ -40,8 +40,9 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Known limits
 
 - **The audit engine does not measure the new rules.** Its seventeen checks are mechanical
-  proxies, most reading prose and a few reading markup: headings, table headers, links
-  and images. None reads the structure this release adds. A document with no
+  proxies: eleven read prose, and six read markup, being three on headings and one each
+  on table headers, link text and image alternatives. None reads the structure this
+  release adds. A document with no
   summary, undefined terms, unnumbered clauses or a misplaced stage still reports zero
   findings. A zero is not a pass for any of them, and the organisational Measurement
   dimension does not move when that structure is absent.

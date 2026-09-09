@@ -693,7 +693,7 @@ describe("repository writing conventions", () => {
     "   - Stages 2 and 3 sit in the main body, in that order.",
     "   - Part 5's optional detail holds what a reader can skip and still act on. No stage covers it, so nothing is demoted there by default.",
     "",
-    "   A stage covers what the explanation contains. A runbook explains what to do and a decision record explains a choice, so neither needs stage 2's diagram of components nor stage 3's code. Omit a stage the explanation has no content for, and keep the order of those it has.",
+    "   A stage covers what the explanation contains. A runbook explains what to do and a decision record explains a choice, so neither needs stage 2's diagram of components nor stage 3's code. Omit a stage the explanation has no content for, and keep the order of those it has. They also do not exclude what a genre needs beside them: an incident report's timeline sits with the stages rather than inside one.",
     "",
     "2. **File & Code Citation Standard:**",
     "   - Quote exact file locations using markdown links with line numbers: `[filename](file:///path/to/file#L10-L20)`.",
