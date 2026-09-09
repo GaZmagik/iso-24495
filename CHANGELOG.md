@@ -47,11 +47,13 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   findings. A zero is not a pass for any of them, and the organisational Measurement
   dimension does not move when that structure is absent.
 
-- **Seven documents are now pinned whole, and editing one means rebuilding its fixture.**
-  Guarding the words was not enough: a review left every pinned rule intact and wrapped the
-  block in image syntax, so the page showed alternative text instead. Only the whole file
-  guards the space around a block. The builder is checked in beside the fixture, and the
-  templates under `assets` have been held this way since 0.6.2.
+- **Every shipped document is now pinned whole, and editing one means rebuilding its
+  fixture.** Guarding the words was not enough: a review kept every pinned rule intact,
+  wrapped the block in image syntax, and left a page with no paragraph on it. Only the whole
+  file guards the space around a block. The manifests are pinned too, because they decide
+  which repository a reader installs and which directories supply its skills and style. The
+  set comes from the manifests rather than a list, and the builder is checked in beside the
+  fixture.
 
 ### Changed
 

@@ -25,21 +25,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { shippedDocuments } from "./shipped-documents.ts";
+
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const FIXTURE = join(import.meta.dir, "..", "fixtures", "pinned-documents.ts");
 
-/** Every document whose rules this branch pins, as repository-relative paths. */
-const DOCUMENTS = [
-  "README.md",
-  "output-styles/iso-24495.md",
-  "codex-skills/iso-24495-style/SKILL.md",
-  "skills/iso-24495-1/SKILL.md",
-  "skills/iso-24495-2/SKILL.md",
-  "skills/iso-24495-3/SKILL.md",
-  "skills/iso-24495-5/SKILL.md",
-];
-
-const entries = DOCUMENTS.map((file) => {
+const entries = shippedDocuments(REPOSITORY_ROOT).map((file) => {
   const lines = readFileSync(join(REPOSITORY_ROOT, file), "utf8").split(/\r?\n/);
   console.log(`${file}: ${lines.length} lines`);
   const body = lines.map((line) => `    ${JSON.stringify(line)},`).join("\n");
