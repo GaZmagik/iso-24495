@@ -46,6 +46,12 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   findings. A zero is not a pass for any of them, and the organisational Measurement
   dimension does not move when that structure is absent.
 
+- **The check that a rule reaches the reader trusts this project's own parser.** It compares
+  each pinned line with what that parser says the line renders as, so it catches text hidden
+  by a comment or a code fence. Where the parser and a reader's renderer disagree, it would
+  not. Three candidate disagreements were tested against a reference renderer and none hid
+  any pinned text, which is evidence rather than proof.
+
 ### Changed
 
 - **A technical task now reaches the document design skill too**, whenever its output is a
