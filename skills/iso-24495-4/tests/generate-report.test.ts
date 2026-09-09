@@ -45,10 +45,10 @@ describe("generateReport", () => {
       "A human reviewer must validate this report before the organisation acts on it.");
   });
 
-  // The counts are the report's only quantities, and a review replaced the
-  // one that renders them with a literal zero. Every row still appeared, so
-  // the section check above passed and the reader was told there was nothing
-  // to fix.
+  // A review replaced the expression that renders these counts with a literal
+  // zero. Every row still appeared, so the section check above passed and the
+  // reader was told there was nothing to fix. The maturity levels are the
+  // report's other quantities, and they are checked below for the same reason.
   test("the corpus rows carry the counts they were given", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
     const totals = Object.entries(findings.totals);
@@ -61,6 +61,40 @@ describe("generateReport", () => {
       totals.some(([, count]) => count > 0),
       "a corpus with findings must not report every rule as zero",
     ).toBe(true);
+  });
+
+  // Containing a sentence is not showing it. A review wrapped the whole report
+  // in an HTML comment, and every check above passed while a browser rendered
+  // an empty page. So the report must begin as a report, and must carry no
+  // comment opener anywhere in it.
+  test("the report reaches the reader rather than merely containing its words", () => {
+    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
+    expect(report.split(/\r?\n/)[0], "the report must open with its own heading")
+      .toBe("# Plain Language Gap Analysis");
+    expect(report, "a report inside a comment shows a reader nothing")
+      .not.toContain("<!--");
+  });
+
+  // Every number the report prints, checked against the numbers it was handed.
+  // A review replaced each maturity level with a literal 4, and the rows still
+  // appeared, so a reader was told the organisation had reached the top level
+  // whatever its evidence said.
+  test("the maturity rows carry the levels they were scored", () => {
+    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
+    for (const [dimension, result] of Object.entries(maturity.dimensions)) {
+      expect(report, `the row for ${dimension} must show its own level`)
+        .toContain(`| ${dimension} | ${result.level} |`);
+    }
+    expect(report, "the overall level must be the one that was scored")
+      .toContain(`**${maturity.overall}**`);
+  });
+
+  // The sentence that stops a good writing score standing in for evidence.
+  // Reversing it to "always" survived every check.
+  test("the report keeps text quality from raising a level", () => {
+    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
+    expect(report, "text quality must never raise a maturity level")
+      .toContain("Text quality alone never raises a maturity level.");
   });
 
   test("a first run creates state with one timestamped snapshot", () => {

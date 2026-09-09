@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -931,8 +932,18 @@ describe("repository writing conventions", () => {
   test("no line of a pinned document changes without its fixture changing", () => {
 
     for (const file of PINNED_DOCUMENTS) {
-      const actual = readFileSync(join(REPOSITORY_ROOT, file), "utf8").split(/\r?\n/);
-      const expected = PINNED_DOCUMENT_TEXT[file] ?? [];
+      const bytes = readFileSync(join(REPOSITORY_ROOT, file));
+      const pinned = PINNED_DOCUMENT_TEXT[file];
+      const actual = bytes.toString("utf8").split(/\r?\n/);
+      const expected = pinned?.lines ?? [];
+
+      // Decoding is lossy, and a review used that: a price written in UTF-16
+      // changed from pounds to yen, both bytes decoded to the same replacement
+      // character, and every line still matched. The digest sees the bytes.
+      expect(
+        createHash("sha256").update(bytes).digest("hex"),
+        `${file} changed in bytes its lines cannot show. ${REBUILD}`,
+      ).toBe(pinned?.digest ?? "");
 
       // Named line by line rather than as one blob, because a failure saying
       // only that a 209 line file differs sends the reader to a diff tool.

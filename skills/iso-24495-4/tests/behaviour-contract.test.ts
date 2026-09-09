@@ -231,6 +231,103 @@ describe("reader-facing behaviour contracts", () => {
       .toBe('banned term "shall"');
   });
 
+  // Every rewrite this engine suggests, in the words it suggests them.
+  //
+  // A review changed one suggestion so that "in the absence of" was said to
+  // mean the same as "with", and every test passed. The rule name says which
+  // check fired and the count says how often; only these say what to write
+  // instead, which is the part a reader acts on. A wrong one is worse than a
+  // missing one, because it is followed.
+  test("the engine suggests the rewrites it is meant to suggest", () => {
+    const wordy: Array<[string, string]> = [
+    ["null and void", "void"],
+    ["each and every", "each"],
+    ["first and foremost", "first"],
+    ["true and correct", "true"],
+    ["full and complete", "complete"],
+    ["revert back", "revert"],
+    ["repeat again", "repeat"],
+    ["free gift", "gift"],
+    ["past history", "history"],
+    ["future plans", "plans"],
+    ["end result", "result"],
+    ["unexpected surprise", "surprise"],
+    ["advance planning", "planning"],
+    ["close proximity", "close"],
+    ["general consensus", "consensus"],
+    ["in order to", "to"],
+    ["due to the fact that", "because"],
+    ["in the event that", "if"],
+    ["at this point in time", "now"],
+    ["at this moment in time", "now"],
+    ["in the near future", "soon"],
+    ["for the purpose of", "to"],
+    ["with regard to", "about"],
+    ["with reference to", "about"],
+    ["in relation to", "about"],
+    ["in the absence of", "without"],
+    ["a large number of", "many"],
+    ["a small number of", "a few"],
+    ["the majority of", "most"],
+    ["prior to", "before"],
+    ["subsequent to", "after"],
+    ["in spite of the fact that", "although"],
+    ["notwithstanding the fact that", "although"],
+    ["it is possible that", "may"],
+    ["has the ability to", "can"],
+    ["is able to", "can"],
+    ["make a decision", "decide"],
+    ["provide assistance", "help"],
+    ["take into consideration", "consider"],
+    ];
+    const complexWords: Array<[string, string]> = [
+    ["utilise", "use"],
+    ["utilize", "use"],
+    ["utilising", "using"],
+    ["utilizing", "using"],
+    ["commence", "start"],
+    ["commences", "starts"],
+    ["commenced", "started"],
+    ["ascertain", "find"],
+    ["facilitate", "help"],
+    ["facilitates", "helps"],
+    ["endeavour", "try"],
+    ["endeavor", "try"],
+    ["terminate", "end"],
+    ["terminates", "ends"],
+    ["aforementioned", "this"],
+    ["notwithstanding", "despite"],
+    ["henceforth", "now"],
+    ["thereafter", "then"],
+    ["whereby", "how"],
+    ["herein", "here"],
+    ["thereof", "its"],
+    ["therein", "inside"],
+    ["expedite", "hasten"],
+    ["disseminate", "share"],
+    ["remuneration", "pay"],
+    ];
+
+    // Matched on the replacement rather than on the rule or the sentence
+    // around it. A phrase may be reported as a doublet rather than a wordy
+    // phrase, and the two word their advice differently, but which rule fires
+    // is not the part a reader acts on. The word to write instead is.
+    for (const [phrase, lean] of wordy) {
+      const advice = auditText(`We acted ${phrase} the report.`)
+        .map((violation) => violation.detail)
+        .filter((detail) => detail.includes(`"${phrase}"`));
+      expect(advice.length, `"${phrase}" must be reported at all`).toBeGreaterThan(0);
+      expect(advice.join(" "), `"${phrase}" must be offered "${lean}"`)
+        .toContain(`"${lean}"`);
+    }
+
+    for (const [word, plain] of complexWords) {
+      const detail = auditText(`We ${word} the report today.`)
+        .find((violation) => violation.rule === "complex-word")?.detail ?? "";
+      expect(detail, `"${word}" must be offered "${plain}"`).toContain(plain);
+    }
+  });
+
   test("a full stop inside emphasis or quotes still ends the sentence", () => {
     // `**Lead in.** Next sentence.` is the commonest heading-in-a-paragraph pattern in
     // this repository's own skills. The stop sits before the closing markers, not before
