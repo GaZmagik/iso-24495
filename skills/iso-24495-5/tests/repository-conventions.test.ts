@@ -39,7 +39,7 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * shows have to stay the same thing.
  */
 /**
- * Every file that ships, walked here rather than asked for.
+ * Every file that is not TypeScript, walked here rather than asked for.
  *
  * The builder walks the same repository, and sharing that walk with this
  * file was itself a hole: a review emptied one array in the shared module,
@@ -47,40 +47,29 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * cannot see each other, so shortening one no longer lets it agree with
  * itself.
  *
- * Code is left out, because it has its own suites and changes far too often
- * to pin line by line. Everything else ships as words someone acts on.
+ * Four boundaries were drawn before this one and a review stood outside
+ * each. So there is no boundary now: everything is covered except
+ * TypeScript, whose printed sentences are pinned by their own test, and
+ * machinery no reader receives.
  */
 function documentsThatShip(): string[] {
-  const code = new Set([".git", "node_modules", "scripts", "tests"]);
+  const machinery = new Set([".git", ".claude", ".iso-24495-4", "node_modules"]);
   const found = new Set<string>();
 
   const walk = (directory: string): void => {
-    const base = join(REPOSITORY_ROOT, directory);
-    if (!existsSync(base) || !statSync(base).isDirectory()) return;
+    const base = directory === "" ? REPOSITORY_ROOT : join(REPOSITORY_ROOT, directory);
     for (const entry of readdirSync(base)) {
-      if (code.has(entry)) continue;
-      const here = `${directory}/${entry}`;
-      if (statSync(join(REPOSITORY_ROOT, here)).isDirectory()) {
+      if (machinery.has(entry)) continue;
+      const here = directory === "" ? entry : `${directory}/${entry}`;
+      if (statSync(join(base, entry)).isDirectory()) {
         walk(here);
-      } else {
+      } else if (!entry.toLowerCase().endsWith(".ts")) {
         found.add(here);
       }
     }
   };
 
-  if (existsSync(join(REPOSITORY_ROOT, "README.md"))) found.add("README.md");
-  for (const directory of [
-    ".claude-plugin",
-    ".codex-plugin",
-    "agents",
-    "codex-skills",
-    "commands",
-    "output-styles",
-    "skills",
-  ]) {
-    walk(directory);
-  }
-
+  walk("");
   return [...found].sort();
 }
 
@@ -955,7 +944,7 @@ describe("repository writing conventions", () => {
     }
   });
 
-  test("every shipped skill is routed, so a new one cannot arrive unrouted", () => {
+  test("every skill directory is routed, so a new one cannot arrive unrouted", () => {
     // The code skill is deliberately absent from both lists, because code
     // sits outside the standard. The core skill hosts the routing list, so
     // it does not route itself, though the output style still names it.

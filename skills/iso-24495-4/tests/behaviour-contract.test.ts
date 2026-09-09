@@ -219,6 +219,16 @@ describe("reader-facing behaviour contracts", () => {
       .not.toContain("legalese");
     expect(rulesFor("Read [the policy][shall] before replying."))
       .toContain("legalese");
+
+    // The rule name says which check fired; the detail says what to do about
+    // it. A review changed that detail from a banned term to a recommended
+    // one, and every check here passed, because none of them read it. A
+    // finding that recommends what it means to forbid is worse than no
+    // finding at all.
+    const detail = auditText("The party shall comply.")
+      .find((violation) => violation.rule === "legalese")?.detail ?? "";
+    expect(detail, "a legalese finding must name the term as banned")
+      .toBe('banned term "shall"');
   });
 
   test("a full stop inside emphasis or quotes still ends the sentence", () => {

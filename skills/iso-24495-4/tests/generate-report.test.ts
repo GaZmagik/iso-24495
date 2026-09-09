@@ -27,7 +27,44 @@ describe("generateReport", () => {
     expect(report.toLowerCase()).not.toContain("certified");
   });
 
+  // The two checks above read for words, and a review walked past both of
+  // them in the source while every test stayed green. It changed "confers no
+  // certification" to "confers certification", which contains no
+  // "certified", and it changed "must validate" to "need not validate",
+  // which is as provisional as the original by every word this file reads.
+  //
+  // These are the two sentences the report exists to carry. A gap analysis
+  // that confers certification, or that nobody need check, is the claim this
+  // whole project is built to avoid making. They are pinned whole, because a
+  // word is not what they mean.
+  test("the report keeps the two sentences that limit what it claims", () => {
+    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
+    expect(report, "the report must confer no certification").toContain(
+      "It is not a compliance statement and confers no certification.");
+    expect(report, "the report must require a human reviewer").toContain(
+      "A human reviewer must validate this report before the organisation acts on it.");
+  });
+
+  // The counts are the report's only quantities, and a review replaced the
+  // one that renders them with a literal zero. Every row still appeared, so
+  // the section check above passed and the reader was told there was nothing
+  // to fix.
+  test("the corpus rows carry the counts they were given", () => {
+    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
+    const totals = Object.entries(findings.totals);
+    expect(totals.length, "the fixture corpus must produce findings").toBeGreaterThan(0);
+    for (const [rule, count] of totals) {
+      expect(report, `the row for ${rule} must show its own count`)
+        .toContain(`| ${rule} | ${count} |`);
+    }
+    expect(
+      totals.some(([, count]) => count > 0),
+      "a corpus with findings must not report every rule as zero",
+    ).toBe(true);
+  });
+
   test("a first run creates state with one timestamped snapshot", () => {
+
     const { state } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
     expect(state.snapshots).toHaveLength(1);
     expect(state.snapshots[0].timestamp).toBe(NOW);

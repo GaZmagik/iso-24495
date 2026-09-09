@@ -47,14 +47,13 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   findings. A zero is not a pass for any of them, and the organisational Measurement
   dimension does not move when that structure is absent.
 
-- **Every file this plugin ships is now pinned whole, and editing one means rebuilding its
-  fixture.** Guarding the words was not enough: a review kept every pinned rule intact,
-  wrapped the block in image syntax, and left a page with no paragraph on it. Nor was
-  guarding the skills enough, because a reference the skill loads and a template it hands
-  over carry rules too, and one of those said it confers no certification. The manifests are
-  pinned as well, because they decide which repository a reader installs and which
-  directories supply its parts. Code is the exception, having its own suites and a coverage
-  floor.
+- **Every file in this repository is now pinned whole, apart from its TypeScript, and
+  editing one means rebuilding its fixture.** The boundary moved outward four times, and each
+  time a review stood outside the one before. It passed the skills, then the manifests, then
+  the references a skill hands over, then the licence and a command hidden in a directory
+  named for code. TypeScript is excluded because it changes constantly and has its own
+  suites. Its printed sentences are pinned by their own tests, after a review reversed the
+  report's certification disclaimer in code with every test still green.
 
 ### Changed
 

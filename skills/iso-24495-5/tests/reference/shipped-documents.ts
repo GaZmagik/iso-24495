@@ -1,44 +1,35 @@
-// Every file this repository ships to a reader or an agent.
+// Every file in this repository that is not TypeScript.
 //
-// Derived by walking, not by listing. A review deleted one line from an earlier
-// array, rebuilt the fixture, and changed the document that line had covered:
-// the gate stayed green and the test count never moved. A walk has no line to
-// delete. A file leaves this set by leaving the repository.
+// The boundary has moved outward four times, and each move was a review showing
+// that the previous one was drawn around what I had in mind rather than around
+// what a reader receives. Skills, then the manifests that decide which skills
+// arrive, then the references and templates a skill hands over, then the
+// licence, a configuration file that starts a server, and a command hidden in a
+// directory named for code. There is no version of that boundary worth
+// defending, so there is no boundary now.
+//
+// Two things are left out, and both are named rather than described, because a
+// description is a shape an attacker can stand outside of.
+//
+// TypeScript is left out because it changes constantly and has its own suites
+// and a coverage floor. That is not a claim that code is harmless: a review
+// reversed the report's certification disclaimer in code and the gate stayed
+// green, so the sentences the engine prints are pinned by their own test rather
+// than by this fixture.
+//
+// The rest is machinery that no reader receives: git's own directory, installed
+// packages, the engine's cache, and a local settings file that differs on every
+// machine and ships to nobody.
 //
 // The suite works the same set out for itself, without importing this module.
 // Sharing it was a hole of its own: emptying one array here once satisfied both
-// sides at once. Two computations that cannot see each other must be changed
-// twice, and the second change is the one a reader notices.
-//
-// What is left out, and why. Test and script directories hold code, which has
-// its own suites and its own coverage floor, and which changes far too often to
-// pin line by line. Everything else ships as words that a reader or an agent
-// acts on: the skills and their references, templates and interface files, the
-// output style, the manifests that decide which of them arrive, and the README.
+// sides at once.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-/** Directories holding code rather than words. */
-const NOT_SHIPPED_AS_WORDS = new Set(["tests", "scripts", "node_modules", ".git"]);
-
-/** Where a plugin's components live, whether or not a manifest names them. */
-const COMPONENT_DIRECTORIES = [
-  ".claude-plugin",
-  ".codex-plugin",
-  "output-styles",
-  "commands",
-  "agents",
-  "skills",
-  "codex-skills",
-];
-
-/** Files that ship on their own, outside any component directory. */
-const STANDALONE = ["README.md"];
-
-function posix(root: string, path: string): string {
-  return relative(root, path).split("\\").join("/");
-}
+/** Names that hold machinery rather than anything a reader is handed. */
+const NOT_SHIPPED = new Set([".git", ".claude", ".iso-24495-4", "node_modules"]);
 
 function isDirectory(path: string): boolean {
   try {
@@ -48,73 +39,22 @@ function isDirectory(path: string): boolean {
   }
 }
 
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function filesUnder(root: string, directory: string, found: Set<string>): void {
-  const base = join(root, directory);
-  if (!isDirectory(base)) return;
+function walk(root: string, directory: string, found: Set<string>): void {
+  const base = directory === "" ? root : join(root, directory);
   for (const entry of readdirSync(base)) {
-    if (NOT_SHIPPED_AS_WORDS.has(entry)) continue;
-    const path = join(base, entry);
-    if (isDirectory(path)) {
-      filesUnder(root, join(directory, entry), found);
-    } else if (isFile(path)) {
-      found.add(posix(root, path));
+    if (NOT_SHIPPED.has(entry)) continue;
+    const here = directory === "" ? entry : `${directory}/${entry}`;
+    if (isDirectory(join(base, entry))) {
+      walk(root, here, found);
+    } else if (!entry.toLowerCase().endsWith(".ts")) {
+      found.add(relative(root, join(base, entry)).split("\\").join("/"));
     }
   }
-}
-
-/**
- * Directories a manifest names, which need not be the usual ones.
- *
- * A path may be written as one string or as several, and both are valid
- * configuration. Reading only the string form made the builder drop the output
- * style from an equivalent manifest, and no rebuild could put it back.
- */
-function directoriesManifestsName(root: string): string[] {
-  const named: string[] = [];
-  for (const directory of [".claude-plugin", ".codex-plugin"]) {
-    const base = join(root, directory);
-    if (!isDirectory(base)) continue;
-    for (const entry of readdirSync(base)) {
-      if (!entry.toLowerCase().endsWith(".json")) continue;
-      let manifest: Record<string, unknown>;
-      try {
-        manifest = JSON.parse(readFileSync(join(base, entry), "utf8")) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      const holders = [manifest, ...((manifest.plugins as Record<string, unknown>[]) ?? [])];
-      for (const holder of holders) {
-        for (const key of ["skills", "outputStyles", "commands", "agents"]) {
-          const declared = holder?.[key];
-          const paths = Array.isArray(declared)
-            ? declared.filter((entry) => typeof entry === "string") as string[]
-            : typeof declared === "string" ? [declared] : [];
-          named.push(...paths);
-        }
-      }
-    }
-  }
-  return named;
 }
 
 /** Every shipped file, in a stable order. */
 export function shippedDocuments(root: string): string[] {
   const found = new Set<string>();
-
-  for (const file of STANDALONE) {
-    if (isFile(join(root, file))) found.add(file);
-  }
-  for (const directory of [...COMPONENT_DIRECTORIES, ...directoriesManifestsName(root)]) {
-    filesUnder(root, directory, found);
-  }
-
+  walk(root, "", found);
   return [...found].sort();
 }
