@@ -101,7 +101,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 8. **Layering the Detail:**
    - Label the overview explicitly in any document with 6 or more sections, or one whose conclusion readers need before the detail. A reader who stops at the overview then knows what they hold.
    - That label is the section's heading, and it names the section rather than its message. This rule overrides the heading rule for that one heading, and for no other. It keeps the document's conclusion, the action required, and any essential qualification.
-   - Give that label a heading or a word, never a visual treatment alone.
+   - Give that label a heading, never bold text or a visual treatment alone. A listener reaches it through the heading list or not at all.
    - Move detail that only some readers need into footnotes, an appendix, or a collapsible block, and keep it reachable from the main path.
    - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs a technical explanation's stages, and states where each one lands in these levels.
 
@@ -152,7 +152,7 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Reading order:** Does document order match reading order, with each sidebar and displaced callout given its own heading?
 - [ ] **Opening block:** Does the document open with its title, a one-line purpose naming the reader's task and scope, the primary audience, and a version or date?
 - [ ] **Overview contents:** Where needed, does it keep the conclusion, the required action and every essential qualification?
-- [ ] **Overview label and detail:** Is it labelled in words, and has the detail moved to footnotes, an appendix or a collapsible block?
+- [ ] **Overview label and detail:** Is the label a heading rather than bold text alone, and has the detail moved to footnotes, an appendix or a collapsible block?
 - [ ] **Levels:** Are there 3 or fewer levels of detail, and is the optional detail still reachable?
 - [ ] **Signposting:** Is the referral near the top or ending the opening section, naming its destination and when to use it, and absent where nothing else exists?
 - [ ] **Preserved:** On a restructure, was every prose passage and content item kept, with no prose rewritten and no tone changed?

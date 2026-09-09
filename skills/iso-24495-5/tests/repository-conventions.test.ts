@@ -31,6 +31,21 @@ const SENTENCE_OR_LINE = /(?<=[.!?])[ \t]+|\r?\n/;
 const FLOOR_WORDING = /between|at least|no fewer|minimum/i;
 const RANGE_WORDING = /(?<![0-9])15(?![0-9])/;
 const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
+/**
+ * The documents whose text this suite pins, as repository-relative paths.
+ *
+ * A reader meets these as rendered pages, so what they say and what a browser
+ * shows have to stay the same thing.
+ */
+const PINNED_DOCUMENTS = [
+  "skills/iso-24495-1/SKILL.md",
+  "skills/iso-24495-2/SKILL.md",
+  "skills/iso-24495-3/SKILL.md",
+  "skills/iso-24495-5/SKILL.md",
+  "output-styles/iso-24495.md",
+  "codex-skills/iso-24495-style/SKILL.md",
+  "README.md",
+];
 const ENTRY_FILES = [
   "skills/iso-24495-text-audit/scripts/audit-text-cli.ts",
   "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
@@ -746,6 +761,8 @@ describe("repository writing conventions", () => {
     "- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions, with a legal document's clause identifiers exempt?",
     "   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs a technical explanation's stages, and states where each one lands in these levels.",
     "   - Two exceptions here, one override in rule 8, and no others. A document type with a published structure keeps that structure's section names, as a decision record keeps Context and Decision.",
+    "   - Give that label a heading, never bold text or a visual treatment alone. A listener reaches it through the heading list or not at all.",
+    "- [ ] **Overview label and detail:** Is the label a heading rather than bold text alone, and has the detail moved to footnotes, an appendix or a collapsible block?",
   ];
 
   const PROXY_NOTE_LINES = [
@@ -761,9 +778,12 @@ describe("repository writing conventions", () => {
   ];
 
   const STYLE_ROUTING_LINES = [
+    "- **`iso-24495-1`:** The core standard; governs every response.",
     "- **`iso-24495-2`:** Legal writing: contracts, licences, compliance text. Invoke `iso-24495-5` with it, because a legal document must be navigable as well as readable.",
     "- **`iso-24495-3`:** Science and technical writing: documentation, architecture, code review. Invoke `iso-24495-5` with it whenever the output is a document.",
+    "- **`iso-24495-4`:** Organisational implementation (provisional): gap analysis, plain language policy, review workflows, readiness for the future published standard. Never for writing individual documents.",
     "- **`iso-24495-5`:** Document design (provisional): structuring complex multi-section documents, contracts included.",
+    "- **`iso-24495-text-audit`:** User-invoked text audit. Never invoke it automatically.",
   ];
 
   const README_LINES = [
@@ -916,6 +936,84 @@ describe("repository writing conventions", () => {
       join(CODEX_SKILLS_ROOT, "iso-24495-style", "SKILL.md"),
     ]) {
       pinnedIn(file, eachLine(STYLE_ROUTING_LINES), relative(REPOSITORY_ROOT, file));
+    }
+  });
+
+  // The check above compares each pinned line with what this project's parser
+  // says it renders as, and a review got past it. Wrapping a rules section in
+  // a hidden div, a template, a style element or a blockquote holding a hidden
+  // div, with the tags outside the pinned range and separated by blank lines,
+  // left the gate at 212 pass while a browser showed none of the rules. That
+  // was proved against CommonMark 0.31.2 and Chromium: the baseline rendered
+  // the rule text and every wrapping rendered nothing.
+  //
+  // No check on the markdown alone can catch it, which is why an earlier
+  // attempt to refute the class failed. The parser is right that the lines
+  // render as markdown, and the wrapper hides the result afterwards, in the
+  // browser. The container escapes the reader and the parser at once.
+  //
+  // So these documents carry no raw HTML at all. They carry none today, so
+  // the rule costs nothing now, and it closes the class rather than the five
+  // openers that were demonstrated. A document that genuinely needs a
+  // container has outgrown this rule, and says so here in the same commit.
+  test("no raw HTML can wrap a rule out of sight", () => {
+    // Any line whose first non-space character opens a tag, a comment or a
+    // declaration. Three leading spaces still open an HTML block, and four
+    // make the line code instead.
+    const HTML_BLOCK_OPENER = /^ {0,3}<[a-zA-Z!?/]/;
+
+    const offenders = PINNED_DOCUMENTS.flatMap((file) =>
+      readFileSync(join(REPOSITORY_ROOT, file), "utf8")
+        .split(/\r?\n/)
+        .map((line, index) => ({ line, number: index + 1 }))
+        .filter((entry) => HTML_BLOCK_OPENER.test(entry.line))
+        .map((entry) => `${file}:${entry.number}: ${entry.line.trim().slice(0, 60)}`));
+
+    expect(offenders, "these documents must carry no raw HTML").toEqual([]);
+  });
+
+  // The lists above are whole lines, and a whole line cannot say that a
+  // line is missing. A review pinned three of five triggers in one file and
+  // three of six in another, so the restrictions keeping the organisational
+  // skill off individual documents, and the audit off automatic invocation,
+  // were deletable while the gate stayed green.
+  //
+  // Regenerating the lists fixed the instance. This fixes the class, and it
+  // is the difference between a list that happens to be complete and one
+  // that cannot be incomplete. The enumeration comes from the skills on
+  // disk rather than from the file being checked, so it is not circular: a
+  // seventh skill fails here until it is routed, and deleting a routing
+  // line fails here as well as failing its whole-line expectation.
+  test("every shipped skill is routed, so a new one cannot arrive unrouted", () => {
+    // The code skill is deliberately absent from both lists, because code
+    // sits outside the standard. The core skill hosts the routing list, so
+    // it does not route itself, though the output style still names it.
+    const UNROUTED = new Set(["iso-24495-code"]);
+    const HOSTS_THE_LIST = "iso-24495-1";
+
+    const shipped = readdirSync(SKILLS_ROOT)
+      .filter((entry) => entry.startsWith("iso-24495-"))
+      .filter((entry) => !UNROUTED.has(entry))
+      .sort();
+    expect(shipped.length, "there must be skills to route").toBeGreaterThan(0);
+
+    const core = CORE_ROUTING_LINES.join(String.fromCharCode(10));
+    const style = STYLE_ROUTING_LINES.join(String.fromCharCode(10));
+
+    for (const skill of shipped) {
+      expect(style, `the output style must route ${skill}`)
+        .toContain(`\`${skill}\``);
+      if (skill === HOSTS_THE_LIST) continue;
+      expect(core, `the core skill must route ${skill}`)
+        .toContain(`\`${skill}\``);
+    }
+
+    // And nothing routes what is deliberately unrouted.
+    for (const skill of UNROUTED) {
+      expect(core, `${skill} must stay out of the core routing list`)
+        .not.toContain(`\`${skill}\``);
+      expect(style, `${skill} must stay out of the style routing list`)
+        .not.toContain(`\`${skill}\``);
     }
   });
 
