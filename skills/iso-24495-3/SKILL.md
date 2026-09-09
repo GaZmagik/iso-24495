@@ -53,7 +53,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
    - Use consistent symbol names across text, code snippets, and diagrams.
 
 4. **Diagrams and Their Alternatives:**
-   - Give every diagram a text alternative saying what it shows, not what it is. Part 5 requires that of any image carrying meaning, and stage 2 above mandates a diagram, so this rule says where the alternative goes.
+   - Give every diagram a text alternative saying what it shows, not what it is. Part 5 requires that of any image carrying meaning. Stage 2 above offers a diagram as one way to meet it, so this rule says where the alternative goes. A summary table is the other way, and Part 5 already governs it.
    - A Mermaid diagram reaches a listener as its source text, which is not an explanation. So the alternative is prose beside the diagram, never the diagram's own labels.
 
 ---
@@ -86,7 +86,7 @@ Before outputting technical text, audit against these checks:
 - [ ] **Progressive structure:** Is system purpose stated before architecture and code?
 - [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?
 - [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?
-- [ ] **Visual aids:** Is a diagram or table used wherever the explanation covers how more than one component relates to another?
+- [ ] **Visual aids:** Does a diagram or table show how components relate, unless an ordered list already presents that relationship as a sequence?
 - [ ] **Code immunity:** Are code snippets and commands intact and un-mangled?
 - [ ] **Text alternatives:** Does every diagram carry prose saying what it shows?
 - [ ] **Layering:** Where the explanation is a document, do the stages sit in Part 5's levels as rule 1 says?

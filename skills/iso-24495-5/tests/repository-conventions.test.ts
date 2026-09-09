@@ -515,7 +515,7 @@ describe("repository writing conventions", () => {
     "5. **Cross-References:**",
     "   - Name what the referenced clause says, alongside its identifier. Write *\"the notice deadline in clause 4.2\"* rather than *\"clause 4.2\"*.",
     "   - Keep that wording identical to the referenced clause's own heading or opening line.",
-    "   - Point at the clause carrying the obligation, never at one that only points somewhere else.",
+    "   - When you point at an obligation, point at the clause carrying it, never at one that only points somewhere else. A first use pointing at the collected definitions is the exception rule 4 requires, because a definition binds nobody.",
     "",
     "6. **Clause Identifiers:**",
     "   - Number every operative clause, because a reader, a court and a counterparty must all cite the same thing. An operative clause imposes, permits or prohibits an action. Recitals, definitions and schedules are numbered by the conventions of the document, not by this rule.",
@@ -528,7 +528,7 @@ describe("repository writing conventions", () => {
     "   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Give it the overview's own heading, which Part 5 requires so a listener can find it. Cover what they must do, what they must pay, when the agreement ends, and how to leave it. A document without one or more of those, such as a privacy policy with no payment, covers the rest. A document with no terms the reader must act on needs no summary of this shape, and Part 5 still decides whether it has an overview.",
     "   - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.",
     "   - The summary **must not** add an obligation, newly qualify one, or leave a reader believing an obligation is gone. Where the operative text already qualifies a term, state the term together with that qualification, which Part 5 requires the overview to keep. Where stating it would take more words than the clause itself, leave the term out and point to its clause. A pointer keeps the obligation reachable, so it is not a removal.",
-    "   - Map the document onto Part 5's three levels of detail. The summary is the overview, the operative terms are the main body, and the schedules are the optional detail.",
+    "   - Map the document onto Part 5's three levels of detail. The summary is the overview, and the operative terms are the main body. Place each schedule by what it holds, because Part 5's optional detail is for what only some readers need. A schedule carrying an obligation, a payment or a limit belongs in the main body with the rest of the operative terms, whichever page it is printed on. Reserve the optional level for a schedule a reader can skip and still comply, such as a list of contacts or a specimen form.",
     "",
     "8. **Section Names:**",
     "   - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.",
@@ -541,7 +541,7 @@ describe("repository writing conventions", () => {
     "  Summary: You can cancel at any time and we will refund the current month.",
     "  ```",
     "* ✅ **ISO 24495-2 Aligned:**",
-    "  > **Summary of your main terms**",
+    "  > #### Summary of your main terms",
     "  >",
     "  > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.",
     "  >",
@@ -598,19 +598,22 @@ describe("repository writing conventions", () => {
     expect(design, "the Part 5 checklist must carry the same exception").toContain(
       "clause identifiers exempt");
 
-    // The boundary says the skill adds "only" these, so a rule the sentence
-    // does not name makes it false and sends a writer to the wrong skill.
-    // Carving section names out of the summary rule did exactly that.
+    // The boundary tells a writer which skill holds what, so a rule it never
+    // names sends them to the wrong one. Carving section names out of the
+    // summary rule did exactly that.
     //
     // The list is derived from the rules rather than written out here, for two
     // reasons a review demonstrated against the written-out version. A fixed
     // list is blind to the direction rules actually grow: a sixth rule was
     // added and the check passed. And searching the whole boundary section
     // passes on words appearing anywhere in it, so the enumeration was emptied
-    // into a neighbouring bullet and the check still passed. This reads the
-    // enumerating sentence alone, and asks it about every rule that exists.
-    const enumeration = /adds only what Part 5 leaves uncovered:([^.]*)\./.exec(legal)?.[1]
-      ?? "";
+    // into a neighbouring bullet and the check still passed. So this reads the
+    // one bullet that divides the rules, and asks it about every rule that
+    // exists. The bullet splits them: most cover what Part 5 leaves out, and
+    // section names apply a case it already allows. Both halves are on the
+    // line, because naming only the additions would leave the rest unplaced.
+    const enumeration = legal.split(/\r?\n/)
+      .find((line) => /rules below cover what Part 5 leaves out/.test(line)) ?? "";
     expect(enumeration, "the boundary must carry an enumeration").not.toBe("");
     const added = documentRuleNames(legal);
     expect(added.length, "the skill must carry document-level rules").toBeGreaterThan(0);
@@ -667,7 +670,7 @@ describe("repository writing conventions", () => {
   const PART_2_SCOPE_BOUNDARY = [
     "3. **Document Design Applies Here Too:**",
     "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
-    "   - This skill adds only what Part 5 leaves uncovered: defined terms, cross-references, clause identifiers, the summary layer, and section names.",
+    "   - Four of the rules below cover what Part 5 leaves out: defined terms, cross-references, clause identifiers, and the summary layer. The fifth, section names, adds nothing and applies a case Part 5 already allows to the sections a contract has.",
     "   - Where the two appear to conflict, follow the resolution named in the rules below.",
   ];
 
@@ -701,7 +704,7 @@ describe("repository writing conventions", () => {
     "   - Use consistent symbol names across text, code snippets, and diagrams.",
     "",
     "4. **Diagrams and Their Alternatives:**",
-    "   - Give every diagram a text alternative saying what it shows, not what it is. Part 5 requires that of any image carrying meaning, and stage 2 above mandates a diagram, so this rule says where the alternative goes.",
+    "   - Give every diagram a text alternative saying what it shows, not what it is. Part 5 requires that of any image carrying meaning. Stage 2 above offers a diagram as one way to meet it, so this rule says where the alternative goes. A summary table is the other way, and Part 5 already governs it.",
     "   - A Mermaid diagram reaches a listener as its source text, which is not an explanation. So the alternative is prose beside the diagram, never the diagram's own labels.",
   ];
 
@@ -729,7 +732,7 @@ describe("repository writing conventions", () => {
     "- [ ] **Progressive structure:** Is system purpose stated before architecture and code?",
     "- [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?",
     "- [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?",
-    "- [ ] **Visual aids:** Is a diagram or table used wherever the explanation covers how more than one component relates to another?",
+    "- [ ] **Visual aids:** Does a diagram or table show how components relate, unless an ordered list already presents that relationship as a sequence?",
     "- [ ] **Code immunity:** Are code snippets and commands intact and un-mangled?",
     "- [ ] **Text alternatives:** Does every diagram carry prose saying what it shows?",
     "- [ ] **Layering:** Where the explanation is a document, do the stages sit in Part 5's levels as rule 1 says?",
