@@ -16,7 +16,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
 ## Scope & Execution Boundaries
 
 1. **Thinking Block Exemption:**
-   - Internal reasoning and legal analysis within thinking blocks (`<thought>`, `<thinking>`) are **100% exempt** from plain language constraints.
+   - Internal reasoning and legal analysis within thinking blocks (the `thought` and `thinking` tags) are **100% exempt** from plain language constraints.
    - Reason exhaustively within thinking blocks. Apply plain language rules strictly to final user-facing legal text.
 
 2. **Legal Enforceability Primacy:**

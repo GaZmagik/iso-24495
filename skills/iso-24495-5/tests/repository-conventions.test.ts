@@ -939,110 +939,42 @@ describe("repository writing conventions", () => {
     }
   });
 
-  // Markup a reader's browser would act on, wherever it sits in the source.
+  // Markup a reader's browser would act on. Four rounds of review defeated
+  // four versions of this check, and the fifth stops trying to win that way.
   //
-  // Three rounds of review defeated the checks before this one. First a tag
-  // on its own line, then a tag mid-line, which opens no HTML block at all
-  // and so reaches the browser as inline raw HTML. Then the exemptions
-  // themselves: a code span whose delimiters do not match, a backtick that
-  // was escaped and so opened nothing, and `<![CDATA[x@y>` read as an email
-  // autolink. Each left the gate green while Chromium showed no rules.
+  // Each earlier version decided which less-than signs were safe, and each
+  // decision was a reimplementation of CommonMark: a tag only at a line
+  // start, then a tag anywhere, then exempt code spans and autolinks, then a
+  // tokeniser removing escapes and matching backtick runs. Every one was
+  // defeated, and always the same way, by finding a case where the
+  // reimplementation and the renderer disagreed. A code span that crossed a
+  // blank line, which CommonMark will not do. A backslash inside a code span,
+  // which is literal there and not an escape. A mismatched delimiter run. An
+  // opener the email pattern read as an autolink. Each left the gate green
+  // while Chromium showed no rules at all.
   //
-  // The lesson is in what they have in common. Every one of those checks
-  // approximated CommonMark with a regular expression, and an approximation
-  // can be pulled away from the renderer it approximates. The attacker only
-  // needs one place where the two disagree.
+  // The mistake was answering the question at all. A document that contains
+  // no less-than sign cannot hand markup to any renderer, whatever the
+  // renderer does, so there is nothing left to get right and nothing left to
+  // disagree about. This check parses nothing.
   //
-  // So nothing is approximated below. Code is removed the way CommonMark
-  // removes it, in order, and whatever still holds a `<` is markup that
-  // reaches the reader. That is a plain rule with no exemption to aim at:
-  // put markup in a code span or a fence, or escape it, and it is text.
-  //
-  // The cost is that these documents cannot write a bare `<` in prose. They
-  // never have, and the fix is a code span, so the cost is a house rule
-  // rather than a limit on what they can say. An indented code block is
-  // deliberately not exempt: recognising one needs another approximation,
-  // and a fence says the same thing without one.
-
-  /** Every place a `<` survives into what a browser is handed. */
-  const markupReachingTheReader = (contents: string): string[] => {
-    const document = readDocument(contents);
-
-    // Blanked rather than dropped, so a position still names its own line.
-    const source = contents.split(/\r?\n/)
-      .map((line, index) => (document.hidden(index) ? " ".repeat(line.length) : line))
-      .join("\n");
-
-    // A backslash makes the next character text, so an escaped backtick
-    // opens nothing and an escaped `<` is a less-than sign rather than a tag.
-    const unescaped = source.replace(/\\[^A-Za-z0-9\s]/g, "  ");
-
-    // A backtick run opens a code span, and only a run of the same length
-    // closes it. A run that never meets its match is literal text, which is
-    // what a mismatched pair did: it looked like a span and rendered as one
-    // more tag.
-    let stripped = "";
-    let at = 0;
-    while (at < unescaped.length) {
-      if (unescaped[at] !== "`") {
-        stripped += unescaped[at];
-        at += 1;
-        continue;
-      }
-      let run = 0;
-      while (unescaped[at + run] === "`") run += 1;
-      let scan = at + run;
-      let closes = -1;
-      while (scan < unescaped.length) {
-        if (unescaped[scan] !== "`") {
-          scan += 1;
-          continue;
-        }
-        let width = 0;
-        while (unescaped[scan + width] === "`") width += 1;
-        if (width === run) {
-          closes = scan;
-          break;
-        }
-        scan += width;
-      }
-      if (closes === -1) {
-        stripped += unescaped.slice(at, at + run);
-        at += run;
-        continue;
-      }
-      const span = unescaped.slice(at, closes + run);
-      stripped += span.replace(/[^\n]/g, " ");
-      at = closes + run;
-    }
-
-    // A link, not a tag, and the one exemption here that carries a proof
-    // rather than an approximation: nothing between the scheme and the closing
-    // bracket may be a bracket or a space, so no tag fits inside one. The email
-    // form is deliberately not exempt, because the pattern written for it
-    // accepted `<![CDATA[x@y>` and let a style element through.
-    const withoutLinks = stripped.replace(
-      /<[a-zA-Z][a-zA-Z0-9+.-]*:[^<>\s]*>/g,
-      (link) => " ".repeat(link.length),
-    );
-
-    const found: string[] = [];
-    withoutLinks.split("\n").forEach((line, index) => {
-      if (line.includes("<")) {
-        found.push(`${index + 1}: ${contents.split(/\r?\n/)[index]?.trim().slice(0, 60)}`);
-      }
-    });
-    return found;
-  };
-
+  // The cost is a house rule, and it is the whole cost: these documents
+  // cannot contain a less-than sign. Four lines named a tag in a code span
+  // and now name it without brackets, which reads better anyway. Prose that
+  // needs the character writes the entity for it, which a browser shows as
+  // text and cannot read as a tag. A specimen that needs one belongs in a
+  // file this rule does not cover, such as a template under assets.
   test("no markup can reach the reader and hide a rule", () => {
     const offenders = PINNED_DOCUMENTS.flatMap((file) =>
-      markupReachingTheReader(readFileSync(join(REPOSITORY_ROOT, file), "utf8"))
-        .map((where) => `${file}:${where}`));
+      readFileSync(join(REPOSITORY_ROOT, file), "utf8")
+        .split(/\r?\n/)
+        .map((line, index) => ({ line, number: index + 1 }))
+        .filter((entry) => entry.line.includes("<"))
+        .map((entry) => `${file}:${entry.number}: ${entry.line.trim().slice(0, 60)}`));
 
     expect(
       offenders,
-      "put markup in a code span or a fence, or escape it, so it stays text",
+      "write the entity for a less-than sign, or name a tag without brackets",
     ).toEqual([]);
   });
 

@@ -22,7 +22,7 @@ A listener has no visual hierarchy. Their structure is the heading tree, the lin
 ## Scope & Execution Boundaries
 
 1. **Thinking Block Exemption:**
-   - Internal layout planning and structural reasoning within thinking blocks (`<thought>`, `<thinking>`) are **100% exempt** from these constraints.
+   - Internal layout planning and structural reasoning within thinking blocks (the `thought` and `thinking` tags) are **100% exempt** from these constraints.
    - Plan freely within thinking blocks. Apply document design rules strictly to final user-facing documents.
 
 2. **Design as Engineering, Not Decoration:**

@@ -16,7 +16,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
 ## Scope & Execution Boundaries
 
 1. **Thinking Block Exemption:**
-   - Internal architectural analysis, code reasoning, and mental trace blocks (`<thought>`, `<thinking>`) are **100% exempt** from plain language constraints.
+   - Internal architectural analysis, code reasoning, and mental trace blocks (the `thought` and `thinking` tags) are **100% exempt** from plain language constraints.
    - Reason freely within thinking blocks. Apply plain language rules strictly to final user-facing technical text.
 
 2. **Code & Data Preservation Immunity:**

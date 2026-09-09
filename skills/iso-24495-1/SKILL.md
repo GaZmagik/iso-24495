@@ -24,7 +24,7 @@ The quantitative rules below are this skill's own proxies for those principles. 
 ## Scope & Execution Boundaries
 
 1. **Thinking Block Exemption:**
-   - Internal reasoning, chain-of-thought, and thinking blocks (`<thought>`, `<thinking>`) are **100% exempt** from all ISO 24495 constraints.
+   - Internal reasoning, chain-of-thought, and thinking blocks (the `thought` and `thinking` tags) are **100% exempt** from all ISO 24495 constraints.
    - Reason deeply and unconstrained within thinking blocks. Apply plain language rules strictly to final user-facing output.
 
 2. **Code & Data Preservation Exemption:**
