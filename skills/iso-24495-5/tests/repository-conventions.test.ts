@@ -39,40 +39,47 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * shows have to stay the same thing.
  */
 /**
- * Every document that ships, worked out here rather than asked for.
+ * Every file that ships, walked here rather than asked for.
  *
- * The builder derives the same set from the manifests, and sharing that
- * derivation with this file was itself a hole: a review emptied one array in
- * the shared module, and both sides then agreed that the README needed no
- * cover. Two computations that cannot see each other have to be changed
- * twice, and the second change is the one a reader notices in a diff.
+ * The builder walks the same repository, and sharing that walk with this
+ * file was itself a hole: a review emptied one array in the shared module,
+ * and both sides then agreed that the README needed no cover. These two
+ * cannot see each other, so shortening one no longer lets it agree with
+ * itself.
+ *
+ * Code is left out, because it has its own suites and changes far too often
+ * to pin line by line. Everything else ships as words someone acts on.
  */
 function documentsThatShip(): string[] {
-  const found = new Set<string>(["README.md"]);
+  const code = new Set([".git", "node_modules", "scripts", "tests"]);
+  const found = new Set<string>();
 
-  const filesIn = (directory: string, keep: (entry: string) => boolean): void => {
+  const walk = (directory: string): void => {
     const base = join(REPOSITORY_ROOT, directory);
-    if (!existsSync(base)) return;
+    if (!existsSync(base) || !statSync(base).isDirectory()) return;
     for (const entry of readdirSync(base)) {
-      if (keep(entry)) found.add(`${directory}/${entry}`);
+      if (code.has(entry)) continue;
+      const here = `${directory}/${entry}`;
+      if (statSync(join(REPOSITORY_ROOT, here)).isDirectory()) {
+        walk(here);
+      } else {
+        found.add(here);
+      }
     }
   };
 
-  const skillsIn = (directory: string): void => {
-    const base = join(REPOSITORY_ROOT, directory);
-    if (!existsSync(base)) return;
-    for (const entry of readdirSync(base)) {
-      const skill = join(base, entry, "SKILL.md");
-      if (existsSync(skill)) found.add(`${directory}/${entry}/SKILL.md`);
-    }
-  };
-
-  for (const manifests of [".claude-plugin", ".codex-plugin"]) {
-    filesIn(manifests, (entry) => entry.toLowerCase().endsWith(".json"));
+  if (existsSync(join(REPOSITORY_ROOT, "README.md"))) found.add("README.md");
+  for (const directory of [
+    ".claude-plugin",
+    ".codex-plugin",
+    "agents",
+    "codex-skills",
+    "commands",
+    "output-styles",
+    "skills",
+  ]) {
+    walk(directory);
   }
-  filesIn("output-styles", () => true);
-  skillsIn("skills");
-  skillsIn("codex-skills");
 
   return [...found].sort();
 }
