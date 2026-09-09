@@ -940,50 +940,46 @@ describe("repository writing conventions", () => {
   });
 
   // The check above compares each pinned line with what this project's parser
-  // says it renders as, and a review got past it. Wrapping a rules section in
-  // a hidden div, a template, a style element or a blockquote holding a hidden
-  // div, with the tags outside the pinned range and separated by blank lines,
-  // left the gate at 212 pass while a browser showed none of the rules. That
-  // was proved against CommonMark 0.31.2 and Chromium: the baseline rendered
-  // the rule text and every wrapping rendered nothing.
+  // says it renders as, and two reviews got past it. First by wrapping a rules
+  // section in a hidden div, a template or a style element on their own lines.
+  // Then, when those were caught, by putting the tag mid-line: `Review <style>`
+  // opens no HTML block at all, so CommonMark passes it through as inline raw
+  // HTML, and the browser's style element then swallows every rule after it.
+  // Both were proved against CommonMark 0.31.2 and Chromium, and both left the
+  // gate green.
   //
-  // No check on the markdown alone can catch it, which is why an earlier
-  // attempt to refute the class failed. The parser is right that the lines
-  // render as markdown, and the wrapper hides the result afterwards, in the
-  // browser. The container escapes the reader and the parser at once.
+  // No check on the markdown alone can catch that. The parser is right that
+  // the lines render as markdown, and the wrapper hides the result afterwards.
+  // So a tag anywhere in a line a reader sees is refused, not merely a tag
+  // that opens one.
   //
-  // So these documents carry no raw HTML at all. They carry none today, so
-  // the rule costs nothing now, and it closes the class rather than the five
-  // openers that were demonstrated. A document that genuinely needs a
-  // container has outgrown this rule, and says so here in the same commit.
+  // Three things are not raw HTML and are exempt, because refusing them broke
+  // a specimen a reviewer was right to defend: fenced code, which the parser
+  // already reports as hidden; a code span, which a renderer escapes, and
+  // which these documents use for placeholders such as a thinking block; and
+  // an autolink, which is a link rather than a tag.
   test("no raw HTML can wrap a rule out of sight", () => {
-    // Any line whose first non-space character opens a tag, a comment or a
-    // declaration. Three leading spaces still open an HTML block, and four
-    // make the line code instead.
-    const HTML_BLOCK_OPENER = /^ {0,3}<[a-zA-Z!?/]/;
+    // A fenced block is hidden, so only a visible line is read. What remains
+    // after code spans and autolinks come out is prose, and prose has no tags.
+    const CODE_SPAN = /`+[^`]*`+/g;
+    const AUTOLINK =
+      /<[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^<>\s]*>|<[^\s<>@]+@[^\s<>@]+>/g;
+    const RAW_TAG = /<[a-zA-Z!?/]/;
 
-    const offenders = PINNED_DOCUMENTS.flatMap((file) =>
-      readFileSync(join(REPOSITORY_ROOT, file), "utf8")
+    const offenders = PINNED_DOCUMENTS.flatMap((file) => {
+      const contents = readFileSync(join(REPOSITORY_ROOT, file), "utf8");
+      const document = readDocument(contents);
+      return contents
         .split(/\r?\n/)
-        .map((line, index) => ({ line, number: index + 1 }))
-        .filter((entry) => HTML_BLOCK_OPENER.test(entry.line))
-        .map((entry) => `${file}:${entry.number}: ${entry.line.trim().slice(0, 60)}`));
+        .map((line, index) => ({ line, index }))
+        .filter((entry) => !document.hidden(entry.index))
+        .filter((entry) => RAW_TAG.test(entry.line.replace(CODE_SPAN, "").replace(AUTOLINK, "")))
+        .map((entry) => `${file}:${entry.index + 1}: ${entry.line.trim().slice(0, 60)}`);
+    });
 
     expect(offenders, "these documents must carry no raw HTML").toEqual([]);
   });
 
-  // The lists above are whole lines, and a whole line cannot say that a
-  // line is missing. A review pinned three of five triggers in one file and
-  // three of six in another, so the restrictions keeping the organisational
-  // skill off individual documents, and the audit off automatic invocation,
-  // were deletable while the gate stayed green.
-  //
-  // Regenerating the lists fixed the instance. This fixes the class, and it
-  // is the difference between a list that happens to be complete and one
-  // that cannot be incomplete. The enumeration comes from the skills on
-  // disk rather than from the file being checked, so it is not circular: a
-  // seventh skill fails here until it is routed, and deleting a routing
-  // line fails here as well as failing its whole-line expectation.
   test("every shipped skill is routed, so a new one cannot arrive unrouted", () => {
     // The code skill is deliberately absent from both lists, because code
     // sits outside the standard. The core skill hosts the routing list, so
@@ -991,8 +987,11 @@ describe("repository writing conventions", () => {
     const UNROUTED = new Set(["iso-24495-code"]);
     const HOSTS_THE_LIST = "iso-24495-1";
 
+    // A skill is a directory holding a SKILL.md, which is how the frontmatter
+    // suite finds them. Filtering on the iso-24495 prefix instead let a skill
+    // named for its subject ship unrouted with the gate green.
     const shipped = readdirSync(SKILLS_ROOT)
-      .filter((entry) => entry.startsWith("iso-24495-"))
+      .filter((entry) => existsSync(join(SKILLS_ROOT, entry, "SKILL.md")))
       .filter((entry) => !UNROUTED.has(entry))
       .sort();
     expect(shipped.length, "there must be skills to route").toBeGreaterThan(0);
