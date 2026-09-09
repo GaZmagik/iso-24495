@@ -939,59 +939,131 @@ describe("repository writing conventions", () => {
     }
   });
 
-  // The check above compares each pinned line with what this project's parser
-  // says it renders as, and two reviews got past it. First by wrapping a rules
-  // section in a hidden div, a template or a style element on their own lines.
-  // Then, when those were caught, by putting the tag mid-line: `Review <style>`
-  // opens no HTML block at all, so CommonMark passes it through as inline raw
-  // HTML, and the browser's style element then swallows every rule after it.
-  // Both were proved against CommonMark 0.31.2 and Chromium, and both left the
-  // gate green.
+  // Markup a reader's browser would act on, wherever it sits in the source.
   //
-  // No check on the markdown alone can catch that. The parser is right that
-  // the lines render as markdown, and the wrapper hides the result afterwards.
-  // So a tag anywhere in a line a reader sees is refused, not merely a tag
-  // that opens one.
+  // Three rounds of review defeated the checks before this one. First a tag
+  // on its own line, then a tag mid-line, which opens no HTML block at all
+  // and so reaches the browser as inline raw HTML. Then the exemptions
+  // themselves: a code span whose delimiters do not match, a backtick that
+  // was escaped and so opened nothing, and `<![CDATA[x@y>` read as an email
+  // autolink. Each left the gate green while Chromium showed no rules.
   //
-  // Three things are not raw HTML and are exempt, because refusing them broke
-  // a specimen a reviewer was right to defend: fenced code, which the parser
-  // already reports as hidden; a code span, which a renderer escapes, and
-  // which these documents use for placeholders such as a thinking block; and
-  // an autolink, which is a link rather than a tag.
-  test("no raw HTML can wrap a rule out of sight", () => {
-    // A fenced block is hidden, so only a visible line is read. What remains
-    // after code spans and autolinks come out is prose, and prose has no tags.
-    const CODE_SPAN = /`+[^`]*`+/g;
-    const AUTOLINK =
-      /<[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^<>\s]*>|<[^\s<>@]+@[^\s<>@]+>/g;
-    const RAW_TAG = /<[a-zA-Z!?/]/;
+  // The lesson is in what they have in common. Every one of those checks
+  // approximated CommonMark with a regular expression, and an approximation
+  // can be pulled away from the renderer it approximates. The attacker only
+  // needs one place where the two disagree.
+  //
+  // So nothing is approximated below. Code is removed the way CommonMark
+  // removes it, in order, and whatever still holds a `<` is markup that
+  // reaches the reader. That is a plain rule with no exemption to aim at:
+  // put markup in a code span or a fence, or escape it, and it is text.
+  //
+  // The cost is that these documents cannot write a bare `<` in prose. They
+  // never have, and the fix is a code span, so the cost is a house rule
+  // rather than a limit on what they can say. An indented code block is
+  // deliberately not exempt: recognising one needs another approximation,
+  // and a fence says the same thing without one.
 
-    const offenders = PINNED_DOCUMENTS.flatMap((file) => {
-      const contents = readFileSync(join(REPOSITORY_ROOT, file), "utf8");
-      const document = readDocument(contents);
-      return contents
-        .split(/\r?\n/)
-        .map((line, index) => ({ line, index }))
-        .filter((entry) => !document.hidden(entry.index))
-        .filter((entry) => RAW_TAG.test(entry.line.replace(CODE_SPAN, "").replace(AUTOLINK, "")))
-        .map((entry) => `${file}:${entry.index + 1}: ${entry.line.trim().slice(0, 60)}`);
+  /** Every place a `<` survives into what a browser is handed. */
+  const markupReachingTheReader = (contents: string): string[] => {
+    const document = readDocument(contents);
+
+    // Blanked rather than dropped, so a position still names its own line.
+    const source = contents.split(/\r?\n/)
+      .map((line, index) => (document.hidden(index) ? " ".repeat(line.length) : line))
+      .join("\n");
+
+    // A backslash makes the next character text, so an escaped backtick
+    // opens nothing and an escaped `<` is a less-than sign rather than a tag.
+    const unescaped = source.replace(/\\[^A-Za-z0-9\s]/g, "  ");
+
+    // A backtick run opens a code span, and only a run of the same length
+    // closes it. A run that never meets its match is literal text, which is
+    // what a mismatched pair did: it looked like a span and rendered as one
+    // more tag.
+    let stripped = "";
+    let at = 0;
+    while (at < unescaped.length) {
+      if (unescaped[at] !== "`") {
+        stripped += unescaped[at];
+        at += 1;
+        continue;
+      }
+      let run = 0;
+      while (unescaped[at + run] === "`") run += 1;
+      let scan = at + run;
+      let closes = -1;
+      while (scan < unescaped.length) {
+        if (unescaped[scan] !== "`") {
+          scan += 1;
+          continue;
+        }
+        let width = 0;
+        while (unescaped[scan + width] === "`") width += 1;
+        if (width === run) {
+          closes = scan;
+          break;
+        }
+        scan += width;
+      }
+      if (closes === -1) {
+        stripped += unescaped.slice(at, at + run);
+        at += run;
+        continue;
+      }
+      const span = unescaped.slice(at, closes + run);
+      stripped += span.replace(/[^\n]/g, " ");
+      at = closes + run;
+    }
+
+    // A link, not a tag, and the one exemption here that carries a proof
+    // rather than an approximation: nothing between the scheme and the closing
+    // bracket may be a bracket or a space, so no tag fits inside one. The email
+    // form is deliberately not exempt, because the pattern written for it
+    // accepted `<![CDATA[x@y>` and let a style element through.
+    const withoutLinks = stripped.replace(
+      /<[a-zA-Z][a-zA-Z0-9+.-]*:[^<>\s]*>/g,
+      (link) => " ".repeat(link.length),
+    );
+
+    const found: string[] = [];
+    withoutLinks.split("\n").forEach((line, index) => {
+      if (line.includes("<")) {
+        found.push(`${index + 1}: ${contents.split(/\r?\n/)[index]?.trim().slice(0, 60)}`);
+      }
     });
+    return found;
+  };
 
-    expect(offenders, "these documents must carry no raw HTML").toEqual([]);
+  test("no markup can reach the reader and hide a rule", () => {
+    const offenders = PINNED_DOCUMENTS.flatMap((file) =>
+      markupReachingTheReader(readFileSync(join(REPOSITORY_ROOT, file), "utf8"))
+        .map((where) => `${file}:${where}`));
+
+    expect(
+      offenders,
+      "put markup in a code span or a fence, or escape it, so it stays text",
+    ).toEqual([]);
   });
 
   test("every shipped skill is routed, so a new one cannot arrive unrouted", () => {
     // The code skill is deliberately absent from both lists, because code
     // sits outside the standard. The core skill hosts the routing list, so
     // it does not route itself, though the output style still names it.
-    const UNROUTED = new Set(["iso-24495-code"]);
+    // Two skills are deliberately unrouted. Code sits outside the standard,
+    // and the style skill holds the output style itself rather than being a
+    // destination anyone routes to.
+    const UNROUTED = new Set(["iso-24495-code", "iso-24495-style"]);
     const HOSTS_THE_LIST = "iso-24495-1";
 
-    // A skill is a directory holding a SKILL.md, which is how the frontmatter
-    // suite finds them. Filtering on the iso-24495 prefix instead let a skill
-    // named for its subject ship unrouted with the gate green.
-    const shipped = readdirSync(SKILLS_ROOT)
-      .filter((entry) => existsSync(join(SKILLS_ROOT, entry, "SKILL.md")))
+    // A skill is any directory holding a SKILL.md under either root, which is
+    // how the frontmatter suite finds them. Two narrower guesses shipped a
+    // skill unrouted with the gate green: filtering on the iso-24495 prefix
+    // missed one named for its subject, and reading only skills/ missed one
+    // that the Codex manifest ships from codex-skills/.
+    const shipped = [SKILLS_ROOT, CODEX_SKILLS_ROOT]
+      .flatMap((root) => readdirSync(root)
+        .filter((entry) => existsSync(join(root, entry, "SKILL.md"))))
       .filter((entry) => !UNROUTED.has(entry))
       .sort();
     expect(shipped.length, "there must be skills to route").toBeGreaterThan(0);
