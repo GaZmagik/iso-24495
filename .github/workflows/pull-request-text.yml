@@ -10,6 +10,9 @@ on:
     types: [opened, edited, reopened, synchronize]
 
 jobs:
+  # Do not rename this job. Its key is the name of a required status check on
+  # main, in the protect-main ruleset, so a rename leaves that check waiting for
+  # a report that never comes and no pull request can merge.
   audit:
     runs-on: ubuntu-latest
     steps:

@@ -6,6 +6,9 @@ on:
   pull_request:
 
 jobs:
+  # Do not rename this job. Its key is the name of a required status check on
+  # main, in the protect-main ruleset, so a rename leaves that check waiting for
+  # a report that never comes and no pull request can merge.
   check:
     runs-on: ubuntu-latest
     steps:

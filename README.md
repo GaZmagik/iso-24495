@@ -182,6 +182,8 @@ bash scripts/audit-pull-request-text.sh <file>
 
 The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all.
 
+Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
+
 `bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.
 
 The current suite covers 100% of measured source lines and functions.
