@@ -1034,16 +1034,20 @@ describe("repository writing conventions", () => {
           "bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts",
           { cwd: REPOSITORY_ROOT, stdio: "pipe" },
         );
+        // Compared as written, like the rebuild above. Comparing the raw text
+        // failed a normal checkout: this repository is checked out with
+        // carriage returns and the builder writes without them, so a correct
+        // tree looked wrong.
         expect(
-          readFileSync(fixture, "utf8"),
+          asWritten(readFileSync(fixture, "utf8")),
           "the documented command with no argument must write this fixture",
-        ).toBe(fixtureBefore);
+        ).toBe(asWritten(fixtureBefore));
       } finally {
         writeFileSync(fixture, fixtureBefore, "utf8");
       }
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
   test("the fixture covers every document the manifests ship", () => {
     // Both sorted, so where a name sits in the list is not a second thing to
