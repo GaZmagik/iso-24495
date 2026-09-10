@@ -1223,6 +1223,107 @@ describe("repository writing conventions", () => {
       const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
       expect(readme).toMatch(/scripts\/check\.sh/);
     });
+
+    // A pull request description is text a reader receives, and until now the
+    // suite read every document in this repository except that one. It lives on
+    // GitHub rather than in the tree, so a second workflow fetches it and hands
+    // it to the same script a contributor can run over any file.
+    describe("the pull request description check", () => {
+      const auditScript = join(REPOSITORY_ROOT, "scripts", "audit-pull-request-text.sh");
+      const descriptionWorkflow = join(
+        REPOSITORY_ROOT,
+        ".github",
+        "workflows",
+        "pull-request-text.yml",
+      );
+
+      // Windows separators reach bash as escape characters rather than as path
+      // separators, and `dirname` then reads the whole path as one name. Both
+      // platforms accept forward slashes, so both get them.
+      const forBash = (path: string): string => path.split("\\").join("/");
+
+      /** Runs the check over one piece of text, and reports what a reader sees. */
+      const audit = (text: string): { status: number | null; output: string } => {
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-description-"));
+        try {
+          const file = join(directory, "description.md");
+          writeFileSync(file, text, "utf8");
+          const run = Bun.spawnSync(["bash", forBash(auditScript), forBash(file)]);
+          const decoder = new TextDecoder();
+          return {
+            status: run.exitCode,
+            output: `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`,
+          };
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      };
+
+      test("the decision lives in a script a contributor can run", () => {
+        expect(existsSync(auditScript), "scripts/audit-pull-request-text.sh must exist").toBe(true);
+        const script = readFileSync(auditScript, "utf8");
+        expect(script, "the script must fail on the first error").toMatch(/^set -euo pipefail$/m);
+        expect(script, "the script must run the shipped audit").toMatch(/audit-text-cli\.ts/);
+      });
+
+      test("plain text passes, whichever line endings it arrives with", () => {
+        const lines = [
+          "This branch adds the Part 5 rules.",
+          "",
+          "It fixes the timing guards as well.",
+        ];
+        // A description written in the GitHub editor arrives with Windows line
+        // endings. A check that passed here and failed there would be the drift
+        // the shared script exists to prevent, so both are pinned.
+        for (const ending of ["\n", "\r\n"]) {
+          const result = audit(lines.join(ending) + ending);
+          expect(result.status, `${JSON.stringify(ending)} gave: ${result.output}`).toBe(0);
+        }
+      });
+
+      test("a sentence past the ceiling fails, and the log names the rule", () => {
+        const result = audit(`${"word ".repeat(40)}stop.`);
+        expect(result.status, result.output).toBe(1);
+        // A bare exit code leaves the author nothing to act on, so the findings
+        // themselves have to reach the log.
+        expect(result.output, "the log must name the rule").toContain("sentence-length");
+      });
+
+      test("an empty description fails rather than passing on an empty audit", () => {
+        const result = audit("");
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain("no text to read");
+      });
+
+      test("a missing argument is a usage error rather than a pass", () => {
+        const run = Bun.spawnSync(["bash", forBash(auditScript)]);
+        expect(run.exitCode).toBe(2);
+      });
+
+      test("the workflow hands the description to that script", () => {
+        expect(
+          existsSync(descriptionWorkflow),
+          ".github/workflows/pull-request-text.yml must exist",
+        ).toBe(true);
+        const workflow = readFileSync(descriptionWorkflow, "utf8");
+        // A description changes without a commit, so pushes alone would miss it.
+        expect(workflow, "it must run when a description is edited").toMatch(
+          /^\s*types:.*\bedited\b/m,
+        );
+        expect(workflow, "it must call the shared script").toMatch(
+          /bash\s+scripts\/audit-pull-request-text\.sh/,
+        );
+        const inlineBunCalls = workflow.match(/^\s*run:\s*bun\b/gm) ?? [];
+        expect(inlineBunCalls, "the workflow must not run its own bun commands").toEqual([]);
+        // A description is text from outside this repository, so it reaches the
+        // script as an environment variable and never as part of the command.
+        expect(workflow, "the description must not be written into the command").toMatch(
+          /PR_BODY:\s*\$\{\{\s*github\.event\.pull_request\.body\s*\}\}/,
+        );
+        expect(workflow, "the step must read it from that variable").toContain('"$PR_BODY"');
+      });
+    });
+
   });
 
   // Codex reads the same marketplace manifest as Claude Code, and gives each

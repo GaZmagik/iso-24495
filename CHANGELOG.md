@@ -37,6 +37,12 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   whether they had complied. An operative clause imposes, permits or prohibits an action, and
   recitals, definitions and schedules are numbered by the document's conventions instead.
 
+- **The plugin now audits its own pull request descriptions.** The suite reads every document in
+  this repository. A description was the one piece of text it never saw, because it lives on
+  GitHub rather than in the tree. A workflow now hands it to
+  `scripts/audit-pull-request-text.sh`, which you can run over any file yourself. It fails a
+  description that carries findings, and one that is empty.
+
 ### Known limits
 
 - **The audit engine does not measure the new rules.** Its seventeen checks are mechanical

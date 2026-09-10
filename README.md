@@ -174,6 +174,14 @@ Directory audits skip selected or nested symbolic links and directory junctions.
 
 Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
 
+A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
+
+```bash
+bash scripts/audit-pull-request-text.sh <file>
+```
+
+The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all.
+
 `bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.
 
 The current suite covers 100% of measured source lines and functions.

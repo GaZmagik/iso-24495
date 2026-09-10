@@ -1,0 +1,29 @@
+# A pull request description is text a reader receives, so this plugin's own
+# audit reads it. The decision lives in scripts/audit-pull-request-text.sh, and
+# this file only fetches the description and hands it over, so that a
+# contributor can reproduce a failure here with one local command.
+name: Pull request text
+
+on:
+  pull_request:
+    # Edited as well as pushed, because a description changes without a commit.
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Audit the description
+        # Passed as an environment variable rather than written into the script,
+        # so a description cannot become part of the command that reads it.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pull-request.md"
+          bash scripts/audit-pull-request-text.sh "$RUNNER_TEMP/pull-request.md"
