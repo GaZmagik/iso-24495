@@ -9,6 +9,63 @@ import {
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const target = argv[2];
+  if (!target) {
+    stderr(
+      "Usage: bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>]",
+    );
+    return 2;
+  }
+  let jsonPath: string | undefined;
+  let projectDir = process.cwd();
+  const seenOptions = new Set<string>();
+  for (let index = 3; index < argv.length; index++) {
+    const option = argv[index];
+    if (option !== "--json" && option !== "--project-dir") {
+      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
+      stderr(`audit-text: ${kind}: ${option}`);
+      return 2;
+    }
+    if (seenOptions.has(option)) {
+      stderr(`audit-text: ${option} appears more than once`);
+      return 2;
+    }
+    seenOptions.add(option);
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) {
+      const expected = option === "--json" ? "an output file" : "a directory";
+      stderr(`audit-text: ${option} requires ${expected}`);
+      return 2;
+    }
+    if (option === "--json") {
+      jsonPath = value;
+    } else {
+      projectDir = value;
+    }
+    index++;
+  }
+
+  try {
+    const findings = auditTarget(target, projectDir);
+    for (const path of findings.skipped) {
+      stderr(`warning: skipped unreadable entry: ${path}`);
+    }
+    if (jsonPath !== undefined) {
+      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
+    }
+    stdout(formatFindings(findings));
+    return 0;
+  } catch (error) {
+    stderr(`audit-text: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
 export interface TextAuditResult extends Findings {
   skipped: string[];
 }
@@ -86,61 +143,4 @@ export function formatFindings(findings: TextAuditResult): string {
     "The user decides whether the text suits its readers and purpose.",
   );
   return lines.join("\n");
-}
-
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const target = argv[2];
-  if (!target) {
-    stderr(
-      "Usage: bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>]",
-    );
-    return 2;
-  }
-  let jsonPath: string | undefined;
-  let projectDir = process.cwd();
-  const seenOptions = new Set<string>();
-  for (let index = 3; index < argv.length; index++) {
-    const option = argv[index];
-    if (option !== "--json" && option !== "--project-dir") {
-      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(`audit-text: ${kind}: ${option}`);
-      return 2;
-    }
-    if (seenOptions.has(option)) {
-      stderr(`audit-text: ${option} appears more than once`);
-      return 2;
-    }
-    seenOptions.add(option);
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      const expected = option === "--json" ? "an output file" : "a directory";
-      stderr(`audit-text: ${option} requires ${expected}`);
-      return 2;
-    }
-    if (option === "--json") {
-      jsonPath = value;
-    } else {
-      projectDir = value;
-    }
-    index++;
-  }
-
-  try {
-    const findings = auditTarget(target, projectDir);
-    for (const path of findings.skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
-    }
-    if (jsonPath !== undefined) {
-      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
-    }
-    stdout(formatFindings(findings));
-    return 0;
-  } catch (error) {
-    stderr(`audit-text: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
-  }
 }
