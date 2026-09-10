@@ -556,13 +556,22 @@ describe("command line entry files", () => {
         + `Skipped entries: ${(savedAudit.skipped as string[]).length}.`,
       );
 
-      // The saved totals must also be the findings the saved rows describe. A
-      // review saved a total of one where two findings sat in the same file,
-      // and the printed count is built from the totals rather than the rows.
+      // The totals rebuilt from the saved findings, rule by rule. Comparing the
+      // sum alone lost the names: a review moved every count onto one rule, so
+      // the file said two findings of legalese where it had recorded one of
+      // legalese and one complex word, and the sum still matched.
+      const countedByRule: Record<string, number> = {};
+      for (const file of Object.values(savedAudit.files as Record<string, {
+        violations: Array<{ rule: string }>;
+      }>)) {
+        for (const violation of file.violations) {
+          countedByRule[violation.rule] = (countedByRule[violation.rule] ?? 0) + 1;
+        }
+      }
       expect(
-        countFrom(savedAudit.totals),
-        "the saved totals must count the saved findings",
-      ).toBe(savedRows.length);
+        savedAudit.totals,
+        "the saved totals must be the findings the saved file records",
+      ).toEqual(countedByRule);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

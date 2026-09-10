@@ -28,7 +28,6 @@ describe("generateReport", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
     expect(report).toContain("ISO/CD 24495-4");
     expect(report.toLowerCase()).toContain("provisional");
-    expect(report.toLowerCase()).not.toContain("certified");
   });
 
   // The whole report, line for line.

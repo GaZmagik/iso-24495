@@ -39,10 +39,21 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * A reader meets these as rendered pages, so what they say and what a browser
  * shows have to stay the same thing.
  */
-/** Whether a file survives a round trip through UTF-8, which is what text means here. */
-function isText(path: string): boolean {
-  const bytes = readFileSync(path);
-  return Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes);
+/**
+ * Whether a file is one this repository pins, decided by its name.
+ *
+ * Deciding by decoding was circular, and a review walked through the circle:
+ * it removed a reference from the list, reversed a sentence in it and appended
+ * one invalid byte, and the file then failed to be text and so was never
+ * required to be listed. A file does not stop being a document by being
+ * damaged. Its name says what it is meant to be, and the encoding check below
+ * says whether it still is.
+ */
+const TEXT_KINDS = [".md", ".yaml", ".yml", ".json", ".txt"];
+
+function isPinnedKind(file: string): boolean {
+  const name = file.toLowerCase();
+  return TEXT_KINDS.some((kind) => name.endsWith(kind)) || !name.includes(".");
 }
 
 const PINNED_DOCUMENTS = [...SHIPPED_DOCUMENTS];
@@ -890,11 +901,8 @@ describe("repository writing conventions", () => {
   // The fixture is written by a script, and a script's inputs are a place to
   // hide. A review deleted one path from the builder, rebuilt, and then
   // changed the document that path had covered: nothing failed and no count
-  // moved. So the set is derived from the manifests here as well as there,
-  // and the two must agree. Each is computed without reading the other, so
-  // shortening one no longer lets it agree with itself. Removing a skill
-  // from a manifest stops it
-  // shipping, which is a visible act rather than a quiet one.
+  // moved. So the fixture's keys and the pinned list must agree here, and the
+  // floor below says nothing has quietly left that list.
   // A list can be short, and a review proved that by shortening one. This
   // is the floor beneath it: everything of a kind this repository is known
   // to ship must be listed, so a skill or a manifest cannot arrive unnoticed.
@@ -945,7 +953,7 @@ describe("repository writing conventions", () => {
         const path = join(base, entry);
         if (statSync(path).isDirectory()) {
           textFilesUnder(`${directory}/${entry}`, here);
-        } else if (isText(path) && !listed.has(here)) {
+        } else if (isPinnedKind(entry) && !listed.has(here)) {
           missing.push(here);
         }
       }
@@ -1004,9 +1012,16 @@ describe("repository writing conventions", () => {
         asWritten(readFileSync(rebuilt, "utf8")),
         "a rebuild on an unchanged tree must reproduce the fixture",
       ).toBe(asWritten(readFileSync(fixture, "utf8")));
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
+      // Where it writes when told nothing, which the check above never sees
+      // because it always tells it. A review renamed the default and the gate
+      // stayed green while the documented command wrote the wrong file.
+      const builder = readFileSync(
+        join(import.meta.dir, "reference", "build-pinned-documents.ts"), "utf8");
+      expect(builder, "the default destination must be the fixture this suite reads")
+        .toContain('join(import.meta.dir, "..", "fixtures", "pinned-documents.ts")');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
   test("the fixture covers every document the manifests ship", () => {
     // Both sorted, so where a name sits in the list is not a second thing to
@@ -1019,11 +1034,12 @@ describe("repository writing conventions", () => {
   test("no line of a pinned document changes without its fixture changing", () => {
 
     for (const file of PINNED_DOCUMENTS) {
-      // Read as text, and required to be text. A review changed a price
-      // written in UTF-16 from pounds to yen and every line still matched,
-      // because both bytes decode to the same replacement character. Refusing
-      // a file that does not survive the round trip closes that without a
-      // digest, and without this suite deciding what a file format is.
+      // Required to survive a round trip through UTF-8. A review changed a
+      // price written in UTF-16 from pounds to yen, and every line still
+      // matched, because both bytes decode to the same replacement character.
+      // Refusing a file that does not come back unchanged closes that, and the
+      // floor decides which files must be here by their names rather than by
+      // whether they decode, so damaging one cannot excuse it.
       const bytes = readFileSync(join(REPOSITORY_ROOT, file));
       const text = bytes.toString("utf8");
       expect(
@@ -1036,7 +1052,6 @@ describe("repository writing conventions", () => {
 
       // Decoding is lossy, and a review used that: a price written in UTF-16
       // changed from pounds to yen, both bytes decoded to the same replacement
-      // character, and every line still matched. The digest sees the bytes.
       // Named line by line rather than as one blob, because a failure saying
       // only that a 209 line file differs sends the reader to a diff tool.
       const reach = Math.max(actual.length, expected.length);
