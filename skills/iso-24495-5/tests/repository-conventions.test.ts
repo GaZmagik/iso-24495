@@ -49,11 +49,16 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * damaged. Its name says what it is meant to be, and the encoding check below
  * says whether it still is.
  */
-const TEXT_KINDS = [".md", ".yaml", ".yml", ".json", ".txt"];
-
 function isPinnedKind(file: string): boolean {
   const name = file.toLowerCase();
-  return TEXT_KINDS.some((kind) => name.endsWith(kind)) || !name.includes(".");
+  // Prose comes from the engine's own list, which a second list here got
+  // wrong: it omitted the .markdown extension that this repository documents
+  // and the engine audits, so a reference in that format shipped unpinned.
+  // The engine's comment says every caller must ask it rather than compare
+  // extensions, and this is a caller.
+  return isAuditedDocument(name)
+    || [".yaml", ".yml", ".json"].some((kind) => name.endsWith(kind))
+    || !name.includes(".");
 }
 
 const PINNED_DOCUMENTS = [...SHIPPED_DOCUMENTS];
@@ -1013,12 +1018,29 @@ describe("repository writing conventions", () => {
         "a rebuild on an unchanged tree must reproduce the fixture",
       ).toBe(asWritten(readFileSync(fixture, "utf8")));
       // Where it writes when told nothing, which the check above never sees
-      // because it always tells it. A review renamed the default and the gate
-      // stayed green while the documented command wrote the wrong file.
-      const builder = readFileSync(
-        join(import.meta.dir, "reference", "build-pinned-documents.ts"), "utf8");
-      expect(builder, "the default destination must be the fixture this suite reads")
-        .toContain('join(import.meta.dir, "..", "fixtures", "pinned-documents.ts")');
+      // because it always tells it. Reading the source for the right filename
+      // was not enough either: a review appended a replace call to the same
+      // expression and the spelling still matched. So the command is run with
+      // no argument, and the fixture it should have written is restored
+      // afterwards whatever happened.
+      // A mark is left in the fixture first, so that a command writing
+      // somewhere else leaves it behind. Comparing the file with itself proved
+      // nothing: a review redirected the default with a replace call, the real
+      // fixture went untouched, and an unchanged file matched.
+      const fixtureBefore = readFileSync(fixture, "utf8");
+      try {
+        writeFileSync(fixture, "// replaced by a test, and rebuilt below\n", "utf8");
+        execSync(
+          "bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts",
+          { cwd: REPOSITORY_ROOT, stdio: "pipe" },
+        );
+        expect(
+          readFileSync(fixture, "utf8"),
+          "the documented command with no argument must write this fixture",
+        ).toBe(fixtureBefore);
+      } finally {
+        writeFileSync(fixture, fixtureBefore, "utf8");
+      }
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -1050,8 +1072,6 @@ describe("repository writing conventions", () => {
       const actual = text.split(/\r?\n/);
       const expected = PINNED_DOCUMENT_TEXT[file] ?? [];
 
-      // Decoding is lossy, and a review used that: a price written in UTF-16
-      // changed from pounds to yen, both bytes decoded to the same replacement
       // Named line by line rather than as one blob, because a failure saying
       // only that a 209 line file differs sends the reader to a diff tool.
       const reach = Math.max(actual.length, expected.length);
