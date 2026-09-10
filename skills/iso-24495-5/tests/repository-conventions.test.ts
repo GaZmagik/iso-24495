@@ -39,6 +39,12 @@ const TARGET_WORDING = /aim|target|or fewer|at or under|not a fault/i;
  * A reader meets these as rendered pages, so what they say and what a browser
  * shows have to stay the same thing.
  */
+/** Whether a file survives a round trip through UTF-8, which is what text means here. */
+function isText(path: string): boolean {
+  const bytes = readFileSync(path);
+  return Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes);
+}
+
 const PINNED_DOCUMENTS = [...SHIPPED_DOCUMENTS];
 /** Named in every failure here, because a diff cannot say what to run. */
 const REBUILD =
@@ -926,29 +932,42 @@ describe("repository writing conventions", () => {
     // The other kinds this repository is known to ship: what a skill hands a
     // reader, the output style, and the three documents at the root. Removing
     // one line from the list passed until these were counted too.
+    // Files, at whatever depth, and text only. A review added a note in a
+    // sub-folder and a diagram beside it, and the floor demanded the folder
+    // rather than the note while the diagram failed for not being text. A
+    // skill may hand a reader a picture; this list holds what it says, and a
+    // picture says nothing this fixture can hold.
+    const textFilesUnder = (directory: string, prefix: string): void => {
+      const base = join(REPOSITORY_ROOT, directory);
+      if (!existsSync(base)) return;
+      for (const entry of readdirSync(base)) {
+        const here = `${prefix}/${entry}`;
+        const path = join(base, entry);
+        if (statSync(path).isDirectory()) {
+          textFilesUnder(`${directory}/${entry}`, here);
+        } else if (isText(path) && !listed.has(here)) {
+          missing.push(here);
+        }
+      }
+    };
+
     for (const root of ["skills", "codex-skills"]) {
       const base = join(REPOSITORY_ROOT, root);
       if (!existsSync(base)) continue;
       for (const skill of readdirSync(base)) {
         for (const kind of ["assets", "references"]) {
-          const directory = join(base, skill, kind);
-          if (!existsSync(directory)) continue;
-          for (const entry of readdirSync(directory)) {
-            const path = `${root}/${skill}/${kind}/${entry}`;
-            if (!listed.has(path)) missing.push(path);
-          }
+          textFilesUnder(`${root}/${skill}/${kind}`, `${root}/${skill}/${kind}`);
         }
       }
     }
 
-    const styles = join(REPOSITORY_ROOT, "output-styles");
-    if (existsSync(styles)) {
-      for (const entry of readdirSync(styles)) {
-        if (!listed.has(`output-styles/${entry}`)) missing.push(`output-styles/${entry}`);
-      }
-    }
+    textFilesUnder("output-styles", "output-styles");
 
-    for (const file of ["README.md", "LICENSE", "CHANGELOG.md"]) {
+    // Named rather than swept, because the root holds build and repository
+    // furniture that no reader receives. A review added a contributing guide
+    // and it was not required here, which is a narrower claim than the commit
+    // made and the honest one.
+    for (const file of ["README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md"]) {
       if (!existsSync(join(REPOSITORY_ROOT, file))) continue;
       if (!listed.has(file)) missing.push(file);
     }
@@ -962,22 +981,39 @@ describe("repository writing conventions", () => {
   });
 
   // The builder is a documented command, and a review found it broken by a
-  // missing import while every test stayed green. A command nobody runs is a
+  // missing import while the gate stayed green. A command nobody runs is a
   // command nobody knows the state of, so this runs it.
-  test("the documented rebuild command runs and changes nothing", () => {
+  //
+  // It rebuilds somewhere harmless. The first version rebuilt over the very
+  // fixture it was checking, so a failing run adopted the change it had just
+  // rejected and the next run passed.
+  //
+  // Line endings are normalised before comparing, because a checkout decides
+  // them and this file is committed.
+  test("the documented rebuild command reproduces the fixture", () => {
     const fixture = join(import.meta.dir, "fixtures", "pinned-documents.ts");
-    const before = readFileSync(fixture, "utf8");
-    execSync(
-      "bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts",
-      { cwd: REPOSITORY_ROOT, stdio: "pipe" },
-    );
-    expect(readFileSync(fixture, "utf8"),
-      "a rebuild on an unchanged tree must reproduce the fixture exactly")
-      .toBe(before);
+    const workspace = mkdtempSync(join(tmpdir(), "iso-rebuild-"));
+    try {
+      const rebuilt = join(workspace, "pinned-documents.ts");
+      execSync(
+        `bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts "${rebuilt}"`,
+        { cwd: REPOSITORY_ROOT, stdio: "pipe" },
+      );
+      const asWritten = (text: string): string => text.replace(/\r\n/g, "\n");
+      expect(
+        asWritten(readFileSync(rebuilt, "utf8")),
+        "a rebuild on an unchanged tree must reproduce the fixture",
+      ).toBe(asWritten(readFileSync(fixture, "utf8")));
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
   test("the fixture covers every document the manifests ship", () => {
+    // Both sorted, so where a name sits in the list is not a second thing to
+    // get right. A document added out of alphabetical order failed here while
+    // being correctly listed and rebuilt.
     expect(Object.keys(PINNED_DOCUMENT_TEXT).sort(), REBUILD)
-      .toEqual(PINNED_DOCUMENTS);
+      .toEqual([...PINNED_DOCUMENTS].sort());
   });
 
   test("no line of a pinned document changes without its fixture changing", () => {

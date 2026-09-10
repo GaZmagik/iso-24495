@@ -33,6 +33,12 @@ function capture() {
   };
 }
 
+/** How many findings a totals map describes. */
+function countFrom(totals: unknown): number {
+  return Object.values((totals ?? {}) as Record<string, number>)
+    .reduce((sum, count) => sum + count, 0);
+}
+
 describe("audit-corpus runCli", () => {
   test("prints the golden table and writes JSON", () => {
     const output = capture();
@@ -537,6 +543,26 @@ describe("command line entry files", () => {
         "| File | Line | Rule | Finding |",
         ...savedRows,
       ]);
+
+      // The summary line as well as the table. A review saved a total of one
+      // where the terminal reported two, and invented a skipped file the
+      // terminal never mentioned. Neither of those shows up in a row.
+      expect(
+        printedAudit.stdout.join("\n"),
+        "the saved counts must be the counts it printed",
+      ).toContain(
+        `Finding count: ${countFrom(savedAudit.totals)}. `
+        + `Files read: ${Object.keys(savedAudit.files as Record<string, unknown>).length}. `
+        + `Skipped entries: ${(savedAudit.skipped as string[]).length}.`,
+      );
+
+      // The saved totals must also be the findings the saved rows describe. A
+      // review saved a total of one where two findings sat in the same file,
+      // and the printed count is built from the totals rather than the rows.
+      expect(
+        countFrom(savedAudit.totals),
+        "the saved totals must count the saved findings",
+      ).toBe(savedRows.length);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

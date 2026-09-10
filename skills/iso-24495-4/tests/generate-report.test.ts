@@ -12,6 +12,10 @@ const answers = await Bun.file(join(FIXTURES, "answers.sample.json")).json();
 const maturity = scoreMaturity(answers);
 const NOW = "2026-08-11T14:00:00.000Z";
 
+/** Named in the failure, because a difference of 45 lines needs a reason. */
+const REPORT_MUST_MATCH =
+  "the report changed. Read the diff as what a reader gains or loses, and update this only when that is what you meant.";
+
 describe("generateReport", () => {
   test("the report contains every required section", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
@@ -27,92 +31,73 @@ describe("generateReport", () => {
     expect(report.toLowerCase()).not.toContain("certified");
   });
 
-  // The two checks above read for words, and a review walked past both of
-  // them in the source while every test stayed green. It changed "confers no
-  // certification" to "confers certification", which contains no
-  // "certified", and it changed "must validate" to "need not validate",
-  // which is as provisional as the original by every word this file reads.
+  // The whole report, line for line.
   //
-  // These are the two sentences the report exists to carry. A gap analysis
-  // that confers certification, or that nobody need check, is the claim this
-  // whole project is built to avoid making. They are pinned whole, because a
-  // word is not what they mean.
-  test("the report keeps the two sentences that limit what it claims", () => {
-    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
-    // Found on a line of their own, not merely somewhere in the text. A review
-    // turned the provisional paragraph into a caption for an image, so the page
-    // showed a picture and the sentence survived only inside its alternative
-    // text. Containing it and showing it are still different things.
-    const shown = report.split(/\r?\n/);
-    const carries = (sentence: string): boolean =>
-      shown.some((line) => line.includes(sentence)
-        && !line.includes("![") && !line.includes("]("));
-    expect(carries("It is not a compliance statement and confers no certification."),
-      "the report must confer no certification, on a line a reader sees").toBe(true);
-    expect(carries("A human reviewer must validate this report before the organisation acts on it."),
-      "the report must require a human reviewer, on a line a reader sees").toBe(true);
-  });
-
-  // A review replaced the expression that renders these counts with a literal
-  // zero. Every row still appeared, so the section check above passed and the
-  // reader was told there was nothing to fix. The maturity levels are the
-  // report's other quantities, and they are checked below for the same reason.
-  test("the corpus rows carry the counts they were given", () => {
-    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
-    const totals = Object.entries(findings.totals);
-    expect(totals.length, "the fixture corpus must produce findings").toBeGreaterThan(0);
-    for (const [rule, count] of totals) {
-      expect(report, `the row for ${rule} must show its own count`)
-        .toContain(`| ${rule} | ${count} |`);
-    }
-    expect(
-      totals.some(([, count]) => count > 0),
-      "a corpus with findings must not report every rule as zero",
-    ).toBe(true);
-  });
-
-  // Containing a sentence is not showing it. A review wrapped the whole report
-  // in an HTML comment, and every check above passed while a browser rendered
-  // an empty page. So the report must begin as a report and carry no markup.
-  test("the report reaches the reader rather than merely containing its words", () => {
-    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
-    expect(report.split(/\r?\n/)[0], "the report must open with its own heading")
-      .toBe("# Plain Language Gap Analysis");
-    // Not merely a comment. A review wrapped the body in a hidden div instead
-    // and the page showed only the title. A report carries no markup at all,
-    // which needs no list of the wrappers anyone might reach for.
-    expect(report, "markup in a report can hide the report").not.toContain("<");
-    // Markdown hides text without any markup: an image caption and a link
-    // title both do it. The two sentences above are checked for the line
-    // they sit on, which is what that costs.
-    expect(report, "an image can carry a whole report as its caption")
-      .not.toContain("![");
-  });
-
-  // The maturity levels, checked against the levels the report was handed. A
-  // review replaced each with a literal 4, and the rows still appeared, so a
-  // reader was told the organisation had reached the top level whatever its
-  // evidence said.
+  // Four checks tried to describe what the report must not do: no word
+  // "certified", then no comment opener, then no less-than sign, then no
+  // image syntax. A review walked past each in turn, and the last two also
+  // refused output the generator legitimately produces, because a second
+  // evidence path is separated with a break tag.
   //
-  // The trend totals are not checked here, and a review showed they can be
-  // replaced by a literal zero. That renderer and the test that reads only its
-  // heading both predate this branch.
-  test("the maturity rows carry the levels they were scored", () => {
+  // Describing a document by what it may not contain was the mistake. This
+  // is what it does contain, on fixed inputs and a fixed clock, checked
+  // against a renderer when it was written down. Comparing the next report
+  // with the one that was reviewed needs no renderer here.
+  //
+  // Every earlier survivor fails against this: a comment or a hidden div
+  // around the body, the disclaimer as an image caption or a reference
+  // definition, a maturity level replaced by a literal, a count replaced by
+  // zero, and a reversed sentence about text quality. The four tests this
+  // replaces each checked one of those and missed the rest.
+  test("the report is exactly this document", () => {
     const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
-    for (const [dimension, result] of Object.entries(maturity.dimensions)) {
-      expect(report, `the row for ${dimension} must show its own level`)
-        .toContain(`| ${dimension} | ${result.level} |`);
-    }
-    expect(report, "the overall level must be the one that was scored")
-      .toContain(`**${maturity.overall}**`);
-  });
-
-  // The sentence that stops a good writing score standing in for evidence.
-  // Reversing it to "always" survived every check.
-  test("the report keeps text quality from raising a level", () => {
-    const { report } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
-    expect(report, "text quality must never raise a maturity level")
-      .toContain("Text quality alone never raises a maturity level.");
+    expect(report.split(/\r?\n/), REPORT_MUST_MATCH).toEqual([
+    "# Plain Language Gap Analysis",
+    "",
+    "> Provisional: this analysis is based on the public scope of ISO/CD 24495-4 (committee draft, unpublished). It is not a compliance statement and confers no certification. Audit date: 2026-08-11T14:00:00.000Z.",
+    "",
+    "## Maturity",
+    "",
+    "| Dimension | Level | Blocking criteria |",
+    "|-----------|-------|-------------------|",
+    "| governance | 2 | resourced-mandated |",
+    "| capability | 1 | training-delivered |",
+    "| process | 2 | signoff-gates |",
+    "| measurement | 0 | corpus-baseline-taken |",
+    "| culture | 1 | leadership-champions |",
+    "",
+    "Overall maturity (weakest dimension): **0**.",
+    "",
+    "## Evidence",
+    "",
+    "| Artefact category | Found | Paths |",
+    "|-------------------|-------|-------|",
+    "| policy | yes | docs/plain-language-policy.md |",
+    "| review-workflow | yes | .github/PULL_REQUEST_TEMPLATE.md |",
+    "| automated-checks | yes | .github/workflows/text-lint.yml |",
+    "| training | yes | training/introduction.md |",
+    "| glossary | yes | glossary.md |",
+    "",
+    "## Corpus findings",
+    "",
+    "| Rule | Violations |",
+    "|------|------------|",
+    "| sentence-average | 1 |",
+    "| paragraph-length | 1 |",
+    "| heading-depth | 2 |",
+    "| legalese | 5 |",
+    "| sentence-length | 2 |",
+    "",
+    "Corpus metrics are proxies for the Measurement dimension only. Text quality alone never raises a maturity level.",
+    "",
+    "## Limitations",
+    "",
+    "- The underlying standard is an unpublished committee draft; criteria may change.",
+    "- Text heuristics are English-centric and approximate.",
+    "- Maturity levels reflect the evidence supplied; absent evidence scores as absent.",
+    "- A human reviewer must validate this report before the organisation acts on it.",
+    "",
+    ]);
   });
 
   test("a first run creates state with one timestamped snapshot", () => {

@@ -52,8 +52,3 @@ export const SHIPPED_DOCUMENTS: readonly string[] = [
   "skills/iso-24495-text-audit/SKILL.md",
   "skills/iso-24495-text-audit/agents/openai.yaml",
 ];
-
-/** The same list, for a builder that wants it as an array it can walk. */
-export function shippedDocuments(): string[] {
-  return [...SHIPPED_DOCUMENTS];
-}

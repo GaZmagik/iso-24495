@@ -21,12 +21,16 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { shippedDocuments } from "./shipped-documents.ts";
+import { SHIPPED_DOCUMENTS } from "./shipped-documents.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..", "..");
-const FIXTURE = join(import.meta.dir, "..", "fixtures", "pinned-documents.ts");
+// Written where told, so a check can rebuild without touching the fixture
+// it is checking. A test ran this command against the fixture itself, and a
+// failing run then adopted the change it had just rejected.
+const FIXTURE = process.argv[2]
+  ?? join(import.meta.dir, "..", "fixtures", "pinned-documents.ts");
 
-const entries = shippedDocuments().map((file) => {
+const entries = SHIPPED_DOCUMENTS.map((file) => {
   const lines = readFileSync(join(REPOSITORY_ROOT, file), "utf8").split(/\r?\n/);
   console.log(`${file}: ${lines.length} lines`);
   const body = lines.map((line) => `    ${JSON.stringify(line)},`).join("\n");
@@ -44,5 +48,5 @@ ${entries}
 };
 `;
 
-writeFileSync(FIXTURE, contents.replace(/\n/g, "\r\n"), "utf8");
+writeFileSync(FIXTURE, contents, "utf8");
 console.log(`wrote ${FIXTURE}`);
