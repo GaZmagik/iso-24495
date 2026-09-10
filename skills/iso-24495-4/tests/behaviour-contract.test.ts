@@ -51,6 +51,50 @@ function sentenceOf(words: number, stem = "word"): string {
   return `${Array.from({ length: words }, (_, index) => `${stem}${index}`).join(" ")}.`;
 }
 
+/**
+ * The fastest of a few runs, in milliseconds.
+ *
+ * The guards below compare the cost of three times the input with the cost of
+ * one, to catch a rule that reads the whole text again for every token. One
+ * sample each measures the machine as much as the code: a run descheduled once
+ * inflates the numerator, or flatters the denominator, and the ratio then says
+ * nothing about the algorithm. That is what made these fail under load while
+ * passing alone, and a guard that fails a healthy build gets deleted rather
+ * than read.
+ *
+ * Load only ever adds time, so the fastest of several runs is the closest
+ * estimate of what the work costs. Quadratic cost is still there in the fastest
+ * run, so this steadies the measurement without softening what it asserts.
+ *
+ * Two runs rather than more, because each one triples the work these tests
+ * already do and three took the largest past its timeout. Two is what the
+ * observed failures needed: both came from one sample being descheduled, and a
+ * minimum over two ignores that unless it happens twice.
+ */
+/**
+ * How long a scaling guard may take, well beyond what it needs.
+ *
+ * These tests assert a ratio rather than a speed: three times the input must
+ * cost roughly three times the work, not nine. Their wall clock is only the
+ * room that measurement needs, and the default five seconds is not room enough
+ * on a busy machine. Four of them run at once here and each takes about seven
+ * seconds under that contention.
+ *
+ * A genuine stall is still caught, by this and by the absolute budgets
+ * elsewhere in this file, which bound single operations at one second or less.
+ */
+const SCALING_TIMEOUT_MS = 60_000;
+
+function fastest(work: () => void, attempts = 2): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const started = performance.now();
+    work();
+    best = Math.min(best, performance.now() - started);
+  }
+  return best;
+}
+
 describe("reader-facing behaviour contracts", () => {
   test("an acronym is defined only when its first use actually gives the meaning", () => {
     const laterDefinition = [
@@ -525,17 +569,13 @@ describe("reader-facing behaviour contracts", () => {
         + "[".repeat(size) + "]".repeat(size));
     };
     deep(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      deep(size);
-      return performance.now() - started;
-    };
+    const time = (size: number): number => fastest(() => deep(size));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
 
     let layered = "innermost";
     for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
     expect(() => auditText(layered)).not.toThrow();
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("an empty link shows a reader nothing, so it measures as nothing", () => {
     // A link with no text still has a destination and a title, and leaving them in place
@@ -590,11 +630,7 @@ ${sentence}`)
       auditText("Read [outer [inner] text](/uri) here. ".repeat(size));
     };
     audit(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      audit(size);
-      return performance.now() - started;
-    };
+    const time = (size: number): number => fastest(() => audit(size));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
 
     // Brackets that never close are the shape that was worst, and the shape a generated
@@ -624,7 +660,7 @@ ${sentence}`)
     ]) {
       expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
     }
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("markup that spans lines does not move the lines after it", () => {
     // A link destination or title may hold a line ending. Flattening the link to its
@@ -672,13 +708,9 @@ ${sentence}`)
       auditText(Array(size).fill("A.A.A. (").join(" ") + " and).");
     };
     hostile(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      hostile(size);
-      return performance.now() - started;
-    };
+    const time = (size: number): number => fastest(() => hostile(size));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("an expansion is read to its closing bracket, however long it runs", () => {
     // A definition is spelled by the words that carry initials, and the ignored words
@@ -706,13 +738,8 @@ ${sentence}`)
     // The shape is what is measured, not the clock: tripling the input triples linear work
     // and multiplies quadratic work by nine, and that separation holds on any machine.
     const growth = (work: (size: number) => void, size: number): number => {
-      const time = (at: number): number => {
-        const started = performance.now();
-        work(at);
-        return performance.now() - started;
-      };
       work(size);
-      return time(size * 3) / Math.max(time(size), 1);
+      return fastest(() => work(size * 3)) / Math.max(fastest(() => work(size)), 1);
     };
 
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
@@ -732,7 +759,7 @@ ${sentence}`)
     // The findings themselves must survive the repair, not merely arrive sooner.
     const long = Array(500).fill(sentence).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("a hostile token cannot stall the rules that read it", () => {
     // Trimming a token to its letters with an anchored alternation retried the suffix at
