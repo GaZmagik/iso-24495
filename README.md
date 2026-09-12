@@ -180,7 +180,9 @@ A pull request description is text a reader receives, so it is audited as well. 
 bash scripts/audit-pull-request-text.sh <file>
 ```
 
-The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all.
+The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all. Whitespace is not text, because a reader gets as much from a page of spaces as from an empty one.
+
+A file the script cannot read stops it with a different code, rather than any verdict about text. A review found the reason for that: a mistyped name beginning with a dash reached `dirname` as an option, and the script audited a neighbouring file and passed. A check that passes for the wrong target is worse than one that fails.
 
 Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
 

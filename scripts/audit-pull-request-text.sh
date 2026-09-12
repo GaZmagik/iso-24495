@@ -8,8 +8,9 @@
 #
 #   bash scripts/audit-pull-request-text.sh <file>
 #
-# Exit 0 means the text passed, 1 means it has findings or is empty, and 2 means
-# the arguments were wrong.
+# Exit 0 means the text passed. Exit 1 means it has findings, or holds no text.
+# Exit 2 means the arguments were wrong, which includes naming a file that
+# cannot be read.
 set -euo pipefail
 
 TEXT="${1:-}"
@@ -19,13 +20,34 @@ if [ -z "$TEXT" ]; then
 fi
 
 # Resolved before the directory changes below, so a relative path still works.
-TEXT="$(cd "$(dirname "$TEXT")" 2>/dev/null && pwd)/$(basename "$TEXT")" || true
+#
+# Every name passes a "--" first, because one beginning with a dash otherwise
+# arrives as an option. A review named the consequence: "-missing.md" did not
+# exist, `dirname` read it as a flag, the failure was swallowed, and the script
+# audited a neighbouring file and passed. A checker that passes for the wrong
+# target is worse than one that fails, so a resolution failure now stops it.
+if ! DIRECTORY="$(cd -- "$(dirname -- "$TEXT")" 2>/dev/null && pwd)"; then
+  echo "There is no directory holding $TEXT, so nothing can be read." >&2
+  exit 2
+fi
+TEXT="$DIRECTORY/$(basename -- "$TEXT")"
 
-cd "$(dirname "$0")/.."
+cd -- "$(dirname -- "$0")/.."
 
-# An audit of nothing finds nothing, so an empty description would earn a green
-# tick. A reader gets nothing from one either.
-if [ ! -s "$TEXT" ]; then
+# The audit must read the file the caller named. Anything else is a mistake in
+# the call rather than a judgement about text, so it exits 2 and says which.
+if [ ! -f "$TEXT" ]; then
+  echo "There is no file to read at $TEXT." >&2
+  exit 2
+fi
+
+# An audit of nothing finds nothing, so a description holding no text would earn
+# a green tick. A reader gets nothing from one either.
+#
+# The test is for a character that is not whitespace, not for a byte. A body of
+# spaces and newlines passed the byte test while giving a reader exactly as much
+# as an empty one.
+if ! grep -q '[^[:space:]]' -- "$TEXT"; then
   echo "There is no text to read, so there is nothing for a reader to read."
   exit 1
 fi
@@ -40,10 +62,10 @@ bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts "$TEXT" --json "$FINDI
 # marker says a file was read and was clean, and the second says the run as a
 # whole found nothing.
 #
-# The two cannot disagree about one named file today, because the audit reads
-# whatever it is given: a file with an unknown extension and a file with damaged
-# bytes were both read rather than skipped. They are read as a pair anyway, so
-# that a future change to this report fails the check instead of passing it.
+# Both are read, because they can disagree. A review selected a symbolic link:
+# the audit skips those rather than following them, so it reported empty totals
+# with no file entry at all. Totals alone would have called that a pass. The
+# pair is what distinguishes a clean read from a read that never happened.
 if grep -q '"violations": \[\]' "$FINDINGS" && grep -q '"totals": {}' "$FINDINGS"; then
   echo "==> The text reads plainly against the engine's checks"
   exit 0

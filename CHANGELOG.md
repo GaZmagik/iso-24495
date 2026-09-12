@@ -38,10 +38,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   recitals, definitions and schedules are numbered by the document's conventions instead.
 
 - **This repository now audits its own pull request descriptions.** The suite reads every
-  document here. A description was the one piece of text it never saw, because it lives on
-  GitHub rather than in the tree. A workflow now hands it to
+  document here, and a description was the one piece of text it never saw, because it lives
+  on GitHub rather than in the tree. A workflow now hands it to
   `scripts/audit-pull-request-text.sh`, which a contributor can run over any file. It fails a
-  description that carries findings, and one that is empty.
+  description that carries findings, and one holding no text. A file it cannot read stops it
+  with a different code, so a mistyped name never reads as a pass.
 
 ### Known limits
 

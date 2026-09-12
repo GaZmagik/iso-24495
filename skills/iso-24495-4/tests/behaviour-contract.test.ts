@@ -52,26 +52,6 @@ function sentenceOf(words: number, stem = "word"): string {
 }
 
 /**
- * The fastest of a few runs, in milliseconds.
- *
- * The guards below compare the cost of three times the input with the cost of
- * one, to catch a rule that reads the whole text again for every token. One
- * sample each measures the machine as much as the code: a run descheduled once
- * inflates the numerator, or flatters the denominator, and the ratio then says
- * nothing about the algorithm. That is what made these fail under load while
- * passing alone, and a guard that fails a healthy build gets deleted rather
- * than read.
- *
- * Load only ever adds time, so the fastest of several runs is the closest
- * estimate of what the work costs. Quadratic cost is still there in the fastest
- * run, so this steadies the measurement without softening what it asserts.
- *
- * Two runs rather than more, because each one triples the work these tests
- * already do and three took the largest past its timeout. Two is what the
- * observed failures needed: both came from one sample being descheduled, and a
- * minimum over two ignores that unless it happens twice.
- */
-/**
  * How long a scaling guard may take, well beyond what it needs.
  *
  * These tests assert a ratio rather than a speed: three times the input must
@@ -85,11 +65,39 @@ function sentenceOf(words: number, stem = "word"): string {
  */
 const SCALING_TIMEOUT_MS = 60_000;
 
-function fastest(work: () => void, attempts = 2): number {
+/**
+ * The fastest of a few runs, in milliseconds.
+ *
+ * The guards below compare the cost of three times the input with the cost of
+ * one, to catch a rule that reads the whole text again for every token. One
+ * sample each measures the machine as much as the code: a run descheduled once
+ * inflates the numerator, or flatters the denominator, and the ratio then says
+ * nothing about the algorithm. That is what made these fail under load while
+ * passing alone, and a guard that fails a healthy build gets deleted rather
+ * than read.
+ *
+ * Load only ever adds time, so the fastest of several runs is the closest
+ * estimate of what the work costs.
+ *
+ * **Every attempt must be given work it has not done before.** The first
+ * version of this replayed one input, which made the minimum the cost of the
+ * cheapest repeat rather than of the work. A review proved the hole: with
+ * quadratic scanning behind a cache of the last result, this guard passed while
+ * the single-sample guard it replaced failed at a ratio of 8.78 against a limit
+ * of 5, and the whole gate went green. So the attempt number is passed to the
+ * work, every builder below salts its text with it, and no cache can serve a
+ * second attempt. A guard that can be satisfied by a cache measures the cache.
+ *
+ * Two runs rather than more, because each one triples the work these tests
+ * already do and three took the largest past its timeout. Two is what the
+ * observed failures needed: both came from one sample being descheduled, and a
+ * minimum over two ignores that unless it happens twice.
+ */
+function fastest(work: (attempt: number) => void, attempts = 2): number {
   let best = Number.POSITIVE_INFINITY;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const started = performance.now();
-    work();
+    work(attempt);
     best = Math.min(best, performance.now() - started);
   }
   return best;
@@ -564,12 +572,12 @@ describe("reader-facing behaviour contracts", () => {
   test("deep nesting is read once, not once per level", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
-    const deep = (size: number): void => {
-      auditText("[a](x)".replace("a", "a".repeat(1)) .repeat(1)
+    const deep = (size: number, salt: number): void => {
+      auditText(`salt${salt}. ` + "[a](x)".replace("a", "a".repeat(1)) .repeat(1)
         + "[".repeat(size) + "]".repeat(size));
     };
-    deep(1_000);
-    const time = (size: number): number => fastest(() => deep(size));
+    deep(1_000, 0);
+    const time = (size: number): number => fastest((attempt) => deep(size, attempt + 1));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
 
     let layered = "innermost";
@@ -626,11 +634,11 @@ ${sentence}`)
     // Measured through the whole audit, because every rule that reads links used to run a
     // pattern of its own over the same text. Ten thousand unmatched brackets cost about
     // nine seconds across them; one shared scan is what removed it.
-    const audit = (size: number): void => {
-      auditText("Read [outer [inner] text](/uri) here. ".repeat(size));
+    const audit = (size: number, salt: number): void => {
+      auditText(`salt${salt}. ` + "Read [outer [inner] text](/uri) here. ".repeat(size));
     };
-    audit(1_000);
-    const time = (size: number): number => fastest(() => audit(size));
+    audit(1_000, 0);
+    const time = (size: number): number => fastest((attempt) => audit(size, attempt + 1));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
 
     // Brackets that never close are the shape that was worst, and the shape a generated
@@ -704,11 +712,11 @@ ${sentence}`)
     // Every word here is discounted: "A" reads as the article, and so does "and". The
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
-    const hostile = (size: number): void => {
-      auditText(Array(size).fill("A.A.A. (").join(" ") + " and).");
+    const hostile = (size: number, salt: number): void => {
+      auditText(`salt${salt}. ` + Array(size).fill("A.A.A. (").join(" ") + " and).");
     };
-    hostile(1_000);
-    const time = (size: number): number => fastest(() => hostile(size));
+    hostile(1_000, 0);
+    const time = (size: number): number => fastest((attempt) => hostile(size, attempt + 1));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
   }, SCALING_TIMEOUT_MS);
 
@@ -737,22 +745,25 @@ ${sentence}`)
     //
     // The shape is what is measured, not the clock: tripling the input triples linear work
     // and multiplies quadratic work by nine, and that separation holds on any machine.
-    const growth = (work: (size: number) => void, size: number): number => {
-      work(size);
-      return fastest(() => work(size * 3)) / Math.max(fastest(() => work(size)), 1);
+    const growth = (work: (size: number, salt: number) => void, size: number): number => {
+      work(size, 0);
+      // Each sample is salted differently, so no cache can answer a repeat.
+      return fastest((attempt) => work(size * 3, attempt + 1))
+        / Math.max(fastest((attempt) => work(size, attempt + 101)), 1);
     };
 
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
-    const acronyms = (size: number): void => {
-      auditText(Array(size).fill("Alpha Beta (AB)").join(" ") + ".", { knownAcronyms: known });
+    const acronyms = (size: number, salt: number): void => {
+      auditText(`salt${salt}. ` + Array(size).fill("Alpha Beta (AB)").join(" ") + ".",
+        { knownAcronyms: known });
     };
     expect(growth(acronyms, 1_000)).toBeLessThan(5);
 
     // Every finding counted the line endings before it from the start of the paragraph.
     const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
-    const paragraphs = (size: number): void => {
-      auditText(Array(size).fill(sentence).join(" "));
+    const paragraphs = (size: number, salt: number): void => {
+      auditText(`salt${salt}. ` + Array(size).fill(sentence).join(" "));
     };
     expect(growth(paragraphs, 1_000)).toBeLessThan(5);
 

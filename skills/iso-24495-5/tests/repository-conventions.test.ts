@@ -1289,10 +1289,37 @@ describe("repository writing conventions", () => {
         expect(result.output, "the log must name the rule").toContain("sentence-length");
       });
 
-      test("an empty description fails rather than passing on an empty audit", () => {
-        const result = audit("");
-        expect(result.status, result.output).toBe(1);
-        expect(result.output).toContain("no text to read");
+      // A byte count called a description of spaces and newlines text, while a
+      // reader gets exactly as much from it as from an empty one.
+      test("a description holding no text fails, whitespace included", () => {
+        for (const empty of ["", " \t\r\n  \n", "\n\n\n"]) {
+          const result = audit(empty);
+          expect(result.status, `${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
+          expect(result.output).toContain("no text to read");
+        }
+      });
+
+      // A name beginning with a dash reached `dirname` as an option, and the
+      // failure was swallowed. A file that did not exist then resolved to the
+      // current directory, where the script audited a neighbour and passed.
+      // Passing for the wrong target is worse than failing.
+      test("a name beginning with a dash names that file, or nothing", () => {
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-dash-"));
+        try {
+          // A neighbour that would pass, so auditing the wrong file reads green.
+          writeFileSync(join(directory, "aaa-neighbour.md"), "This reads plainly.\n", "utf8");
+          const named = join(directory, "-description.md");
+          writeFileSync(named, "This description reads plainly.\n", "utf8");
+
+          const present = Bun.spawnSync(["bash", forBash(auditScript), forBash(named)]);
+          expect(present.exitCode, "a real file must be audited, whatever its name").toBe(0);
+
+          const missing = join(directory, "-missing.md");
+          const absent = Bun.spawnSync(["bash", forBash(auditScript), forBash(missing)]);
+          expect(absent.exitCode, "a file that is not there cannot pass").toBe(2);
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
       });
 
       test("a missing argument is a usage error rather than a pass", () => {
@@ -1321,6 +1348,65 @@ describe("repository writing conventions", () => {
           /PR_BODY:\s*\$\{\{\s*github\.event\.pull_request\.body\s*\}\}/,
         );
         expect(workflow, "the step must read it from that variable").toContain('"$PR_BODY"');
+      });
+
+      /** The shell the workflow runs, lifted out of the YAML and dedented. */
+      const workflowCommand = (): string => {
+        const lines = readFileSync(descriptionWorkflow, "utf8").split(/\r?\n/);
+        const start = lines.findIndex((line) => /^\s*run:\s*\|\s*$/.test(line));
+        expect(start, "the workflow must hold one literal run block").toBeGreaterThan(-1);
+        const indent = (/^\s*/.exec(lines[start]) ?? [""])[0].length;
+        const body: string[] = [];
+        for (let index = start + 1; index < lines.length; index += 1) {
+          const line = lines[index];
+          const depth = (/^\s*/.exec(line) ?? [""])[0].length;
+          if (line.trim() !== "" && depth <= indent) {
+            break;
+          }
+          body.push(line.slice(indent + 2));
+        }
+        return body.join("\n");
+      };
+
+      /** Runs that shell the way the runner would, and reports what happened. */
+      const runWorkflowCommand = (description: string): { status: number | null } => {
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-workflow-"));
+        try {
+          const step = join(directory, "step.sh");
+          writeFileSync(step, workflowCommand(), "utf8");
+          const run = Bun.spawnSync(["bash", forBash(step)], {
+            cwd: REPOSITORY_ROOT,
+            env: { ...process.env, PR_BODY: description, RUNNER_TEMP: forBash(directory) },
+          });
+          return { status: run.exitCode };
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      };
+
+      // Reading the workflow for the script's name proves only that the name is
+      // written there. A review deleted the audit command, added "|| true", and
+      // interpolated the description straight into the shell; all three passed
+      // every test above. So the block is lifted out and run, and a check that
+      // cannot fail is not a check.
+      test("the workflow's own shell passes plain text and fails the rest", () => {
+        expect(runWorkflowCommand("This description reads plainly.\n").status).toBe(0);
+        expect(
+          runWorkflowCommand(`${"word ".repeat(40)}stop.`).status,
+          "a sentence past the ceiling must fail the step",
+        ).toBe(1);
+        expect(
+          runWorkflowCommand(" \t\r\n  \n").status,
+          "whitespace is not text a reader can read",
+        ).toBe(1);
+      });
+
+      // A description is written by anyone who opens a pull request. Expanded
+      // into the command it would be shell, so the run block must name no
+      // template expression at all, whatever it looks like.
+      test("no description text is expanded inside the shell", () => {
+        expect(workflowCommand(), "the shell must hold no template expression")
+          .not.toContain("${{");
       });
     });
 
