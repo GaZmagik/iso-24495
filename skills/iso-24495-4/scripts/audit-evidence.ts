@@ -6,6 +6,39 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Evidence } from "./lib/types.ts";
 
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
+  if (!dir) {
+    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
+    return 2;
+  }
+  const jsonFlag = argv.indexOf("--json");
+  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+    stderr("audit-evidence: --json requires an output file");
+    return 2;
+  }
+  try {
+    const evidence = auditEvidence(dir);
+    if (jsonFlag !== -1) {
+      writeFileSync(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2));
+    }
+    stdout("| Artefact category | Found | Paths |");
+    stdout("|-------------------|-------|-------|");
+    for (const category of CATEGORIES) {
+      const { found, paths } = evidence.artefacts[category];
+      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
+    }
+    return 0;
+  } catch (error) {
+    stderr(`audit-evidence: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
 export const CATEGORIES = [
   "policy",
   "review-workflow",
@@ -58,37 +91,4 @@ export function auditEvidence(dir: string): Evidence {
     evidence.artefacts[category] = { found: matched.length > 0, paths: matched };
   }
   return evidence;
-}
-
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const dir = argv[2];
-  if (!dir) {
-    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
-    return 2;
-  }
-  const jsonFlag = argv.indexOf("--json");
-  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
-    stderr("audit-evidence: --json requires an output file");
-    return 2;
-  }
-  try {
-    const evidence = auditEvidence(dir);
-    if (jsonFlag !== -1) {
-      writeFileSync(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2));
-    }
-    stdout("| Artefact category | Found | Paths |");
-    stdout("|-------------------|-------|-------|");
-    for (const category of CATEGORIES) {
-      const { found, paths } = evidence.artefacts[category];
-      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
-    }
-    return 0;
-  } catch (error) {
-    stderr(`audit-evidence: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
-  }
 }
