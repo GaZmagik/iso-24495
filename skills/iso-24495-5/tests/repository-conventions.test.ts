@@ -1299,6 +1299,45 @@ describe("repository writing conventions", () => {
         }
       });
 
+      // A non-breaking space is whitespace a reader cannot see, but grep's
+      // [:space:] class treats it differently by locale. A file holding only
+      // non-breaking spaces must fail on every platform.
+      test("non-breaking spaces are not text a reader can read", () => {
+        const nbsp = " ";
+        for (const empty of [nbsp, `${nbsp}${nbsp}${nbsp}`, ` ${nbsp}\n\t${nbsp}`]) {
+          const result = audit(empty);
+          expect(result.status, `${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
+          expect(result.output).toContain("no text to read");
+        }
+      });
+
+      // The script promises exit 2 for a file it cannot read, but a permission
+      // error from grep fell through to "no text" with exit 1.
+      test("an unreadable file exits 2, not 1", () => {
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-unreadable-"));
+        try {
+          const file = join(directory, "locked.md");
+          writeFileSync(file, "This text reads plainly.\n", "utf8");
+          // Probe whether chmod 000 actually removes read permission here.
+          // Git Bash on Windows may ignore it, so the test is skipped where it
+          // has no effect rather than asserting a platform it cannot control.
+          const probe = Bun.spawnSync(
+            ["bash", "-c", "chmod 000 -- \"$1\" && ! test -r \"$1\"", "_", forBash(file)],
+          );
+          if (probe.exitCode !== 0) {
+            // chmod had no effect; restore and skip.
+            Bun.spawnSync(["bash", "-c", "chmod 644 -- \"$1\"", "_", forBash(file)]);
+            return; // skipped on this platform
+          }
+          const run = Bun.spawnSync(["bash", forBash(auditScript), forBash(file)]);
+          // Restore before any assertion, so cleanup always succeeds.
+          Bun.spawnSync(["bash", "-c", "chmod 644 -- \"$1\"", "_", forBash(file)]);
+          expect(run.exitCode, "an unreadable file must exit 2").toBe(2);
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      });
+
       // A name beginning with a dash reached `dirname` as an option, and the
       // failure was swallowed. A file that did not exist then resolved to the
       // current directory, where the script audited a neighbour and passed.
@@ -1308,14 +1347,21 @@ describe("repository writing conventions", () => {
         try {
           // A neighbour that would pass, so auditing the wrong file reads green.
           writeFileSync(join(directory, "aaa-neighbour.md"), "This reads plainly.\n", "utf8");
-          const named = join(directory, "-description.md");
-          writeFileSync(named, "This description reads plainly.\n", "utf8");
+          writeFileSync(join(directory, "-description.md"), "This description reads plainly.\n", "utf8");
 
-          const present = Bun.spawnSync(["bash", forBash(auditScript), forBash(named)]);
+          // The argument itself must begin with a dash, not hide behind a
+          // directory prefix. Setting cwd to the fixture directory and passing
+          // the bare name is what makes the dash lead the argument.
+          const present = Bun.spawnSync(
+            ["bash", forBash(auditScript), "-description.md"],
+            { cwd: directory },
+          );
           expect(present.exitCode, "a real file must be audited, whatever its name").toBe(0);
 
-          const missing = join(directory, "-missing.md");
-          const absent = Bun.spawnSync(["bash", forBash(auditScript), forBash(missing)]);
+          const absent = Bun.spawnSync(
+            ["bash", forBash(auditScript), "-missing.md"],
+            { cwd: directory },
+          );
           expect(absent.exitCode, "a file that is not there cannot pass").toBe(2);
         } finally {
           rmSync(directory, { recursive: true, force: true });
@@ -1350,22 +1396,32 @@ describe("repository writing conventions", () => {
         expect(workflow, "the step must read it from that variable").toContain('"$PR_BODY"');
       });
 
-      /** The shell the workflow runs, lifted out of the YAML and dedented. */
+      /** The parsed workflow as a structured object. */
+      const parsedWorkflow = (): {
+        jobs: Record<string, {
+          steps: Array<{
+            name?: string;
+            run?: string;
+            env?: Record<string, string>;
+            shell?: string;
+            "continue-on-error"?: boolean;
+            [key: string]: unknown;
+          }>;
+          "continue-on-error"?: boolean;
+          defaults?: { run?: { shell?: string } };
+          [key: string]: unknown;
+        }>;
+      } => {
+        return Bun.YAML.parse(readFileSync(descriptionWorkflow, "utf8")) as ReturnType<typeof parsedWorkflow>;
+      };
+
+      /** The shell the workflow runs, extracted from the parsed YAML. */
       const workflowCommand = (): string => {
-        const lines = readFileSync(descriptionWorkflow, "utf8").split(/\r?\n/);
-        const start = lines.findIndex((line) => /^\s*run:\s*\|\s*$/.test(line));
-        expect(start, "the workflow must hold one literal run block").toBeGreaterThan(-1);
-        const indent = (/^\s*/.exec(lines[start]) ?? [""])[0].length;
-        const body: string[] = [];
-        for (let index = start + 1; index < lines.length; index += 1) {
-          const line = lines[index];
-          const depth = (/^\s*/.exec(line) ?? [""])[0].length;
-          if (line.trim() !== "" && depth <= indent) {
-            break;
-          }
-          body.push(line.slice(indent + 2));
-        }
-        return body.join("\n");
+        const workflow = parsedWorkflow();
+        const steps = workflow.jobs.audit.steps;
+        const runSteps = steps.filter((step) => step.run !== undefined);
+        expect(runSteps.length, "the audit job must hold exactly one run block").toBe(1);
+        return runSteps[0].run ?? "";
       };
 
       /** Runs that shell the way the runner would, and reports what happened. */
@@ -1401,12 +1457,44 @@ describe("repository writing conventions", () => {
         ).toBe(1);
       });
 
-      // A description is written by anyone who opens a pull request. Expanded
-      // into the command it would be shell, so the run block must name no
-      // template expression at all, whatever it looks like.
-      test("no description text is expanded inside the shell", () => {
-        expect(workflowCommand(), "the shell must hold no template expression")
-          .not.toContain("${{");
+      // The hand-written parser that extracted the first run block was blind to
+      // a second step, to continue-on-error, and to a shell override. Parsing
+      // the YAML structurally closes all four.
+      test("the workflow has no structural escape from the audit", () => {
+        const workflow = parsedWorkflow();
+        const job = workflow.jobs.audit;
+        const steps = job.steps;
+
+        // Exactly one run block, so a second step cannot bypass the audit.
+        const runSteps = steps.filter((step) => step.run !== undefined);
+        expect(runSteps.length, "the audit job must hold exactly one run block").toBe(1);
+
+        // No step carries continue-on-error, so a failure cannot be swallowed.
+        for (const step of steps) {
+          expect(
+            step["continue-on-error"],
+            `step "${step.name ?? step.uses ?? "unnamed"}" must not carry continue-on-error`,
+          ).toBeUndefined();
+        }
+        // Nor at job level.
+        expect(job["continue-on-error"], "the job must not carry continue-on-error").toBeUndefined();
+
+        // No step uses a shell override, and no job-level default sets one.
+        for (const step of steps) {
+          expect(
+            step.shell,
+            `step "${step.name ?? step.uses ?? "unnamed"}" must not override shell`,
+          ).toBeUndefined();
+        }
+        expect(job.defaults?.run?.shell, "the job must not set a default shell").toBeUndefined();
+
+        // No template expression appears in any run block. A description is
+        // text from outside this repository; expanded into the command it
+        // would be shell.
+        for (const step of runSteps) {
+          expect(step.run, "the run block must hold no template expression")
+            .not.toContain("${{");
+        }
       });
     });
 

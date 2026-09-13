@@ -41,13 +41,25 @@ if [ ! -f "$TEXT" ]; then
   exit 2
 fi
 
+# The audit must be able to read the file, not merely know it exists. A
+# permission error from grep falls through to "no text" with exit 1, but the
+# README and this header promise exit 2 for an unreadable file.
+if [ ! -r "$TEXT" ]; then
+  echo "The file at $TEXT exists but cannot be read." >&2
+  exit 2
+fi
+
 # An audit of nothing finds nothing, so a description holding no text would earn
 # a green tick. A reader gets nothing from one either.
 #
-# The test is for a character that is not whitespace, not for a byte. A body of
-# spaces and newlines passed the byte test while giving a reader exactly as much
-# as an empty one.
-if ! grep -q '[^[:space:]]' -- "$TEXT"; then
+# The test deletes every byte that is ASCII whitespace or the UTF-8 encoding of
+# the non-breaking space (C2 A0), and checks whether anything remains. A POSIX
+# character class would work for ASCII, but [:space:] treats U+00A0 differently
+# by locale, so a file of non-breaking spaces passed on one platform and failed
+# on another. Byte deletion is portable: the only valid UTF-8 character composed
+# solely of bytes C2 and A0 is the non-breaking space itself, so deleting those
+# bytes cannot hide a real character.
+if [ -z "$(LC_ALL=C tr -d ' \t\r\n\f\v\302\240\0' < "$TEXT")" ]; then
   echo "There is no text to read, so there is nothing for a reader to read."
   exit 1
 fi
