@@ -41,10 +41,12 @@ if [ ! -f "$TEXT" ]; then
   exit 2
 fi
 
-# The audit must be able to read the file, not merely know it exists. A
-# permission error from grep falls through to "no text" with exit 1, but the
-# README and this header promise exit 2 for an unreadable file.
-if [ ! -r "$TEXT" ]; then
+# The audit must be able to read the file, not merely know it exists. A test of
+# permission bits is not enough: a review held a Windows exclusive lock on the
+# file, which `-r` still called readable, and the content check below then
+# failed to read it and reported "no text" with exit 1. So the file is read
+# here, and any failure to read it is the exit 2 this header promises.
+if ! cat -- "$TEXT" > /dev/null 2>&1; then
   echo "The file at $TEXT exists but cannot be read." >&2
   exit 2
 fi
@@ -52,16 +54,28 @@ fi
 # An audit of nothing finds nothing, so a description holding no text would earn
 # a green tick. A reader gets nothing from one either.
 #
-# The test deletes every byte that is ASCII whitespace or the UTF-8 encoding of
-# the non-breaking space (C2 A0), and checks whether anything remains. A POSIX
-# character class would work for ASCII, but [:space:] treats U+00A0 differently
-# by locale, so a file of non-breaking spaces passed on one platform and failed
-# on another. Byte deletion is portable: the only valid UTF-8 character composed
-# solely of bytes C2 and A0 is the non-breaking space itself, so deleting those
-# bytes cannot hide a real character.
-if [ -z "$(LC_ALL=C tr -d ' \t\r\n\f\v\302\240\0' < "$TEXT")" ]; then
+# The file passes when it holds one character that is not Unicode whitespace, a
+# NUL byte or a byte order mark. Perl decodes the file as UTF-8, and its \s class
+# covers every Unicode space, the non-breaking, em, thin and ideographic spaces
+# among them. A byte order mark is not whitespace to Unicode, so it is named.
+# An earlier version deleted a list of known whitespace bytes with `tr`, and a
+# file of em spaces passed because nobody had listed them.
+#
+# Perl exits 0 for text and 1 for none. Any other status means the file could
+# not be read after all, which is exit 2 rather than a judgement about text.
+TEXT_STATUS=0
+perl -e '
+  open(my $file, "<:encoding(UTF-8)", $ARGV[0]) or exit 2;
+  while (my $line = <$file>) { exit 0 if $line =~ /[^\s\x{0}\x{FEFF}]/ }
+  exit 1
+' -- "$TEXT" 2>/dev/null || TEXT_STATUS=$?
+if [ "$TEXT_STATUS" -eq 1 ]; then
   echo "There is no text to read, so there is nothing for a reader to read."
   exit 1
+fi
+if [ "$TEXT_STATUS" -ne 0 ]; then
+  echo "The file at $TEXT exists but cannot be read." >&2
+  exit 2
 fi
 
 FINDINGS="$(mktemp)"

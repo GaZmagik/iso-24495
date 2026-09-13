@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import {
@@ -1311,6 +1311,30 @@ describe("repository writing conventions", () => {
         }
       });
 
+      // The byte list that caught non-breaking spaces caught nothing it did not
+      // name, and a review filled files with other Unicode spaces and a byte
+      // order mark. Each passed. So the list is gone, and each of those is
+      // pinned here, with a byte order mark before real text as the control.
+      // Nine cases each start bash and Perl, and on Windows under the full suite
+      // the test ran past the five-second default, so it gets thirty.
+      test("every Unicode space and a byte order mark are not text either", () => {
+        const spaces = {
+          "em space": "\u2003",
+          "thin space": "\u2009",
+          "ideographic space": "\u3000",
+          "byte order mark": "\uFEFF",
+        };
+        for (const [name, character] of Object.entries(spaces)) {
+          for (const empty of [character, `${character}${character}\n${character}`]) {
+            const result = audit(empty);
+            expect(result.status, `${name} ${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
+            expect(result.output, name).toContain("no text to read");
+          }
+        }
+        const marked = audit("\uFEFFThis description reads plainly.\n");
+        expect(marked.status, `a marked file with text gave: ${marked.output}`).toBe(0);
+      }, 30_000);
+
       // The script promises exit 2 for a file it cannot read, but a permission
       // error from grep fell through to "no text" with exit 1.
       test("an unreadable file exits 2, not 1", () => {
@@ -1338,6 +1362,49 @@ describe("repository writing conventions", () => {
         }
       });
 
+      // Permission bits are one way a file refuses to be read, and a review
+      // found another. A Windows exclusive lock leaves `-r` true while every
+      // read fails, and the script called that "no text" with exit 1. The
+      // chmod test above is skipped on Windows, where chmod has no effect, so
+      // this one holds a real lock there. Elsewhere it checks that the script
+      // reads the file before judging it, which is the guard both cases need.
+      test("a file that refuses to be read exits 2, whatever refuses it", async () => {
+        const script = readFileSync(auditScript, "utf8");
+        expect(script, "the script must read the file before judging its text").toMatch(
+          /if ! cat -- "\$TEXT" > \/dev\/null 2>&1; then\s+echo "[^"]*cannot be read\."[^\n]*\n\s+exit 2/,
+        );
+        if (process.platform !== "win32") {
+          return;
+        }
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-locked-"));
+        try {
+          const file = join(directory, "locked.md");
+          writeFileSync(file, "This text reads plainly.\n", "utf8");
+          const holder = Bun.spawn(
+            [
+              "powershell.exe",
+              "-NoProfile",
+              "-Command",
+              `$h = [IO.File]::Open('${file}', 'Open', 'Read', 'None'); ` +
+                "Write-Output locked; Start-Sleep 60",
+            ],
+            { stdout: "pipe" },
+          );
+          try {
+            const reader = holder.stdout.getReader();
+            const { value } = await reader.read();
+            expect(new TextDecoder().decode(value), "the lock must be held").toContain("locked");
+            const run = Bun.spawnSync(["bash", forBash(auditScript), forBash(file)]);
+            expect(run.exitCode, "a locked file must exit 2").toBe(2);
+          } finally {
+            holder.kill();
+            await holder.exited;
+          }
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }, 30_000);
+
       // A name beginning with a dash reached `dirname` as an option, and the
       // failure was swallowed. A file that did not exist then resolved to the
       // current directory, where the script audited a neighbour and passed.
@@ -1363,6 +1430,22 @@ describe("repository writing conventions", () => {
             { cwd: directory },
           );
           expect(absent.exitCode, "a file that is not there cannot pass").toBe(2);
+
+          // A bare name exercises `basename` and leaves `dirname` reading ".",
+          // so a review removed only the "--" before `dirname` and every test
+          // still passed. A directory whose name begins with a dash makes
+          // `dirname` receive it. The file inside fails and the neighbour
+          // beside the script's argument passes, so auditing the wrong one
+          // turns this red.
+          mkdirSync(join(directory, "-dashdir"));
+          writeFileSync(join(directory, "-dashdir", "file.md"), `${"word ".repeat(40)}stop.\n`, "utf8");
+          writeFileSync(join(directory, "file.md"), "This neighbour reads plainly.\n", "utf8");
+          const nested = Bun.spawnSync(
+            ["bash", forBash(auditScript), "-dashdir/file.md"],
+            { cwd: directory },
+          );
+          expect(nested.exitCode, "the file inside the dashed directory must be the one audited")
+            .toBe(1);
         } finally {
           rmSync(directory, { recursive: true, force: true });
         }
@@ -1398,15 +1481,20 @@ describe("repository writing conventions", () => {
 
       /** The parsed workflow as a structured object. */
       const parsedWorkflow = (): {
+        env?: Record<string, string>;
+        defaults?: { run?: { shell?: string } };
         jobs: Record<string, {
           steps: Array<{
             name?: string;
             run?: string;
             env?: Record<string, string>;
             shell?: string;
+            if?: unknown;
             "continue-on-error"?: boolean;
             [key: string]: unknown;
           }>;
+          env?: Record<string, string>;
+          if?: unknown;
           "continue-on-error"?: boolean;
           defaults?: { run?: { shell?: string } };
           [key: string]: unknown;
@@ -1487,6 +1575,29 @@ describe("repository writing conventions", () => {
           ).toBeUndefined();
         }
         expect(job.defaults?.run?.shell, "the job must not set a default shell").toBeUndefined();
+
+        // The checks above read the job and its steps, and a review went round
+        // them through the settings that decide whether and how a step runs.
+        // Three mutations passed the whole gate: "if: false" on the step, a
+        // fixed clean PR_BODY bound at job level, and a workflow default shell
+        // of python. Each is closed here at every level it can be set.
+        expect(
+          workflow.defaults?.run?.shell,
+          "the workflow must not set a default shell",
+        ).toBeUndefined();
+        expect(job.if, "the job must not carry an if condition").toBeUndefined();
+        for (const step of steps) {
+          expect(
+            step.if,
+            `step "${step.name ?? step.uses ?? "unnamed"}" must not carry an if condition`,
+          ).toBeUndefined();
+        }
+        expect(workflow.env?.PR_BODY, "the workflow must not bind PR_BODY").toBeUndefined();
+        expect(job.env?.PR_BODY, "the job must not bind PR_BODY").toBeUndefined();
+        expect(
+          runSteps[0].env?.PR_BODY,
+          "the run step must bind PR_BODY to the description itself",
+        ).toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
 
         // No template expression appears in any run block. A description is
         // text from outside this repository; expanded into the command it
