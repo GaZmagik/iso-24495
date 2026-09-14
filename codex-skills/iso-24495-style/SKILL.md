@@ -324,13 +324,10 @@ Before: # Deployment guide
         ## Prerequisites
 After:  # Deployment guide
 
-        **Purpose:** This guide covers deploying the application to production.
-
-        **Date:** Last updated March 2026.
-
-        **Reader:** [Author needed: reader]
-
-        **Other guides:** [Author needed: referral, or confirm that none exists]
+        - **Purpose:** This guide covers deploying the application to production.
+        - **Date:** Last updated March 2026.
+        - **Reader:** [Author needed: reader]
+        - **Other guides:** [Author needed: referral, or confirm that none exists]
 
         ## Prerequisites
 ```

@@ -103,8 +103,10 @@ Good:  if (typeof duration !== "string") {
        }
        throw new TypeError(
          `Duration must be a number followed by ms, s, m, h or d; got ${duration.length} characters`)
-Good:  throw new Error(`API token rejected: expected 32 characters, got ${
-         typeof token === "string" ? `${token.length} characters` : `a value of type ${typeof token}`}`)
+Good:  if (typeof token !== "string") {
+         throw new TypeError(`API token must be a string; got a value of type ${typeof token}`)
+       }
+       throw new Error(`API token rejected: expected 32 characters, got ${token.length}`)
 ```
 
 Quote a value only where you control it, such as one you have already matched against
