@@ -101,8 +101,8 @@ Before: The configuration file must be placed in the root directory of the proje
         repository so that the build system can locate it during the initialisation
         phase of the continuous integration pipeline run.
 After:  Place the configuration file in the root directory of the repository, so
-        that the build system can find it when the continuous integration pipeline
-        starts.
+        the build system can find it. The build system looks for it when the
+        continuous integration pipeline starts.
 ```
 
 #### 4. Fragments in running prose
@@ -174,12 +174,16 @@ Two names for one concept invite an argument that they mean two things. Say in w
 Before: 1.2 "Confidential Information", also referred to herein as "CI" or
             "confidential material", means information the discloser marks as
             confidential.
+
         6.1 The recipient shall protect all confidential material.
+
         6.2 Any breach of the CI obligations entitles the discloser to terminate
             this agreement.
 After:  1.2 Confidential Information is a defined term. It means information the
             discloser marks as confidential.
+
         6.1 The recipient must protect all Confidential Information.
+
         6.2 If an obligation about Confidential Information is breached, the
             discloser may terminate this agreement.
 ```
@@ -196,11 +200,11 @@ Before: 9.1 In the event that the supplier fails to deliver the goods within 14
             the buyer shall be entitled to cancel the order and receive a full
             refund of any sums paid.
 After:  9.1 Late delivery
-            - **Trigger:** The supplier does not deliver the goods within 14 days
-              of the order date, and force majeure did not cause the delay.
-            - **Action:** The buyer may cancel the order.
-            - **Consequence:** A buyer who cancels is entitled to a full refund
-              of any sums paid.
+        - **Trigger:** The supplier does not deliver the goods within 14 days of
+          the order date, and force majeure did not cause the delay.
+        - **Action:** The buyer may cancel the order.
+        - **Consequence:** A buyer who cancels is entitled to a full refund of
+          any sums paid.
 ```
 
 The identifier 9.1 stays in the clause text, because a list would renumber it.
@@ -209,11 +213,15 @@ The identifier 9.1 stays in the clause text, because a list would renumber it.
 
 ```text
 Before: 4.2 Notice deadline
-            The licensee must notify the licensor of any claim within 30 days.
+
+        The licensee must notify the licensor of any claim within 30 days.
+
         11.3 The licensor may reject any claim notified later than clause 4.2
              permits.
 After:  4.2 Notice deadline
-            The licensee must notify the licensor of any claim within 30 days.
+
+        The licensee must notify the licensor of any claim within 30 days.
+
         11.3 The licensor may reject any claim notified after the notice deadline
              in clause 4.2.
 ```
@@ -230,7 +238,7 @@ Before: Summary: You can cancel at any time.
         1 Your agreement
         ...
         7.1 The customer may cancel by giving 30 days' written notice.
-After:  Summary of your main terms
+After:  ## Summary of your main terms
 
         This summary helps you find your terms. The agreement itself, starting at
         clause 1, governs.
@@ -281,20 +289,24 @@ After:  The parser builds an abstract syntax tree (AST). The checker then visits
 A diagram reaches a listener as its source text. Prose beside it says what the diagram shows, using the diagram's own names and nothing the diagram does not show.
 
 ```text
-Before: sequenceDiagram
+Before: ~~~mermaid
+        sequenceDiagram
           Client->>Auth service: Credentials
           Auth service->>User database: Look up user
           Auth service-->>Client: Token
+        ~~~
 
         See the diagram above for details.
 After:  The client sends its credentials to the Auth service. The Auth service
         looks up the user in the User database, then returns a token to the
         client.
 
+        ~~~mermaid
         sequenceDiagram
           Client->>Auth service: Credentials
           Auth service->>User database: Look up user
           Auth service-->>Client: Token
+        ~~~
 ```
 
 ### Document design (Part 5)
@@ -313,8 +325,11 @@ Before: # Deployment guide
 After:  # Deployment guide
 
         **Purpose:** This guide covers deploying the application to production.
+
         **Date:** Last updated March 2026.
+
         **Reader:** [Author needed: reader]
+
         **Other guides:** [Author needed: referral, or confirm that none exists]
 
         ## Prerequisites
@@ -407,15 +422,18 @@ The comment goes, because the name now says what it said.
 
 #### 21. An error that names the problem
 
-The message names the format it expected and the shape of what arrived. It never quotes the value, because that value has just failed validation and could hold anything.
+The message names the format it expected and the shape of what arrived. It never quotes the value, because that value has just failed validation and could hold anything. Only a string's length is safe to read, so the message checks the type first: any other value could carry a `length` of its own.
 
 ```text
 Before: if (!/^\d+(ms|s|m|h|d)$/.test(duration)) {
           throw new Error("invalid input");
         }
 After:  if (!/^\d+(ms|s|m|h|d)$/.test(duration)) {
+          const shape = typeof duration === "string"
+            ? `${duration.length} characters`
+            : `a value of type ${typeof duration}`;
           throw new Error(
-            `Duration must be a whole number followed by ms, s, m, h or d; got ${duration.length} characters`);
+            `Duration must be a whole number followed by ms, s, m, h or d; got ${shape}`);
         }
 ```
 

@@ -1378,17 +1378,25 @@ describe("repository writing conventions", () => {
         }
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-locked-"));
         try {
-          const file = join(directory, "locked.md");
+          // A review put the file under "reader's cache", and the apostrophe
+          // closed the PowerShell string before the lock was taken. The path
+          // now reaches PowerShell as a variable, never as part of the command,
+          // and the apostrophe stays here so the test proves that it does.
+          mkdirSync(join(directory, "reader's cache"));
+          const file = join(directory, "reader's cache", "locked.md");
           writeFileSync(file, "This text reads plainly.\n", "utf8");
           const holder = Bun.spawn(
             [
               "powershell.exe",
               "-NoProfile",
               "-Command",
-              `$h = [IO.File]::Open('${file}', 'Open', 'Read', 'None'); ` +
+              // Without "Stop", a failed Open is reported and the next statement
+              // still prints "locked", so the check below would believe it.
+              "$ErrorActionPreference = 'Stop'; " +
+                "$h = [IO.File]::Open($env:LOCKED_FILE, 'Open', 'Read', 'None'); " +
                 "Write-Output locked; Start-Sleep 60",
             ],
-            { stdout: "pipe" },
+            { stdout: "pipe", env: { ...process.env, LOCKED_FILE: file } },
           );
           try {
             const reader = holder.stdout.getReader();
@@ -1481,23 +1489,17 @@ describe("repository writing conventions", () => {
 
       /** The parsed workflow as a structured object. */
       const parsedWorkflow = (): {
-        env?: Record<string, string>;
-        defaults?: { run?: { shell?: string } };
+        [key: string]: unknown;
         jobs: Record<string, {
+          [key: string]: unknown;
           steps: Array<{
+            [key: string]: unknown;
             name?: string;
+            uses?: string;
             run?: string;
             env?: Record<string, string>;
-            shell?: string;
-            if?: unknown;
-            "continue-on-error"?: boolean;
-            [key: string]: unknown;
+            with?: Record<string, unknown>;
           }>;
-          env?: Record<string, string>;
-          if?: unknown;
-          "continue-on-error"?: boolean;
-          defaults?: { run?: { shell?: string } };
-          [key: string]: unknown;
         }>;
       } => {
         return Bun.YAML.parse(readFileSync(descriptionWorkflow, "utf8")) as ReturnType<typeof parsedWorkflow>;
@@ -1545,67 +1547,56 @@ describe("repository writing conventions", () => {
         ).toBe(1);
       });
 
-      // The hand-written parser that extracted the first run block was blind to
-      // a second step, to continue-on-error, and to a shell override. Parsing
-      // the YAML structurally closes all four.
+      // The workflow is read as a list of permitted keys, not a list of banned
+      // ones. Reviews kept finding settings the banned list had not named: a
+      // second step, continue-on-error, a shell override, "if: false", a clean
+      // PR_BODY bound at job level, a default shell of python, and then
+      // working-directory at three levels. Each passed until it was named. A
+      // key missing from these lists now fails whatever it does, so a new
+      // setting has to be argued for here before the workflow can carry it.
       test("the workflow has no structural escape from the audit", () => {
         const workflow = parsedWorkflow();
+        const keysOutside = (value: object, permitted: string[]): string[] =>
+          Object.keys(value).filter((key) => !permitted.includes(key));
+
+        // Bun's parser keeps "on" as a string key rather than reading it as a
+        // boolean. "defaults" and "env" are absent at both levels, which is
+        // what closes a default shell, a default working directory and a
+        // PR_BODY bound above the step.
+        expect(keysOutside(workflow, ["name", "on", "jobs"]), "workflow keys").toEqual([]);
         const job = workflow.jobs.audit;
-        const steps = job.steps;
+        expect(keysOutside(job, ["runs-on", "steps"]), "job keys").toEqual([]);
 
-        // Exactly one run block, so a second step cannot bypass the audit.
-        const runSteps = steps.filter((step) => step.run !== undefined);
-        expect(runSteps.length, "the audit job must hold exactly one run block").toBe(1);
+        // The checkout decides which script runs, so it takes no settings: a
+        // "ref" or "repository" would fetch a different one. Bun takes only
+        // its version. Any third action could rewrite the script before it
+        // runs, so the steps are these two and one run block, in this order.
+        const [checkout, setupBun, audit, ...rest] = job.steps;
+        expect(rest, "the job must hold exactly three steps").toEqual([]);
+        expect(checkout?.uses, "the first step must check out this repository").toMatch(
+          /^actions\/checkout@/,
+        );
+        expect(keysOutside(checkout, ["uses"]), "checkout step keys").toEqual([]);
+        expect(setupBun?.uses, "the second step must install Bun").toMatch(/^oven-sh\/setup-bun@/);
+        expect(keysOutside(setupBun, ["uses", "with"]), "setup-bun step keys").toEqual([]);
+        expect(keysOutside(setupBun.with ?? {}, ["bun-version"]), "setup-bun settings").toEqual([]);
 
-        // No step carries continue-on-error, so a failure cannot be swallowed.
-        for (const step of steps) {
-          expect(
-            step["continue-on-error"],
-            `step "${step.name ?? step.uses ?? "unnamed"}" must not carry continue-on-error`,
-          ).toBeUndefined();
-        }
-        // Nor at job level.
-        expect(job["continue-on-error"], "the job must not carry continue-on-error").toBeUndefined();
-
-        // No step uses a shell override, and no job-level default sets one.
-        for (const step of steps) {
-          expect(
-            step.shell,
-            `step "${step.name ?? step.uses ?? "unnamed"}" must not override shell`,
-          ).toBeUndefined();
-        }
-        expect(job.defaults?.run?.shell, "the job must not set a default shell").toBeUndefined();
-
-        // The checks above read the job and its steps, and a review went round
-        // them through the settings that decide whether and how a step runs.
-        // Three mutations passed the whole gate: "if: false" on the step, a
-        // fixed clean PR_BODY bound at job level, and a workflow default shell
-        // of python. Each is closed here at every level it can be set.
+        // The run step takes a name, the description and the command. Without
+        // "if", "shell", "working-directory" or "continue-on-error", GitHub
+        // runs it with bash from the repository root and fails the job when it
+        // fails, which is how runWorkflowCommand runs it above.
+        expect(audit?.run, "the third step must be the run block").toBeDefined();
+        expect(keysOutside(audit, ["name", "env", "run"]), "run step keys").toEqual([]);
+        expect(keysOutside(audit.env ?? {}, ["PR_BODY"]), "run step environment").toEqual([]);
         expect(
-          workflow.defaults?.run?.shell,
-          "the workflow must not set a default shell",
-        ).toBeUndefined();
-        expect(job.if, "the job must not carry an if condition").toBeUndefined();
-        for (const step of steps) {
-          expect(
-            step.if,
-            `step "${step.name ?? step.uses ?? "unnamed"}" must not carry an if condition`,
-          ).toBeUndefined();
-        }
-        expect(workflow.env?.PR_BODY, "the workflow must not bind PR_BODY").toBeUndefined();
-        expect(job.env?.PR_BODY, "the job must not bind PR_BODY").toBeUndefined();
-        expect(
-          runSteps[0].env?.PR_BODY,
+          audit.env?.PR_BODY,
           "the run step must bind PR_BODY to the description itself",
         ).toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
 
-        // No template expression appears in any run block. A description is
+        // No template expression appears in the run block. A description is
         // text from outside this repository; expanded into the command it
         // would be shell.
-        for (const step of runSteps) {
-          expect(step.run, "the run block must hold no template expression")
-            .not.toContain("${{");
-        }
+        expect(audit.run, "the run block must hold no template expression").not.toContain("${{");
       });
     });
 

@@ -93,12 +93,18 @@ Where you cannot show a value safely, show its shape.
 **A value on this path has just failed validation, so its contents are unknown.** Naming
 the field does not make them safe: whatever the caller passed is what reaches the log.
 Report the format you expected and the shape of what arrived, never the value itself.
+Read a length only once you know the value is a string, because any other value can carry a
+`length` property holding anything at all.
 
 ```
 Bad:   throw new Error("invalid input")
-Good:  throw new TypeError(
+Good:  if (typeof duration !== "string") {
+         throw new TypeError(`Duration must be a string; got a value of type ${typeof duration}`)
+       }
+       throw new TypeError(
          `Duration must be a number followed by ms, s, m, h or d; got ${duration.length} characters`)
-Good:  throw new Error(`API token rejected: expected 32 characters, got ${token.length}`)
+Good:  throw new Error(`API token rejected: expected 32 characters, got ${
+         typeof token === "string" ? `${token.length} characters` : `a value of type ${typeof token}`}`)
 ```
 
 Quote a value only where you control it, such as one you have already matched against
