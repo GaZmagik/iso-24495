@@ -1567,6 +1567,13 @@ describe("repository writing conventions", () => {
         const job = workflow.jobs.audit;
         expect(keysOutside(job, ["runs-on", "steps"]), "job keys").toEqual([]);
 
+        // The runner decides the default shell. On Windows GitHub runs the
+        // block with PowerShell, so "set -euo pipefail" fails before the audit
+        // starts, while runWorkflowCommand still runs it with bash and passes.
+        expect(job["runs-on"], "the audit job must run on the runner whose shell is bash").toBe(
+          "ubuntu-latest",
+        );
+
         // The checkout decides which script runs, so it takes no settings: a
         // "ref" or "repository" would fetch a different one. Bun takes only
         // its version. Any third action could rewrite the script before it
@@ -1583,8 +1590,9 @@ describe("repository writing conventions", () => {
 
         // The run step takes a name, the description and the command. Without
         // "if", "shell", "working-directory" or "continue-on-error", GitHub
-        // runs it with bash from the repository root and fails the job when it
-        // fails, which is how runWorkflowCommand runs it above.
+        // runs it on that Ubuntu runner with bash from the repository root,
+        // and fails the job when it fails, which is how runWorkflowCommand
+        // runs it above.
         expect(audit?.run, "the third step must be the run block").toBeDefined();
         expect(keysOutside(audit, ["name", "env", "run"]), "run step keys").toEqual([]);
         expect(keysOutside(audit.env ?? {}, ["PR_BODY"]), "run step environment").toEqual([]);
