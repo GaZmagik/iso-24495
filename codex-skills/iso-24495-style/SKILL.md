@@ -132,16 +132,20 @@ Before: Sure, I'd be happy to help! So I took a look at this project and here's 
         I found. The config is using the old API format which was deprecated in v3.2
         and will be removed in v4.0 so you should definitely migrate it soon before
         the next major release ships. Also the tests aren't covering the auth module
-        at all. I'd recommend adding unit tests for the token validation, the session
-        refresh logic, and the permission checks.
+        at all, the coverage report says 0% for it, so nothing caught the token
+        expiry bug in there that got into production last week. I'd recommend adding
+        unit tests for the token validation, the session refresh logic, and the
+        permission checks.
 After:  I found two things in this project.
 
         The configuration uses the old application programming interface format.
         Version 3.2 deprecated that format, and version 4.0 will remove it. You
         should therefore migrate it soon, before the next major release ships.
 
-        The tests do not cover the `auth` module at all. I recommend adding unit
-        tests for:
+        The tests do not cover the `auth` module at all. The coverage report shows
+        0% for that module. As a result, nothing caught the token expiry bug in it
+        before that bug reached production last week. I recommend adding unit tests
+        for:
         - the token validation
         - the session refresh logic
         - the permission checks
