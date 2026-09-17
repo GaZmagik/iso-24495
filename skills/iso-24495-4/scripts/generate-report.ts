@@ -5,6 +5,54 @@
 import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+  now: () => string = () => new Date().toISOString(),
+): number {
+  const [findingsPath, evidencePath, maturityPath] = argv.slice(2);
+  if (!findingsPath || !evidencePath || !maturityPath) {
+    stderr(
+      "Usage: bun generate-report-cli.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]",
+    );
+    return 2;
+  }
+  const stateFlag = argv.indexOf("--state");
+  const outFlag = argv.indexOf("--out");
+  if (stateFlag !== -1 && !argv[stateFlag + 1]) {
+    stderr("generate-report: --state requires a state file");
+    return 2;
+  }
+  if (outFlag !== -1 && !argv[outFlag + 1]) {
+    stderr("generate-report: --out requires a report file");
+    return 2;
+  }
+  try {
+    const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
+    const priorState = statePath && existsSync(statePath)
+      ? JSON.parse(readFileSync(statePath, "utf8"))
+      : null;
+    const { report, state } = generateReport({
+      findings: JSON.parse(readFileSync(findingsPath, "utf8")),
+      evidence: JSON.parse(readFileSync(evidencePath, "utf8")),
+      maturity: JSON.parse(readFileSync(maturityPath, "utf8")),
+      state: priorState,
+      now: now(),
+    });
+    if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 2));
+    if (outFlag !== -1) {
+      writeFileSync(argv[outFlag + 1], report);
+    } else {
+      stdout(report);
+    }
+    return 0;
+  } catch (error) {
+    stderr(`generate-report: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
 export interface ReportInput {
   findings: Findings;
   evidence: Evidence;
@@ -83,52 +131,4 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   lines.push("");
 
   return { report: lines.join("\n"), state };
-}
-
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-  now: () => string = () => new Date().toISOString(),
-): number {
-  const [findingsPath, evidencePath, maturityPath] = argv.slice(2);
-  if (!findingsPath || !evidencePath || !maturityPath) {
-    stderr(
-      "Usage: bun generate-report-cli.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]",
-    );
-    return 2;
-  }
-  const stateFlag = argv.indexOf("--state");
-  const outFlag = argv.indexOf("--out");
-  if (stateFlag !== -1 && !argv[stateFlag + 1]) {
-    stderr("generate-report: --state requires a state file");
-    return 2;
-  }
-  if (outFlag !== -1 && !argv[outFlag + 1]) {
-    stderr("generate-report: --out requires a report file");
-    return 2;
-  }
-  try {
-    const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
-    const priorState = statePath && existsSync(statePath)
-      ? JSON.parse(readFileSync(statePath, "utf8"))
-      : null;
-    const { report, state } = generateReport({
-      findings: JSON.parse(readFileSync(findingsPath, "utf8")),
-      evidence: JSON.parse(readFileSync(evidencePath, "utf8")),
-      maturity: JSON.parse(readFileSync(maturityPath, "utf8")),
-      state: priorState,
-      now: now(),
-    });
-    if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 2));
-    if (outFlag !== -1) {
-      writeFileSync(argv[outFlag + 1], report);
-    } else {
-      stdout(report);
-    }
-    return 0;
-  } catch (error) {
-    stderr(`generate-report: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
-  }
 }
