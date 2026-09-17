@@ -146,9 +146,9 @@ After:  I found two things in this project.
         0% for that module. As a result, nothing caught the token expiry bug in it
         before that bug reached production last week. I recommend adding unit tests
         for:
-        - the token validation
-        - the session refresh logic
-        - the permission checks
+        - **Token validation:** confirm that expired tokens are rejected.
+        - **Session refresh:** confirm that valid sessions refresh correctly.
+        - **Permission checks:** confirm that unauthorised requests are rejected.
 ```
 
 The "after" keeps "the next major release" apart from version 4.0, because the "before" never says they are the same release.
@@ -237,21 +237,26 @@ The words "the notice deadline" match the heading of clause 4.2 exactly.
 A summary that drops a condition changes what the reader believes their rights are.
 
 ```text
-Before: Summary: You can cancel at any time.
+Before: Summary: You can cancel at any time and receive a full refund.
 
         1 Your agreement
+        This agreement governs your order.
         ...
-        7.1 The customer may cancel by giving 30 days' written notice.
+        7.1 The customer may cancel within 30 days after the order date.
+
+        7.2 If the customer cancels under clause 7.1, the supplier must refund
+            any sums the customer paid.
 After:  ## Summary of your main terms
 
-        This summary helps you find your terms. The agreement itself, starting at
-        clause 1, governs.
+        This summary helps you find your terms. The agreement governs your order.
 
-        - **How to leave:** You may cancel by giving 30 days' written notice, as
-          clause 7.1 sets out.
+        - **How to leave:** You may cancel within 30 days after the order date,
+          as clause 7.1 sets out.
+        - **Refund:** If you cancel under clause 7.1, the supplier must refund
+          any sums you paid, as clause 7.2 sets out.
 ```
 
-The summary in the "before" contradicts clause 7.1, which governs, so the "after" takes its wording from the clause. This excerpt shows one line of the summary. A full summary also covers what the reader must do, what they must pay and when the agreement ends.
+The summary in the "before" drops the 30-day condition. The "after" takes the cancellation and refund terms from clauses 7.1 and 7.2 without adding another obligation.
 
 ### Technical writing (Part 3)
 

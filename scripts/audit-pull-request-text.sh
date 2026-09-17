@@ -54,10 +54,11 @@ fi
 # An audit of nothing finds nothing, so a description holding no text would earn
 # a green tick. A reader gets nothing from one either.
 #
-# The file passes when it holds one character that is not Unicode whitespace, a
-# NUL byte or a byte order mark. Perl decodes the file as UTF-8, and its \s class
+# The file passes when it holds one visible character that is not Unicode
+# whitespace or a NUL byte. Perl decodes the file as UTF-8, and its \s class
 # covers every Unicode space, the non-breaking, em, thin and ideographic spaces
-# among them. A byte order mark is not whitespace to Unicode, so it is named.
+# among them. HTML comments and zero-width characters are removed before the
+# visible-text check because a reader sees nothing from them.
 # An earlier version deleted a list of known whitespace bytes with `tr`, and a
 # file of em spaces passed because nobody had listed them.
 #
@@ -66,8 +67,12 @@ fi
 TEXT_STATUS=0
 perl -e '
   open(my $file, "<:encoding(UTF-8)", $ARGV[0]) or exit 2;
-  while (my $line = <$file>) { exit 0 if $line =~ /[^\s\x{0}\x{FEFF}]/ }
-  exit 1
+  local $/;
+  my $text = <$file>;
+  exit 1 if $text !~ /[^\s\x{0}\x{FEFF}]/;
+  $text =~ s/<!--.*?-->//gs;
+  $text =~ s/[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{2060}]//g;
+  exit($text =~ /[^\s\x{0}]/ ? 0 : 1)
 ' -- "$TEXT" 2>/dev/null || TEXT_STATUS=$?
 if [ "$TEXT_STATUS" -eq 1 ]; then
   echo "There is no text to read, so there is nothing for a reader to read."

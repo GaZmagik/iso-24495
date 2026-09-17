@@ -430,6 +430,15 @@ describe("repository writing conventions", () => {
     expect(wrong).toEqual([]);
   });
 
+  test("every output-style bullet opens with bold words", () => {
+    const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
+    const bullets = style.split(/\r?\n/).filter((line) => /^\s*-\s+/.test(line));
+    expect(bullets.length, "the output style must contain enough bullets to exercise the rule")
+      .toBeGreaterThanOrEqual(20);
+    const unlabelled = bullets.filter((line) => !/^\s*-\s+\*\*[^*]+\*\*/.test(line));
+    expect(unlabelled).toEqual([]);
+  });
+
   // The style states measurable limits, which are worth nothing if nothing
   // tells the model to read its own draft back against them.
   // These rules came from two external reviews of the plugin author's own
@@ -1217,6 +1226,19 @@ describe("repository writing conventions", () => {
       // in the version test names the symptom and not this setting.
       expect(workflow, "a shallow checkout leaves the version test no tags to read")
         .toMatch(/^\s*fetch-depth:\s*0\s*$/m);
+
+      const parsed = Bun.YAML.parse(workflow) as {
+        jobs: Record<string, Record<string, unknown>>;
+      };
+      const checkJob = parsed.jobs.check;
+      expect(checkJob, "the required check job must exist").toBeDefined();
+      expect(checkJob["if"], "the check job must always run").toBeUndefined();
+      expect(
+        checkJob["continue-on-error"],
+        "a failed check job must fail the workflow",
+      ).toBeUndefined();
+      expect(checkJob["runs-on"], "the check job must use the expected runner")
+        .toBe("ubuntu-latest");
     });
 
     test("the README tells a contributor to run the same script", () => {
@@ -1333,6 +1355,30 @@ describe("repository writing conventions", () => {
         }
         const marked = audit("\uFEFFThis description reads plainly.\n");
         expect(marked.status, `a marked file with text gave: ${marked.output}`).toBe(0);
+      }, 30_000);
+
+      test("an HTML-comment-only description has no visible text", () => {
+        const result = audit(" \n<!-- Describe your change here. -->\n\t");
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain("no text to read");
+
+        const visible = audit("<!-- Context for authors. -->\nThis description reads plainly.\n");
+        expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
+      });
+
+      test("zero-width characters are not visible text", () => {
+        const zeroWidthCharacters = {
+          "zero-width space": "\u200B",
+          "zero-width non-joiner": "\u200C",
+          "zero-width joiner": "\u200D",
+          "byte order mark": "\uFEFF",
+          "word joiner": "\u2060",
+        };
+        for (const [name, character] of Object.entries(zeroWidthCharacters)) {
+          const result = audit(` ${character}\n${character}\t`);
+          expect(result.status, `${name} gave: ${result.output}`).toBe(1);
+          expect(result.output, name).toContain("no text to read");
+        }
       }, 30_000);
 
       // The script promises exit 2 for a file it cannot read, but a permission
@@ -1471,9 +1517,10 @@ describe("repository writing conventions", () => {
         ).toBe(true);
         const workflow = readFileSync(descriptionWorkflow, "utf8");
         // A description changes without a commit, so pushes alone would miss it.
-        expect(workflow, "it must run when a description is edited").toMatch(
-          /^\s*types:.*\bedited\b/m,
-        );
+        expect(
+          parsedWorkflow().on.pull_request.types,
+          "it must run when a description is edited",
+        ).toContain("edited");
         expect(workflow, "it must call the shared script").toMatch(
           /bash\s+scripts\/audit-pull-request-text\.sh/,
         );
@@ -1490,6 +1537,7 @@ describe("repository writing conventions", () => {
       /** The parsed workflow as a structured object. */
       const parsedWorkflow = (): {
         [key: string]: unknown;
+        on: { pull_request: { types: string[] } };
         jobs: Record<string, {
           [key: string]: unknown;
           steps: Array<{

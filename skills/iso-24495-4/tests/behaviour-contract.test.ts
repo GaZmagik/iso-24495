@@ -85,8 +85,9 @@ const SCALING_TIMEOUT_MS = 60_000;
  * quadratic scanning behind a cache of the last result, this guard passed while
  * the single-sample guard it replaced failed at a ratio of 8.78 against a limit
  * of 5, and the whole gate went green. So the attempt number is passed to the
- * work, every builder below salts its text with it, and no cache can serve a
- * second attempt. A guard that can be satisfied by a cache measures the cache.
+ * work, every builder below changes the document length with it, and no cache
+ * keyed on layout can serve a second attempt. A guard that can be satisfied by
+ * a cache measures the cache.
  *
  * Two runs rather than more, because each one triples the work these tests
  * already do and three took the largest past its timeout. Two is what the
@@ -572,9 +573,8 @@ describe("reader-facing behaviour contracts", () => {
   test("deep nesting is read once, not once per level", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
-    const deep = (size: number, salt: number): void => {
-      auditText(`salt${salt}. ` + "[a](x)".replace("a", "a".repeat(1)) .repeat(1)
-        + "[".repeat(size) + "]".repeat(size));
+    const deep = (size: number, variation: number): void => {
+      auditText("[a](x)" + "[".repeat(size + variation) + "]".repeat(size + variation));
     };
     deep(1_000, 0);
     const time = (size: number): number => fastest((attempt) => deep(size, attempt + 1));
@@ -634,8 +634,8 @@ ${sentence}`)
     // Measured through the whole audit, because every rule that reads links used to run a
     // pattern of its own over the same text. Ten thousand unmatched brackets cost about
     // nine seconds across them; one shared scan is what removed it.
-    const audit = (size: number, salt: number): void => {
-      auditText(`salt${salt}. ` + "Read [outer [inner] text](/uri) here. ".repeat(size));
+    const audit = (size: number, variation: number): void => {
+      auditText("Read [outer [inner] text](/uri) here. ".repeat(size + variation));
     };
     audit(1_000, 0);
     const time = (size: number): number => fastest((attempt) => audit(size, attempt + 1));
@@ -712,8 +712,8 @@ ${sentence}`)
     // Every word here is discounted: "A" reads as the article, and so does "and". The
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
-    const hostile = (size: number, salt: number): void => {
-      auditText(`salt${salt}. ` + Array(size).fill("A.A.A. (").join(" ") + " and).");
+    const hostile = (size: number, variation: number): void => {
+      auditText(Array(size + variation).fill("A.A.A. (").join(" ") + " and).");
     };
     hostile(1_000, 0);
     const time = (size: number): number => fastest((attempt) => hostile(size, attempt + 1));
@@ -745,25 +745,25 @@ ${sentence}`)
     //
     // The shape is what is measured, not the clock: tripling the input triples linear work
     // and multiplies quadratic work by nine, and that separation holds on any machine.
-    const growth = (work: (size: number, salt: number) => void, size: number): number => {
+    const growth = (work: (size: number, variation: number) => void, size: number): number => {
       work(size, 0);
-      // Each sample is salted differently, so no cache can answer a repeat.
+      // Each sample has a different length, so no layout cache can answer it.
       return fastest((attempt) => work(size * 3, attempt + 1))
         / Math.max(fastest((attempt) => work(size, attempt + 101)), 1);
     };
 
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
-    const acronyms = (size: number, salt: number): void => {
-      auditText(`salt${salt}. ` + Array(size).fill("Alpha Beta (AB)").join(" ") + ".",
+    const acronyms = (size: number, variation: number): void => {
+      auditText(Array(size + variation).fill("Alpha Beta (AB)").join(" ") + ".",
         { knownAcronyms: known });
     };
     expect(growth(acronyms, 1_000)).toBeLessThan(5);
 
     // Every finding counted the line endings before it from the start of the paragraph.
     const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
-    const paragraphs = (size: number, salt: number): void => {
-      auditText(`salt${salt}. ` + Array(size).fill(sentence).join(" "));
+    const paragraphs = (size: number, variation: number): void => {
+      auditText(Array(size + variation).fill(sentence).join(" "));
     };
     expect(growth(paragraphs, 1_000)).toBeLessThan(5);
 
