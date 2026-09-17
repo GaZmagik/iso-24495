@@ -1241,6 +1241,55 @@ describe("repository writing conventions", () => {
         .toBe("ubuntu-latest");
     });
 
+    // Reading the raw YAML for the command's name proves only that the name is
+    // written there. A review commented the command out, and another skipped
+    // the job with "if: false"; both kept every string above intact. The
+    // description workflow already refuses this by reading the parsed YAML as
+    // permitted key lists rather than by matching text, and this applies the
+    // same reading here. A key missing from a list below fails whatever it
+    // does, so a new setting has to be argued for before the workflow can
+    // carry it.
+    test("the workflow has no structural escape from the gate", () => {
+      const parsed = Bun.YAML.parse(readFileSync(workflowPath, "utf8")) as {
+        jobs: Record<string, {
+          [key: string]: unknown;
+          steps: Array<{ [key: string]: unknown; run?: string }>;
+        }>;
+      };
+      const checkJob = parsed.jobs.check;
+      expect(checkJob, "the required check job must exist").toBeDefined();
+
+      const keysOutside = (value: object, permitted: string[]): string[] =>
+        Object.keys(value).filter((key) => !permitted.includes(key));
+
+      // "if" here would skip the job, and "continue-on-error" would let a
+      // failed gate report success. Both are absent because neither is named.
+      expect(keysOutside(checkJob, ["runs-on", "steps"]), "job keys").toEqual([]);
+      expect(checkJob["if"], "the check job must always run").toBeUndefined();
+      expect(checkJob["continue-on-error"], "a failed gate must fail the workflow")
+        .toBeUndefined();
+      // The runner decides the default shell, and bash scripts/check.sh is a
+      // bash command, so the job must name the Ubuntu runner rather than inherit
+      // a Windows one whose default shell is PowerShell.
+      expect(checkJob["runs-on"], "the check job must use the expected runner")
+        .toBe("ubuntu-latest");
+
+      for (const step of checkJob.steps) {
+        expect(keysOutside(step, ["uses", "with", "name", "run"]), "step keys").toEqual([]);
+        for (const key of ["if", "continue-on-error", "working-directory", "shell"]) {
+          expect(step[key], `a step must not set ${key}`).toBeUndefined();
+        }
+      }
+
+      // The gate is read from the parsed run field, so a comment naming the
+      // script cannot stand in for running it, and a second run block cannot
+      // hide a command that fails.
+      const runSteps = checkJob.steps.filter((step) => step.run !== undefined);
+      expect(runSteps.length, "the check job must hold exactly one run block").toBe(1);
+      expect(runSteps[0].run, "the run step must call the shared gate")
+        .toContain("bash scripts/check.sh");
+    });
+
     test("the README tells a contributor to run the same script", () => {
       const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
       expect(readme).toMatch(/scripts\/check\.sh/);
@@ -1364,6 +1413,40 @@ describe("repository writing conventions", () => {
 
         const visible = audit("<!-- Context for authors. -->\nThis description reads plainly.\n");
         expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
+      });
+
+      // A comment that never closes still hides every character after it, so
+      // the file has nothing a reader sees. The terminated-comment rule above
+      // matched only a closing tag, and the opening one then counted as text.
+      test("an unterminated HTML comment hides the rest of the description", () => {
+        const result = audit("<!-- Describe your change here.\n");
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain("no text to read");
+
+        const visible = audit("<!-- Context for authors. -->\nThis description reads plainly.\n");
+        expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
+      });
+
+      // A Markdown link reference definition renders as nothing, so a
+      // description holding only one shows a reader an empty page. Its label
+      // and destination are visible characters, which is why the check passed.
+      test("a Markdown link reference definition is not visible text", () => {
+        for (const definition of [
+          "[invisible]: https://example.invalid\n",
+          "  [refunds]: /refunds\n",
+          "[diagram]: diagram.png",
+        ]) {
+          const result = audit(definition);
+          expect(result.status, `${JSON.stringify(definition)} gave: ${result.output}`).toBe(1);
+          expect(result.output).toContain("no text to read");
+        }
+
+        // A definition beside real prose leaves the prose, and a label that
+        // names no destination is not a definition, so both still pass.
+        const used = audit("[g]: /uri\n\nSee [the guide][g].\n");
+        expect(used.status, `a definition beside prose gave: ${used.output}`).toBe(0);
+        const literal = audit("[label]:\n");
+        expect(literal.status, `a label with no destination gave: ${literal.output}`).toBe(0);
       });
 
       test("zero-width characters are not visible text", () => {

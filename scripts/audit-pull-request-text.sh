@@ -57,10 +57,14 @@ fi
 # The file passes when it holds one visible character that is not Unicode
 # whitespace or a NUL byte. Perl decodes the file as UTF-8, and its \s class
 # covers every Unicode space, the non-breaking, em, thin and ideographic spaces
-# among them. HTML comments and zero-width characters are removed before the
-# visible-text check because a reader sees nothing from them.
-# An earlier version deleted a list of known whitespace bytes with `tr`, and a
-# file of em spaces passed because nobody had listed them.
+# among them. Four kinds of markup are removed before the visible-text check
+# because a reader sees nothing from them: a terminated HTML comment, an
+# unterminated one, every zero-width character, and a Markdown link reference
+# definition. An earlier version deleted a list of known whitespace bytes with
+# `tr`, and a file of em spaces passed because nobody had listed them. A later
+# version stripped comments and zero-width characters, and a file holding only
+# `[invisible]: https://example.invalid` passed on its visible punctuation.
+# An unterminated `<!--` hides the rest of the file and passed the same way.
 #
 # Perl exits 0 for text and 1 for none. Any other status means the file could
 # not be read after all, which is exit 2 rather than a judgement about text.
@@ -71,7 +75,14 @@ perl -e '
   my $text = <$file>;
   exit 1 if $text !~ /[^\s\x{0}\x{FEFF}]/;
   $text =~ s/<!--.*?-->//gs;
+  # An unterminated comment never reaches its close, so it hides everything
+  # after it and the remainder is not text a reader receives.
+  $text =~ s/<!--.*//s;
   $text =~ s/[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{2060}]//g;
+  # A link reference definition is not rendered. Its label and its destination
+  # sit on one line, indented by at most three spaces, and the destination is
+  # the non-whitespace that follows the colon.
+  $text =~ s/^[ \t]{0,3}\[[^\]]*\]:[ \t]*\S.*$//mg;
   exit($text =~ /[^\s\x{0}]/ ? 0 : 1)
 ' -- "$TEXT" 2>/dev/null || TEXT_STATUS=$?
 if [ "$TEXT_STATUS" -eq 1 ]; then

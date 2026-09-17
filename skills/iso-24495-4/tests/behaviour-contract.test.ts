@@ -85,9 +85,9 @@ const SCALING_TIMEOUT_MS = 60_000;
  * quadratic scanning behind a cache of the last result, this guard passed while
  * the single-sample guard it replaced failed at a ratio of 8.78 against a limit
  * of 5, and the whole gate went green. So the attempt number is passed to the
- * work, every builder below changes the document length with it, and no cache
- * keyed on layout can serve a second attempt. A guard that can be satisfied by
- * a cache measures the cache.
+ * work, every builder below builds its whole text from it, and no cache keyed
+ * on the text, on a word in it or on the layout it parses to can serve a second
+ * attempt. A guard that can be satisfied by a cache measures the cache.
  *
  * Two runs rather than more, because each one triples the work these tests
  * already do and three took the largest past its timeout. Two is what the
@@ -102,6 +102,62 @@ function fastest(work: (attempt: number) => void, attempts = 2): number {
     best = Math.min(best, performance.now() - started);
   }
   return best;
+}
+
+/**
+ * A word that belongs to one attempt at one position and to nothing else.
+ *
+ * The guards below once salted a document with the attempt number, and a review
+ * defeated every salt by caching the result under a key the salt left alone:
+ * first the text with the prefix digit removed, then the layout the document
+ * produced. The text of every attempt is now built from these words, so no two
+ * attempts share a line, a marker or the layout either parses to, and a cache
+ * has nothing to answer a second attempt with. The word is letters only, so
+ * discarding the digits cannot make two attempts look alike.
+ */
+function uniqueWord(attempt: number, index: number): string {
+  const letters = "abcdefghijklmnopqrstuvwxyz";
+  let value = attempt * 1_000_003 + index;
+  let word = "";
+  do {
+    word = letters[value % 26] + word;
+    value = Math.floor(value / 26);
+  } while (value > 0);
+  return `zz${word}`;
+}
+
+/** Deeply nested labels, whose every label is new on every attempt. */
+function deepLabelDocument(size: number, variation: number): string {
+  const opens = Array.from({ length: size + variation }, (_, index) =>
+    `[${uniqueWord(variation, index)}`).join("");
+  return `[a](x)${opens}${"]".repeat(size + variation)}`;
+}
+
+/** Nested link labels, whose every sentence is new on every attempt. */
+function nestedLinkDocument(size: number, variation: number): string {
+  return Array.from({ length: size + variation }, (_, index) =>
+    `${uniqueWord(variation, index)} reads [outer [inner] text](/uri) here.`).join(" ");
+}
+
+/** Discounted acronym candidates, whose every candidate is new per attempt. */
+function discountedAcronymDocument(size: number, variation: number): string {
+  return Array.from({ length: size + variation }, (_, index) =>
+    `${uniqueWord(variation, index)} A.A.A. (`).join(" ") + " and).";
+}
+
+/** Acronym definitions, whose every definition is new on every attempt. */
+function acronymDefinitionDocument(size: number, variation: number): string {
+  return Array.from({ length: size + variation }, (_, index) =>
+    `${uniqueWord(variation, index)} Alpha Beta (AB)`).join(" ") + ".";
+}
+
+/** The 31-word sentence the paragraph guard repeats. */
+const LONG_SENTENCE = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
+
+/** One paragraph of long sentences, new on every attempt. */
+function longParagraphDocument(size: number, variation: number): string {
+  return Array.from({ length: size + variation }, (_, index) =>
+    `${uniqueWord(variation, index)} ${LONG_SENTENCE}`).join(" ");
 }
 
 describe("reader-facing behaviour contracts", () => {
@@ -574,7 +630,7 @@ describe("reader-facing behaviour contracts", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
     const deep = (size: number, variation: number): void => {
-      auditText("[a](x)" + "[".repeat(size + variation) + "]".repeat(size + variation));
+      auditText(deepLabelDocument(size, variation));
     };
     deep(1_000, 0);
     const time = (size: number): number => fastest((attempt) => deep(size, attempt + 1));
@@ -584,6 +640,37 @@ describe("reader-facing behaviour contracts", () => {
     for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
     expect(() => auditText(layered)).not.toThrow();
   }, SCALING_TIMEOUT_MS);
+
+  // The guards above measure the algorithm only while each attempt is given
+  // work it has not done. Three earlier repairs salted a document, and a review
+  // defeated each by caching the result under a key the salt left alone: the
+  // text with the prefix digit removed, then the layout the document parsed to.
+  // This counts what the builders produce, so a salt that a cache's key
+  // discards cannot come back unnoticed.
+  test("every timing attempt is given a document no other attempt has seen", () => {
+    const builders: Array<[string, (size: number, variation: number) => string]> = [
+      ["deep nesting", deepLabelDocument],
+      ["nested labels", nestedLinkDocument],
+      ["discounted acronyms", discountedAcronymDocument],
+      ["acronym definitions", acronymDefinitionDocument],
+      ["long paragraphs", longParagraphDocument],
+    ];
+    // The marker words, which are the part of each attempt that must be new.
+    const markers = (text: string): string[] =>
+      text.split(/[^a-z]+/).filter((word) => /^zz[a-z]+$/.test(word));
+
+    for (const [name, build] of builders) {
+      const first = build(20, 1);
+      const second = build(20, 2);
+      expect(first, `${name} must differ between attempts`).not.toBe(second);
+      const found = markers(first);
+      expect(found.length, `${name} must carry a marker in every element`)
+        .toBeGreaterThanOrEqual(20);
+      const seen = new Set(found);
+      const shared = markers(second).filter((word) => seen.has(word));
+      expect(shared, `${name} shares a marker between attempts`).toEqual([]);
+    }
+  });
 
   test("an empty link shows a reader nothing, so it measures as nothing", () => {
     // A link with no text still has a destination and a title, and leaving them in place
@@ -635,7 +722,7 @@ ${sentence}`)
     // pattern of its own over the same text. Ten thousand unmatched brackets cost about
     // nine seconds across them; one shared scan is what removed it.
     const audit = (size: number, variation: number): void => {
-      auditText("Read [outer [inner] text](/uri) here. ".repeat(size + variation));
+      auditText(nestedLinkDocument(size, variation));
     };
     audit(1_000, 0);
     const time = (size: number): number => fastest((attempt) => audit(size, attempt + 1));
@@ -713,7 +800,7 @@ ${sentence}`)
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
     const hostile = (size: number, variation: number): void => {
-      auditText(Array(size + variation).fill("A.A.A. (").join(" ") + " and).");
+      auditText(discountedAcronymDocument(size, variation));
     };
     hostile(1_000, 0);
     const time = (size: number): number => fastest((attempt) => hostile(size, attempt + 1));
@@ -747,7 +834,8 @@ ${sentence}`)
     // and multiplies quadratic work by nine, and that separation holds on any machine.
     const growth = (work: (size: number, variation: number) => void, size: number): number => {
       work(size, 0);
-      // Each sample has a different length, so no layout cache can answer it.
+      // Each sample is built from words no other sample has used, so a cache
+      // keyed on the text, a word or the layout cannot answer a repeat.
       return fastest((attempt) => work(size * 3, attempt + 1))
         / Math.max(fastest((attempt) => work(size, attempt + 101)), 1);
     };
@@ -755,20 +843,18 @@ ${sentence}`)
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
     const acronyms = (size: number, variation: number): void => {
-      auditText(Array(size + variation).fill("Alpha Beta (AB)").join(" ") + ".",
-        { knownAcronyms: known });
+      auditText(acronymDefinitionDocument(size, variation), { knownAcronyms: known });
     };
     expect(growth(acronyms, 1_000)).toBeLessThan(5);
 
     // Every finding counted the line endings before it from the start of the paragraph.
-    const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
     const paragraphs = (size: number, variation: number): void => {
-      auditText(Array(size + variation).fill(sentence).join(" "));
+      auditText(longParagraphDocument(size, variation));
     };
     expect(growth(paragraphs, 1_000)).toBeLessThan(5);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
-    const long = Array(500).fill(sentence).join(" ");
+    const long = Array(500).fill(LONG_SENTENCE).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
   }, SCALING_TIMEOUT_MS);
 
