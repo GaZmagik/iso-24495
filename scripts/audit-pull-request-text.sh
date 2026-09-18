@@ -54,37 +54,16 @@ fi
 # An audit of nothing finds nothing, so a description holding no text would earn
 # a green tick. A reader gets nothing from one either.
 #
-# The file passes when it holds one visible character that is not Unicode
-# whitespace or a NUL byte. Perl decodes the file as UTF-8, and its \s class
-# covers every Unicode space, the non-breaking, em, thin and ideographic spaces
-# among them. Four kinds of markup are removed before the visible-text check
-# because a reader sees nothing from them: a terminated HTML comment, an
-# unterminated one, every zero-width character, and a Markdown link reference
-# definition. An earlier version deleted a list of known whitespace bytes with
-# `tr`, and a file of em spaces passed because nobody had listed them. A later
-# version stripped comments and zero-width characters, and a file holding only
-# `[invisible]: https://example.invalid` passed on its visible punctuation.
-# An unterminated `<!--` hides the rest of the file and passed the same way.
+# The Markdown renderer decides what a reader sees, so a comment, a link
+# reference definition or a page of Unicode spaces all count as no text. An
+# earlier version stripped such constructs one pattern at a time, and each
+# review found one the list had missed. scripts/visible-text.ts says what it
+# accepts.
 #
-# Perl exits 0 for text and 1 for none. Any other status means the file could
-# not be read after all, which is exit 2 rather than a judgement about text.
+# The check exits 0 for text and 1 for none. Any other status means the file
+# could not be read after all, which is exit 2 rather than a judgement about text.
 TEXT_STATUS=0
-perl -e '
-  open(my $file, "<:encoding(UTF-8)", $ARGV[0]) or exit 2;
-  local $/;
-  my $text = <$file>;
-  exit 1 if $text !~ /[^\s\x{0}\x{FEFF}]/;
-  $text =~ s/<!--.*?-->//gs;
-  # An unterminated comment never reaches its close, so it hides everything
-  # after it and the remainder is not text a reader receives.
-  $text =~ s/<!--.*//s;
-  $text =~ s/[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{2060}]//g;
-  # A link reference definition is not rendered. Its label and its destination
-  # sit on one line, indented by at most three spaces, and the destination is
-  # the non-whitespace that follows the colon.
-  $text =~ s/^[ \t]{0,3}\[[^\]]*\]:[ \t]*\S.*$//mg;
-  exit($text =~ /[^\s\x{0}]/ ? 0 : 1)
-' -- "$TEXT" 2>/dev/null || TEXT_STATUS=$?
+bun scripts/visible-text-cli.ts "$TEXT" || TEXT_STATUS=$?
 if [ "$TEXT_STATUS" -eq 1 ]; then
   echo "There is no text to read, so there is nothing for a reader to read."
   exit 1

@@ -1208,16 +1208,50 @@ describe("repository writing conventions", () => {
       );
     });
 
-    test("the workflow runs that script rather than its own commands", () => {
-      expect(existsSync(workflowPath), ".github/workflows/tests.yml must exist").toBe(true);
+    // Windows separators reach bash as escape characters rather than as path
+    // separators, and `dirname` then reads the whole path as one name. Both
+    // platforms accept forward slashes, so both get them.
+    const forBash = (path: string): string => path.split("\\").join("/");
+
+    /** The one run block of a workflow job, read from the parsed YAML. */
+    const runBlock = (path: string, job: string): string => {
+      const parsed = Bun.YAML.parse(readFileSync(path, "utf8")) as {
+        jobs: Record<string, { steps: Array<{ run?: string }> }>;
+      };
+      const runSteps = parsed.jobs[job].steps.filter((step) => step.run !== undefined);
+      expect(runSteps.length, `the ${job} job must hold exactly one run block`).toBe(1);
+      return runSteps[0].run ?? "";
+    };
+
+    /** Runs a run block with bash, the way the runner would, and returns its exit code. */
+    const runBlockIn = (
+      block: string,
+      cwd: string,
+      env: Record<string, string> = {},
+    ): number | null => {
+      const directory = mkdtempSync(join(tmpdir(), "iso-24495-step-"));
+      try {
+        const step = join(directory, "step.sh");
+        writeFileSync(step, block, "utf8");
+        const run = Bun.spawnSync(["bash", forBash(step)], {
+          cwd,
+          env: { ...process.env, RUNNER_TEMP: forBash(directory), ...env },
+        });
+        return run.exitCode;
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    };
+
+    // Reading the workflow for the command proves only that the command is
+    // written there. Reviews commented it out, added "|| true" and changed the
+    // shell, and each kept the text intact. So the run block is lifted out and
+    // run against a stand-in gate: it must pass when the gate passes and fail
+    // when the gate fails. Running the real gate here would run this suite
+    // inside itself.
+    test("the workflow runs that script, and fails when it fails", () => {
       const workflow = readFileSync(workflowPath, "utf8");
       expect(workflow, "the workflow must run on pull requests").toMatch(/^\s*pull_request:/m);
-      expect(workflow, "the workflow must install Bun").toMatch(/oven-sh\/setup-bun/);
-      expect(workflow, "the workflow must call the shared script").toMatch(
-        /bash\s+scripts\/check\.sh/,
-      );
-      const inlineBunCalls = workflow.match(/^\s*run:\s*bun\b/gm) ?? [];
-      expect(inlineBunCalls, "the workflow must not run its own bun commands").toEqual([]);
 
       // The version test reads git tags, and a default checkout fetches none.
       // It already refuses an empty tag list, so a shallow checkout fails the
@@ -1227,67 +1261,17 @@ describe("repository writing conventions", () => {
       expect(workflow, "a shallow checkout leaves the version test no tags to read")
         .toMatch(/^\s*fetch-depth:\s*0\s*$/m);
 
-      const parsed = Bun.YAML.parse(workflow) as {
-        jobs: Record<string, Record<string, unknown>>;
-      };
-      const checkJob = parsed.jobs.check;
-      expect(checkJob, "the required check job must exist").toBeDefined();
-      expect(checkJob["if"], "the check job must always run").toBeUndefined();
-      expect(
-        checkJob["continue-on-error"],
-        "a failed check job must fail the workflow",
-      ).toBeUndefined();
-      expect(checkJob["runs-on"], "the check job must use the expected runner")
-        .toBe("ubuntu-latest");
-    });
-
-    // Reading the raw YAML for the command's name proves only that the name is
-    // written there. A review commented the command out, and another skipped
-    // the job with "if: false"; both kept every string above intact. The
-    // description workflow already refuses this by reading the parsed YAML as
-    // permitted key lists rather than by matching text, and this applies the
-    // same reading here. A key missing from a list below fails whatever it
-    // does, so a new setting has to be argued for before the workflow can
-    // carry it.
-    test("the workflow has no structural escape from the gate", () => {
-      const parsed = Bun.YAML.parse(readFileSync(workflowPath, "utf8")) as {
-        jobs: Record<string, {
-          [key: string]: unknown;
-          steps: Array<{ [key: string]: unknown; run?: string }>;
-        }>;
-      };
-      const checkJob = parsed.jobs.check;
-      expect(checkJob, "the required check job must exist").toBeDefined();
-
-      const keysOutside = (value: object, permitted: string[]): string[] =>
-        Object.keys(value).filter((key) => !permitted.includes(key));
-
-      // "if" here would skip the job, and "continue-on-error" would let a
-      // failed gate report success. Both are absent because neither is named.
-      expect(keysOutside(checkJob, ["runs-on", "steps"]), "job keys").toEqual([]);
-      expect(checkJob["if"], "the check job must always run").toBeUndefined();
-      expect(checkJob["continue-on-error"], "a failed gate must fail the workflow")
-        .toBeUndefined();
-      // The runner decides the default shell, and bash scripts/check.sh is a
-      // bash command, so the job must name the Ubuntu runner rather than inherit
-      // a Windows one whose default shell is PowerShell.
-      expect(checkJob["runs-on"], "the check job must use the expected runner")
-        .toBe("ubuntu-latest");
-
-      for (const step of checkJob.steps) {
-        expect(keysOutside(step, ["uses", "with", "name", "run"]), "step keys").toEqual([]);
-        for (const key of ["if", "continue-on-error", "working-directory", "shell"]) {
-          expect(step[key], `a step must not set ${key}`).toBeUndefined();
+      const block = runBlock(workflowPath, "check");
+      for (const status of [0, 1]) {
+        const repository = mkdtempSync(join(tmpdir(), "iso-24495-gate-"));
+        try {
+          mkdirSync(join(repository, "scripts"));
+          writeFileSync(join(repository, "scripts", "check.sh"), `exit ${status}\n`, "utf8");
+          expect(runBlockIn(block, repository), `a gate that exits ${status}`).toBe(status);
+        } finally {
+          rmSync(repository, { recursive: true, force: true });
         }
       }
-
-      // The gate is read from the parsed run field, so a comment naming the
-      // script cannot stand in for running it, and a second run block cannot
-      // hide a command that fails.
-      const runSteps = checkJob.steps.filter((step) => step.run !== undefined);
-      expect(runSteps.length, "the check job must hold exactly one run block").toBe(1);
-      expect(runSteps[0].run, "the run step must call the shared gate")
-        .toContain("bash scripts/check.sh");
     });
 
     test("the README tells a contributor to run the same script", () => {
@@ -1307,11 +1291,6 @@ describe("repository writing conventions", () => {
         "workflows",
         "pull-request-text.yml",
       );
-
-      // Windows separators reach bash as escape characters rather than as path
-      // separators, and `dirname` then reads the whole path as one name. Both
-      // platforms accept forward slashes, so both get them.
-      const forBash = (path: string): string => path.split("\\").join("/");
 
       /** Runs the check over one piece of text, and reports what a reader sees. */
       const audit = (text: string): { status: number | null; output: string } => {
@@ -1370,99 +1349,22 @@ describe("repository writing conventions", () => {
         }
       });
 
-      // A non-breaking space is whitespace a reader cannot see, but grep's
-      // [:space:] class treats it differently by locale. A file holding only
-      // non-breaking spaces must fail on every platform.
-      test("non-breaking spaces are not text a reader can read", () => {
-        const nbsp = " ";
-        for (const empty of [nbsp, `${nbsp}${nbsp}${nbsp}`, ` ${nbsp}\n\t${nbsp}`]) {
+      // The Markdown renderer decides what a reader sees, and the unit tests in
+      // scripts/tests/visible-text.test.ts hold the cases. These prove that the
+      // script asks it: a comment and a definition spread over two lines each
+      // render as nothing.
+      test("markup that renders nothing fails, like whitespace", () => {
+        for (const empty of [
+          "<!-- Describe your change here. -->\n",
+          "[x]:\n  https://example.invalid\n",
+        ]) {
           const result = audit(empty);
           expect(result.status, `${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
           expect(result.output).toContain("no text to read");
         }
-      });
-
-      // The byte list that caught non-breaking spaces caught nothing it did not
-      // name, and a review filled files with other Unicode spaces and a byte
-      // order mark. Each passed. So the list is gone, and each of those is
-      // pinned here, with a byte order mark before real text as the control.
-      // Nine cases each start bash and Perl, and on Windows under the full suite
-      // the test ran past the five-second default, so it gets thirty.
-      test("every Unicode space and a byte order mark are not text either", () => {
-        const spaces = {
-          "em space": "\u2003",
-          "thin space": "\u2009",
-          "ideographic space": "\u3000",
-          "byte order mark": "\uFEFF",
-        };
-        for (const [name, character] of Object.entries(spaces)) {
-          for (const empty of [character, `${character}${character}\n${character}`]) {
-            const result = audit(empty);
-            expect(result.status, `${name} ${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
-            expect(result.output, name).toContain("no text to read");
-          }
-        }
-        const marked = audit("\uFEFFThis description reads plainly.\n");
-        expect(marked.status, `a marked file with text gave: ${marked.output}`).toBe(0);
-      }, 30_000);
-
-      test("an HTML-comment-only description has no visible text", () => {
-        const result = audit(" \n<!-- Describe your change here. -->\n\t");
-        expect(result.status, result.output).toBe(1);
-        expect(result.output).toContain("no text to read");
-
         const visible = audit("<!-- Context for authors. -->\nThis description reads plainly.\n");
         expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
       });
-
-      // A comment that never closes still hides every character after it, so
-      // the file has nothing a reader sees. The terminated-comment rule above
-      // matched only a closing tag, and the opening one then counted as text.
-      test("an unterminated HTML comment hides the rest of the description", () => {
-        const result = audit("<!-- Describe your change here.\n");
-        expect(result.status, result.output).toBe(1);
-        expect(result.output).toContain("no text to read");
-
-        const visible = audit("<!-- Context for authors. -->\nThis description reads plainly.\n");
-        expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
-      });
-
-      // A Markdown link reference definition renders as nothing, so a
-      // description holding only one shows a reader an empty page. Its label
-      // and destination are visible characters, which is why the check passed.
-      test("a Markdown link reference definition is not visible text", () => {
-        for (const definition of [
-          "[invisible]: https://example.invalid\n",
-          "  [refunds]: /refunds\n",
-          "[diagram]: diagram.png",
-        ]) {
-          const result = audit(definition);
-          expect(result.status, `${JSON.stringify(definition)} gave: ${result.output}`).toBe(1);
-          expect(result.output).toContain("no text to read");
-        }
-
-        // A definition beside real prose leaves the prose, and a label that
-        // names no destination is not a definition, so both still pass.
-        const used = audit("[g]: /uri\n\nSee [the guide][g].\n");
-        expect(used.status, `a definition beside prose gave: ${used.output}`).toBe(0);
-        const literal = audit("[label]:\n");
-        expect(literal.status, `a label with no destination gave: ${literal.output}`).toBe(0);
-      });
-
-      test("zero-width characters are not visible text", () => {
-        const zeroWidthCharacters = {
-          "zero-width space": "\u200B",
-          "zero-width non-joiner": "\u200C",
-          "zero-width joiner": "\u200D",
-          "byte order mark": "\uFEFF",
-          "word joiner": "\u2060",
-        };
-        for (const [name, character] of Object.entries(zeroWidthCharacters)) {
-          const result = audit(` ${character}\n${character}\t`);
-          expect(result.status, `${name} gave: ${result.output}`).toBe(1);
-          expect(result.output, name).toContain("no text to read");
-        }
-      }, 30_000);
 
       // The script promises exit 2 for a file it cannot read, but a permission
       // error from grep fell through to "no text" with exit 1.
@@ -1593,149 +1495,40 @@ describe("repository writing conventions", () => {
         expect(run.exitCode).toBe(2);
       });
 
-      test("the workflow hands the description to that script", () => {
-        expect(
-          existsSync(descriptionWorkflow),
-          ".github/workflows/pull-request-text.yml must exist",
-        ).toBe(true);
-        const workflow = readFileSync(descriptionWorkflow, "utf8");
-        // A description changes without a commit, so pushes alone would miss it.
-        expect(
-          parsedWorkflow().on.pull_request.types,
-          "it must run when a description is edited",
-        ).toContain("edited");
-        expect(workflow, "it must call the shared script").toMatch(
-          /bash\s+scripts\/audit-pull-request-text\.sh/,
-        );
-        const inlineBunCalls = workflow.match(/^\s*run:\s*bun\b/gm) ?? [];
-        expect(inlineBunCalls, "the workflow must not run its own bun commands").toEqual([]);
-        // A description is text from outside this repository, so it reaches the
-        // script as an environment variable and never as part of the command.
-        expect(workflow, "the description must not be written into the command").toMatch(
-          /PR_BODY:\s*\$\{\{\s*github\.event\.pull_request\.body\s*\}\}/,
-        );
-        expect(workflow, "the step must read it from that variable").toContain('"$PR_BODY"');
+      /** The parsed description workflow. */
+      const parsedWorkflow = (): {
+        on: { pull_request: { types: string[] } };
+        jobs: Record<string, { steps: Array<{ run?: string; env?: Record<string, string> }> }>;
+      } => Bun.YAML.parse(readFileSync(descriptionWorkflow, "utf8")) as ReturnType<typeof parsedWorkflow>;
+
+      // A description changes without a commit, so pushes alone would miss it.
+      test("the workflow runs when a description is edited", () => {
+        expect(parsedWorkflow().on.pull_request.types).toContain("edited");
       });
 
-      /** The parsed workflow as a structured object. */
-      const parsedWorkflow = (): {
-        [key: string]: unknown;
-        on: { pull_request: { types: string[] } };
-        jobs: Record<string, {
-          [key: string]: unknown;
-          steps: Array<{
-            [key: string]: unknown;
-            name?: string;
-            uses?: string;
-            run?: string;
-            env?: Record<string, string>;
-            with?: Record<string, unknown>;
-          }>;
-        }>;
-      } => {
-        return Bun.YAML.parse(readFileSync(descriptionWorkflow, "utf8")) as ReturnType<typeof parsedWorkflow>;
-      };
-
-      /** The shell the workflow runs, extracted from the parsed YAML. */
-      const workflowCommand = (): string => {
-        const workflow = parsedWorkflow();
-        const steps = workflow.jobs.audit.steps;
-        const runSteps = steps.filter((step) => step.run !== undefined);
-        expect(runSteps.length, "the audit job must hold exactly one run block").toBe(1);
-        return runSteps[0].run ?? "";
-      };
-
-      /** Runs that shell the way the runner would, and reports what happened. */
-      const runWorkflowCommand = (description: string): { status: number | null } => {
-        const directory = mkdtempSync(join(tmpdir(), "iso-24495-workflow-"));
-        try {
-          const step = join(directory, "step.sh");
-          writeFileSync(step, workflowCommand(), "utf8");
-          const run = Bun.spawnSync(["bash", forBash(step)], {
-            cwd: REPOSITORY_ROOT,
-            env: { ...process.env, PR_BODY: description, RUNNER_TEMP: forBash(directory) },
-          });
-          return { status: run.exitCode };
-        } finally {
-          rmSync(directory, { recursive: true, force: true });
-        }
-      };
+      // A description is text from outside this repository. Expanded into the
+      // command it would be shell, so it reaches the step as a variable. The
+      // test below supplies its own PR_BODY, so it cannot see what the workflow
+      // binds; this is the one fact it reads rather than runs.
+      test("the description reaches the shell as a variable, never as a command", () => {
+        const step = parsedWorkflow().jobs.audit.steps.find((each) => each.run !== undefined);
+        expect(step?.run, "the run block must hold no template expression").not.toContain("${{");
+        expect(step?.env?.PR_BODY, "PR_BODY must be the description itself")
+          .toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
+      });
 
       // Reading the workflow for the script's name proves only that the name is
       // written there. A review deleted the audit command, added "|| true", and
-      // interpolated the description straight into the shell; all three passed
-      // every test above. So the block is lifted out and run, and a check that
-      // cannot fail is not a check.
+      // interpolated the description straight into the shell; all three kept
+      // the name intact. So the block is lifted out and run, which is the test
+      // that replaced a list of workflow settings that each review extended.
       test("the workflow's own shell passes plain text and fails the rest", () => {
-        expect(runWorkflowCommand("This description reads plainly.\n").status).toBe(0);
-        expect(
-          runWorkflowCommand(`${"word ".repeat(40)}stop.`).status,
-          "a sentence past the ceiling must fail the step",
-        ).toBe(1);
-        expect(
-          runWorkflowCommand(" \t\r\n  \n").status,
-          "whitespace is not text a reader can read",
-        ).toBe(1);
-      });
-
-      // The workflow is read as a list of permitted keys, not a list of banned
-      // ones. Reviews kept finding settings the banned list had not named: a
-      // second step, continue-on-error, a shell override, "if: false", a clean
-      // PR_BODY bound at job level, a default shell of python, and then
-      // working-directory at three levels. Each passed until it was named. A
-      // key missing from these lists now fails whatever it does, so a new
-      // setting has to be argued for here before the workflow can carry it.
-      test("the workflow has no structural escape from the audit", () => {
-        const workflow = parsedWorkflow();
-        const keysOutside = (value: object, permitted: string[]): string[] =>
-          Object.keys(value).filter((key) => !permitted.includes(key));
-
-        // Bun's parser keeps "on" as a string key rather than reading it as a
-        // boolean. "defaults" and "env" are absent at both levels, which is
-        // what closes a default shell, a default working directory and a
-        // PR_BODY bound above the step.
-        expect(keysOutside(workflow, ["name", "on", "jobs"]), "workflow keys").toEqual([]);
-        const job = workflow.jobs.audit;
-        expect(keysOutside(job, ["runs-on", "steps"]), "job keys").toEqual([]);
-
-        // The runner decides the default shell. On Windows GitHub runs the
-        // block with PowerShell, so "set -euo pipefail" fails before the audit
-        // starts, while runWorkflowCommand still runs it with bash and passes.
-        expect(job["runs-on"], "the audit job must run on the runner whose shell is bash").toBe(
-          "ubuntu-latest",
-        );
-
-        // The checkout decides which script runs, so it takes no settings: a
-        // "ref" or "repository" would fetch a different one. Bun takes only
-        // its version. Any third action could rewrite the script before it
-        // runs, so the steps are these two and one run block, in this order.
-        const [checkout, setupBun, audit, ...rest] = job.steps;
-        expect(rest, "the job must hold exactly three steps").toEqual([]);
-        expect(checkout?.uses, "the first step must check out this repository").toMatch(
-          /^actions\/checkout@/,
-        );
-        expect(keysOutside(checkout, ["uses"]), "checkout step keys").toEqual([]);
-        expect(setupBun?.uses, "the second step must install Bun").toMatch(/^oven-sh\/setup-bun@/);
-        expect(keysOutside(setupBun, ["uses", "with"]), "setup-bun step keys").toEqual([]);
-        expect(keysOutside(setupBun.with ?? {}, ["bun-version"]), "setup-bun settings").toEqual([]);
-
-        // The run step takes a name, the description and the command. Without
-        // "if", "shell", "working-directory" or "continue-on-error", GitHub
-        // runs it on that Ubuntu runner with bash from the repository root,
-        // and fails the job when it fails, which is how runWorkflowCommand
-        // runs it above.
-        expect(audit?.run, "the third step must be the run block").toBeDefined();
-        expect(keysOutside(audit, ["name", "env", "run"]), "run step keys").toEqual([]);
-        expect(keysOutside(audit.env ?? {}, ["PR_BODY"]), "run step environment").toEqual([]);
-        expect(
-          audit.env?.PR_BODY,
-          "the run step must bind PR_BODY to the description itself",
-        ).toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
-
-        // No template expression appears in the run block. A description is
-        // text from outside this repository; expanded into the command it
-        // would be shell.
-        expect(audit.run, "the run block must hold no template expression").not.toContain("${{");
+        const block = runBlock(descriptionWorkflow, "audit");
+        const run = (description: string): number | null =>
+          runBlockIn(block, REPOSITORY_ROOT, { PR_BODY: description });
+        expect(run("This description reads plainly.\n")).toBe(0);
+        expect(run(`${"word ".repeat(40)}stop.`), "a sentence past the ceiling must fail").toBe(1);
+        expect(run(" \t\r\n  \n"), "whitespace is not text a reader can read").toBe(1);
       });
     });
 
