@@ -45,6 +45,8 @@ describe("hasVisibleText", () => {
       "---",
       "<div></div>",
       "![](x.png)",
+      // An image is not text, so its alternative text does not count.
+      "![A diagram of the audit](x.png)",
       "[x]:\n  https://example.invalid\n",
     ]) {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);

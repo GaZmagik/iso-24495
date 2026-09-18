@@ -15,6 +15,9 @@
  * category covers the zero-width characters and the byte order mark, so no
  * list of them is kept here.
  *
+ * An image is not text, so a description holding only an image fails, whatever
+ * its alternative text says.
+ *
  * Entities inside a raw HTML block stay as written, so `<div>&nbsp;</div>`
  * counts as text. That is accepted: the check exists to catch a description
  * nobody wrote, not one written to evade it.
