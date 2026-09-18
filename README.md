@@ -11,14 +11,14 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | Skill | Scope |
 |-------|-------|
 | `iso-24495-1` | **Core principles.** Governs all user-facing output: no filler preambles, short sentences and paragraphs, active voice, scannable structure, concrete instructions. |
-| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses. |
-| `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms. |
+| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses, defined terms, cross-references that name what they point at, stable clause identifiers, a summary layer over the operative text, and section names a reader can navigate by. |
+| `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms, text alternatives for diagrams, and the stages placed inside the document levels of `iso-24495-5`. |
 | `iso-24495-4` | **Organisational implementation (provisional).** A task skill for plain language gap analysis in organisations: a process-artefact sweep, a corpus audit, a five-dimension maturity model with deterministic scoring, and an append-only audit trend. Ships TypeScript tooling run with [Bun](https://bun.sh) (`bun test` covered). Based on the unpublished ISO/CD 24495-4 committee draft. |
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
 
-The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. The text audit never activates automatically.
+The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
 All skills exempt internal reasoning. The writing skills preserve code blocks, commands, and logs untouched; `iso-24495-code` is the exception, because governing code is its subject. Technical and legal accuracy always supersede formatting rules.
 
@@ -173,6 +173,18 @@ Directory audits skip selected or nested symbolic links and directory junctions.
 ## Testing policy
 
 Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
+
+A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
+
+```bash
+bash scripts/audit-pull-request-text.sh <file>
+```
+
+The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all. Whitespace is not text, because a reader gets as much from a page of spaces as from an empty one.
+
+A file the script cannot read stops it with a different code, rather than any verdict about text. A review found the reason for that: a mistyped name beginning with a dash reached `dirname` as an option, and the script audited a neighbouring file and passed. A check that passes for the wrong target is worse than one that fails.
+
+Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
 
 `bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.
 

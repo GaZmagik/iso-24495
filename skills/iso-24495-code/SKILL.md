@@ -2,7 +2,7 @@
 name: iso-24495-code
 description: "Plain language applied to source code (ISO 24495-1:2023 principles). Governs the parts of code a person reads: the order units appear in, their names, comments, and error messages. Applied when writing or restructuring code, not when explaining it."
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
   iso-standard: "ISO 24495-1:2023"
   iso-status: "published, applied by analogy to source code"
 ---
@@ -93,12 +93,20 @@ Where you cannot show a value safely, show its shape.
 **A value on this path has just failed validation, so its contents are unknown.** Naming
 the field does not make them safe: whatever the caller passed is what reaches the log.
 Report the format you expected and the shape of what arrived, never the value itself.
+Read a length only once you know the value is a string, because any other value can carry a
+`length` property holding anything at all.
 
 ```
 Bad:   throw new Error("invalid input")
-Good:  throw new TypeError(
+Good:  if (typeof duration !== "string") {
+         throw new TypeError(`Duration must be a string; got a value of type ${typeof duration}`)
+       }
+       throw new TypeError(
          `Duration must be a number followed by ms, s, m, h or d; got ${duration.length} characters`)
-Good:  throw new Error(`API token rejected: expected 32 characters, got ${token.length}`)
+Good:  if (typeof token !== "string") {
+         throw new TypeError(`API token must be a string; got a value of type ${typeof token}`)
+       }
+       throw new Error(`API token rejected: expected 32 characters, got ${token.length}`)
 ```
 
 Quote a value only where you control it, such as one you have already matched against

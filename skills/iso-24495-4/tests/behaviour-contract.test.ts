@@ -51,6 +51,66 @@ function sentenceOf(words: number, stem = "word"): string {
   return `${Array.from({ length: words }, (_, index) => `${stem}${index}`).join(" ")}.`;
 }
 
+/**
+ * How long a scaling guard may take, well beyond what it needs.
+ *
+ * These tests assert a ratio rather than a speed: three times the input must
+ * cost roughly three times the work, not nine. Their wall clock is only the
+ * room that measurement needs, and the default five seconds is not always
+ * room enough on a busy machine.
+ *
+ * A genuine stall is still caught, by this and by the absolute budgets
+ * elsewhere in this file, which bound single operations at one second or less.
+ */
+const SCALING_TIMEOUT_MS = 60_000;
+
+/**
+ * How long one call takes, in milliseconds.
+ *
+ * Each scaling guard times one call at three times the input against one call
+ * at the input. No input is timed twice, so a cache of earlier results cannot
+ * shorten the larger call. A cache that answers the smaller call from its
+ * warm-up only raises the ratio, which fails the guard rather than passing it.
+ *
+ * An earlier version took the fastest of several runs, which needed each run
+ * to be given a new document. Reviews defeated three ways of making it new,
+ * each with a cache keyed on what the change left alone. If load makes these
+ * guards flaky, raise the limit rather than add samples.
+ */
+function elapsed(work: () => void): number {
+  const started = performance.now();
+  work();
+  return performance.now() - started;
+}
+
+/** Deeply nested labels that never resolve. */
+function deepLabelDocument(size: number): string {
+  return `[a](x)${"[".repeat(size)}${"]".repeat(size)}`;
+}
+
+/** Sentences that each hold a nested link label. */
+function nestedLinkDocument(size: number): string {
+  return "Read [outer [inner] text](/uri) here. ".repeat(size);
+}
+
+/** Acronym candidates that are all discounted. */
+function discountedAcronymDocument(size: number): string {
+  return Array(size).fill("A.A.A. (").join(" ") + " and).";
+}
+
+/** Acronym definitions, one after another. */
+function acronymDefinitionDocument(size: number): string {
+  return Array(size).fill("Alpha Beta (AB)").join(" ") + ".";
+}
+
+/** The 31-word sentence the paragraph guard repeats. */
+const LONG_SENTENCE = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
+
+/** One paragraph of long sentences. */
+function longParagraphDocument(size: number): string {
+  return Array(size).fill(LONG_SENTENCE).join(" ");
+}
+
 describe("reader-facing behaviour contracts", () => {
   test("an acronym is defined only when its first use actually gives the meaning", () => {
     const laterDefinition = [
@@ -219,6 +279,117 @@ describe("reader-facing behaviour contracts", () => {
       .not.toContain("legalese");
     expect(rulesFor("Read [the policy][shall] before replying."))
       .toContain("legalese");
+
+    // The rule name says which check fired; the detail says what to do about
+    // it. A review changed that detail from a banned term to a recommended
+    // one, and every check here passed, because none of them read it. A
+    // finding that recommends what it means to forbid is worse than no
+    // finding at all.
+    const detail = auditText("The party shall comply.")
+      .find((violation) => violation.rule === "legalese")?.detail ?? "";
+    expect(detail, "a legalese finding must name the term as banned")
+      .toBe('banned term "shall"');
+  });
+
+  // Every rewrite this engine suggests, in the words it suggests them.
+  //
+  // A review changed one suggestion so that "in the absence of" was said to
+  // mean the same as "with", and every test passed. The rule name says which
+  // check fired and the count says how often; only these say what to write
+  // instead, which is the part a reader acts on. A wrong one is worse than a
+  // missing one, because it is followed.
+  test("the engine suggests the rewrites it is meant to suggest", () => {
+    const wordy: Array<[string, string]> = [
+    ["null and void", "void"],
+    ["each and every", "each"],
+    ["first and foremost", "first"],
+    ["true and correct", "true"],
+    ["full and complete", "complete"],
+    ["revert back", "revert"],
+    ["repeat again", "repeat"],
+    ["free gift", "gift"],
+    ["past history", "history"],
+    ["future plans", "plans"],
+    ["end result", "result"],
+    ["unexpected surprise", "surprise"],
+    ["advance planning", "planning"],
+    ["close proximity", "close"],
+    ["general consensus", "consensus"],
+    ["in order to", "to"],
+    ["due to the fact that", "because"],
+    ["in the event that", "if"],
+    ["at this point in time", "now"],
+    ["at this moment in time", "now"],
+    ["in the near future", "soon"],
+    ["for the purpose of", "to"],
+    ["with regard to", "about"],
+    ["with reference to", "about"],
+    ["in relation to", "about"],
+    ["in the absence of", "without"],
+    ["a large number of", "many"],
+    ["a small number of", "a few"],
+    ["the majority of", "most"],
+    ["prior to", "before"],
+    ["subsequent to", "after"],
+    ["in spite of the fact that", "although"],
+    ["notwithstanding the fact that", "although"],
+    ["it is possible that", "may"],
+    ["has the ability to", "can"],
+    ["is able to", "can"],
+    ["make a decision", "decide"],
+    ["provide assistance", "help"],
+    ["take into consideration", "consider"],
+    ];
+    const complexWords: Array<[string, string]> = [
+    ["utilise", "use"],
+    ["utilize", "use"],
+    ["utilising", "using"],
+    ["utilizing", "using"],
+    ["commence", "start"],
+    ["commences", "starts"],
+    ["commenced", "started"],
+    ["ascertain", "find"],
+    ["facilitate", "help"],
+    ["facilitates", "helps"],
+    ["endeavour", "try"],
+    ["endeavor", "try"],
+    ["terminate", "end"],
+    ["terminates", "ends"],
+    ["aforementioned", "this"],
+    ["notwithstanding", "despite"],
+    ["henceforth", "now"],
+    ["thereafter", "then"],
+    ["whereby", "how"],
+    ["herein", "here"],
+    ["thereof", "its"],
+    ["therein", "inside"],
+    ["expedite", "hasten"],
+    ["disseminate", "share"],
+    ["remuneration", "pay"],
+    ];
+
+    // Matched on the replacement rather than on the rule or the sentence
+    // around it. A phrase may be reported as a doublet rather than a wordy
+    // phrase, and the two word their advice differently, but which rule fires
+    // is not the part a reader acts on. The word to write instead is.
+    for (const [phrase, lean] of wordy) {
+      const advice = auditText(`We acted ${phrase} the report.`)
+        .map((violation) => violation.detail)
+        .filter((detail) => detail.includes(`"${phrase}"`));
+      expect(advice.length, `"${phrase}" must be reported at all`).toBeGreaterThan(0);
+      expect(advice.join(" "), `"${phrase}" must be offered "${lean}"`)
+        .toContain(`"${lean}"`);
+    }
+
+    // Matched whole. A review changed "end" to "extend", and a check reading
+    // for a substring accepted it, so the engine advised replacing "terminate"
+    // with a word meaning its opposite.
+    for (const [word, plain] of complexWords) {
+      const detail = auditText(`We ${word} the report today.`)
+        .find((violation) => violation.rule === "complex-word")?.detail ?? "";
+      expect(detail, `"${word}" must be offered "${plain}" and nothing else`)
+        .toBe(`"${word}" where "${plain}" would do`);
+    }
   });
 
   test("a full stop inside emphasis or quotes still ends the sentence", () => {
@@ -410,21 +581,16 @@ describe("reader-facing behaviour contracts", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
     const deep = (size: number): void => {
-      auditText("[a](x)".replace("a", "a".repeat(1)) .repeat(1)
-        + "[".repeat(size) + "]".repeat(size));
+      auditText(deepLabelDocument(size));
     };
     deep(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      deep(size);
-      return performance.now() - started;
-    };
+    const time = (size: number): number => elapsed(() => deep(size));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
 
     let layered = "innermost";
     for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
     expect(() => auditText(layered)).not.toThrow();
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("an empty link shows a reader nothing, so it measures as nothing", () => {
     // A link with no text still has a destination and a title, and leaving them in place
@@ -476,14 +642,10 @@ ${sentence}`)
     // pattern of its own over the same text. Ten thousand unmatched brackets cost about
     // nine seconds across them; one shared scan is what removed it.
     const audit = (size: number): void => {
-      auditText("Read [outer [inner] text](/uri) here. ".repeat(size));
+      auditText(nestedLinkDocument(size));
     };
     audit(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      audit(size);
-      return performance.now() - started;
-    };
+    const time = (size: number): number => elapsed(() => audit(size));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
 
     // Brackets that never close are the shape that was worst, and the shape a generated
@@ -513,7 +675,7 @@ ${sentence}`)
     ]) {
       expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
     }
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("markup that spans lines does not move the lines after it", () => {
     // A link destination or title may hold a line ending. Flattening the link to its
@@ -558,16 +720,12 @@ ${sentence}`)
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
     const hostile = (size: number): void => {
-      auditText(Array(size).fill("A.A.A. (").join(" ") + " and).");
+      auditText(discountedAcronymDocument(size));
     };
     hostile(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      hostile(size);
-      return performance.now() - started;
-    };
+    const time = (size: number): number => elapsed(() => hostile(size));
     expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("an expansion is read to its closing bracket, however long it runs", () => {
     // A definition is spelled by the words that carry initials, and the ignored words
@@ -595,33 +753,27 @@ ${sentence}`)
     // The shape is what is measured, not the clock: tripling the input triples linear work
     // and multiplies quadratic work by nine, and that separation holds on any machine.
     const growth = (work: (size: number) => void, size: number): number => {
-      const time = (at: number): number => {
-        const started = performance.now();
-        work(at);
-        return performance.now() - started;
-      };
       work(size);
-      return time(size * 3) / Math.max(time(size), 1);
+      return elapsed(() => work(size * 3)) / Math.max(elapsed(() => work(size)), 1);
     };
 
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
     const acronyms = (size: number): void => {
-      auditText(Array(size).fill("Alpha Beta (AB)").join(" ") + ".", { knownAcronyms: known });
+      auditText(acronymDefinitionDocument(size), { knownAcronyms: known });
     };
     expect(growth(acronyms, 1_000)).toBeLessThan(5);
 
     // Every finding counted the line endings before it from the start of the paragraph.
-    const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
     const paragraphs = (size: number): void => {
-      auditText(Array(size).fill(sentence).join(" "));
+      auditText(longParagraphDocument(size));
     };
     expect(growth(paragraphs, 1_000)).toBeLessThan(5);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
-    const long = Array(500).fill(sentence).join(" ");
+    const long = Array(500).fill(LONG_SENTENCE).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
-  });
+  }, SCALING_TIMEOUT_MS);
 
   test("a hostile token cannot stall the rules that read it", () => {
     // Trimming a token to its letters with an anchored alternation retried the suffix at

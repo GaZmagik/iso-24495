@@ -2,6 +2,89 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.7.0] - 2026-09-06
+
+### Added
+
+- **Document-level rules for legal writing.** `iso-24495-2` governed wording alone, so a contract
+  came out clearly worded inside a structure nobody could navigate. It now carries five rules the
+  wording rules could not reach: defined terms, cross-references, clause identifiers, a summary
+  layer, and section names. Cross-references name what they point at, clause identifiers survive
+  an amendment, and section names use the reference case Part 5 already allows.
+- **A summary that cannot be mistaken for the agreement.** It sits directly after Part 5's
+  opening block. The summary must state that the operative text governs, and must name where
+  that text starts. It must not add, qualify or remove an obligation, because a summary a
+  reader acts on instead of the contract changes their rights.
+- **A qualification that travels with its term.** Part 5 requires an overview to keep every
+  essential qualification, so the summary states a term together with every one of them.
+  Where that cannot be done plainly, the term is left out and its clause named instead.
+- **A worked summary example**, showing the governing statement that a bare summary leaves out.
+- **A mapping between a technical explanation and a technical document.** `iso-24495-3` orders an
+  explanation in three stages, and `iso-24495-5` orders a document in three levels. They are
+  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the
+  purpose line of the opening block, and opens the overview where Part 5 calls for one. Stages 2
+  and 3 are the main body, and nothing is demoted to optional detail by default.
+- **A stage covers what the explanation contains.** Every stage was mandatory, so a runbook needed
+  a diagram of its own step list and a decision record needed a code snippet it has no code for.
+  A stage with no content is omitted, and the order of the rest holds.
+- **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table
+  where an explanation covers how more than one component relates to another. It never mentioned
+  alternative text, so a document passing its own checklist could hand a listener nothing. A
+  Mermaid diagram reaches a listener as its source, which is not an explanation, so the
+  alternative is prose beside it.
+- **A definition of the clause the numbering rule means.** "Number every operative clause" never
+  said what operative means, and the checklist repeated the term, so a non-lawyer could not tell
+  whether they had complied. An operative clause imposes, permits or prohibits an action, and
+  recitals, definitions and schedules are numbered by the document's conventions instead.
+
+- **This repository now audits its own pull request descriptions.** The suite reads every
+  document here, and a description was the one piece of text it never saw, because it lives
+  on GitHub rather than in the tree. A workflow now hands it to
+  `scripts/audit-pull-request-text.sh`, which a contributor can run over any file. It fails a
+  description that carries findings, and one holding no text. A file it cannot read stops it
+  with a different code, so a mistyped name never reads as a pass.
+
+### Known limits
+
+- **The audit engine does not measure the new rules.** Its seventeen checks are mechanical
+  proxies: eleven read prose, and six read markup, being three on headings and one each
+  on table headers, link text and image alternatives. None reads the structure this
+  release adds. A document with no
+  summary, undefined terms, unnumbered clauses or a misplaced stage still reports zero
+  findings. A zero is not a pass for any of them, and the organisational Measurement
+  dimension does not move when that structure is absent.
+
+- **Every file in this repository is now pinned whole, apart from its TypeScript, and
+  editing one means rebuilding its fixture.** The boundary moved outward four times, and each
+  time a review stood outside the one before. It passed the skills, then the manifests, then
+  the references a skill hands over, then the licence and a command hidden in a directory
+  named for code. TypeScript is excluded because it changes constantly and has its own
+  suites. Its printed sentences are pinned by their own tests, after a review reversed the
+  report's certification disclaimer in code with every test still green.
+
+### Changed
+
+- **A technical task now reaches the document design skill too**, whenever its output is a
+  document. A code review comment and a chat answer are explanations rather than documents, so the
+  pairing is conditional where the legal one is not.
+- **Part 5 says what Part 3 governs.** It claimed Part 3 governed the wording across its levels.
+  Part 3 governs the stages, and now states where each one lands.
+- **The citation rule governs an explanation of code.** It read on any logic at all, so a user
+  guide describing what happens after a click would have carried file and line references its
+  reader cannot use.
+- **A defined term is collected where it appears in more than one section.** The rule said "where
+  a term runs throughout", which two writers would not apply the same way.
+- **The design document template requires a text alternative** beside a diagram. It offered a
+  diagram or a description, and so permitted a diagram with neither.
+- **A legal task now reaches the document design skill.** The Part 5 trigger named reports,
+  specifications and guides, and stopped there, so nothing routed a contract or a licence to the
+  design rules. The core skill, the output style and the Codex style skill now send legal work to
+  `iso-24495-5` as well as `iso-24495-2`.
+- **Part 5 names the one exception to its ordered-list rule.** No ordered list renders a
+  compound identifier such as 4.2.1, so a legal document writes its clause identifiers into the
+  clause text. Part 5 states that exception where the rule itself is stated, and its self-audit
+  checklist carries the same exception.
+
 ## [0.6.2] - 2026-08-27
 
 ### Added
@@ -81,6 +164,13 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   reading the manifest saw a version one release behind the skills beside it.
 - The three templates are now compared against their recorded text, so no reader-visible change to
   them can happen without the test changing in the same commit.
+- The release version is now checked rather than trusted. Twelve places carry it: both plugin
+  manifests, the marketplace version, the marketplace `source.ref`, and all eight skill files. A
+  test asserts they agree, that the changelog records the version, and that the version is later
+  than every release already tagged. The entry two above is what this catches, a Codex manifest
+  left a release behind because nothing compared the versions. Continuous integration now checks
+  out with `fetch-depth: 0`, because a checkout without tags would let the last of those three
+  checks pass having examined nothing.
 
 These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
 van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
