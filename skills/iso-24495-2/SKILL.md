@@ -90,19 +90,29 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
   > 2. **Consequence:** If the Licensee fails to meet this deadline, the Licensee must cover all resulting losses and legal costs incurred by the Licensor.
 
 ### Example 2: The Summary Layer
-* ❌ **Not aligned (no governing text named, and an obligation stated without its qualification):**
+* ❌ **Not aligned (the summary drops conditions in the source clause):**
   ```text
-  Summary: You can cancel at any time and we will refund the current month.
+  9.1 The Customer may terminate this Agreement by giving the Supplier at
+      least 30 days' written notice. If the Customer does so, the Supplier
+      must refund to the Customer the fees paid for the part of the term
+      that has not yet run. The refund is calculated pro rata.
+
+  Summary: You can end the Agreement and get your money back.
   ```
 * ✅ **ISO 24495-2 Aligned:**
-  > #### Summary of your main terms
+  > ## Summary of your main terms
   >
-  > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.
+  > The operative text starts at clause 9.1 below, and it governs.
   >
-  > - **What you pay:** You must pay £15 each month, in advance. Clause 3 covers late payment.
-  > - **What you must do:** You must keep your account details current. Clause 5 lists your other obligations.
-  > - **When it ends:** The agreement ends after 12 months, unless you renew it. Clause 6 has the renewal terms.
-  > - **How to leave:** You may cancel, giving the notice set out in clause 7.
+  > - **Ending the Agreement:** You may end this Agreement by giving the Supplier at least 30 days' written notice.
+  > - **Refund:** If you do, the Supplier must refund you the fees paid for the part of the term that has not yet run, calculated pro rata.
+  >
+  > ```text
+  > 9.1 The Customer may terminate this Agreement by giving the Supplier at
+  >     least 30 days' written notice. If the Customer does so, the Supplier
+  >     must refund to the Customer the fees paid for the part of the term
+  >     that has not yet run. The refund is calculated pro rata.
+  > ```
 
 ---
 

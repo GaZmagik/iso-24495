@@ -42,8 +42,7 @@ Or from a local clone:
 
 ## Installation (Codex CLI)
 
-Codex reads the same marketplace manifest, so the plugin installs from the same
-address:
+Codex reads the same marketplace manifest, so the plugin installs from the same address:
 
 ```
 codex plugin marketplace add https://github.com/GaZmagik/iso-24495.git
@@ -57,15 +56,9 @@ codex plugin marketplace add .
 codex plugin add iso-24495-plain-language@iso-24495
 ```
 
-Every skill carries `agents/openai.yaml`, which gives Codex its display name,
-its short description, and the prompt Codex offers for it. Invoke a skill by
-name, as in `$iso-24495-1`, or ask for it in words.
+Every skill carries `agents/openai.yaml`, which gives Codex its display name, its short description, and the prompt Codex offers for it. Invoke a skill by name, as in `$iso-24495-1`, or ask for it in words.
 
-Codex has no output style, so the same rules are a skill there:
-`iso-24495-style` holds the output style word for word, and a test keeps the
-two identical. It lives in `codex-skills/` rather than `skills/`, because
-Claude Code scans `skills/` and would otherwise offer a skill its output style
-already covers. Codex reads both directories, named in `.codex-plugin/plugin.json`.
+Codex has no output style, so the same rules are a skill there: `iso-24495-style` holds the output style word for word, and a test keeps the two identical. It lives in `codex-skills/` rather than `skills/`, because Claude Code scans `skills/` and would otherwise offer a skill its output style already covers. Codex reads both directories, named in `.codex-plugin/plugin.json`.
 
 Name the skill in your `AGENTS.md` to apply it to every response:
 
@@ -73,8 +66,7 @@ Name the skill in your `AGENTS.md` to apply it to every response:
 Apply `iso-24495-style` to every response.
 ```
 
-Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. An
-`AGENTS.md` inside a plugin is ignored, so a plugin cannot apply itself.
+Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. An `AGENTS.md` inside a plugin is ignored, so a plugin cannot apply itself.
 
 ## Usage
 
@@ -118,12 +110,7 @@ The ISO texts are licensed, so the standards themselves cost money. Everything i
 
 ## What the engine reads
 
-A rule can only be as right as the text it reads. So the engine parses
-Markdown the way CommonMark describes it: each line is matched against the
-containers already open, then against any container it starts. What remains
-is the block a rule measures. That is what lets a wrapped list item, a
-quotation continuing without its marker, and a heading written inside a list
-all be read correctly.
+A rule can only be as right as the text it reads. So the engine parses Markdown the way CommonMark describes it: each line is matched against the containers already open, then against any container it starts. What remains is the block a rule measures. That is what lets a wrapped list item, a quotation continuing without its marker, and a heading written inside a list all be read correctly.
 
 **Measured, because a reader reads them:**
 
@@ -135,18 +122,13 @@ all be read correctly.
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give
-  back to the writer;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid, except that `table-header` reads them;
 - YAML front matter, which is metadata;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 
-The parser is checked against the CommonMark reference implementation. 302
-documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`,
-and every one that this engine reads differently carries the reason why. The
-reference is not a dependency: it was installed outside the repository, asked
-once, and its answers kept.
+The parser is checked against the CommonMark reference implementation. 302 documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`, and every one that this engine reads differently carries the reason why. The reference is not a dependency: it was installed outside the repository, asked once, and its answers kept.
 
 ## User-invoked text audit
 

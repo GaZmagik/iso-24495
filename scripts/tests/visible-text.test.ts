@@ -32,6 +32,30 @@ describe("hasVisibleText", () => {
     }
   });
 
+  test("HTML character references in raw blocks count as their rendered characters", () => {
+    for (const text of [
+      "<div>&nbsp;</div>",
+      "<div>&nbsp</div>",
+      "<div>&#160;</div>",
+      "<div>&#xA0;</div>",
+      "<div>&#160</div>",
+      "<div>&#xA0</div>",
+      "<div>&#8203;</div>",
+      "<div>&#8203</div>",
+      "<div>&#32</div>",
+      "<div>&ZeroWidthSpace;</div>",
+    ]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
+    }
+    for (const text of ["<div>&amp;nbsp;</div>", "<div>&lt;div&gt;</div>", "<div>&ZeroWidthSpace</div>"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
+    }
+    for (const text of ["<div>&#133;</div>", "<div>&#x85;</div>"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
+    }
+    expect(hasVisibleText("<div>&#129;</div>")).toBe(false);
+  });
+
   // Each of these renders as nothing. The last is a definition spread over two
   // lines, which the pattern this replaced did not recognise.
   test("markup that renders nothing is not visible", () => {

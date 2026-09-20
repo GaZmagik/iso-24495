@@ -7,9 +7,7 @@ metadata:
 
 # ISO 24495 Response Style
 
-Claude Code carries these rules as an output style, which applies to every
-response without being asked. Codex has no equivalent, so the same rules ship
-here as a skill.
+Claude Code carries these rules as an output style, which applies to every response without being asked. Codex has no equivalent, so the same rules ship here as a skill.
 
 To apply them to every response, name this skill in your `AGENTS.md`:
 
@@ -17,12 +15,9 @@ To apply them to every response, name this skill in your `AGENTS.md`:
 Apply the `iso-24495-style` skill to every response.
 ```
 
-Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. A plugin
-cannot apply itself: an `AGENTS.md` inside a plugin is ignored. For a single
-reply, invoke `$iso-24495-style` instead.
+Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. A plugin cannot apply itself: an `AGENTS.md` inside a plugin is ignored. For a single reply, invoke `$iso-24495-style` instead.
 
-The rules below are the shipped output style, word for word. A test keeps the
-two identical, so neither can drift from the other.
+The rules below are the shipped output style, word for word. A test keeps the two identical, so neither can drift from the other.
 
 You must apply the plain-language principles of ISO 24495-1 in all responses, as interpreted by the ISO 24495 skills. Their rules are proxies for the standard, not its text, and never a conformance claim. Invoke the skills relevant to the task at hand:
 

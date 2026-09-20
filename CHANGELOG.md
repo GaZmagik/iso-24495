@@ -2,193 +2,86 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
-## [0.7.0] - 2026-09-06
+## [0.7.0] - 2026-09-20
 
 ### Added
 
-- **Document-level rules for legal writing.** `iso-24495-2` governed wording alone, so a contract
-  came out clearly worded inside a structure nobody could navigate. It now carries five rules the
-  wording rules could not reach: defined terms, cross-references, clause identifiers, a summary
-  layer, and section names. Cross-references name what they point at, clause identifiers survive
-  an amendment, and section names use the reference case Part 5 already allows.
-- **A summary that cannot be mistaken for the agreement.** It sits directly after Part 5's
-  opening block. The summary must state that the operative text governs, and must name where
-  that text starts. It must not add, qualify or remove an obligation, because a summary a
-  reader acts on instead of the contract changes their rights.
-- **A qualification that travels with its term.** Part 5 requires an overview to keep every
-  essential qualification, so the summary states a term together with every one of them.
+- **Document-level rules for legal writing.** `iso-24495-2` governed wording alone, so a contract came out clearly worded inside a structure nobody could navigate. It now carries five rules the wording rules could not reach: defined terms, cross-references, clause identifiers, a summary layer, and section names. Cross-references name what they point at, clause identifiers survive an amendment, and section names use the reference case Part 5 already allows.
+- **A summary that cannot be mistaken for the agreement.** It sits directly after Part 5's opening block. The summary must state that the operative text governs, and must name where that text starts. It must not add, qualify or remove an obligation, because a summary a reader acts on instead of the contract changes their rights.
+- **A qualification that travels with its term.** Part 5 requires an overview to keep every essential qualification, so the summary states a term together with every one of them.
   Where that cannot be done plainly, the term is left out and its clause named instead.
 - **A worked summary example**, showing the governing statement that a bare summary leaves out.
-- **A mapping between a technical explanation and a technical document.** `iso-24495-3` orders an
-  explanation in three stages, and `iso-24495-5` orders a document in three levels. They are
-  different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the
-  purpose line of the opening block, and opens the overview where Part 5 calls for one. Stages 2
-  and 3 are the main body, and nothing is demoted to optional detail by default.
-- **A stage covers what the explanation contains.** Every stage was mandatory, so a runbook needed
-  a diagram of its own step list and a decision record needed a code snippet it has no code for.
+- **A mapping between a technical explanation and a technical document.** `iso-24495-3` orders an explanation in three stages, and `iso-24495-5` orders a document in three levels. They are different axes, so Part 3 now says where each stage lands. The purpose sentence supplies the purpose line of the opening block, and opens the overview where Part 5 calls for one. Stages 2 and 3 are the main body, and nothing is demoted to optional detail by default.
+- **A stage covers what the explanation contains.** Every stage was mandatory, so a runbook needed a diagram of its own step list and a decision record needed a code snippet it has no code for.
   A stage with no content is omitted, and the order of the rest holds.
-- **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table
-  where an explanation covers how more than one component relates to another. It never mentioned
-  alternative text, so a document passing its own checklist could hand a listener nothing. A
-  Mermaid diagram reaches a listener as its source, which is not an explanation, so the
-  alternative is prose beside it.
-- **A definition of the clause the numbering rule means.** "Number every operative clause" never
-  said what operative means, and the checklist repeated the term, so a non-lawyer could not tell
-  whether they had complied. An operative clause imposes, permits or prohibits an action, and
-  recitals, definitions and schedules are numbered by the document's conventions instead.
+- **A text alternative wherever a diagram is required.** Part 3 mandates a diagram or table where an explanation covers how more than one component relates to another. It never mentioned alternative text, so a document passing its own checklist could hand a listener nothing. A Mermaid diagram reaches a listener as its source, which is not an explanation, so the alternative is prose beside it.
+- **A definition of the clause the numbering rule means.** "Number every operative clause" never said what operative means, and the checklist repeated the term, so a non-lawyer could not tell whether they had complied. An operative clause imposes, permits or prohibits an action, and recitals, definitions and schedules are numbered by the document's conventions instead.
 
-- **This repository now audits its own pull request descriptions.** The suite reads every
-  document here, and a description was the one piece of text it never saw, because it lives
-  on GitHub rather than in the tree. A workflow now hands it to
-  `scripts/audit-pull-request-text.sh`, which a contributor can run over any file. It fails a
-  description that carries findings, and one holding no text. A file it cannot read stops it
-  with a different code, so a mistyped name never reads as a pass.
+- **This repository now audits its own pull request descriptions.** The suite reads every document here, and a description was the one piece of text it never saw, because it lives on GitHub rather than in the tree. A workflow now hands it to `scripts/audit-pull-request-text.sh`, which a contributor can run over any file. It fails a description that carries findings, and one holding no text. A file it cannot read stops it with a different code, so a mistyped name never reads as a pass.
 
 ### Known limits
 
-- **The audit engine does not measure the new rules.** Its seventeen checks are mechanical
-  proxies: eleven read prose, and six read markup, being three on headings and one each
-  on table headers, link text and image alternatives. None reads the structure this
-  release adds. A document with no
-  summary, undefined terms, unnumbered clauses or a misplaced stage still reports zero
-  findings. A zero is not a pass for any of them, and the organisational Measurement
-  dimension does not move when that structure is absent.
+- **The audit engine does not measure the new rules.** Its seventeen checks are mechanical proxies: eleven read prose, and six read markup, being three on headings and one each on table headers, link text and image alternatives. None reads the structure this release adds. A document with no summary, undefined terms, unnumbered clauses or a misplaced stage still reports zero findings. A zero is not a pass for any of them, and the organisational Measurement dimension does not move when that structure is absent.
 
-- **Every file in this repository is now pinned whole, apart from its TypeScript, and
-  editing one means rebuilding its fixture.** The boundary moved outward four times, and each
-  time a review stood outside the one before. It passed the skills, then the manifests, then
-  the references a skill hands over, then the licence and a command hidden in a directory
-  named for code. TypeScript is excluded because it changes constantly and has its own
-  suites. Its printed sentences are pinned by their own tests, after a review reversed the
-  report's certification disclaimer in code with every test still green.
+- **Thirty reviewed documents are pinned whole, and editing one means rebuilding its fixture.**
+  The list covers skills, manifests, selected references and templates, the output style, and root documents.
+  A separate test requires every skill and manifest to appear on the list, but the list does not cover every repository file or determine what a host packages.
+  TypeScript is excluded because it changes constantly and has its own suites.
+  Sentences printed by the audit tools are pinned separately, after a review reversed the report's certification disclaimer in code with every test still green.
 
 ### Changed
 
-- **A technical task now reaches the document design skill too**, whenever its output is a
-  document. A code review comment and a chat answer are explanations rather than documents, so the
-  pairing is conditional where the legal one is not.
+- **A technical task now reaches the document design skill too**, whenever its output is a document. A code review comment and a chat answer are explanations rather than documents, so the pairing is conditional where the legal one is not.
 - **Part 5 says what Part 3 governs.** It claimed Part 3 governed the wording across its levels.
   Part 3 governs the stages, and now states where each one lands.
-- **The citation rule governs an explanation of code.** It read on any logic at all, so a user
-  guide describing what happens after a click would have carried file and line references its
-  reader cannot use.
-- **A defined term is collected where it appears in more than one section.** The rule said "where
-  a term runs throughout", which two writers would not apply the same way.
-- **The design document template requires a text alternative** beside a diagram. It offered a
-  diagram or a description, and so permitted a diagram with neither.
-- **A legal task now reaches the document design skill.** The Part 5 trigger named reports,
-  specifications and guides, and stopped there, so nothing routed a contract or a licence to the
-  design rules. The core skill, the output style and the Codex style skill now send legal work to
-  `iso-24495-5` as well as `iso-24495-2`.
-- **Part 5 names the one exception to its ordered-list rule.** No ordered list renders a
-  compound identifier such as 4.2.1, so a legal document writes its clause identifiers into the
-  clause text. Part 5 states that exception where the rule itself is stated, and its self-audit
-  checklist carries the same exception.
+- **The citation rule governs an explanation of code.** It read on any logic at all, so a user guide describing what happens after a click would have carried file and line references its reader cannot use.
+- **A defined term is collected where it appears in more than one section.** The rule said "where a term runs throughout", which two writers would not apply the same way.
+- **The design document template requires a text alternative** beside a diagram. It offered a diagram or a description, and so permitted a diagram with neither.
+- **A legal task now reaches the document design skill.** The Part 5 trigger named reports, specifications and guides, and stopped there, so nothing routed a contract or a licence to the design rules. The core skill, the output style and the Codex style skill now send legal work to `iso-24495-5` as well as `iso-24495-2`.
+- **Part 5 names the one exception to its ordered-list rule.** No ordered list renders a compound identifier such as 4.2.1, so a legal document writes its clause identifiers into the clause text. Part 5 states that exception where the rule itself is stated, and its self-audit checklist carries the same exception.
 
 ## [0.6.2] - 2026-08-27
 
 ### Added
 
-- **An opening block.** Every document states its title, a one-line purpose, its version or date,
-  and the reader it is for. Each field carries a minimum. Purpose gives the reader's task and the
-  document's scope, the reader line names the primary audience, and the referral names the
-  alternative and when to use it. Part 1 still decides who the reader is, and this rule decides
-  only where the answer appears.
-- **A layering rule.** A document with 6 or more sections labels its overview, as does one whose
-  conclusion readers need before the detail. That overview keeps the conclusion, the required
-  action and every essential qualification. Detail only some readers need moves to footnotes, an
-  appendix or a collapsible block, and stays reachable. Three levels is the ceiling, and Part 3
-  governs the wording across them.
-- **A signposting rule.** A document tells a reader who needs something else where to go, naming
-  the alternative and when to use it. It leaves the signpost out where no alternative exists,
-  rather than shipping an empty heading.
-- **Two exceptions to the heading rule, and no others.** A document type with a published structure
-  keeps that structure's section names, as a decision record keeps Context and Decision. A
-  reference section a reader jumps to by subject keeps the subject. A section read in sequence
-  gets a message or a task.
-- **One override.** The overview's label names its section rather than its message, so the layering
-  rule overrides the heading rule for that heading and no other.
-- **Branching routes.** A forking procedure gets a decision table or labelled conditions, never one
-  numbered list. A labelled decision table is already the written form, so prose is added only
-  where the routes are drawn as a picture.
+- **An opening block.** Every document states its title, a one-line purpose, its version or date, and the reader it is for. Each field carries a minimum. Purpose gives the reader's task and the document's scope, the reader line names the primary audience, and the referral names the alternative and when to use it. Part 1 still decides who the reader is, and this rule decides only where the answer appears.
+- **A layering rule.** A document with 6 or more sections labels its overview, as does one whose conclusion readers need before the detail. That overview keeps the conclusion, the required action and every essential qualification. Detail only some readers need moves to footnotes, an appendix or a collapsible block, and stays reachable. Three levels is the ceiling, and Part 3 governs the wording across them.
+- **A signposting rule.** A document tells a reader who needs something else where to go, naming the alternative and when to use it. It leaves the signpost out where no alternative exists, rather than shipping an empty heading.
+- **Two exceptions to the heading rule, and no others.** A document type with a published structure keeps that structure's section names, as a decision record keeps Context and Decision. A reference section a reader jumps to by subject keeps the subject. A section read in sequence gets a message or a task.
+- **One override.** The overview's label names its section rather than its message, so the layering rule overrides the heading rule for that heading and no other.
+- **Branching routes.** A forking procedure gets a decision table or labelled conditions, never one numbered list. A labelled decision table is already the written form, so prose is added only where the routes are drawn as a picture.
 - **Heading numbering**, for documents whose sections a reader must cite by identifier.
-- **Named heading failures.** Reject a heading that jokes, puns or plays with words, and one built
-  on a term the document has not yet explained. The engine checks heading length and form, so this
-  is guidance rather than a gate.
-- **Limits on structures the skill required without any.** Name the narrowest presentation a table
-  must survive and read it back at that width, or use labelled records where nobody has named one.
-  Reserve a callout for what changes the reader's action, and merge adjacent ones. Keep a sequence
-  an ordered list, so it survives being heard.
-- **Bullet limits**: one paragraph carrying one idea, nested no deeper than two levels, with longer
-  material promoted to a subsection.
-- **An accessibility exemption** from the ban on two devices carrying one meaning. A text
-  alternative is exempt beside a picture or diagram, or where the original is not exposed to a
-  screen reader. A table is excluded only where its headers identify every value and its reading
-  order keeps the comparison intact.
-- **A provisional-label rule.** A document citing this skill, or ISO 24495-5 itself, says that
-  Part 5 is an unpublished draft.
+- **Named heading failures.** Reject a heading that jokes, puns or plays with words, and one built on a term the document has not yet explained. The engine checks heading length and form, so this is guidance rather than a gate.
+- **Limits on structures the skill required without any.** Name the narrowest presentation a table must survive and read it back at that width, or use labelled records where nobody has named one.
+  Reserve a callout for what changes the reader's action, and merge adjacent ones. Keep a sequence an ordered list, so it survives being heard.
+- **Bullet limits**: one paragraph carrying one idea, nested no deeper than two levels, with longer material promoted to a subsection.
+- **An accessibility exemption** from the ban on two devices carrying one meaning. A text alternative is exempt beside a picture or diagram, or where the original is not exposed to a screen reader. A table is excluded only where its headers identify every value and its reading order keeps the comparison intact.
+- **A provisional-label rule.** A document citing this skill, or ISO 24495-5 itself, says that Part 5 is an unpublished draft.
 
 ### Changed
 
-- **The self-audit checklist grows from 6 checks to 25**, so every rule above it has one. The new
-  checks cover heading quality and numbering, chunking, table width, callout restraint and
-  branching. They also cover link text, alternative text, table headers, reading order, the opening
-  block, the overview, and the three restructuring guarantees.
-- **All three templates carry the opening block**, as a list with a purpose line and a conditional
-  referral. Every table in them tells the author to name a width or use labelled records.
-- **The runbook's headings state their task**: check these before you start, run these steps in
-  order, confirm the task worked. Topic labels do not survive the heading rule on sections read in
-  sequence.
-- **The design document names what its sequential subsections explain**, while its reference
-  sections keep their subjects. It also says why it numbers its sections, and tells an author to
-  remove the numbers from the headings and the contents list together.
-- **The decision record gains a status**, being proposed, accepted, deprecated or superseded, and
-  names Michael Nygard's Documenting Architecture Decisions, 2011, as the structure its headings
-  come from. Its options heading states its message, because that section is this template's own
-  addition rather than part of that structure.
+- **The self-audit checklist grows from 6 checks to 25**, so every rule above it has one. The new checks cover heading quality and numbering, chunking, table width, callout restraint and branching. They also cover link text, alternative text, table headers, reading order, the opening block, the overview, and the three restructuring guarantees.
+- **All three templates carry the opening block**, as a list with a purpose line and a conditional referral. Every table in them tells the author to name a width or use labelled records.
+- **The runbook's headings state their task**: check these before you start, run these steps in order, confirm the task worked. Topic labels do not survive the heading rule on sections read in sequence.
+- **The design document names what its sequential subsections explain**, while its reference sections keep their subjects. It also says why it numbers its sections, and tells an author to remove the numbers from the headings and the contents list together.
+- **The decision record gains a status**, being proposed, accepted, deprecated or superseded, and names Michael Nygard's Documenting Architecture Decisions, 2011, as the structure its headings come from. Its options heading states its message, because that section is this template's own addition rather than part of that structure.
 
 ### Fixed
 
-- Restructuring an existing document could have required inventing content. The workflow forbids
-  adding content, while the new opening block and signposting rules demand it. An agent asked to
-  restructure a document with no purpose statement had to fabricate one, or leave the document
-  non-compliant. Restructuring now builds those blocks only from sentences the document already
-  holds, or from wording the author supplies, and marks what is missing as a gap. A wrong purpose
-  sends a reader confidently in the wrong direction, which is worse than no purpose at all.
-- A promoted sentence can now move only where its dependencies, its order against neighbouring
-  steps and the claim it qualifies all survive. Every word can survive a move while the meaning
-  does not, as a warning parted from its procedure shows.
-- The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1
-  release bumped the marketplace, the Claude manifest and all eight skill files, and missed
-  `.codex-plugin/plugin.json`, because nothing checks that the versions agree. A Codex user
-  reading the manifest saw a version one release behind the skills beside it.
-- The three templates are now compared against their recorded text, so no reader-visible change to
-  them can happen without the test changing in the same commit.
-- The release version is now checked rather than trusted. Twelve places carry it: both plugin
-  manifests, the marketplace version, the marketplace `source.ref`, and all eight skill files. A
-  test asserts they agree, that the changelog records the version, and that the version is later
-  than every release already tagged. The entry two above is what this catches, a Codex manifest
-  left a release behind because nothing compared the versions. Continuous integration now checks
-  out with `fetch-depth: 0`, because a checkout without tags would let the last of those three
-  checks pass having examined nothing.
+- Restructuring an existing document could have required inventing content. The workflow forbids adding content, while the new opening block and signposting rules demand it. An agent asked to restructure a document with no purpose statement had to fabricate one, or leave the document non-compliant. Restructuring now builds those blocks only from sentences the document already holds, or from wording the author supplies, and marks what is missing as a gap. A wrong purpose sends a reader confidently in the wrong direction, which is worse than no purpose at all.
+- A promoted sentence can now move only where its dependencies, its order against neighbouring steps and the claim it qualifies all survive. Every word can survive a move while the meaning does not, as a warning parted from its procedure shows.
+- The Codex manifest sat at 0.6.0 while every other version site had moved to 0.6.1. The 0.6.1 release bumped the marketplace, the Claude manifest and all eight skill files, and missed `.codex-plugin/plugin.json`, because nothing checks that the versions agree. A Codex user reading the manifest saw a version one release behind the skills beside it.
+- The three templates are now compared against their recorded text, so no reader-visible change to them can happen without the test changing in the same commit.
+- The release version is now checked rather than trusted. Twelve places carry it: both plugin manifests, the marketplace version, the marketplace `source.ref`, and all eight skill files. A test asserts they agree, that the changelog records the version, and that the version is later than every release already tagged. The entry two above is what this catches, a Codex manifest left a release behind because nothing compared the versions. Continuous integration now checks out with `fetch-depth: 0`, because a checkout without tags would let the last of those three checks pass having examined nothing.
 
-These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller,
-van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language
-Federation. No substantial wording is copied from it.
+These additions paraphrase the Document design pattern library, version 0.6, June 2025, by Waller, van der Waarde, Schriver, Slabbert, Cheek and Linsky, for the International Plain Language Federation. No substantial wording is copied from it.
 
 ## [0.6.1] - 2026-08-22
 
 ### Fixed
 
-- `iso-24495-code` would not load. Its description was an unquoted YAML scalar holding a colon
-  and a space, in "the parts of code a person reads: the order units appear in". YAML reads that
-  as the start of a nested mapping, so a loader refused the file with "mapping values are not
-  allowed in this context at line 2 column 123". The skill has been unloadable since 0.6.0
-  shipped. The description is now quoted, so a later edit that adds a colon still parses.
-- Nothing had ever parsed a `SKILL.md` as YAML, which is why the gate did not catch it. The
-  other tests read these files as text, check the prose inside them and the files beside them,
-  and took the frontmatter on trust. Every skill's frontmatter is now parsed on each run, and
-  must carry a name matching its directory and a description that is not empty.
+- `iso-24495-code` would not load. Its description was an unquoted YAML scalar holding a colon and a space, in "the parts of code a person reads: the order units appear in". YAML reads that as the start of a nested mapping, so a loader refused the file with "mapping values are not allowed in this context at line 2 column 123". The skill has been unloadable since 0.6.0 shipped. The description is now quoted, so a later edit that adds a colon still parses.
+- Nothing had ever parsed a `SKILL.md` as YAML, which is why the gate did not catch it. The other tests read these files as text, check the prose inside them and the files beside them, and took the frontmatter on trust. Every skill's frontmatter is now parsed on each run, and must carry a name matching its directory and a description that is not empty.
 
 ## [0.6.0] - 2026-08-20
 

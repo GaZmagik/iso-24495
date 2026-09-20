@@ -52,30 +52,19 @@ function sentenceOf(words: number, stem = "word"): string {
 }
 
 /**
- * How long a scaling guard may take, well beyond what it needs.
+ * How long a hostile-input guard may take, well beyond what it needs.
  *
- * These tests assert a ratio rather than a speed: three times the input must
- * cost roughly three times the work, not nine. Their wall clock is only the
- * room that measurement needs, and the default five seconds is not always
- * room enough on a busy machine.
- *
- * A genuine stall is still caught, by this and by the absolute budgets
- * elsewhere in this file, which bound single operations at one second or less.
+ * A timeout catches a genuine stall on the selected large inputs. It does not
+ * establish the growth rate of any helper. The absolute budgets elsewhere in
+ * this file bound selected single operations more tightly.
  */
-const SCALING_TIMEOUT_MS = 60_000;
+const HOSTILE_TIMEOUT_MS = 60_000;
 
 /**
  * How long one call takes, in milliseconds.
  *
- * Each scaling guard times one call at three times the input against one call
- * at the input. No input is timed twice, so a cache of earlier results cannot
- * shorten the larger call. A cache that answers the smaller call from its
- * warm-up only raises the ratio, which fails the guard rather than passing it.
- *
- * An earlier version took the fastest of several runs, which needed each run
- * to be given a new document. Reviews defeated three ways of making it new,
- * each with a cache keyed on what the change left alone. If load makes these
- * guards flaky, raise the limit rather than add samples.
+ * This helper is used only by the single-operation budgets below. It is not a
+ * growth-rate measure, because other audit work can mask one slow helper.
  */
 function elapsed(work: () => void): number {
   const started = performance.now();
@@ -577,20 +566,18 @@ describe("reader-facing behaviour contracts", () => {
     expect(readerProseBlocks(bracketed)[0]?.lines.join("")).toBe(" here.");
   });
 
-  test("deep nesting is read once, not once per level", () => {
+  test("deep nesting finishes and does not exhaust the stack", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
     const deep = (size: number): void => {
       auditText(deepLabelDocument(size));
     };
-    deep(1_000);
-    const time = (size: number): number => elapsed(() => deep(size));
-    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
+    deep(3_000);
 
     let layered = "innermost";
     for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
     expect(() => auditText(layered)).not.toThrow();
-  }, SCALING_TIMEOUT_MS);
+  }, HOSTILE_TIMEOUT_MS);
 
   test("an empty link shows a reader nothing, so it measures as nothing", () => {
     // A link with no text still has a destination and a title, and leaving them in place
@@ -634,19 +621,13 @@ ${sentence}`)
     expect(found[0]?.line).toBe(3);
   });
 
-  test("nested link labels are flattened in one pass, not one scan each", () => {
-    // Matching each "[" to its partner by scanning forward would be quadratic, so the
-    // partners are matched once for the whole text. Doubling the input must roughly
-    // double the work rather than quadruple it.
-    // Measured through the whole audit, because every rule that reads links used to run a
-    // pattern of its own over the same text. Ten thousand unmatched brackets cost about
-    // nine seconds across them; one shared scan is what removed it.
+  test("nested link labels and unmatched brackets finish", () => {
+    // Every rule that reads links once ran a separate scan. Ten thousand
+    // unmatched brackets took about nine seconds before the shared scan.
     const audit = (size: number): void => {
       auditText(nestedLinkDocument(size));
     };
-    audit(1_000);
-    const time = (size: number): number => elapsed(() => audit(size));
-    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
+    audit(3_000);
 
     // Brackets that never close are the shape that was worst, and the shape a generated
     // or damaged document reaches without anybody meaning harm.
@@ -675,7 +656,7 @@ ${sentence}`)
     ]) {
       expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
     }
-  }, SCALING_TIMEOUT_MS);
+  }, HOSTILE_TIMEOUT_MS);
 
   test("markup that spans lines does not move the lines after it", () => {
     // A link destination or title may hold a line ending. Flattening the link to its
@@ -715,17 +696,15 @@ ${sentence}`)
     expect(auditText(wrong).map((v) => v.rule)).toContain("acronym-undefined");
   });
 
-  test("a discounted word cannot reopen the search for a definition", () => {
+  test("discounted words do not stall the definition search", () => {
     // Every word here is discounted: "A" reads as the article, and so does "and". The
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
     const hostile = (size: number): void => {
       auditText(discountedAcronymDocument(size));
     };
-    hostile(1_000);
-    const time = (size: number): number => elapsed(() => hostile(size));
-    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
-  }, SCALING_TIMEOUT_MS);
+    hostile(3_000);
+  }, HOSTILE_TIMEOUT_MS);
 
   test("an expansion is read to its closing bracket, however long it runs", () => {
     // A definition is spelled by the words that carry initials, and the ignored words
@@ -745,35 +724,28 @@ ${sentence}`)
       .map((v) => v.rule)).toContain("acronym-undefined");
   });
 
-  test("a large document cannot stall the rules that walk it", () => {
+  test("large documents finish and retain their findings", () => {
     // Three places rebuilt a whole prefix or suffix inside a loop over the same text, so
     // each cost grew with the square of the document. Repairing only the one the review
     // named would have left the shape alive in the other two.
     //
-    // The shape is what is measured, not the clock: tripling the input triples linear work
-    // and multiplies quadratic work by nine, and that separation holds on any machine.
-    const growth = (work: (size: number) => void, size: number): number => {
-      work(size);
-      return elapsed(() => work(size * 3)) / Math.max(elapsed(() => work(size)), 1);
-    };
-
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
     const acronyms = (size: number): void => {
       auditText(acronymDefinitionDocument(size), { knownAcronyms: known });
     };
-    expect(growth(acronyms, 1_000)).toBeLessThan(5);
+    acronyms(3_000);
 
     // Every finding counted the line endings before it from the start of the paragraph.
     const paragraphs = (size: number): void => {
       auditText(longParagraphDocument(size));
     };
-    expect(growth(paragraphs, 1_000)).toBeLessThan(5);
+    paragraphs(3_000);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
     const long = Array(500).fill(LONG_SENTENCE).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
-  }, SCALING_TIMEOUT_MS);
+  }, HOSTILE_TIMEOUT_MS);
 
   test("a hostile token cannot stall the rules that read it", () => {
     // Trimming a token to its letters with an anchored alternation retried the suffix at

@@ -579,19 +579,29 @@ describe("repository writing conventions", () => {
 
   const PART_2_SUMMARY_EXAMPLE = [
     "### Example 2: The Summary Layer",
-    "* ❌ **Not aligned (no governing text named, and an obligation stated without its qualification):**",
+    "* ❌ **Not aligned (the summary drops conditions in the source clause):**",
     "  ```text",
-    "  Summary: You can cancel at any time and we will refund the current month.",
+    "  9.1 The Customer may terminate this Agreement by giving the Supplier at",
+    "      least 30 days' written notice. If the Customer does so, the Supplier",
+    "      must refund to the Customer the fees paid for the part of the term",
+    "      that has not yet run. The refund is calculated pro rata.",
+    "",
+    "  Summary: You can end the Agreement and get your money back.",
     "  ```",
     "* ✅ **ISO 24495-2 Aligned:**",
-    "  > #### Summary of your main terms",
+    "  > ## Summary of your main terms",
     "  >",
-    "  > This summary helps you find your obligations. The agreement itself, starting at clause 1, is what governs.",
+    "  > The operative text starts at clause 9.1 below, and it governs.",
     "  >",
-    "  > - **What you pay:** You must pay £15 each month, in advance. Clause 3 covers late payment.",
-    "  > - **What you must do:** You must keep your account details current. Clause 5 lists your other obligations.",
-    "  > - **When it ends:** The agreement ends after 12 months, unless you renew it. Clause 6 has the renewal terms.",
-    "  > - **How to leave:** You may cancel, giving the notice set out in clause 7.",
+    "  > - **Ending the Agreement:** You may end this Agreement by giving the Supplier at least 30 days' written notice.",
+    "  > - **Refund:** If you do, the Supplier must refund you the fees paid for the part of the term that has not yet run, calculated pro rata.",
+    "  >",
+    "  > ```text",
+    "  > 9.1 The Customer may terminate this Agreement by giving the Supplier at",
+    "  >     least 30 days' written notice. If the Customer does so, the Supplier",
+    "  >     must refund to the Customer the fees paid for the part of the term",
+    "  >     that has not yet run. The refund is calculated pro rata.",
+    "  > ```",
   ];
 
   const PART_2_CHECKLIST = [
@@ -618,7 +628,22 @@ describe("repository writing conventions", () => {
       return legal.slice(from, to).trimEnd().split(/\r?\n/);
     };
     expect(between("4. **Defined Terms:**", "\n---")).toEqual(PART_2_DOCUMENT_RULES);
-    expect(between("### Example 2:", "\n---")).toEqual(PART_2_SUMMARY_EXAMPLE);
+    const example = between("### Example 2:", "\n---");
+    expect(example).toEqual(PART_2_SUMMARY_EXAMPLE);
+    const sourceStart = example.findIndex((line) => line.startsWith("  9.1 "));
+    const operativeStart = example.findIndex((line) => line.startsWith("  > 9.1 "));
+    const operativeEnd = example.findIndex((line, index) => index > operativeStart && line === "  > ```");
+    expect(sourceStart).toBeGreaterThan(-1);
+    expect(operativeStart).toBeGreaterThan(-1);
+    expect(operativeEnd).toBeGreaterThan(operativeStart);
+    const sourceEnd = example.findIndex((line, index) => index > sourceStart && line === "");
+    expect(sourceEnd).toBeGreaterThan(sourceStart);
+    const sourceClause = example.slice(sourceStart, sourceEnd)
+      .map((line) => line.trim()).join(" ");
+    const operativeClause = example.slice(operativeStart, operativeEnd)
+      .map((line) => line.replace(/^  >\s*/, "").trim()).join(" ");
+    expect(operativeClause, "the operative text must preserve its governing source")
+      .toBe(sourceClause);
     const checklist = legal.slice(legal.indexOf("- [ ] **No legalese:**"));
     expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_2_CHECKLIST);
   });
@@ -1243,12 +1268,10 @@ describe("repository writing conventions", () => {
       }
     };
 
-    // Reading the workflow for the command proves only that the command is
-    // written there. Reviews commented it out, added "|| true" and changed the
-    // shell, and each kept the text intact. So the run block is lifted out and
-    // run against a stand-in gate: it must pass when the gate passes and fail
-    // when the gate fails. Running the real gate here would run this suite
-    // inside itself.
+    // Execute the checked-in shell block against a stand-in gate. It must pass
+    // when the gate passes and fail when the gate fails. Running the real gate
+    // here would run this suite inside itself. This test does not validate the
+    // GitHub workflow settings that decide whether or where the block runs.
     test("the workflow runs that script, and fails when it fails", () => {
       const workflow = readFileSync(workflowPath, "utf8");
       expect(workflow, "the workflow must run on pull requests").toMatch(/^\s*pull_request:/m);
@@ -1517,11 +1540,9 @@ describe("repository writing conventions", () => {
           .toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
       });
 
-      // Reading the workflow for the script's name proves only that the name is
-      // written there. A review deleted the audit command, added "|| true", and
-      // interpolated the description straight into the shell; all three kept
-      // the name intact. So the block is lifted out and run, which is the test
-      // that replaced a list of workflow settings that each review extended.
+      // Execute the checked-in shell block with clean and rejected descriptions.
+      // This catches a missing invocation or swallowed failure, but it does not
+      // validate the GitHub workflow settings that decide whether the job runs.
       test("the workflow's own shell passes plain text and fails the rest", () => {
         const block = runBlock(descriptionWorkflow, "audit");
         const run = (description: string): number | null =>
