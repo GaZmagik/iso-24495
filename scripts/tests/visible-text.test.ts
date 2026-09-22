@@ -32,6 +32,24 @@ describe("hasVisibleText", () => {
     }
   });
 
+  test("one letter, number, punctuation mark or symbol is visible", () => {
+    for (const text of ["a", "7", ".", "\u20AC"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
+    }
+  });
+
+  // Unicode classes each of these outside the letter, number, punctuation and
+  // symbol categories, so none produces a mark of its own. The combining
+  // grapheme joiner is a nonspacing mark rather than a format character, which
+  // is why a test that excluded format characters passed it.
+  test("a mark with no base, a private use or an unassigned character is not visible", () => {
+    for (const text of ["\u034F", "\u0301", "\uE000", "\u0378"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
+    }
+    // The base letter is what a reader sees, so the same mark on one counts.
+    expect(hasVisibleText("e\u0301")).toBe(true);
+  });
+
   test("HTML character references in raw blocks count as their rendered characters", () => {
     for (const text of [
       "<div>&nbsp;</div>",
