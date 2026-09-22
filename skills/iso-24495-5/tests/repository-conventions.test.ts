@@ -1543,6 +1543,14 @@ describe("repository writing conventions", () => {
       // Execute the checked-in shell block with clean and rejected descriptions.
       // This catches a missing invocation or swallowed failure, but it does not
       // validate the GitHub workflow settings that decide whether the job runs.
+      //
+      // That is a design limit, not a gap to close. GitHub honours settings
+      // outside the shell block: `continue-on-error: true` on the step passes
+      // this whole gate while a failed audit no longer fails the check, and an
+      // `if` condition on the job or step can stop it running at all. A review
+      // proved the first, and advised documenting the limit rather than adding
+      // assertions: each structural assertion added before this broke on the
+      // next setting it did not know, so none is added here.
       test("the workflow's own shell passes plain text and fails the rest", () => {
         const block = runBlock(descriptionWorkflow, "audit");
         const run = (description: string): number | null =>

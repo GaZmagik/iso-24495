@@ -9,9 +9,12 @@ const windows1252 = new TextDecoder("windows-1252");
 /**
  * Whether the rendered document holds one character a reader can see.
  *
- * The renderer passes HTML comments through untouched, so they are removed
- * before the tags. A comment that never closes hides the rest of the document,
- * as it does in a browser.
+ * An HTML parser reads the rendered document, for the same reason the renderer
+ * reads the Markdown: a pattern that stripped tags took the ">" inside a quoted
+ * attribute as the end of the tag. The parser drops comments, including one
+ * that never closes and so hides the rest of the document, as in a browser.
+ * The text is collected from the whole document rather than from its elements,
+ * because a raw HTML block can hold text outside any element.
  *
  * Whitespace, control and format characters are not visible. The format
  * category covers the zero-width characters and the byte order mark, so no
@@ -26,10 +29,10 @@ const windows1252 = new TextDecoder("windows-1252");
  * that would become Markdown syntax if the whole string were rendered again.
  */
 export function hasVisibleText(markdown: string): boolean {
-  const rendered = Bun.markdown.html(markdown)
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<!--[\s\S]*/, "")
-    .replace(/<[^>]*>/g, "");
+  let rendered = "";
+  new HTMLRewriter()
+    .onDocument({ text(chunk) { rendered += chunk.text; } })
+    .transform(Bun.markdown.html(markdown));
   const text = rendered.replace(
     /&(?:#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);?/g,
     (reference) => {

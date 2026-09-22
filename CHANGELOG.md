@@ -29,6 +29,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
   TypeScript is excluded because it changes constantly and has its own suites.
   Sentences printed by the audit tools are pinned separately, after a review reversed the report's certification disclaimer in code with every test still green.
 
+- **The workflow test checks the audit command, not the workflow settings.** It runs the pull request workflow's shell block and confirms that a rejected description fails. It cannot see settings that GitHub applies outside that block, such as `continue-on-error` on the step or an `if` condition on the job. A setting like that can stop a failed audit from failing the check while every test still passes.
+
 ### Changed
 
 - **A technical task now reaches the document design skill too**, whenever its output is a document. A code review comment and a chat answer are explanations rather than documents, so the pairing is conditional where the legal one is not.

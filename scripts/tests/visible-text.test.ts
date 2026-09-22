@@ -72,8 +72,16 @@ describe("hasVisibleText", () => {
       // An image is not text, so its alternative text does not count.
       "![A diagram of the audit](x.png)",
       "[x]:\n  https://example.invalid\n",
+      // A pattern that stripped tags ended this one at the quoted ">".
+      '<div title=">"></div>',
     ]) {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
     }
+  });
+
+  // A raw HTML block can hold text outside any element, and a reader sees it.
+  test("text beside an element in a raw HTML block is visible", () => {
+    expect(hasVisibleText("<div></div>Visible")).toBe(true);
+    expect(hasVisibleText('<div title=">"></div>Visible')).toBe(true);
   });
 });
