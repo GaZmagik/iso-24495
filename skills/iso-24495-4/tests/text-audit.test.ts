@@ -171,6 +171,48 @@ describe("runCli", () => {
     expect(missingProject.stderr[0]).toContain("--project-dir requires");
   });
 
+  // A pull request description has no front matter, so GitHub shows a leading
+  // "---" block as a rule and a heading. A file in a repository may carry
+  // metadata, so the block is hidden unless the caller says there is none.
+  test("--no-front-matter reads a leading block as the text it shows", () => {
+    const project = makeProject();
+    try {
+      const file = join(project, "description.md");
+      writeFileSync(file, "---\nnote: The tenant shall pay.\n---\n");
+      const metadata = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", file, "--project-dir", project],
+        metadata.writeOut,
+        metadata.writeErr,
+      )).toBe(0);
+      expect(metadata.stdout.join("\n")).not.toContain("heading-style");
+
+      const text = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", file, "--no-front-matter", "--project-dir", project],
+        text.writeOut,
+        text.writeErr,
+      )).toBe(0);
+      expect(text.stdout.join("\n")).toContain("heading-style");
+      expect(auditTarget(file, project, readFileSync, { frontMatter: false })
+        .totals["heading-style"]).toBe(1);
+      expect(auditTarget(file, project).totals["heading-style"]).toBeUndefined();
+
+      const twice = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", file, "--no-front-matter", "--no-front-matter"],
+        twice.writeOut,
+        twice.writeErr,
+      )).toBe(2);
+      expect(twice.stderr[0]).toContain("--no-front-matter appears more than once");
+      const usage = capture();
+      runCli(["bun", "audit-text-cli.ts"], usage.writeOut, usage.writeErr);
+      expect(usage.stderr[0]).toContain("[--no-front-matter]");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   test("rejects malformed options before writing any output", () => {
     const project = makeProject();
     const originalDirectory = process.cwd();

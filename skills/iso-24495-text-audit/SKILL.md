@@ -24,6 +24,8 @@ Audit only the path the user selects. Report mechanical findings so the user can
 bun <skill-directory>/scripts/audit-text-cli.ts <file-or-directory> --project-dir <project-directory>
 ```
 
+   Add `--no-front-matter` for text that cannot carry metadata, such as a pull request description, so that a leading `---` block is read as the rule and heading the page shows.
+
 7. Report every finding with its file, line, rule, and explanation.
 8. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
 9. Explain that findings are mechanical proxies, not an ISO judgement.

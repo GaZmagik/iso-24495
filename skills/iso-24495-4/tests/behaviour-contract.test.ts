@@ -1884,6 +1884,34 @@ ${sentence}`)
     expect(rulesFor("The DOM loads first.")).toContain("acronym-undefined");
   });
 
+  // A pull request description has no front matter: GitHub shows a leading "---"
+  // block as a rule and a heading, so the audit hid text a reader sees. A file in a
+  // repository may carry metadata, so the default reading does not change.
+  test("a leading front matter block is metadata by default, and text when told so", () => {
+    const description = ["---", "note: The tenant shall pay.", "---", ""].join(BREAK);
+    expect(auditText(description)).toEqual([]);
+    expect(headings(description)).toEqual([]);
+    expect(readDocument(description).hidden(1)).toBe(true);
+    const asText = { frontMatter: false };
+    expect(auditText(description, asText)).toEqual([
+      { rule: "heading-style", line: 2, detail: "heading ends with a full stop" },
+    ]);
+    expect(headings(description, asText))
+      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay." }]);
+    expect(readDocument(description, asText).hidden(1)).toBe(false);
+    // The paragraph became the heading's text, so no prose block remains either way.
+    expect(proseBlocks(description, asText)).toEqual([]);
+    expect(readerProseBlocks(description, asText)).toEqual([]);
+    // A block that closes with "..." is metadata too. Read as text, the closing line
+    // is no underline, so the line above it stays a paragraph and its word reports.
+    const dotted = ["---", "note: The tenant shall pay.", "...", ""].join(BREAK);
+    expect(rulesFor(dotted)).toEqual([]);
+    expect(auditText(dotted, asText).map((violation) => violation.rule)).toContain("legalese");
+    // The option changes nothing for a document without a leading block.
+    const plain = ["Body text.", "", "---", "note: The tenant shall pay.", "---"].join(BREAK);
+    expect(auditText(plain, asText)).toEqual(auditText(plain));
+  });
+
   // A soft line break is a space to the reader, so a definition wrapped across two
   // lines is one definition. The scan read a source line at a time, so "identity and
   // access" and "management (IAM)" on the next line never met, and IAM was reported.
