@@ -397,29 +397,48 @@ function acronymViolations(text: string, known: ReadonlySet<string>): Violation[
   const seen = new Set<string>();
   const definitionLocations = new Map<string, { line: number; column: number }>();
   const document = readDocument(text);
+  const blocks = readerProseBlocks(text);
+  // The block each line sits in. The words before a parenthesis carry across a soft
+  // line break, which is a space to the reader, so "identity and access" wrapped
+  // before "management (IAM)" still spells the acronym. They never carry across a
+  // paragraph, a list item or a heading, which end the sentence the reader is in.
+  const blockOfLine = new Map<number, number>();
+  blocks.forEach((block, id) => {
+    for (let offset = 0; offset < block.lines.length; offset++) {
+      blockOfLine.set(block.line - 1 + offset, id);
+    }
+  });
+  // Only the last few words before a parenthesis can spell the acronym inside it, so
+  // they are carried forward rather than recovered by slicing the line from its start
+  // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
+  let recent: string[] = [];
+  const carry = (fragment: string): void => {
+    for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
+      if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
+      recent.push(word);
+      if (recent.length > LONGEST_ACRONYM) recent.shift();
+    }
+  };
+  let previousBlock: number | undefined;
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
-    // Only the last few words before a parenthesis can spell the acronym inside it, so
-    // they are carried forward rather than recovered by slicing the line from its start
-    // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
+    const block = blockOfLine.get(i);
+    if (block === undefined || block !== previousBlock) recent = [];
+    previousBlock = block;
     const sourceLine = document.lines[i] as string;
-    const recent: string[] = [];
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");
-      for (const word of sourceLine.slice(scanned, match.index).match(/[A-Za-z]+/g) ?? []) {
-        if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
-        recent.push(word);
-        if (recent.length > LONGEST_ACRONYM) recent.shift();
-      }
+      carry(sourceLine.slice(scanned, match.index));
       scanned = match.index;
       if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
       if (!definitionLocations.has(key)) {
         definitionLocations.set(key, { line: i + 1, column: match.index });
       }
     }
+    carry(sourceLine.slice(scanned));
   }
-  for (const block of readerProseBlocks(text)) {
+  for (const block of blocks) {
     const tokens = block.lines.flatMap((line, lineIndex) =>
       [...line.matchAll(/\S+/g)].map((match) => ({
         raw: match[0],

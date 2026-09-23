@@ -1820,6 +1820,33 @@ ${sentence}`)
     expect(rulesFor("The DOM loads first.")).toContain("acronym-undefined");
   });
 
+  // A soft line break is a space to the reader, so a definition wrapped across two
+  // lines is one definition. The scan read a source line at a time, so "identity and
+  // access" and "management (IAM)" on the next line never met, and IAM was reported.
+  test("an acronym's definition is found across a wrapped line, and not across a block", () => {
+    const use = ["", "The IAM endpoint works."];
+    const wrapped = ["The identity and access", "management (IAM) endpoint works."];
+    expect(rulesFor(wrapped.join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor([...wrapped, ...use].join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor(["- The identity and access", "  management (IAM) endpoint works.", ...use]
+      .join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor(["> The identity and access", "> management (IAM) endpoint works.", ...use]
+      .join(BREAK))).not.toContain("acronym-undefined");
+    // The words carry across more than one break.
+    expect(rulesFor(["The identity", "and access", "management (IAM) works."].join(BREAK)))
+      .not.toContain("acronym-undefined");
+
+    // A paragraph break, a list item boundary and a heading each end the words that
+    // can spell an acronym, as they end the sentence a reader is in.
+    for (const document of [
+      ["The identity and access", "", "management (IAM) endpoint works."],
+      ["- identity and access", "- management (IAM) endpoint works."],
+      ["The identity and access", "# management (IAM)", ...use],
+    ]) {
+      expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("acronym-undefined");
+    }
+  });
+
   // Every complex-word suggestion must be no longer than the word it replaces,
   // or taking the advice pushes a sentence at the cap over it.
   test("complex-word advice never creates a longer sentence", () => {
