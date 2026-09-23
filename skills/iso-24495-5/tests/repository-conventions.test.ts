@@ -449,6 +449,45 @@ describe("repository writing conventions", () => {
   // Inverting three rules into their opposites still passed it. Each rule is
   // now anchored to the start of its own bullet, inside the section, so a
   // negation breaks the anchor rather than satisfying it.
+  // Part 5 forbids rewording prose: a restructure changes headings, list types,
+  // formatting and position, adds a label or a marked slot, and leaves every
+  // word as written. Examples 17 and 18 each once reworded their "before", and
+  // each was found by a reviewer rather than a test.
+  test("every Part 5 example in the output style restructures without rewording", () => {
+    const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
+    const section = style.slice(
+      style.indexOf("### Document design (Part 5)"),
+      style.indexOf("### Source code"),
+    );
+    const examples = section.split(/\n(?=#### \d+\. )/).slice(1);
+    expect(examples.length).toBe(4);
+    /** The words a reader meets, once the structure a restructure may add is removed. */
+    const words = (block: string): string[] => block
+      .split("\n")
+      .map((line) => line.replace(/^(?:Before:|After:)/, "").replace(/^ {0,8}/, ""))
+      // A heading, and an elision standing for the lines not shown.
+      .filter((line) => !/^\s*(?:#|\.\.\.\s*$)/.test(line))
+      // A list marker, a bold label such as "**Purpose:**", and a marked slot.
+      .map((line) => line
+        .replace(/^\s*-\s*/, "")
+        .replace(/^\*\*[^*]+:\*\*\s*/, "")
+        .replace(/\[Author needed:[^\]]*\]/g, "")
+        .replace(/\*\*/g, "")
+        // A link reads as its text.
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1"))
+      .join(" ")
+      .split(/\s+/)
+      .filter((word) => word !== "");
+    for (const example of examples) {
+      const title = example.split("\n")[0];
+      const code = /```text\n([\s\S]*?)```/.exec(example);
+      expect(code, title).not.toBeNull();
+      const [before, after] = (code as RegExpExecArray)[1].split(/^After:/m);
+      expect(after, title).toBeDefined();
+      expect(words(after as string), title).toEqual(words(before));
+    }
+  });
+
   test("the output style keeps the reporting rules", () => {
     const style = readFileSync(join(REPOSITORY_ROOT, "output-styles", "iso-24495.md"), "utf8");
     expect(style).toMatch(/^## Reporting work$/m);

@@ -389,12 +389,14 @@ The first sentence stays whole, because splitting it into numbered steps would r
 
 #### 18. Link text that names its destination
 
-A screen reader can list every link on its own, so "here" tells that reader nothing.
+A screen reader can list every link on its own, so "here" tells that reader nothing. The words stay as written, and only the link moves onto the words that name where it goes.
 
 ```text
 Before: For the rollback steps, click [here](./rollback.md).
-After:  See the [rollback steps](./rollback.md).
+After:  For the [rollback steps](./rollback.md), click here.
 ```
+
+Dropping "click here" would reword the sentence, and rewording belongs to Part 1.
 
 ### Source code
 
