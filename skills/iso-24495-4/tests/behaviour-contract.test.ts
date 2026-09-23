@@ -1574,6 +1574,80 @@ ${sentence}`)
     }
   });
 
+  test("a raw HTML block is read by HTML's rules, and Markdown text by CommonMark's", () => {
+    // The renderer passes an HTML block to the page unchanged, and the browser then
+    // decodes "&#97" without its semicolon, so "<div>We sh&#97ll pay.</div>" showed
+    // "shall" while the audit, reading by CommonMark's rules, saw no reference.
+    const legalese = "The party sh&#97ll act.";
+    expect(rulesFor(`<div>${legalese}</div>`)).toContain("legalese");
+    expect(rulesFor("<div>The party sh&#97;ll act.</div>")).toContain("legalese");
+    const words = Array.from({ length: 31 }, (_, index) => `word${index}`);
+    expect(rulesFor(`<div>${words.join("&#32")}.</div>`)).toContain("sentence-length");
+    expect(rulesFor(`<div>${words.join("&nbsp")}.</div>`)).toContain("sentence-length");
+    // Any number of leading zeros, and a legacy name, decode as the page decodes them.
+    expect(readerProseBlocks("<div>a&#00000032;b &copy c</div>")[0]?.lines[0]).toBe(" a b © c ");
+
+    // Outside an HTML block the same text is Markdown, where CommonMark requires the
+    // semicolon, so the page shows the reference as written and so does the audit.
+    expect(rulesFor(legalese)).not.toContain("legalese");
+    expect(proseBlocks(legalese)[0]?.lines[0]).toBe(legalese);
+    expect(rulesFor(`${words.join("&#32")}.`)).not.toContain("sentence-length");
+    // An inline tag does not open an HTML block: its text is still Markdown text.
+    expect(rulesFor("<span>The party sh&#97ll act.</span>")).not.toContain("legalese");
+    expect(rulesFor(["Text.", "<span>The party sh&#97ll act.</span>"].join(BREAK)))
+      .not.toContain("legalese");
+
+    // CommonMark's three visible block kinds: a pre, script, style or textarea element,
+    // which runs to its closing tag across blank lines; a block-level element; and a
+    // complete tag alone on its line, which cannot interrupt a paragraph.
+    expect(rulesFor("<pre>The party sh&#97ll act.</pre>")).toContain("legalese");
+    const preformatted = ["<pre>", legalese, "", "still</pre>", "Plain &#97 text."];
+    expect(rulesFor(preformatted.join(BREAK))).toContain("legalese");
+    expect(proseBlocks(preformatted.join(BREAK)).map((block) => block.lines)).toEqual([
+      [" ", "The party shall act.", "", "still "],
+      ["Plain &#97 text."],
+    ]);
+    expect(rulesFor(["<span>", legalese, "</span>"].join(BREAK))).toContain("legalese");
+    expect(rulesFor(["Text.", "<span>", legalese, "</span>"].join(BREAK))).not.toContain("legalese");
+    expect(rulesFor(["Text.", `<div>${legalese}</div>`].join(BREAK))).toContain("legalese");
+    expect(proseBlocks(["Text.", `<div>${legalese}</div>`].join(BREAK)).map((block) => block.line))
+      .toEqual([1, 2]);
+
+    // The block ends at a blank line, where Markdown's rules resume, and it belongs
+    // to the list item or quotation that holds it.
+    const ended = ["<div>", legalese, "", "Plain &#97 text."].join(BREAK);
+    expect(rulesFor(ended)).toContain("legalese");
+    expect(proseBlocks(ended)[1]?.lines).toEqual(["Plain &#97 text."]);
+    expect(rulesFor(`- <div>${legalese}</div>`)).toContain("legalese");
+    expect(rulesFor(`> <div>${legalese}</div>`)).toContain("legalese");
+    // A block-level element interrupts a paragraph, so it cannot lazily continue a
+    // quoted one either: the quotation ends and the block opens outside it.
+    const afterQuote = ["> Text.", "<div>", legalese, "</div>"].join(BREAK);
+    expect(proseBlocks(afterQuote).map((block) => block.lines))
+      .toEqual([["Text."], [" ", "The party shall act.", " "]]);
+    expect(rulesFor(afterQuote)).toContain("legalese");
+    // It has no lazy continuation, so it ends with its quotation, and the closing tag
+    // left outside opens a block of its own.
+    expect(proseBlocks(["> <div>", "> a", "</div>", "", "Plain &#97 text."].join(BREAK))
+      .map((block) => block.lines))
+      .toEqual([[" ", "a"], [" "], ["Plain &#97 text."]]);
+
+    // Raw HTML has no code span, no escape and no link: each is text on the page,
+    // and a reference inside one decodes all the same.
+    const tick = String.fromCharCode(96);
+    const ticked = `The party ${tick}sh&#97ll act${tick} now.`;
+    expect(rulesFor(`<div>${ticked}</div>`)).toContain("legalese");
+    expect(proseBlocks(`<div>${ticked}</div>`)[0]?.lines[0])
+      .toBe(` The party ${tick}shall act${tick} now. `);
+    expect(rulesFor(ticked)).not.toContain("legalese");
+    const slash = String.fromCharCode(92);
+    expect(readerProseBlocks(`<div>x ${slash}&#97; y</div>`)[0]?.lines[0]).toBe(` x ${slash}a y `);
+    expect(readerProseBlocks("<div>See [the page](x) now.</div>")[0]?.lines[0])
+      .toBe(" See [the page](x) now. ");
+    // A tag and a comment inside the block are markup, as they are on the page.
+    expect(readerProseBlocks("<div>a <b>b</b> <!-- c --> d</div>")[0]?.lines[0]).toBe(" a  b    d ");
+  });
+
   test("malformed comment openers remain reader-visible prose", () => {
     const legalese = "The supplier shall comply.";
     for (const document of [

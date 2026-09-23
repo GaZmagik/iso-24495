@@ -31,6 +31,8 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 - **The workflow test checks the audit command, not the workflow settings.** It runs the pull request workflow's shell block and confirms that a rejected description fails. It cannot see settings that GitHub applies outside that block, such as `continue-on-error` on the step or an `if` condition on the job. A setting like that can stop a failed audit from failing the check while every test still passes.
 
+- **Markdown link syntax inside a raw HTML block is still read as a link.** The page shows `[click here](x)` in a div as those characters, but the link-text rule reads it as a link and reports it. That is a false positive rather than a bypass: the escapes, code spans and references that could hide text are read as the page reads them.
+
 ### Changed
 
 - **A technical task now reaches the document design skill too**, whenever its output is a document. A code review comment and a chat answer are explanations rather than documents, so the pairing is conditional where the legal one is not.
@@ -45,6 +47,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Fixed
 
 - **The audit reads a character reference as the character a reader sees.** GitHub decodes `&#97;` to `a` everywhere except inside code, so `sh&#97;ll` rendered as the banned word while the audit read the source and reported nothing. The engine now decodes a reference where it reads inline markup, and a heading's or a table row's markup is read the way a paragraph's already was. Every rule, every document and the pull request check now see the page's text, and a tag quoted in a code span no longer counts as a link. Inside a code span or a fenced block a reference stays as written, as it does on the page.
+- **A raw HTML block decodes as the browser decodes it.** The renderer passes such a block to the page unchanged, and the browser accepts `&#97` without its semicolon, so `sh&#97ll` in a div showed the banned word unreported. The engine now recognises the HTML blocks CommonMark defines and decodes their references by the tokeniser's rules, including a missing semicolon, unlimited digits and the legacy names. Markdown text keeps CommonMark's rules, so `&#97ll` outside a block stays as written, as it does on the page. The visibility check shares that reader, so a description rendering as one space now fails.
 - **Example 17 in the output style restructures without rewriting.** Its "after" split a sentence into steps, added a lead-in the "before" never held, and reworded "Otherwise" as "If the copy succeeds". Part 5 forbids rewriting prose in a restructure, so every sentence in the "after" now appears word for word in the "before".
 
 ## [0.6.2] - 2026-08-27

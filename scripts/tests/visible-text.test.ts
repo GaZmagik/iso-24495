@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { hasVisibleText } from "../visible-text.ts";
+import { readerProseBlocks } from "../../skills/iso-24495-4/scripts/lib/parse.ts";
 
 describe("hasVisibleText", () => {
   test("prose is visible, and markup around it does not hide it", () => {
@@ -72,6 +73,52 @@ describe("hasVisibleText", () => {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
     }
     expect(hasVisibleText("<div>&#129;</div>")).toBe(false);
+  });
+
+  // A browser reads a raw HTML block by the HTML tokeniser's rules, which the
+  // Markdown renderer's decoding did not follow: eight digits stayed as eight
+  // visible digits, so a description rendering as one space passed.
+  test("a raw HTML reference decodes as the tokeniser decodes it", () => {
+    for (const text of [
+      "<div>&#00000032;</div>",
+      "<div>&#x000000A0</div>",
+      "<div>&nbsp&nbsp</div>",
+      "<div>&#129;&#x81</div>",
+    ]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
+    }
+    // A null becomes the replacement character, which is a mark a reader sees, and
+    // "&notit;" decodes by longest match to a sign followed by three characters.
+    for (const text of ["<div>&#0;</div>", "<div>&notit;</div>", "<div>&#x110000;</div>"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
+    }
+    // Markdown text keeps CommonMark's rules, so the same eight digits are text.
+    expect(hasVisibleText("&#00000032;")).toBe(true);
+  });
+
+  // The audit and this check must see the same characters, or a description
+  // could pass one and fail the other. Both now decode through one reader, and
+  // this pins the agreement over the cases that once split them.
+  test("the audit reads the same visible characters as this check", () => {
+    const visible = /[\p{L}\p{N}\p{P}\p{S}]/u;
+    for (const text of [
+      "<div>&#00000032;</div>",
+      "<div>&nbsp</div>",
+      "<div>&#32</div>",
+      "<div>&#129;</div>",
+      "<div>&#x80;</div>",
+      "<div>&#0;</div>",
+      "<div>We sh&#97ll pay.</div>",
+      "<div>&amp;</div>",
+      "<div></div>",
+      "&#00000032;",
+      "&#97ll",
+      "&nbsp;",
+    ]) {
+      const audited = readerProseBlocks(text)
+        .some((block) => block.lines.some((line) => visible.test(line)));
+      expect(audited, JSON.stringify(text)).toBe(hasVisibleText(text));
+    }
   });
 
   // Each of these renders as nothing. The last is a definition spread over two

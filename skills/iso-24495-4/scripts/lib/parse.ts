@@ -8,6 +8,7 @@
 // that continues without its marker, or an item whose content sits four
 // columns in. This is the algorithm those scanners were approximating.
 
+import { htmlReferenceAt, markdownReferenceAt } from "./character-references.ts";
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
 
 export interface ProseBlock {
@@ -15,6 +16,8 @@ export interface ProseBlock {
   line: number;
   /** The block's lines, in order, with container markers removed. */
   lines: string[];
+  /** Set on a raw HTML block, whose text is read by HTML's rules rather than Markdown's. */
+  rawHtml?: boolean;
 }
 
 export interface Heading {
@@ -314,13 +317,33 @@ function listMarkerAt(line: string, midParagraph: boolean): { length: number; co
   return { length: consumed, column };
 }
 
+/**
+ * Whether the line opens an HTML block a reader sees text in, and what closes it.
+ *
+ * A closing pattern is returned for a pre, script, style or textarea element, which
+ * ends on the line holding one of their closing tags. The other two kinds end at a
+ * blank line, so they carry no pattern. A complete tag alone on its line is the only
+ * kind that cannot interrupt a paragraph.
+ */
+function htmlBlockStart(text: string, paragraphOpen: boolean): { closes: RegExp | null } | null {
+  if (RAW_TEXT_ELEMENT_OPEN.test(text)) return { closes: RAW_TEXT_ELEMENT_CLOSE };
+  const element = BLOCK_ELEMENT_TAG.exec(text);
+  if (element !== null && BLOCK_ELEMENT_NAMES.has(element[1].toLowerCase())) {
+    return { closes: null };
+  }
+  if (paragraphOpen || !COMPLETE_TAG_LINE.test(text)) return null;
+  const name = (TAG_NAME.exec(text) as RegExpExecArray)[1].toLowerCase();
+  return RAW_TEXT_ELEMENT_NAMES.has(name) ? null : { closes: null };
+}
+
 /** True when the text starts a block, so it cannot lazily continue a paragraph. */
 function startsAnyBlock(text: string): boolean {
   return ATX_HEADING.test(text)
     || THEMATIC_BREAK.test(text)
     || FENCE_OPEN.test(text)
     || QUOTE_MARKER.test(text)
-    || LIST_MARKER.test(text);
+    || LIST_MARKER.test(text)
+    || htmlBlockStart(text, true) !== null;
 }
 
 function parse(lines: string[]): Parsed {
@@ -339,6 +362,7 @@ function parse(lines: string[]): Parsed {
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
+  let htmlBlock: { closes: RegExp | null; depth: number; block: ProseBlock } | null = null;
 
   const closeParagraph = (): void => {
     paragraph = null;
@@ -403,6 +427,24 @@ function parse(lines: string[]): Parsed {
       stack.length = matched;
     }
 
+    if (htmlBlock !== null) {
+      if (matched < htmlBlock.depth) {
+        // An HTML block has no lazy continuation, so it ends with the container
+        // that holds it, and the line is read afresh outside that container.
+        htmlBlock = null;
+        stack.length = matched;
+      } else if (htmlBlock.closes === null && rest.trim() === "") {
+        htmlBlock = null;
+        continue;
+      } else {
+        // Every line to the block's end is its text, whatever Markdown it resembles:
+        // the page shows "# Heading" inside a div as those words.
+        htmlBlock.block.lines.push(text.trimStart());
+        if (htmlBlock.closes !== null && htmlBlock.closes.test(text)) htmlBlock = null;
+        continue;
+      }
+    }
+
     if (rest.trim() === "") {
       closeParagraph();
       if (!allMatched) stack.length = matched;
@@ -453,6 +495,18 @@ function parse(lines: string[]): Parsed {
     // the quotation. Later inside the same quotation GitHub renders it as
     // ordinary text, and a reader meets it as a word.
     if (openedQuote && stack.length === 1 && ALERT_MARKER.test(text.trim())) {
+      continue;
+    }
+
+    const html = htmlBlockStart(text, paragraph !== null);
+    if (html !== null) {
+      closeParagraph();
+      const block: ProseBlock = { line: i + 1, lines: [text.trimStart()], rawHtml: true };
+      paragraphs.push(block);
+      // An element closed on its opening line is a block of that line alone.
+      if (html.closes === null || !html.closes.test(text)) {
+        htmlBlock = { closes: html.closes, depth: stack.length, block };
+      }
       continue;
     }
 
@@ -562,13 +616,15 @@ function parse(lines: string[]): Parsed {
 
   for (const block of paragraphs) {
     const source = block.lines.join("\n");
-    const forLineRules = visibleInline(source, false).split("\n");
-    const withTags = visibleInline(source, false, true).split("\n");
+    const rawHtml = block.rawHtml === true;
+    const forLineRules = visibleInline(source, { keepLiteralSyntax: false, rawHtml }).split("\n");
+    const withTags = visibleInline(source, { keepLiteralSyntax: false, keepHtmlTags: true, rawHtml })
+      .split("\n");
     for (let offset = 0; offset < forLineRules.length; offset++) {
       readable[block.line - 1 + offset] = forLineRules[offset];
       markup[block.line - 1 + offset] = withTags[offset];
     }
-    block.lines = visibleInline(source).split("\n");
+    block.lines = visibleInline(source, { rawHtml }).split("\n");
   }
   for (const heading of found) {
     heading.text = visibleText(heading.text, references);
@@ -621,12 +677,29 @@ function withoutInvisible(
 
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
-// A character reference as CommonMark bounds it: a decimal or hexadecimal code
-// point, or a name from the HTML5 entity list, each closed by a semicolon. One
-// without the semicolon is literal text, as it is on GitHub. The pattern is
-// sticky and read from the current index, because slicing the rest of the text
-// at every ampersand would be quadratic.
-const CHARACTER_REFERENCE = /&(?:#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/y;
+// CommonMark's HTML block start conditions 1, 6 and 7, which open a block whose
+// text a reader sees. Conditions 2 to 4 are BLOCK_INVISIBLE_OPEN, because a
+// comment, a processing instruction and a declaration show nothing. The renderer
+// passes such a block to the page unchanged, so its text is read by HTML's rules:
+// no escape, no code span, and a character reference as the browser decodes it.
+// A pre, script, style or textarea element runs to the line holding any of the
+// four closing tags, across blank lines. A block-level element, and a complete
+// tag alone on its line, run to a blank line. Only the last cannot interrupt a
+// paragraph, and none continues past the container that holds it.
+const RAW_TEXT_ELEMENT_OPEN = /^ {0,3}<(?:pre|script|style|textarea)(?=[ \t>]|$)/i;
+const RAW_TEXT_ELEMENT_CLOSE = /<\/(?:pre|script|style|textarea)>/i;
+const RAW_TEXT_ELEMENT_NAMES: ReadonlySet<string> = new Set(["pre", "script", "style", "textarea"]);
+const BLOCK_ELEMENT_TAG = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9]*)(?=[ \t>]|\/>|$)/;
+const BLOCK_ELEMENT_NAMES: ReadonlySet<string> = new Set([
+  "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center",
+  "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption",
+  "figure", "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+  "header", "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem", "nav",
+  "noframes", "ol", "optgroup", "option", "p", "param", "search", "section", "summary", "table",
+  "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul",
+]);
+const COMPLETE_TAG_LINE = new RegExp("^ {0,3}" + HTML_TAG_AT_START.source.slice(1) + "[ \\t]*$");
+const TAG_NAME = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9-]*)/;
 
 function abruptCommentClose(afterOpening: string): number {
   if (afterOpening.startsWith("->")) return 2;
@@ -656,39 +729,6 @@ function tickRun(text: string, start: number): number {
   return end - start;
 }
 
-/** What each reference decoded to, because a document repeats the same few. */
-const decodedReferences = new Map<string, string | null>();
-
-/**
- * The text a reference stands for, or null where its name is not one.
- *
- * The Markdown renderer decodes it, so the entity list lives there and not here. It
- * hands an unknown name back unchanged, which is also what a reader sees. The
- * visibility check in scripts/visible-text.ts decodes by HTML's rules instead, which
- * accept a missing semicolon and remap a legacy code point, because it reads rendered
- * HTML. This reads Markdown, so the two are deliberately not shared.
- */
-function decodeReference(reference: string): string | null {
-  const cached = decodedReferences.get(reference);
-  if (cached !== undefined) return cached;
-  const decoded = Bun.markdown.render(reference, {
-    text: (text: string) => text,
-    paragraph: (children: string) => children,
-  });
-  const result = decoded === reference ? null : decoded;
-  decodedReferences.set(reference, result);
-  return result;
-}
-
-/** The reference opening at the index, decoded, or null where the ampersand is text. */
-function referenceAt(text: string, index: number): { decoded: string; length: number } | null {
-  CHARACTER_REFERENCE.lastIndex = index;
-  const match = CHARACTER_REFERENCE.exec(text);
-  if (match === null) return null;
-  const decoded = decodeReference(match[0]);
-  return decoded === null ? null : { decoded, length: match[0].length };
-}
-
 /**
  * Decoded text, written as the mode already writes an escaped character.
  *
@@ -708,17 +748,34 @@ function literalText(decoded: string, keepLiteralSyntax: boolean): string {
   return literal;
 }
 
-/** Remove only inline markup that CommonMark keeps out of rendered text. */
-function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = false): string {
+/** How the inline reader treats the markup it meets. */
+interface InlineReading {
+  /** Keep an escape and a code span as written, for the prose rules; blank them for the line rules. */
+  keepLiteralSyntax?: boolean;
+  /** Keep HTML tags, for the rules that read an anchor or an image from the line. */
+  keepHtmlTags?: boolean;
+  /**
+   * Read a raw HTML block. The page shows a backslash and a backtick there as
+   * text, and decodes a reference by HTML's rules rather than CommonMark's.
+   */
+  rawHtml?: boolean;
+}
+
+/** Remove only inline markup that the page keeps out of rendered text. */
+function visibleInline(text: string, reading: InlineReading = {}): string {
+  const keepLiteralSyntax = reading.keepLiteralSyntax ?? true;
+  const keepHtmlTags = reading.keepHtmlTags ?? false;
+  const rawHtml = reading.rawHtml ?? false;
   let visible = "";
   let index = 0;
   while (index < text.length) {
-    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1])) {
+    if (!rawHtml && text[index] === "\\" && index + 1 < text.length
+      && ESCAPABLE.test(text[index + 1])) {
       visible += keepLiteralSyntax ? text.slice(index, index + 2) : "  ";
       index += 2;
       continue;
     }
-    if (text[index] === "`") {
+    if (!rawHtml && text[index] === "`") {
       const length = tickRun(text, index);
       // The shared index knows where every span ends. Searching the rest of the text for
       // each unmatched run was quadratic: 10,000 backticks cost 4.6 seconds.
@@ -746,9 +803,10 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
     }
     // A reference is read here and nowhere earlier, because a code span keeps it
     // literal and a tag's attributes are consumed whole below. "sh&#97;ll" rendered
-    // as "shall" and reported nothing while the audit read the source.
+    // as "shall" and reported nothing while the audit read the source. A raw HTML
+    // block reads by HTML's rules, where "sh&#97ll" renders the same word.
     if (text[index] === "&") {
-      const reference = referenceAt(text, index);
+      const reference = rawHtml ? htmlReferenceAt(text, index) : markdownReferenceAt(text, index);
       if (reference !== null) {
         visible += literalText(reference.decoded, keepLiteralSyntax);
         index += reference.length;
@@ -1062,7 +1120,10 @@ export function readerProseBlocks(text: string): ProseBlock[] {
   const parsed = parse(toLines(text));
   return parsed.paragraphs.map((block) => ({
     line: block.line,
-    lines: visibleText(block.lines.join("\n"), parsed.references).split("\n"),
+    // A raw HTML block has no link to flatten: "[a](b)" there is text on the page.
+    lines: block.rawHtml === true
+      ? block.lines
+      : visibleText(block.lines.join("\n"), parsed.references).split("\n"),
   }));
 }
 
@@ -1081,11 +1142,12 @@ export function readDocument(text: string): Document {
   const lines = toLines(text);
   const parsed = parse(lines);
   return {
-    lines: parsed.readable.map((line) => visibleInline(line, false)),
+    lines: parsed.readable.map((line) => visibleInline(line, { keepLiteralSyntax: false })),
     // A paragraph's markup was read as a block above, but a heading's or a table
     // row's was still the source line, so an anchor there kept its references and
     // its code spans: "cl&#105;ck here" passed, and a quoted tag counted as a link.
-    markupLines: parsed.markup.map((line) => visibleInline(line, false, true)),
+    markupLines: parsed.markup.map((line) =>
+      visibleInline(line, { keepLiteralSyntax: false, keepHtmlTags: true })),
     references: parsed.references,
     hidden: (index) => parsed.hidden.has(index),
   };

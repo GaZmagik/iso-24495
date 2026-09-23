@@ -4,7 +4,7 @@
 // review found a construct the list had missed. So the Markdown renderer now
 // decides what a reader sees, and this reads what it rendered.
 
-const windows1252 = new TextDecoder("windows-1252");
+import { decodeHtmlText } from "../skills/iso-24495-4/scripts/lib/character-references.ts";
 
 /**
  * Whether the rendered document holds one character a reader can see.
@@ -31,36 +31,18 @@ const windows1252 = new TextDecoder("windows-1252");
  * An image is not text, so a description holding only an image fails, whatever
  * its alternative text says.
  *
- * Decode character references once after removing markup. Raw HTML blocks
- * leave their references encoded in the rendered string, while ordinary
- * Markdown text does not. Decoding each reference on its own preserves text
- * that would become Markdown syntax if the whole string were rendered again.
+ * The rendered document is HTML, so its references decode by HTML's rules, as
+ * the browser decodes them. That is right for both kinds of text: the renderer
+ * has already decoded a Markdown reference and re-encoded the ampersand, so
+ * "&#97ll" outside HTML arrives as "&amp;#97ll" and reads back as the text the
+ * page shows, while a raw HTML block arrives as written and decodes as the page
+ * decodes it. The audit engine reads the same reader, so the two cannot
+ * disagree about what a reference shows.
  */
 export function hasVisibleText(markdown: string): boolean {
   let rendered = "";
   new HTMLRewriter()
     .onDocument({ text(chunk) { rendered += chunk.text; } })
     .transform(Bun.markdown.html(markdown));
-  const text = rendered.replace(
-    /&(?:#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);?/g,
-    (reference) => {
-      // Raw HTML accepts this whitespace name without a semicolon.
-      if (reference === "&nbsp") return "\u00A0";
-      const numeric = /^&#([xX]?)([0-9A-Fa-f]+);?$/.exec(reference);
-      if (numeric) {
-        const codePoint = Number.parseInt(numeric[2], numeric[1] ? 16 : 10);
-        if (codePoint >= 0x80 && codePoint <= 0x9f) {
-          // HTML maps legacy numeric references here as Windows-1252 bytes.
-          return windows1252.decode(Uint8Array.of(codePoint));
-        }
-      }
-      // HTML also accepts numeric references without the semicolon that the
-      // Markdown renderer requires when it reads standalone text.
-      const paragraph = Bun.markdown.html(numeric && !reference.endsWith(";")
-        ? `${reference};`
-        : reference);
-      return paragraph.slice(3, -5);
-    },
-  );
-  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(text);
+  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(decodeHtmlText(rendered));
 }

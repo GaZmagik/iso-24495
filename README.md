@@ -119,7 +119,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - quotations, including GitHub alerts such as `> [!WARNING]`;
 - headings, at any depth and in any container;
 - HTML, because its text is prose a reader reads;
-- a character reference such as `&#97;`, decoded to the character the page shows, except inside code, where the page keeps it as written.
+- a character reference such as `&#97;`, decoded to the character the page shows, except inside code, where the page keeps it as written. Markdown text follows CommonMark, which needs the semicolon. A raw HTML block follows the HTML tokeniser instead, which accepts `&#97` without one, as the browser does.
 
 **Not measured, because they are not sentences:**
 
