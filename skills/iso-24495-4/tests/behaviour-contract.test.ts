@@ -1608,6 +1608,16 @@ ${sentence}`)
       ["Plain &#97 text."],
     ]);
     expect(rulesFor(["<span>", legalese, "</span>"].join(BREAK))).toContain("legalese");
+    // A closing tag alone on its line opens a block whatever its name, and so does a
+    // self-closing pre tag: the specification's text excludes the latter, but the
+    // reference implementation and the renderer both open a block for it, and the
+    // fixture is checked against the reference.
+    for (const opener of ["</pre>", "<pre/>", "</script>"]) {
+      const lone = [opener, legalese].join(BREAK);
+      expect(rulesFor(lone), opener).toContain("legalese");
+      expect(proseBlocks(lone).map((block) => block.lines), opener)
+        .toEqual([[" ", "The party shall act."]]);
+    }
     expect(rulesFor(["Text.", "<span>", legalese, "</span>"].join(BREAK))).not.toContain("legalese");
     expect(rulesFor(["Text.", `<div>${legalese}</div>`].join(BREAK))).toContain("legalese");
     expect(proseBlocks(["Text.", `<div>${legalese}</div>`].join(BREAK)).map((block) => block.line))

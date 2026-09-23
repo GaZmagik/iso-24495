@@ -323,7 +323,10 @@ function listMarkerAt(line: string, midParagraph: boolean): { length: number; co
  * A closing pattern is returned for a pre, script, style or textarea element, which
  * ends on the line holding one of their closing tags. The other two kinds end at a
  * blank line, so they carry no pattern. A complete tag alone on its line is the only
- * kind that cannot interrupt a paragraph.
+ * kind that cannot interrupt a paragraph, and it opens a block whatever its name: the
+ * specification's text excludes an open pre, script, style or textarea tag there, but
+ * the reference implementation and the renderer both open a block for "<pre/>" alone
+ * on a line, and the fixture is checked against the reference.
  */
 function htmlBlockStart(text: string, paragraphOpen: boolean): { closes: RegExp | null } | null {
   if (RAW_TEXT_ELEMENT_OPEN.test(text)) return { closes: RAW_TEXT_ELEMENT_CLOSE };
@@ -331,9 +334,7 @@ function htmlBlockStart(text: string, paragraphOpen: boolean): { closes: RegExp 
   if (element !== null && BLOCK_ELEMENT_NAMES.has(element[1].toLowerCase())) {
     return { closes: null };
   }
-  if (paragraphOpen || !COMPLETE_TAG_LINE.test(text)) return null;
-  const name = (TAG_NAME.exec(text) as RegExpExecArray)[1].toLowerCase();
-  return RAW_TEXT_ELEMENT_NAMES.has(name) ? null : { closes: null };
+  return paragraphOpen || !COMPLETE_TAG_LINE.test(text) ? null : { closes: null };
 }
 
 /** True when the text starts a block, so it cannot lazily continue a paragraph. */
@@ -688,7 +689,6 @@ const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-
 // paragraph, and none continues past the container that holds it.
 const RAW_TEXT_ELEMENT_OPEN = /^ {0,3}<(?:pre|script|style|textarea)(?=[ \t>]|$)/i;
 const RAW_TEXT_ELEMENT_CLOSE = /<\/(?:pre|script|style|textarea)>/i;
-const RAW_TEXT_ELEMENT_NAMES: ReadonlySet<string> = new Set(["pre", "script", "style", "textarea"]);
 const BLOCK_ELEMENT_TAG = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9]*)(?=[ \t>]|\/>|$)/;
 const BLOCK_ELEMENT_NAMES: ReadonlySet<string> = new Set([
   "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center",
@@ -699,7 +699,6 @@ const BLOCK_ELEMENT_NAMES: ReadonlySet<string> = new Set([
   "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul",
 ]);
 const COMPLETE_TAG_LINE = new RegExp("^ {0,3}" + HTML_TAG_AT_START.source.slice(1) + "[ \\t]*$");
-const TAG_NAME = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9-]*)/;
 
 function abruptCommentClose(afterOpening: string): number {
   if (afterOpening.startsWith("->")) return 2;
