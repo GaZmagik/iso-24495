@@ -1082,7 +1082,10 @@ export function readDocument(text: string): Document {
   const parsed = parse(lines);
   return {
     lines: parsed.readable.map((line) => visibleInline(line, false)),
-    markupLines: parsed.markup,
+    // A paragraph's markup was read as a block above, but a heading's or a table
+    // row's was still the source line, so an anchor there kept its references and
+    // its code spans: "cl&#105;ck here" passed, and a quoted tag counted as a link.
+    markupLines: parsed.markup.map((line) => visibleInline(line, false, true)),
     references: parsed.references,
     hidden: (index) => parsed.hidden.has(index),
   };

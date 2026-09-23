@@ -1525,6 +1525,20 @@ ${sentence}`)
     expect(rulesFor("[cl&#105;ck here](x) is a link.")).toContain("link-text");
     expect(rulesFor(["| h&#124;i | j |", "|---|---|", "| 1 | 2 |"].join(BREAK)))
       .not.toContain("table-header");
+
+    // An HTML anchor is read from the markup lines. A paragraph's were decoded as a
+    // block, but a heading's and a table row's were still the source, so the same
+    // anchor passed there and a quoted tag in a heading counted as a link.
+    const anchor = '<a href="x">cl&#105;ck here</a>';
+    for (const document of [
+      `See ${anchor} now.`,
+      `# ${anchor}`,
+      [`| ${anchor} | b |`, "|---|---|", "| 1 | 2 |"].join(BREAK),
+    ]) {
+      expect(rulesFor(document), document).toContain("link-text");
+    }
+    const tick = String.fromCharCode(96);
+    expect(rulesFor(`# ${tick}<a href="x">click here</a>${tick}`)).toEqual([]);
     expect(readerProseBlocks('See [the page](x&#97;y "t&#97;").')[0]?.lines[0])
       .toBe("See the page.");
   });

@@ -44,7 +44,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Fixed
 
-- **The audit reads a character reference as the character a reader sees.** GitHub decodes `&#97;` to `a` everywhere except inside code. That let `sh&#97;ll` render as the banned word, and a sentence padded with `&#32;` render as thirty words, while the audit read the source and reported neither. The engine now decodes a reference where it reads inline markup, so every rule, every document and the pull request check see the same text as the page. Inside a code span or a fenced block a reference stays as written, as it does on the page.
+- **The audit reads a character reference as the character a reader sees.** GitHub decodes `&#97;` to `a` everywhere except inside code, so `sh&#97;ll` rendered as the banned word while the audit read the source and reported nothing. The engine now decodes a reference where it reads inline markup, and a heading's or a table row's markup is read the way a paragraph's already was. Every rule, every document and the pull request check now see the page's text, and a tag quoted in a code span no longer counts as a link. Inside a code span or a fenced block a reference stays as written, as it does on the page.
 - **Example 17 in the output style restructures without rewriting.** Its "after" split a sentence into steps, added a lead-in the "before" never held, and reworded "Otherwise" as "If the copy succeeds". Part 5 forbids rewriting prose in a restructure, so every sentence in the "after" now appears word for word in the "before".
 
 ## [0.6.2] - 2026-08-27
