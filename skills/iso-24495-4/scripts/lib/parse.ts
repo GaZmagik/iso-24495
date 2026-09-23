@@ -700,6 +700,37 @@ const BLOCK_ELEMENT_NAMES: ReadonlySet<string> = new Set([
 ]);
 const COMPLETE_TAG_LINE = new RegExp("^ {0,3}" + HTML_TAG_AT_START.source.slice(1) + "[ \\t]*$");
 
+// The elements whose tag separates the text on either side of it, and every other
+// tag joins that text. The Rendering section of the HTML Standard (15.3) gives
+// these a box of their own: "display: block" for the flow, sectioning, list and
+// form elements, "display: table" and its parts, "display: list-item" for li, and a
+// line break for br. Every other element renders inline by default, a comment or a
+// processing instruction renders nothing, and an element rendered "display: none"
+// has no box, so "sh<em>all</em>", "sh<!-- x -->all" and "sh<script></script>all"
+// all show one word. An inline-block control such as input or button is inline
+// too, and joins under this rule. The reader replaced every tag with a space, so
+// the audit read "sh all" where the page showed "shall".
+const SEPARATING_ELEMENTS: ReadonlySet<string> = new Set([
+  "html", "body", "address", "blockquote", "center", "dialog", "div", "figure", "figcaption",
+  "footer", "form", "header", "hr", "legend", "listing", "main", "p", "plaintext", "pre",
+  "search", "xmp", "article", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "nav",
+  "section", "dir", "dd", "dl", "dt", "menu", "ol", "ul", "li", "fieldset", "details",
+  "summary", "option", "optgroup", "table", "caption", "colgroup", "col", "thead", "tbody",
+  "tfoot", "tr", "td", "th", "br",
+]);
+const TAG_NAME = /^<\/?([A-Za-z][A-Za-z0-9-]*)/;
+
+/** True when the tag's element separates the text on either side of it. */
+function separatesText(tag: string): boolean {
+  const name = (TAG_NAME.exec(tag) as RegExpExecArray)[1].toLowerCase();
+  return SEPARATING_ELEMENTS.has(name);
+}
+
+/** How many line endings a span of removed markup held. */
+function lineEndings(span: string): number {
+  return span.split("\n").length - 1;
+}
+
 function abruptCommentClose(afterOpening: string): number {
   if (afterOpening.startsWith("->")) return 2;
   return afterOpening.startsWith(">") ? 1 : 0;
@@ -767,10 +798,23 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
   const rawHtml = reading.rawHtml ?? false;
   let visible = "";
   let index = 0;
+  // Line endings inside removed joining markup. Leaving them where they were split
+  // "sh<!--\n-->all" into two words on two lines, and dropping them moved every later
+  // sentence up a line. They are owed to the next line ending instead, so the word
+  // joins and the lines after it keep their numbers.
+  let owedLineEndings = 0;
+  const emit = (fragment: string): void => {
+    if (owedLineEndings > 0 && fragment.includes("\n")) {
+      visible += fragment.replace("\n", "\n".repeat(owedLineEndings + 1));
+      owedLineEndings = 0;
+      return;
+    }
+    visible += fragment;
+  };
   while (index < text.length) {
     if (!rawHtml && text[index] === "\\" && index + 1 < text.length
       && ESCAPABLE.test(text[index + 1])) {
-      visible += keepLiteralSyntax ? text.slice(index, index + 2) : "  ";
+      emit(keepLiteralSyntax ? text.slice(index, index + 2) : "  ");
       index += 2;
       continue;
     }
@@ -783,20 +827,20 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
         const closing = end - length;
         const span = text.slice(index, end);
         if (keepLiteralSyntax) {
-          visible += span;
+          emit(span);
         } else {
           // Keep the words a reader sees in a code-formatted link label, but
           // neutralise syntax that would turn a Markdown example into a link.
           const content = text.slice(index + length, closing)
             .replace(/[!<>[\]()]/g, " ");
-          visible += " ".repeat(length) + content + " ".repeat(length);
+          emit(" ".repeat(length) + content + " ".repeat(length));
         }
         index = end;
         continue;
       }
       // An unmatched run is literal text. Emitting one character and looking again made
       // the next backtick rescan the rest of the run, which cost 4.6 seconds at 10,000.
-      visible += text.slice(index, index + length);
+      emit(text.slice(index, index + length));
       index += length;
       continue;
     }
@@ -807,13 +851,13 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
     if (text[index] === "&") {
       const reference = rawHtml ? htmlReferenceAt(text, index) : markdownReferenceAt(text, index);
       if (reference !== null) {
-        visible += literalText(reference.decoded, keepLiteralSyntax);
+        emit(literalText(reference.decoded, keepLiteralSyntax));
         index += reference.length;
         continue;
       }
     }
     if (text[index] !== "<") {
-      visible += text[index];
+      emit(text[index]);
       index++;
       continue;
     }
@@ -821,13 +865,16 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
     const rest = text.slice(index);
     const tag = HTML_TAG_AT_START.exec(rest);
     if (tag !== null) {
-      visible += keepHtmlTags ? tag[0] : " " + tag[0].replace(/[^\n]/g, "");
+      // A separating element's tag leaves a space where its box begins or ends. Any
+      // other tag leaves nothing, and its line endings are owed to the next one.
+      if (keepHtmlTags) emit(tag[0]);
+      else if (separatesText(tag[0])) emit(" " + tag[0].replace(/[^\n]/g, ""));
+      else owedLineEndings += lineEndings(tag[0]);
       index += tag[0].length;
       continue;
     }
     const abrupt = rest.startsWith("<!--") ? abruptCommentClose(rest.slice(4)) : 0;
     if (abrupt > 0) {
-      visible += " ";
       index += 4 + abrupt;
       continue;
     }
@@ -842,15 +889,15 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
       const closing = closingMarkup(rest, invisible.close, invisible.offset);
       if (closing !== null) {
         const length = closing.at + closing.length;
-        visible += " " + rest.slice(0, length).replace(/[^\n]/g, "");
+        owedLineEndings += lineEndings(rest.slice(0, length));
         index += length;
         continue;
       }
     }
-    visible += "<";
+    emit("<");
     index++;
   }
-  return visible;
+  return visible + "\n".repeat(owedLineEndings);
 }
 
 const BACKSLASH = "\\";

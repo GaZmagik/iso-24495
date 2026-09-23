@@ -1416,14 +1416,14 @@ ${sentence}`)
 
     // A tag is markup; an autolink and a comparison are text a reader reads.
     expect(proseBlocks('A <span class="label">tag</span> here.').map((b) => b.lines[0]))
-      .toEqual(["A  tag  here."]);
+      .toEqual(["A tag here."]);
     expect(proseBlocks("The value is < 5 and > 2 today.").map((b) => b.lines[0]))
       .toEqual(["The value is < 5 and > 2 today."]);
     expect(proseBlocks("Read <https://example.com> today.").map((b) => b.lines[0]))
       .toEqual(["Read <https://example.com> today."]);
     // A heading loses its tags too, so its length is the length a reader sees.
     expect(headings('# A heading <span class="label">wrapped</span> here')[0]?.text)
-      .toBe("A heading  wrapped  here");
+      .toBe("A heading wrapped here");
 
     // A tag may span lines, and removing tags line by line left the halves
     // behind as words a reader never meets.
@@ -1484,10 +1484,11 @@ ${sentence}`)
     expect(proseBlocks("The literal `one `` two` stays visible.")[0]?.lines[0])
       .toBe("The literal `one `` two` stays visible.");
 
+    // Invisible markup produces no box, so only the spaces written around it remain.
     for (const [source, visible] of [
-      ["Text <!-- hidden --> after.", "Text   after."],
-      ["Text <?hidden?> after.", "Text   after."],
-      ["Text <!DOCTYPE hidden> after.", "Text   after."],
+      ["Text <!-- hidden --> after.", "Text  after."],
+      ["Text <?hidden?> after.", "Text  after."],
+      ["Text <!DOCTYPE hidden> after.", "Text  after."],
       ["Text <!-- unclosed markup.", "Text <!-- unclosed markup."],
     ]) {
       expect(proseBlocks(source)[0]?.lines[0], source).toBe(visible);
@@ -1612,11 +1613,13 @@ ${sentence}`)
     // self-closing pre tag: the specification's text excludes the latter, but the
     // reference implementation and the renderer both open a block for it, and the
     // fixture is checked against the reference.
-    for (const opener of ["</pre>", "<pre/>", "</script>"]) {
+    // A pre element is a block of its own, so its tag leaves a space; a script element
+    // has no box at all, so its tag leaves nothing.
+    for (const [opener, gap] of [["</pre>", " "], ["<pre/>", " "], ["</script>", ""]]) {
       const lone = [opener, legalese].join(BREAK);
       expect(rulesFor(lone), opener).toContain("legalese");
       expect(proseBlocks(lone).map((block) => block.lines), opener)
-        .toEqual([[" ", "The party shall act."]]);
+        .toEqual([[gap, "The party shall act."]]);
     }
     expect(rulesFor(["Text.", "<span>", legalese, "</span>"].join(BREAK))).not.toContain("legalese");
     expect(rulesFor(["Text.", `<div>${legalese}</div>`].join(BREAK))).toContain("legalese");
@@ -1654,8 +1657,59 @@ ${sentence}`)
     expect(readerProseBlocks(`<div>x ${slash}&#97; y</div>`)[0]?.lines[0]).toBe(` x ${slash}a y `);
     expect(readerProseBlocks("<div>See [the page](x) now.</div>")[0]?.lines[0])
       .toBe(" See [the page](x) now. ");
-    // A tag and a comment inside the block are markup, as they are on the page.
-    expect(readerProseBlocks("<div>a <b>b</b> <!-- c --> d</div>")[0]?.lines[0]).toBe(" a  b    d ");
+    // A tag and a comment inside the block are markup, as they are on the page: the
+    // div is a box of its own, while the inline tag and the comment leave no gap.
+    expect(readerProseBlocks("<div>a <b>b</b> <!-- c --> d</div>")[0]?.lines[0]).toBe(" a b  d ");
+  });
+
+  test("markup inside a word joins or separates it as the page does", () => {
+    // A browser joins text across an inline element or a comment, so "sh<em>all</em>"
+    // shows "shall". The reader replaced every tag with a space, so the audit read
+    // "sh all" and the banned word vanished into two harmless ones.
+    for (const text of [
+      "We sh<em>all</em> pay.",
+      'We sh<span class="x">all</span> pay.',
+      "We sh<!-- x -->all pay.",
+      "We sh<!-->all pay.",
+      "We sh<?pi?>all pay.",
+      "We sh<!DOCTYPE x>all pay.",
+      "We sh<wbr>all pay.",
+      "We sh<custom-element>all</custom-element> pay.",
+    ]) {
+      expect(rulesFor(text), text).toContain("legalese");
+      expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shall pay.");
+    }
+    // An element the HTML Standard renders as its own block, table part, list item
+    // or line break separates the text on either side of it.
+    for (const text of [
+      "We sh<br>all pay.",
+      "We sh<br/>all pay.",
+      "We sh<div>all</div> pay.",
+      "We sh<p>all pay.",
+      "We sh<li>all pay.",
+      "We sh<td>all pay.",
+      "We sh<hr>all pay.",
+      "We sh<h2>all</h2> pay.",
+      "We sh<summary>all</summary> pay.",
+    ]) {
+      expect(rulesFor(text), text).not.toContain("legalese");
+    }
+    expect(readerProseBlocks("We sh<br>all pay.")[0]?.lines[0]).toBe("We sh all pay.");
+    // A heading goes through the same reader.
+    expect(headings("# Sh<em>all</em> we")[0]?.text).toBe("Shall we");
+
+    // Markup that spans lines is removed with its line endings, which are owed to the
+    // next line ending, so the word joins and the lines after it keep their numbers.
+    const long = sentenceOf(31);
+    const spanning = ["We sh<!--", "-->all pay.", long].join(BREAK);
+    expect(readerProseBlocks(spanning)[0]?.lines).toEqual(["We shall pay.", "", long]);
+    expect(rulesFor(spanning)).toContain("legalese");
+    expect(auditText(spanning).filter((violation) => violation.rule === "sentence-length"))
+      .toEqual([{ rule: "sentence-length", line: 3, detail: "31 words (limit 30)" }]);
+    const tagSpanning = ["We sh<span", 'class="x">all</span> pay.', long].join(BREAK);
+    expect(readerProseBlocks(tagSpanning)[0]?.lines).toEqual(["We shall pay.", "", long]);
+    expect(readerProseBlocks(["We sh<!--", "-->all pay."].join(BREAK))[0]?.lines)
+      .toEqual(["We shall pay.", ""]);
   });
 
   test("malformed comment openers remain reader-visible prose", () => {
