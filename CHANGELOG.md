@@ -42,6 +42,11 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **A legal task now reaches the document design skill.** The Part 5 trigger named reports, specifications and guides, and stopped there, so nothing routed a contract or a licence to the design rules. The core skill, the output style and the Codex style skill now send legal work to `iso-24495-5` as well as `iso-24495-2`.
 - **Part 5 names the one exception to its ordered-list rule.** No ordered list renders a compound identifier such as 4.2.1, so a legal document writes its clause identifiers into the clause text. Part 5 states that exception where the rule itself is stated, and its self-audit checklist carries the same exception.
 
+### Fixed
+
+- **The audit reads a character reference as the character a reader sees.** GitHub decodes `&#97;` to `a` everywhere except inside code. That let `sh&#97;ll` render as the banned word, and a sentence padded with `&#32;` render as thirty words, while the audit read the source and reported neither. The engine now decodes a reference where it reads inline markup, so every rule, every document and the pull request check see the same text as the page. Inside a code span or a fenced block a reference stays as written, as it does on the page.
+- **Example 17 in the output style restructures without rewriting.** Its "after" split a sentence into steps, added a lead-in the "before" never held, and reworded "Otherwise" as "If the copy succeeds". Part 5 forbids rewriting prose in a restructure, so every sentence in the "after" now appears word for word in the "before".
+
 ## [0.6.2] - 2026-08-27
 
 ### Added

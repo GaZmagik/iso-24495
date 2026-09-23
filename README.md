@@ -118,7 +118,8 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
 - headings, at any depth and in any container;
-- HTML, because its text is prose a reader reads.
+- HTML, because its text is prose a reader reads;
+- a character reference such as `&#97;`, decoded to the character the page shows, except inside code, where the page keeps it as written.
 
 **Not measured, because they are not sentences:**
 

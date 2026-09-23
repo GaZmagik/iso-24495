@@ -15,6 +15,7 @@ import {
   headings,
   mergedSentences,
   proseBlocks,
+  readDocument,
   readerProseBlocks,
   splitSentences,
   wordCount,
@@ -1490,6 +1491,72 @@ ${sentence}`)
       ["Text <!-- unclosed markup.", "Text <!-- unclosed markup."],
     ]) {
       expect(proseBlocks(source)[0]?.lines[0], source).toBe(visible);
+    }
+  });
+
+  test("a character reference is read as the character a reader sees", () => {
+    // GitHub decodes "&#97;" to "a" everywhere except inside code, so "sh&#97;ll"
+    // renders as "shall" and a space written as "&#32;" still separates two words.
+    // The audit read the source and reported nothing for either.
+    expect(rulesFor("The party sh&#97;ll act.")).toContain("legalese");
+    expect(rulesFor("The party sh&#x61;ll act.")).toContain("legalese");
+    const words = Array.from({ length: 31 }, (_, index) => `word${index}`);
+    expect(rulesFor(`${words.join("&#32;")}.`)).toContain("sentence-length");
+    expect(rulesFor(`${words.join("&nbsp;")}.`)).toContain("sentence-length");
+    expect(rulesFor(`# ${words.slice(0, 13).join("&#32;")}`)).toContain("heading-style");
+    expect(rulesFor("# Title&#46;")).toContain("heading-style");
+    expect(headings("# Sh&#97;ll we")[0]?.text).toBe("Shall we");
+    // A decoded full stop ends a sentence and a decoded comma does not, so only the
+    // second of these is one sentence of 33 words.
+    const five = "Five words end right here";
+    const twentyEight = `${words.slice(0, 28).join(" ")}.`;
+    expect(rulesFor(`${five}&#46; ${twentyEight}`)).toEqual([]);
+    expect(rulesFor(`${five}&#44; ${twentyEight}`)).toContain("sentence-length");
+
+    // Inside a code span or a fenced block the reference stays literal, as it does on
+    // the page, so the same text reports nothing and reads back unchanged.
+    expect(rulesFor("Run `sh&#97;ll` now.")).toEqual([]);
+    expect(proseBlocks("Run `sh&#97;ll` now.")[0]?.lines[0]).toBe("Run `sh&#97;ll` now.");
+    expect(rulesFor(["```", "The party sh&#97;ll act.", "```"].join(BREAK))).toEqual([]);
+
+    // A reference is decoded after the syntax around it has been read, so a decoded
+    // bracket opens no link, while a link whose text holds one is still that link.
+    expect(rulesFor("&#91;click here&#93;(x) is text.")).toEqual([]);
+    expect(rulesFor("[cl&#105;ck here](x) is a link.")).toContain("link-text");
+    expect(rulesFor(["| h&#124;i | j |", "|---|---|", "| 1 | 2 |"].join(BREAK)))
+      .not.toContain("table-header");
+    expect(readerProseBlocks('See [the page](x&#97;y "t&#97;").')[0]?.lines[0])
+      .toBe("See the page.");
+  });
+
+  test("a decoded character is written as the mode writes an escaped one", () => {
+    // The prose reader keeps an escape and the line reader blanks it, so a decoded
+    // punctuation mark takes the same form in each: the link pass that follows the
+    // prose reader would otherwise read it as syntax, which the page never does.
+    const slash = String.fromCharCode(92);
+    expect(readerProseBlocks("Terms &amp; conditions &lt;apply&gt; don&#39;t.")[0]?.lines[0])
+      .toBe(`Terms ${slash}& conditions ${slash}<apply${slash}> don${slash}'t.`);
+    expect(readDocument("Terms &amp; conditions.").lines[0]).toBe("Terms    conditions.");
+
+    // The line reader runs twice over a paragraph. A decoded ampersand is blanked on
+    // the first pass, so "&amp;#97;" reads as "&#97;" on the page and here, never "a".
+    expect(readerProseBlocks("See &amp;#97; here.")[0]?.lines[0]).toBe(`See ${slash}&#97; here.`);
+    expect(readDocument("See &amp;#97; here.").lines[0]).toBe("See   #97; here.");
+
+    // A name the renderer does not know, and a reference without its semicolon, are
+    // literal text on the page and stay so here.
+    expect(proseBlocks("A &foo; b &#97 c &amp d.")[0]?.lines[0]).toBe("A &foo; b &#97 c &amp d.");
+
+    // A reference can decode to two characters, and to a line ending, which becomes a
+    // space so that the sentence on the next line keeps its line number.
+    expect(proseBlocks("a&ThickSpace;b")[0]?.lines[0]).toBe("a  b");
+    const long = `${Array.from({ length: 31 }, (_, index) => `w${index}`).join(" ")}.`;
+    for (const ending of ["&#10;", "&#13;", "&NewLine;"]) {
+      expect(auditText(`First${ending}line.${BREAK}${long}`), ending).toEqual([{
+        rule: "sentence-length",
+        line: 2,
+        detail: "31 words (limit 30)",
+      }]);
     }
   });
 

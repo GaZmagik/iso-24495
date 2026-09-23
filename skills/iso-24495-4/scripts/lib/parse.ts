@@ -621,6 +621,12 @@ function withoutInvisible(
 
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
+// A character reference as CommonMark bounds it: a decimal or hexadecimal code
+// point, or a name from the HTML5 entity list, each closed by a semicolon. One
+// without the semicolon is literal text, as it is on GitHub. The pattern is
+// sticky and read from the current index, because slicing the rest of the text
+// at every ampersand would be quadratic.
+const CHARACTER_REFERENCE = /&(?:#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/y;
 
 function abruptCommentClose(afterOpening: string): number {
   if (afterOpening.startsWith("->")) return 2;
@@ -648,6 +654,58 @@ function tickRun(text: string, start: number): number {
   let end = start;
   while (text[end] === "`") end++;
   return end - start;
+}
+
+/** What each reference decoded to, because a document repeats the same few. */
+const decodedReferences = new Map<string, string | null>();
+
+/**
+ * The text a reference stands for, or null where its name is not one.
+ *
+ * The Markdown renderer decodes it, so the entity list lives there and not here. It
+ * hands an unknown name back unchanged, which is also what a reader sees. The
+ * visibility check in scripts/visible-text.ts decodes by HTML's rules instead, which
+ * accept a missing semicolon and remap a legacy code point, because it reads rendered
+ * HTML. This reads Markdown, so the two are deliberately not shared.
+ */
+function decodeReference(reference: string): string | null {
+  const cached = decodedReferences.get(reference);
+  if (cached !== undefined) return cached;
+  const decoded = Bun.markdown.render(reference, {
+    text: (text: string) => text,
+    paragraph: (children: string) => children,
+  });
+  const result = decoded === reference ? null : decoded;
+  decodedReferences.set(reference, result);
+  return result;
+}
+
+/** The reference opening at the index, decoded, or null where the ampersand is text. */
+function referenceAt(text: string, index: number): { decoded: string; length: number } | null {
+  CHARACTER_REFERENCE.lastIndex = index;
+  const match = CHARACTER_REFERENCE.exec(text);
+  if (match === null) return null;
+  const decoded = decodeReference(match[0]);
+  return decoded === null ? null : { decoded, length: match[0].length };
+}
+
+/**
+ * Decoded text, written as the mode already writes an escaped character.
+ *
+ * A reader sees the character, but a decoded bracket opens no link and a decoded pipe
+ * divides no cell, because GitHub decodes after it has read the syntax. ASCII
+ * punctuation therefore goes out as the escape CommonMark uses for the same literal,
+ * which the link pass and the line rules already read that way. A line ending becomes
+ * a space, or every sentence after it would move down a line.
+ */
+function literalText(decoded: string, keepLiteralSyntax: boolean): string {
+  let literal = "";
+  for (const character of decoded) {
+    if (character === "\n" || character === "\r") literal += " ";
+    else if (ESCAPABLE.test(character)) literal += keepLiteralSyntax ? "\\" + character : "  ";
+    else literal += character;
+  }
+  return literal;
 }
 
 /** Remove only inline markup that CommonMark keeps out of rendered text. */
@@ -685,6 +743,17 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
       visible += text.slice(index, index + length);
       index += length;
       continue;
+    }
+    // A reference is read here and nowhere earlier, because a code span keeps it
+    // literal and a tag's attributes are consumed whole below. "sh&#97;ll" rendered
+    // as "shall" and reported nothing while the audit read the source.
+    if (text[index] === "&") {
+      const reference = referenceAt(text, index);
+      if (reference !== null) {
+        visible += literalText(reference.decoded, keepLiteralSyntax);
+        index += reference.length;
+        continue;
+      }
     }
     if (text[index] !== "<") {
       visible += text[index];
