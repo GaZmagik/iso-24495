@@ -96,6 +96,18 @@ describe("hasVisibleText", () => {
     expect(hasVisibleText("&#00000032;")).toBe(true);
   });
 
+  // GitHub's sanitiser removes a script element with its content, and a browser
+  // gives rp no box, so neither shows a reader anything. The published pipeline
+  // unwraps a style element and leaves its text on the page.
+  test("content the page never shows is not visible", () => {
+    for (const text of ["<script>x</script>", "<script>x", "<SCRIPT type=\"x\">y</SCRIPT>", "<rp>(</rp>"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
+    }
+    for (const text of ["<style>x</style>", "<div>a</div><script>b</script>", "<template>x</template>"]) {
+      expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
+    }
+  });
+
   // The audit and this check must see the same characters, or a description
   // could pass one and fail the other. Both now decode through one reader, and
   // this pins the agreement over the cases that once split them.

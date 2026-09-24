@@ -125,7 +125,8 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid, except that `table-header` reads them;
-- YAML front matter, which is metadata;
+- YAML front matter, which is metadata, except in a pull request description, which has none;
+- a script element and its content, which GitHub's sanitiser removes whole, and the content of an `rp` element, which a browser gives no box;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 

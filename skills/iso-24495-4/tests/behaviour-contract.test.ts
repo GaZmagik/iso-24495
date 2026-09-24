@@ -1712,6 +1712,46 @@ ${sentence}`)
       .toEqual(["We shall pay.", ""]);
   });
 
+  test("content the page never shows is not read, and content it shows is", () => {
+    // GitHub's sanitiser removes a script element with its content, and a browser
+    // gives rp no box, so "sh<script>x</script>all" shows "shall". The reader dropped
+    // the tags and kept the content between them, and read "shxall".
+    for (const text of [
+      "We sh<script>x</script>all pay.",
+      'We sh<SCRIPT type="text/javascript">var x = "<b>y</b>";</SCRIPT>all pay.',
+      "We sh<rp>(</rp>all pay.",
+    ]) {
+      expect(rulesFor(text), text).toContain("legalese");
+      expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shall pay.");
+    }
+    // The published pipeline unwraps a style or template element and leaves its
+    // text on the page, so that text is read.
+    for (const text of ["We sh<style>x</style>all pay.", "We sh<template>x</template>all pay."]) {
+      expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shxall pay.");
+      expect(rulesFor(text), text).not.toContain("legalese");
+    }
+    // An unclosed script swallows the rest of its block, as it does on the page.
+    expect(readerProseBlocks("We sh<script>all pay.")[0]?.lines[0]).toBe("We sh");
+    // The line endings inside the element are owed, so later lines keep their numbers.
+    const long = sentenceOf(31);
+    const spanning = ["We sh<script>", "x", "</script>all pay.", long].join(BREAK);
+    expect(readerProseBlocks(spanning)[0]?.lines).toEqual(["We shall pay.", "", "", long]);
+    expect(auditText(spanning).filter((violation) => violation.rule === "sentence-length"))
+      .toEqual([{ rule: "sentence-length", line: 4, detail: "31 words (limit 30)" }]);
+    // A script block of its own empties, and the paragraph after it still reports.
+    const block = ["<script>", "The party shall act.", "</script>", "", "The party shall act."];
+    expect(proseBlocks(block.join(BREAK)).map((b) => b.lines))
+      .toEqual([["", "", ""], ["The party shall act."]]);
+    expect(auditText(block.join(BREAK)).filter((violation) => violation.rule === "legalese"))
+      .toEqual([{ rule: "legalese", line: 5, detail: 'banned term "shall"' }]);
+    // An anchor inside a script is no link on the page.
+    expect(rulesFor('<script><a href="x">click here</a></script>')).toEqual([]);
+    // Inside a code span the element is text, as on the page.
+    const tick = String.fromCharCode(96);
+    const quoted = `Run ${tick}sh<script>x</script>all${tick} now.`;
+    expect(readerProseBlocks(quoted)[0]?.lines[0]).toBe(quoted);
+  });
+
   test("malformed comment openers remain reader-visible prose", () => {
     const legalese = "The supplier shall comply.";
     for (const document of [

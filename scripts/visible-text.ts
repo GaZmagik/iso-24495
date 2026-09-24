@@ -42,7 +42,11 @@ import { decodeHtmlText } from "../skills/iso-24495-4/scripts/lib/character-refe
 export function hasVisibleText(markdown: string): boolean {
   let rendered = "";
   new HTMLRewriter()
-    .onDocument({ text(chunk) { rendered += chunk.text; } })
+    // A script element goes with its content, because GitHub's sanitiser removes
+    // it whole, and rp goes because a browser gives it no box. The audit engine
+    // hides the same two and no others; parse.ts says why the list stops there.
+    .on("script, rp", { text(chunk) { chunk.remove(); } })
+    .onDocument({ text(chunk) { if (!chunk.removed) rendered += chunk.text; } })
     .transform(Bun.markdown.html(markdown));
   return /[\p{L}\p{N}\p{P}\p{S}]/u.test(decodeHtmlText(rendered));
 }

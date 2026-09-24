@@ -742,6 +742,37 @@ function lineEndings(span: string): number {
   return span.split("\n").length - 1;
 }
 
+// The elements whose content never reaches a reader, so the whole element goes,
+// content and all, the way a comment does. The list is the intersection of the
+// sources to hand rather than their union, because hiding text the page shows is
+// a bypass while measuring text the page hides is only a false positive. Every
+// source removes a script element with its content: the sanitiser GitHub's
+// published pipeline used before Selma named script alone, Selma's own default
+// names it among ten, and a browser renders it "display: none". The rp element
+// is the one element that pipeline allows through which the HTML Standard's
+// Rendering section renders "display: none". A style, svg or iframe element is
+// left readable: Selma's default would drop its content, but the published
+// pipeline names no such list and its predecessor unwrapped those elements and
+// showed their text, and what GitHub runs in production cannot be checked here.
+const HIDDEN_CONTENT_ELEMENTS: ReadonlyMap<string, RegExp> = new Map(
+  ["script", "rp"].map((name) => [name, new RegExp(`</${name}[ \\t\\n]*>`, "ig")]),
+);
+
+/**
+ * Where the element the tag opens ends, content and all, or null where the page
+ * shows its content. An element left open runs to the end of the text, as it does
+ * on the page, where everything after it vanishes.
+ */
+function hiddenContentEnd(text: string, start: number, tag: string): number | null {
+  if (tag.startsWith("</")) return null;
+  const name = (TAG_NAME.exec(tag) as RegExpExecArray)[1].toLowerCase();
+  const closing = HIDDEN_CONTENT_ELEMENTS.get(name);
+  if (closing === undefined) return null;
+  closing.lastIndex = start + tag.length;
+  const match = closing.exec(text);
+  return match === null ? text.length : match.index + match[0].length;
+}
+
 function abruptCommentClose(afterOpening: string): number {
   if (afterOpening.startsWith("->")) return 2;
   return afterOpening.startsWith(">") ? 1 : 0;
@@ -876,6 +907,14 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
     const rest = text.slice(index);
     const tag = HTML_TAG_AT_START.exec(rest);
     if (tag !== null) {
+      // An element whose content the page never shows goes whole, in every reading:
+      // an anchor inside a script is no link, so the markup lines lose it too.
+      const hiddenEnd = hiddenContentEnd(text, index, tag[0]);
+      if (hiddenEnd !== null) {
+        owedLineEndings += lineEndings(text.slice(index, hiddenEnd));
+        index = hiddenEnd;
+        continue;
+      }
       // A separating element's tag leaves a space where its box begins or ends. Any
       // other tag leaves nothing, and its line endings are owed to the next one.
       if (keepHtmlTags) emit(tag[0]);
