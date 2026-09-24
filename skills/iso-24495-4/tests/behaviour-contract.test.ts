@@ -1934,6 +1934,7 @@ ${sentence}`)
     expect(readDocument(description).hidden(1)).toBe(true);
     const asText = { frontMatter: false };
     expect(auditText(description, asText)).toEqual([
+      { rule: "legalese", line: 2, detail: 'banned term "shall"' },
       { rule: "heading-style", line: 2, detail: "heading ends with a full stop" },
     ]);
     expect(headings(description, asText))
@@ -1950,6 +1951,44 @@ ${sentence}`)
     // The option changes nothing for a document without a leading block.
     const plain = ["Body text.", "", "---", "note: The tenant shall pay.", "---"].join(BREAK);
     expect(auditText(plain, asText)).toEqual(auditText(plain));
+  });
+
+  // A reader reads a heading, so the rules about words read it too. The rules about
+  // sentences stay out, because a heading is not a sentence and heading-style already
+  // bounds its length. "## The tenant shall pay" once reported nothing in any document.
+  test("the rules about words read headings, and the rules about sentences do not", () => {
+    expect(auditText("## The tenant shall pay")).toEqual([
+      { rule: "legalese", line: 1, detail: 'banned term "shall"' },
+    ]);
+    const loaded = "## In order to utilise each and every record, failure is not uncommon";
+    expect(rulesFor(loaded).sort())
+      .toEqual(["complex-word", "double-negative", "doublet", "wordy-phrase"]);
+    // A setext heading, a quoted heading and a later heading carry their own lines.
+    expect(auditText(["The tenant shall pay", "---"].join(BREAK)).map((v) => [v.rule, v.line]))
+      .toEqual([["legalese", 1]]);
+    expect(rulesFor("> ## The tenant shall pay")).toEqual(["legalese"]);
+    expect(auditText(["Plain text.", "", "### The tenant shall pay"].join(BREAK))
+      .map((v) => [v.rule, v.line])).toEqual([["legalese", 3]]);
+    // A heading inside a fence is code, and a banned word named in a code span is a
+    // mention rather than a use, in a heading as in prose.
+    expect(rulesFor(["```", "## The tenant shall pay", "```"].join(BREAK))).toEqual([]);
+    const tick = String.fromCharCode(96);
+    expect(rulesFor(`## Avoid ${tick}shall${tick}`)).toEqual([]);
+    // The rules about sentences leave a heading alone: its length is heading-style's.
+    const long = `## ${Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ")}`;
+    expect(rulesFor(long)).toEqual(["heading-style"]);
+    expect(rulesFor("## First check the logs, second restart it, and third tell the team"))
+      .not.toContain("prose-enumeration");
+    expect(rulesFor("# Certainly! The guide")).not.toContain("filler-opening");
+    // An acronym used only in a heading is not reported: the heading is usually the
+    // name of the thing, and a use in prose beneath it reports there.
+    expect(rulesFor("## The DOM")).toEqual([]);
+    expect(rulesFor(["## The DOM", "", "The DOM loads first."].join(BREAK)))
+      .toEqual(["acronym-undefined"]);
+    // The front matter case from the last round, without its full stop, now reports.
+    const description = ["---", "note: The tenant shall pay", "---"].join(BREAK);
+    expect(auditText(description, { frontMatter: false }).map((v) => [v.rule, v.line]))
+      .toEqual([["legalese", 2]]);
   });
 
   // A soft line break is a space to the reader, so a definition wrapped across two

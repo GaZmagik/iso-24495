@@ -11,6 +11,7 @@ import {
   normaliseReference,
   readerProseBlocks,
   readDocument,
+  type ProseBlock,
   type Reading,
   locateSentences,
   wordCount,
@@ -511,9 +512,48 @@ const PROPER_NAME_CONTEXT = new RegExp(
   "i",
 );
 
+/**
+ * The blocks a reader reads as words: every prose block, and every heading as a
+ * block of one line, in the order they appear.
+ *
+ * The rules about words read these. The rules about sentences read prose alone,
+ * because a heading is not a sentence, and heading-style already bounds its length.
+ * The acronym rule reads prose alone too: the definition scan already reads a
+ * heading, a use in the prose beneath one reports there, and a heading that holds
+ * an acronym is usually the name of the thing, so a use there is not reported.
+ */
+function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
+  const blocks = [
+    ...readerProseBlocks(text, reading),
+    ...headings(text, reading).map((heading) => ({ line: heading.line, lines: [heading.text] })),
+  ];
+  return blocks.sort((a, b) => a.line - b.line);
+}
+
+function legaleseViolations(text: string, reading: Reading): Violation[] {
+  const violations: Violation[] = [];
+  for (const block of readerTextBlocks(text, reading)) {
+    for (let i = 0; i < block.lines.length; i++) {
+      const line = block.lines[i];
+      for (const term of LEGALESE) {
+        const matches = withoutNamedTerms(line, term)
+          .match(new RegExp(`\\b${term}\\b`, "gi"));
+        for (let n = 0; n < (matches?.length ?? 0); n++) {
+          violations.push({
+            rule: "legalese",
+            line: block.line + i,
+            detail: `banned term "${term}"`,
+          });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
 function doubletViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of readerTextBlocks(text, reading)) {
     // The advice itself names "to" and "in order to" rather than using them.
     const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
@@ -711,7 +751,7 @@ function withoutNamedTerms(line: string, term: string): string {
 
 function complexWordViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of readerTextBlocks(text, reading)) {
     for (let i = 0; i < block.lines.length; i++) {
       const line = block.lines[i];
       for (const match of line.matchAll(/[A-Za-z']+/g)) {
@@ -731,7 +771,7 @@ function complexWordViolations(text: string, reading: Reading): Violation[] {
 
 function doubleNegativeViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of readerTextBlocks(text, reading)) {
     // Named rather than used: the rule's own description quotes the phrase.
     const paragraph = block.lines.join("\n");
     for (const phrase of DOUBLE_NEGATIVES) {
@@ -815,7 +855,7 @@ function tableHeaderViolations(text: string, reading: Reading): Violation[] {
 
 function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of readerTextBlocks(text, reading)) {
     // The advice itself names "to" and "in order to" rather than using them.
     const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
@@ -930,21 +970,8 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
         detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
       });
     }
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
-      for (const term of LEGALESE) {
-        const matches = withoutNamedTerms(line, term)
-          .match(new RegExp(`\\b${term}\\b`, "gi"));
-        for (let n = 0; n < (matches?.length ?? 0); n++) {
-          violations.push({
-            rule: "legalese",
-            line: block.line + i,
-            detail: `banned term "${term}"`,
-          });
-        }
-      }
-    }
   }
+  violations.push(...legaleseViolations(text, reading));
   // The standards specify an average across the document, not a cap; the cap
   // above only catches genuine sprawl. Small samples are exempt because an
   // average over a handful of sentences is noise, not judgement.
