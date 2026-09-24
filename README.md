@@ -112,6 +112,8 @@ The ISO texts are licensed, so the standards themselves cost money. Everything i
 
 A rule can only be as right as the text it reads. So the engine parses Markdown the way CommonMark describes it: each line is matched against the containers already open, then against any container it starts. What remains is the block a rule measures. That is what lets a wrapped list item, a quotation continuing without its marker, and a heading written inside a list all be read correctly.
 
+The parser decides where each block is, and the Markdown renderer decides what its text shows. GitHub's tag filter is applied to what the renderer writes, and an HTML tokeniser reads the text, so emphasis, links and inline HTML read as the page shows them. The rules about words and sentences read that text, and so does the check that a pull request description shows any text at all.
+
 **Measured, because a reader reads them:**
 
 - paragraphs, wherever they sit;
@@ -119,6 +121,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - quotations, including GitHub alerts such as `> [!WARNING]`;
 - headings, at any depth and in any container;
 - HTML, because its text is prose a reader reads;
+- a script or style tag and what it holds, because GitHub's tag filter shows them as text;
 - a character reference such as `&#97;`, decoded to the character the page shows, except inside code, where the page keeps it as written. Markdown text follows CommonMark, which needs the semicolon. A raw HTML block follows the HTML tokeniser instead, which accepts `&#97` without one, as the browser does.
 
 **Not measured, because they are not sentences:**
@@ -126,7 +129,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid, except that `table-header` reads them;
 - YAML front matter, which is metadata, except in a pull request description, which has none;
-- a script element and its content, which GitHub's sanitiser removes whole, and the content of an `rp` element, which a browser gives no box;
+- the content of a `video`, `audio` or `rp` element, which a browser does not show;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 

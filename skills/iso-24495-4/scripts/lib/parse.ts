@@ -10,6 +10,7 @@
 
 import { htmlReferenceAt, markdownReferenceAt } from "./character-references.ts";
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
+import { isFilteredTag, renderedText, SEPARATING_ELEMENTS } from "./rendered-text.ts";
 
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
@@ -260,6 +261,10 @@ interface Parsed {
   markup: string[];
   /** Valid link reference labels in this document. */
   references: Set<string>;
+  /** Each prose block's source lines, before the inline reader touched them. */
+  sources: string[][];
+  /** The link reference definitions, as written, for rendering a block alone. */
+  definitions: string[];
 }
 
 export function normaliseReference(label: string): string {
@@ -366,6 +371,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const readable = [...lines];
   const markup = [...lines];
   const references = new Set<string>();
+  const definitions: string[] = [];
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -542,6 +548,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
       const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
       if (label !== undefined) references.add(normaliseReference(label));
+      definitions.push(text.trim());
       readable[i] = "";
       markup[i] = "";
       continue;
@@ -626,7 +633,9 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     paragraph.lines.push(text.trimStart());
   }
 
+  const sources: string[][] = [];
   for (const block of paragraphs) {
+    sources.push(block.lines);
     const source = block.lines.join("\n");
     const rawHtml = block.rawHtml === true;
     const forLineRules = visibleInline(source, { keepLiteralSyntax: false, rawHtml }).split("\n");
@@ -638,11 +647,61 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     }
     block.lines = visibleInline(source, { rawHtml }).split("\n");
   }
-  for (const heading of found) {
-    heading.text = visibleText(heading.text, references);
-  }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references };
+  return {
+    paragraphs, headings: found, hidden, tables, readable, markup, references, sources, definitions,
+  };
+}
+
+/**
+ * The lines of a block as the page shows them, one for each source line.
+ *
+ * The block is rendered alone, with the document's link reference definitions after
+ * it, so a reference link resolves as it does in the whole document. A blank line
+ * keeps the definitions out of the block's last paragraph.
+ *
+ * A footnote body such as "[^1]: A note." is text on GitHub, but the renderer has no
+ * footnotes and reads it as a link reference definition, which shows nothing. Its
+ * opening bracket is escaped, so the renderer shows it as the text it is.
+ *
+ * Markdown can take a line ending with it and leave nothing in the HTML to show it
+ * was there: a reference label or a code span that runs over a line. The block then
+ * renders shorter than its source, and is realigned to it.
+ */
+function renderedLines(lines: readonly string[], definitions: readonly string[]): string[] {
+  const source = lines.join("\n").replace(/^( {0,3})\[\^/, "$1\\[^");
+  const withDefinitions = definitions.length > 0 && source.includes("[")
+    ? `${source}\n\n${definitions.join("\n")}`
+    : source;
+  const rendered = renderedText(withDefinitions, { altText: true, codeDelimiters: true }).split("\n");
+  return alignedToSource(rendered, lines);
+}
+
+/**
+ * Rendered lines placed on the source lines they came from.
+ *
+ * Each rendered line goes on the next source line that holds its first word, and no
+ * later than leaves room for the lines still to place. Padding the end instead moved
+ * every sentence after a wrapped reference label up a line.
+ */
+function alignedToSource(rendered: string[], source: readonly string[]): string[] {
+  if (rendered.length >= source.length) return rendered;
+  const aligned: string[] = [];
+  rendered.forEach((line, index) => {
+    const latest = source.length - (rendered.length - index);
+    const word = line.trim().split(/\s+/)[0] as string;
+    let target = aligned.length;
+    for (let at = aligned.length; word !== "" && at <= latest; at++) {
+      if ((source[at] as string).includes(word)) {
+        target = at;
+        break;
+      }
+    }
+    while (aligned.length < target) aligned.push("");
+    aligned.push(line);
+  });
+  while (aligned.length < source.length) aligned.push("");
+  return aligned;
 }
 
 /** The next line's text, with the same containers stripped, or none. */
@@ -711,24 +770,9 @@ const BLOCK_ELEMENT_NAMES: ReadonlySet<string> = new Set([
 ]);
 const COMPLETE_TAG_LINE = new RegExp("^ {0,3}" + HTML_TAG_AT_START.source.slice(1) + "[ \\t]*$");
 
-// The elements whose tag separates the text on either side of it, and every other
-// tag joins that text. The Rendering section of the HTML Standard (15.3) gives
-// these a box of their own: "display: block" for the flow, sectioning, list and
-// form elements, "display: table" and its parts, "display: list-item" for li, and a
-// line break for br. Every other element renders inline by default, a comment or a
-// processing instruction renders nothing, and an element rendered "display: none"
-// has no box, so "sh<em>all</em>", "sh<!-- x -->all" and "sh<script></script>all"
-// all show one word. An inline-block control such as input or button is inline
-// too, and joins under this rule. The reader replaced every tag with a space, so
-// the audit read "sh all" where the page showed "shall".
-const SEPARATING_ELEMENTS: ReadonlySet<string> = new Set([
-  "html", "body", "address", "blockquote", "center", "dialog", "div", "figure", "figcaption",
-  "footer", "form", "header", "hr", "legend", "listing", "main", "p", "plaintext", "pre",
-  "search", "xmp", "article", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "nav",
-  "section", "dir", "dd", "dl", "dt", "menu", "ol", "ul", "li", "fieldset", "details",
-  "summary", "option", "optgroup", "table", "caption", "colgroup", "col", "thead", "tbody",
-  "tfoot", "tr", "td", "th", "br",
-]);
+// The line rules read markup through this reader rather than the renderer, because
+// they need the tags. It joins and separates text at the same elements the renderer
+// route does, so "sh<em>all</em>" and "sh<!-- x -->all" show one word here too.
 const TAG_NAME = /^<\/?([A-Za-z][A-Za-z0-9-]*)/;
 
 /** True when the tag's element separates the text on either side of it. */
@@ -743,20 +787,16 @@ function lineEndings(span: string): number {
 }
 
 // The elements whose content never reaches a reader, so the whole element goes,
-// content and all, the way a comment does. The list is the intersection of the
-// sources to hand rather than their union, because hiding text the page shows is
-// a bypass while measuring text the page hides is only a false positive. Every
-// source removes a script element with its content: the sanitiser GitHub's
-// published pipeline used before Selma named script alone, Selma's own default
-// names it among ten, and a browser renders it "display: none". The rp element
-// is the one element that pipeline allows through which the HTML Standard's
-// Rendering section renders "display: none". A style, svg or iframe element is
-// left readable: Selma's default would drop its content, but the published
-// pipeline names no such list and its predecessor unwrapped those elements and
-// showed their text, and what GitHub runs in production cannot be checked here.
-const HIDDEN_CONTENT_ELEMENTS: ReadonlyMap<string, RegExp> = new Map(
-  ["script", "rp"].map((name) => [name, new RegExp(`</${name}[ \\t\\n]*>`, "ig")]),
-);
+// content and all, the way a comment does: the same three the renderer route hides.
+// A script element is not among them. GitHub's tag filter writes its "<" as text, so
+// the page shows the tag and everything in it. An rp element ends at its end tag, or
+// where an rt or rp element starts or its ruby element ends, because its end tag may
+// be left out there.
+const HIDDEN_CONTENT_ELEMENTS: ReadonlyMap<string, RegExp> = new Map([
+  ["rp", /<\/rp[ \t\n]*>|(?=<(?:rt|rp)[ \t\n>/]|<\/ruby[ \t\n]*>)/ig],
+  ["video", /<\/video[ \t\n]*>/ig],
+  ["audio", /<\/audio[ \t\n]*>/ig],
+]);
 
 /**
  * Where the element the tag opens ends, content and all, or null where the page
@@ -906,7 +946,7 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
 
     const rest = text.slice(index);
     const tag = HTML_TAG_AT_START.exec(rest);
-    if (tag !== null) {
+    if (tag !== null && !isFilteredTag(tag[0])) {
       // An element whose content the page never shows goes whole, in every reading:
       // an anchor inside a script is no link, so the markup lines lose it too.
       const hiddenEnd = hiddenContentEnd(text, index, tag[0]);
@@ -951,23 +991,6 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
 }
 
 const BACKSLASH = "\\";
-const NEWLINE = "\n";
-
-function countLines(text: string): number {
-  return text.split(NEWLINE).length;
-}
-
-/**
- * Keep the label, and keep the line count.
- *
- * A link destination or title may hold a line ending. Deleting it with the rest of the
- * markup moved every later sentence in the block one line up, so a finding pointed at an
- * innocent line. The removed text always follows the label, so the endings go on the end.
- */
-function keepLines(whole: string, kept: string): string {
-  const removed = countLines(whole) - countLines(kept);
-  return removed > 0 ? kept + NEWLINE.repeat(removed) : kept;
-}
 
 /**
  * Where each "[" meets its partner, matched in one pass.
@@ -1145,87 +1168,37 @@ export function markdownLinks(text: string): MarkdownLink[] {
   return links;
 }
 
-/** Where a link's label begins, past the "[" and any "!" before it. */
-function labelStart(link: MarkdownLink): number {
-  return link.start + (link.image ? 2 : 1);
-}
-
-/** The label a reader sees in place of a link, or the link untouched where it stays. */
-function flattenedLink(
-  link: MarkdownLink,
-  whole: string,
-  label: string,
-  references?: ReadonlySet<string>,
-): string {
-  // An empty label is still a link, and a reader sees nothing where it stands. Leaving it
-  // as written counted its destination and title as prose. The rule that reports a link
-  // with no text reads the source lines, so it is unaffected.
-  if (link.kind === "inline") return keepLines(whole, label);
-  const named = link.kind === "reference" ? link.target || link.label : link.label;
-  return references?.has(normaliseReference(named)) ? keepLines(whole, label) : whole;
-}
-
-/**
- * Replace every link and image with the label a reader sees.
- *
- * A label may hold a link or an image of its own, so the labels are closed with a stack
- * rather than by reading each one again from the start. Every character is then read
- * once, however deeply the text nests.
- */
-function flattenLinks(text: string, references?: ReadonlySet<string>): string {
-  const open: Array<{ link: MarkdownLink; label: string }> = [];
-  let flattened = "";
-  let at = 0;
-  const write = (fragment: string): void => {
-    const inner = open.at(-1);
-    if (inner === undefined) flattened += fragment;
-    else inner.label += fragment;
-  };
-  const close = (): void => {
-    const inner = open.pop() as { link: MarkdownLink; label: string };
-    inner.label += text.slice(at, labelStart(inner.link) + inner.link.label.length);
-    at = inner.link.end;
-    write(flattenedLink(inner.link, text.slice(inner.link.start, at), inner.label, references));
-  };
-  for (const link of markdownLinks(text)) {
-    while (open.length > 0) {
-      const inner = open.at(-1) as { link: MarkdownLink; label: string };
-      if (link.start < labelStart(inner.link) + inner.link.label.length) break;
-      close();
-    }
-    write(text.slice(at, link.start));
-    at = labelStart(link);
-    open.push({ link, label: "" });
-  }
-  while (open.length > 0) close();
-  return flattened + text.slice(at);
-}
-
-
-function visibleText(text: string, references?: ReadonlySet<string>): string {
-  return flattenLinks(visibleInline(text), references);
-}
-
 /** Collect prose paragraphs: what a reader reads as sentences. */
 export function proseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
   return parse(toLines(text), reading).paragraphs;
 }
 
-/** Prose reduced to the words a reader meets, without link destinations. */
+/**
+ * Prose reduced to the words a reader meets, as the page shows them.
+ *
+ * The block parser decides where each block is and which lines it holds, and the
+ * renderer decides what its text shows. The rules about words and sentences read this.
+ */
 export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
   const parsed = parse(toLines(text), reading);
-  return parsed.paragraphs.map((block) => ({
+  return parsed.paragraphs.map((block, index) => ({
     line: block.line,
-    // A raw HTML block has no link to flatten: "[a](b)" there is text on the page.
-    lines: block.rawHtml === true
-      ? block.lines
-      : visibleText(block.lines.join("\n"), parsed.references).split("\n"),
+    lines: renderedLines(parsed.sources[index] as string[], parsed.definitions),
   }));
 }
 
-/** Heading levels with their 1-indexed line numbers. */
+/**
+ * Heading levels with their 1-indexed line numbers, and the text each shows.
+ *
+ * The text is rendered as a heading's content, so "1. Scope" stays a heading's words
+ * rather than becoming a list item.
+ */
 export function headings(text: string, reading: Reading = {}): Heading[] {
-  return parse(toLines(text), reading).headings;
+  const parsed = parse(toLines(text), reading);
+  return parsed.headings.map((heading) => ({
+    ...heading,
+    text: renderedLines([`# ${heading.text}`], parsed.definitions)[0] as string,
+  }));
 }
 
 /**

@@ -96,14 +96,18 @@ describe("hasVisibleText", () => {
     expect(hasVisibleText("&#00000032;")).toBe(true);
   });
 
-  // GitHub's sanitiser removes a script element with its content, and a browser
-  // gives rp no box, so neither shows a reader anything. The published pipeline
-  // unwraps a style element and leaves its text on the page.
+  // A browser gives rp no box, and shows a video or audio element's controls
+  // rather than its fallback text, so none of these shows a reader anything.
+  // GitHub's tag filter writes the "<" of a script or style tag as text, so the
+  // page shows the tag, and the published pipeline unwraps a template element.
   test("content the page never shows is not visible", () => {
-    for (const text of ["<script>x</script>", "<script>x", "<SCRIPT type=\"x\">y</SCRIPT>", "<rp>(</rp>"]) {
+    for (const text of ["<rp>(</rp>", "<video>x</video>", "<AUDIO controls>x</AUDIO>"]) {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
     }
-    for (const text of ["<style>x</style>", "<div>a</div><script>b</script>", "<template>x</template>"]) {
+    for (const text of [
+      "<script>x</script>", "<script>x", "<SCRIPT type=\"x\">y</SCRIPT>", "<style>x</style>",
+      "<div>a</div><script>b</script>", "<template>x</template>", "<ruby><rp>(<rt>x</rt></ruby>",
+    ]) {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
     }
   });
@@ -126,6 +130,10 @@ describe("hasVisibleText", () => {
       "&#00000032;",
       "&#97ll",
       "&nbsp;",
+      "<div>&nb<em>sp;</em></div>",
+      "<video>Plain words.</video>",
+      "<script>x</script>",
+      "<ruby><rp>(<rt>x</rt></ruby>",
     ]) {
       const audited = readerProseBlocks(text)
         .some((block) => block.lines.some((line) => visible.test(line)));

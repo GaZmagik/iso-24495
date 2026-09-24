@@ -427,7 +427,14 @@ function acronymViolations(text: string, known: ReadonlySet<string>, reading: Re
     const block = blockOfLine.get(i);
     if (block === undefined || block !== previousBlock) recent = [];
     previousBlock = block;
-    const sourceLine = document.lines[i] as string;
+    // A prose line is read as the page shows it, the text the uses below are found in,
+    // so a definition and a use on one line are compared at the same columns. The
+    // source line kept "**" that the page does not show, and put a definition after
+    // its own use. A heading or a table row has no prose block, and is read as written.
+    const shown = block === undefined ? undefined : blocks[block] as ProseBlock;
+    const sourceLine = shown === undefined
+      ? document.lines[i] as string
+      : shown.lines[i - (shown.line - 1)] as string;
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");

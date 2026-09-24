@@ -542,8 +542,9 @@ describe("reader-facing behaviour contracts", () => {
 
     // Reference and shortcut forms are unchanged, here and on the released engine.
     const shortcut = "[[click here]] follows." + "\n\n" + "[click here]: /uri";
+    // CommonMark reads the inner pair as a shortcut link and the outer brackets as text.
     expect(readerProseBlocks(shortcut)[0]?.lines.join(""))
-      .toBe("[[click here]] follows.");
+      .toBe("[click here] follows.");
   });
 
   test("a linked badge is read, and an alt text is not read as elements", () => {
@@ -1544,18 +1545,19 @@ ${sentence}`)
       .toBe("See the page.");
   });
 
-  test("a decoded character is written as the mode writes an escaped one", () => {
-    // The prose reader keeps an escape and the line reader blanks it, so a decoded
-    // punctuation mark takes the same form in each: the link pass that follows the
-    // prose reader would otherwise read it as syntax, which the page never does.
-    const slash = String.fromCharCode(92);
+  test("a decoded character is written as the character the page shows", () => {
+    // The prose reader reads the rendered page, where links are already resolved, so
+    // a decoded punctuation mark is only the character. Writing it as an escape put a
+    // backslash inside a quotation, and "&quot;shall&quot;" was reported as used.
     expect(readerProseBlocks("Terms &amp; conditions &lt;apply&gt; don&#39;t.")[0]?.lines[0])
-      .toBe(`Terms ${slash}& conditions ${slash}<apply${slash}> don${slash}'t.`);
+      .toBe("Terms & conditions <apply> don't.");
+    expect(rulesFor('Replace "shall" with "must".')).not.toContain("legalese");
+    expect(rulesFor("Replace &quot;shall&quot; with &quot;must&quot;.")).not.toContain("legalese");
+    // The line reader still blanks it, because the line rules read syntax.
     expect(readDocument("Terms &amp; conditions.").lines[0]).toBe("Terms    conditions.");
 
-    // The line reader runs twice over a paragraph. A decoded ampersand is blanked on
-    // the first pass, so "&amp;#97;" reads as "&#97;" on the page and here, never "a".
-    expect(readerProseBlocks("See &amp;#97; here.")[0]?.lines[0]).toBe(`See ${slash}&#97; here.`);
+    // "&amp;#97;" reads as "&#97;" on the page and here, never "a".
+    expect(readerProseBlocks("See &amp;#97; here.")[0]?.lines[0]).toBe("See &#97; here.");
     expect(readDocument("See &amp;#97; here.").lines[0]).toBe("See   #97; here.");
 
     // A name the renderer does not know, and a reference without its semicolon, are
@@ -1586,7 +1588,7 @@ ${sentence}`)
     expect(rulesFor(`<div>${words.join("&#32")}.</div>`)).toContain("sentence-length");
     expect(rulesFor(`<div>${words.join("&nbsp")}.</div>`)).toContain("sentence-length");
     // Any number of leading zeros, and a legacy name, decode as the page decodes them.
-    expect(readerProseBlocks("<div>a&#00000032;b &copy c</div>")[0]?.lines[0]).toBe(" a b © c ");
+    expect(readerProseBlocks("<div>a&#00000032;b &copy c</div>")[0]?.lines[0]).toBe("a b © c");
 
     // Outside an HTML block the same text is Markdown, where CommonMark requires the
     // semicolon, so the page shows the reference as written and so does the audit.
@@ -1613,9 +1615,9 @@ ${sentence}`)
     // self-closing pre tag: the specification's text excludes the latter, but the
     // reference implementation and the renderer both open a block for it, and the
     // fixture is checked against the reference.
-    // A pre element is a block of its own, so its tag leaves a space; a script element
-    // has no box at all, so its tag leaves nothing.
-    for (const [opener, gap] of [["</pre>", " "], ["<pre/>", " "], ["</script>", ""]]) {
+    // A pre element is a block of its own, so its tag leaves a space. GitHub's tag
+    // filter shows a script tag as text, so the page shows "</script>" as written.
+    for (const [opener, gap] of [["</pre>", " "], ["<pre/>", " "], ["</script>", "</script>"]]) {
       const lone = [opener, legalese].join(BREAK);
       expect(rulesFor(lone), opener).toContain("legalese");
       expect(proseBlocks(lone).map((block) => block.lines), opener)
@@ -1654,12 +1656,15 @@ ${sentence}`)
       .toBe(` The party ${tick}shall act${tick} now. `);
     expect(rulesFor(ticked)).not.toContain("legalese");
     const slash = String.fromCharCode(92);
-    expect(readerProseBlocks(`<div>x ${slash}&#97; y</div>`)[0]?.lines[0]).toBe(` x ${slash}a y `);
+    // The page shows "x \a y". A backslash the page shows is written escaped, because
+    // the sentence scanners read a backslash as syntax and read the pair back as one.
+    expect(readerProseBlocks(`<div>x ${slash}&#97; y</div>`)[0]?.lines[0])
+      .toBe(`x ${slash}${slash}a y`);
     expect(readerProseBlocks("<div>See [the page](x) now.</div>")[0]?.lines[0])
-      .toBe(" See [the page](x) now. ");
+      .toBe("See [the page](x) now.");
     // A tag and a comment inside the block are markup, as they are on the page: the
-    // div is a box of its own, while the inline tag and the comment leave no gap.
-    expect(readerProseBlocks("<div>a <b>b</b> <!-- c --> d</div>")[0]?.lines[0]).toBe(" a b  d ");
+    // inline tag and the comment leave no gap.
+    expect(readerProseBlocks("<div>a <b>b</b> <!-- c --> d</div>")[0]?.lines[0]).toBe("a b  d");
   });
 
   test("markup inside a word joins or separates it as the page does", () => {
@@ -1713,39 +1718,51 @@ ${sentence}`)
   });
 
   test("content the page never shows is not read, and content it shows is", () => {
-    // GitHub's sanitiser removes a script element with its content, and a browser
-    // gives rp no box, so "sh<script>x</script>all" shows "shall". The reader dropped
-    // the tags and kept the content between them, and read "shxall".
+    // A browser gives rp no box, and shows a video or audio element's controls
+    // rather than its fallback text, so none of that content is read.
     for (const text of [
-      "We sh<script>x</script>all pay.",
-      'We sh<SCRIPT type="text/javascript">var x = "<b>y</b>";</SCRIPT>all pay.',
       "We sh<rp>(</rp>all pay.",
+      "We sh<video>x</video>all pay.",
+      "We sh<audio>x</audio>all pay.",
     ]) {
       expect(rulesFor(text), text).toContain("legalese");
       expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shall pay.");
     }
-    // The published pipeline unwraps a style or template element and leaves its
-    // text on the page, so that text is read.
-    for (const text of ["We sh<style>x</style>all pay.", "We sh<template>x</template>all pay."]) {
-      expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shxall pay.");
+    // An rp element's end tag may be left out before an rt element, where the rt
+    // text shows. Hiding everything after the rp hid the sentence.
+    expect(readerProseBlocks("<ruby><rp>(<rt>We shall pay.</rt></ruby>")[0]?.lines[0])
+      .toBe("We shall pay.");
+    expect(rulesFor("A plain paragraph.\n\n<ruby><rp>(<rt>We shall pay.</rt></ruby>"))
+      .toContain("legalese");
+    // GitHub's tag filter writes the "<" of a script or style tag as text, so the
+    // page shows the tags and everything between them. Reading "shall" here would
+    // report a word the page never shows; dropping the content hid a sentence it does.
+    for (const text of [
+      "We sh<script>x</script>all pay.",
+      'We sh<SCRIPT type="text/javascript">x</SCRIPT>all pay.',
+      "We sh<style>x</style>all pay.",
+    ]) {
       expect(rulesFor(text), text).not.toContain("legalese");
+      expect(readerProseBlocks(text)[0]?.lines[0], text).toBe(text);
     }
-    // An unclosed script swallows the rest of its block, as it does on the page.
-    expect(readerProseBlocks("We sh<script>all pay.")[0]?.lines[0]).toBe("We sh");
-    // The line endings inside the element are owed, so later lines keep their numbers.
+    expect(rulesFor("A plain paragraph.\n\n<script>We shall pay.</script>")).toContain("legalese");
+    // A tag the filter does not name is a tag like any other.
+    expect(readerProseBlocks("We sh<scriptx>all pay.")[0]?.lines[0]).toBe("We shall pay.");
+    // The published pipeline unwraps a template element and leaves its text on the page.
+    expect(readerProseBlocks("We sh<template>x</template>all pay.")[0]?.lines[0])
+      .toBe("We shxall pay.");
+    // The line endings inside hidden content are owed, so later lines keep their numbers.
     const long = sentenceOf(31);
-    const spanning = ["We sh<script>", "x", "</script>all pay.", long].join(BREAK);
+    const spanning = ["We sh<video>", "x", "</video>all pay.", long].join(BREAK);
     expect(readerProseBlocks(spanning)[0]?.lines).toEqual(["We shall pay.", "", "", long]);
     expect(auditText(spanning).filter((violation) => violation.rule === "sentence-length"))
       .toEqual([{ rule: "sentence-length", line: 4, detail: "31 words (limit 30)" }]);
-    // A script block of its own empties, and the paragraph after it still reports.
+    // A script block shows its sentence, and so does the paragraph after it.
     const block = ["<script>", "The party shall act.", "</script>", "", "The party shall act."];
-    expect(proseBlocks(block.join(BREAK)).map((b) => b.lines))
-      .toEqual([["", "", ""], ["The party shall act."]]);
-    expect(auditText(block.join(BREAK)).filter((violation) => violation.rule === "legalese"))
-      .toEqual([{ rule: "legalese", line: 5, detail: 'banned term "shall"' }]);
-    // An anchor inside a script is no link on the page.
-    expect(rulesFor('<script><a href="x">click here</a></script>')).toEqual([]);
+    expect(auditText(block.join(BREAK)).filter((violation) => violation.rule === "legalese")
+      .map((violation) => violation.line)).toEqual([2, 5]);
+    // The tag filter leaves an anchor inside a script as a link on the page.
+    expect(rulesFor('<script><a href="x">click here</a></script>')).toContain("link-text");
     // Inside a code span the element is text, as on the page.
     const tick = String.fromCharCode(96);
     const quoted = `Run ${tick}sh<script>x</script>all${tick} now.`;

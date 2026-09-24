@@ -4,7 +4,7 @@
 // review found a construct the list had missed. So the Markdown renderer now
 // decides what a reader sees, and this reads what it rendered.
 
-import { decodeHtmlText } from "../skills/iso-24495-4/scripts/lib/character-references.ts";
+import { renderedText } from "../skills/iso-24495-4/scripts/lib/rendered-text.ts";
 
 /**
  * Whether the rendered document holds one character a reader can see.
@@ -31,22 +31,11 @@ import { decodeHtmlText } from "../skills/iso-24495-4/scripts/lib/character-refe
  * An image is not text, so a description holding only an image fails, whatever
  * its alternative text says.
  *
- * The rendered document is HTML, so its references decode by HTML's rules, as
- * the browser decodes them. That is right for both kinds of text: the renderer
- * has already decoded a Markdown reference and re-encoded the ampersand, so
- * "&#97ll" outside HTML arrives as "&amp;#97ll" and reads back as the text the
- * page shows, while a raw HTML block arrives as written and decodes as the page
- * decodes it. The audit engine reads the same reader, so the two cannot
- * disagree about what a reference shows.
+ * The text comes from the same reader the audit engine reads, rendered-text.ts,
+ * so the two cannot disagree about what the page shows: which tags GitHub's tag
+ * filter shows as text, which elements hide their content, and what a reference
+ * decodes to.
  */
 export function hasVisibleText(markdown: string): boolean {
-  let rendered = "";
-  new HTMLRewriter()
-    // A script element goes with its content, because GitHub's sanitiser removes
-    // it whole, and rp goes because a browser gives it no box. The audit engine
-    // hides the same two and no others; parse.ts says why the list stops there.
-    .on("script, rp", { text(chunk) { chunk.remove(); } })
-    .onDocument({ text(chunk) { if (!chunk.removed) rendered += chunk.text; } })
-    .transform(Bun.markdown.html(markdown));
-  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(decodeHtmlText(rendered));
+  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(renderedText(markdown));
 }
