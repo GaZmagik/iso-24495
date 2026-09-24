@@ -96,17 +96,19 @@ describe("hasVisibleText", () => {
     expect(hasVisibleText("&#00000032;")).toBe(true);
   });
 
-  // A browser gives rp no box, and shows a video or audio element's controls
-  // rather than its fallback text, so none of these shows a reader anything.
-  // GitHub's tag filter writes the "<" of a script or style tag as text, so the
-  // page shows the tag, and the published pipeline unwraps a template element.
+  // A browser gives rp no box, and shows a video element's controls rather than
+  // its fallback text. GitHub removes a script element the tag filter misses, with
+  // its content. GitHub's tag filter writes the "<" of a script or style tag as
+  // text, so the page shows the tag, and GitHub unwraps an audio or template
+  // element and leaves its text.
   test("content the page never shows is not visible", () => {
-    for (const text of ["<rp>(</rp>", "<video>x</video>", "<AUDIO controls>x</AUDIO>"]) {
+    for (const text of ["<rp>(</rp>", "<video>x</video>", "<div><script/x>Plain words.</script></div>"]) {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(false);
     }
     for (const text of [
       "<script>x</script>", "<script>x", "<SCRIPT type=\"x\">y</SCRIPT>", "<style>x</style>",
       "<div>a</div><script>b</script>", "<template>x</template>", "<ruby><rp>(<rt>x</rt></ruby>",
+      "<AUDIO controls>x</AUDIO>",
     ]) {
       expect(hasVisibleText(text), JSON.stringify(text)).toBe(true);
     }

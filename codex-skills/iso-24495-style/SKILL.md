@@ -141,12 +141,12 @@ After:  I found two things in this project.
         0% for that module. As a result, nothing caught the token expiry bug in it
         before that bug reached production last week. I recommend adding unit tests
         for:
-        - **Token validation:** confirm that expired tokens are rejected.
-        - **Session refresh:** confirm that valid sessions refresh correctly.
-        - **Permission checks:** confirm that unauthorised requests are rejected.
+        - **Token validation**
+        - **The session refresh logic**
+        - **Permission checks**
 ```
 
-The "after" keeps "the next major release" apart from version 4.0, because the "before" never says they are the same release.
+The "after" keeps "the next major release" apart from version 4.0, because the "before" never says they are the same release. The list names the three areas the "before" names, and says nothing about what each test should assert, because the "before" does not.
 
 ### Legal writing (Part 2)
 
@@ -284,12 +284,13 @@ After:  **System purpose:** The `TokenBucket` class exists to keep the applicati
 
         **Implementation detail:** The class is in
         [`rate_limiter.py:L34-L89`](file:///path/to/rate_limiter.py#L34-L89). It
-        implements the token bucket algorithm and uses a mutex for thread safety.
-        It takes a capacity and a refill rate. Its `consume()` method blocks until
-        tokens are available.
+        implements the token bucket algorithm, which lets a call through while a
+        token remains and adds tokens back at a fixed rate. It uses a mutex, a lock
+        that lets one thread in at a time, for thread safety. It takes a capacity and
+        a refill rate. Its `consume()` method blocks until tokens are available.
 ```
 
-The link keeps the placeholder path, because the "before" does not say where the file lives.
+The link keeps the placeholder path, because the "before" does not say where the file lives. Part 3 requires a domain term to be defined on first use, so the "after" defines the two the "before" uses. Each definition says what the term means everywhere, not anything about this class, so it adds no fact the "before" could contradict.
 
 #### 13. One name for one thing, defined on first use
 

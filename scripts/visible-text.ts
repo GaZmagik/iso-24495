@@ -4,6 +4,7 @@
 // review found a construct the list had missed. So the Markdown renderer now
 // decides what a reader sees, and this reads what it rendered.
 
+import { withoutUnreferencedFootnotes } from "../skills/iso-24495-4/scripts/lib/parse.ts";
 import { renderedText } from "../skills/iso-24495-4/scripts/lib/rendered-text.ts";
 
 /**
@@ -34,8 +35,15 @@ import { renderedText } from "../skills/iso-24495-4/scripts/lib/rendered-text.ts
  * The text comes from the same reader the audit engine reads, rendered-text.ts,
  * so the two cannot disagree about what the page shows: which tags GitHub's tag
  * filter shows as text, which elements hide their content, and what a reference
- * decodes to.
+ * decodes to. A footnote nothing refers to shows nothing on GitHub, so it is
+ * removed first. A description has no front matter, so a leading "---" block is
+ * read as the text GitHub shows.
  */
 export function hasVisibleText(markdown: string): boolean {
-  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(renderedText(markdown));
+  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(shownText(markdown));
+}
+
+/** The text a description shows on GitHub, as this check reads it. */
+export function shownText(markdown: string): string {
+  return renderedText(withoutUnreferencedFootnotes(markdown, { frontMatter: false }));
 }

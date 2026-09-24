@@ -1680,19 +1680,24 @@ ${sentence}`)
       "We sh<!DOCTYPE x>all pay.",
       "We sh<wbr>all pay.",
       "We sh<custom-element>all</custom-element> pay.",
+      // GitHub unwraps a form, and the HTML parser ignores a table cell outside a table.
+      "<div>We sh<form></form>all pay.</div>",
+      "We sh<td>all pay.",
     ]) {
       expect(rulesFor(text), text).toContain("legalese");
       expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shall pay.");
     }
-    // An element the HTML Standard renders as its own block, table part, list item
-    // or line break separates the text on either side of it.
+    // An element GitHub keeps and a browser renders as its own block, list item or
+    // line break separates the text on either side of it, and so does a start tag
+    // that closes the paragraph around it.
     for (const text of [
       "We sh<br>all pay.",
       "We sh<br/>all pay.",
       "We sh<div>all</div> pay.",
       "We sh<p>all pay.",
       "We sh<li>all pay.",
-      "We sh<td>all pay.",
+      "We sh<address>all</address> pay.",
+      "<table><tr><td>We sh</td><td>all pay.</td></tr></table>",
       "We sh<hr>all pay.",
       "We sh<h2>all</h2> pay.",
       "We sh<summary>all</summary> pay.",
@@ -1723,7 +1728,6 @@ ${sentence}`)
     for (const text of [
       "We sh<rp>(</rp>all pay.",
       "We sh<video>x</video>all pay.",
-      "We sh<audio>x</audio>all pay.",
     ]) {
       expect(rulesFor(text), text).toContain("legalese");
       expect(readerProseBlocks(text)[0]?.lines[0], text).toBe("We shall pay.");

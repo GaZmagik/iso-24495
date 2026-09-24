@@ -52,27 +52,46 @@ export function isFilteredTag(tag: string): boolean {
 // No term a rule names is a line break, so no finding changes.
 const NEWLINE_REFERENCE = /&(?:#0*1[03]|#[xX]0*[aAdD]|NewLine);/g;
 
-// The elements whose tag separates the text on either side of it, and every other
-// tag joins that text. The Rendering section of the HTML Standard (15.3) gives
-// these a box of their own: "display: block" for the flow, sectioning, list and
-// form elements, "display: table" and its parts, "display: list-item" for li, and a
-// line break for br. Every other element renders inline, so "sh<em>all</em>" shows
-// one word.
+// GitHub sanitises what its renderer writes: an element on its allowlist is kept,
+// and any other element is unwrapped, its tags removed and its text left in place.
+// Only a kept element can give text a box of its own, so these are the elements
+// that are both kept and rendered as a block, a table part or a line break. An
+// unwrapped one joins the text either side of it, as "sh<form></form>all" shows
+// "shall". Each name was put to GitHub's Markdown API, and the answers are recorded
+// in tests/fixtures/github-rendered.ts.
 export const SEPARATING_ELEMENTS: ReadonlySet<string> = new Set([
-  "html", "body", "address", "blockquote", "center", "dialog", "div", "figure", "figcaption",
-  "footer", "form", "header", "hr", "legend", "listing", "main", "p", "plaintext", "pre",
-  "search", "xmp", "article", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "nav",
-  "section", "dir", "dd", "dl", "dt", "menu", "ol", "ul", "li", "fieldset", "details",
-  "summary", "option", "optgroup", "table", "caption", "colgroup", "col", "thead", "tbody",
+  "blockquote", "div", "hr", "p", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "section",
+  "dd", "dl", "dt", "ol", "ul", "li", "details", "summary", "table", "thead", "tbody",
   "tfoot", "tr", "td", "th", "br",
 ]);
 
-// The elements GitHub keeps whose content a browser does not show. A video or an
-// audio element shows its controls, and its fallback text only where the browser
-// cannot play media at all. The HTML Standard's Rendering section gives rp
-// "display: none". An rp element's end tag may be left out when an rt or rp element
+// The elements whose content never reaches a reader. GitHub keeps a video element,
+// and a browser shows its controls rather than its fallback text, while an audio
+// element is unwrapped and its text shows. A browser gives rp "display: none". A
+// script element that gets past the tag filter, such as "<script/x>", is removed
+// by the sanitiser with everything in it, up to the end of the document if it
+// never closes. An rp element's end tag may be left out when an rt or rp element
 // follows it or its ruby element ends, which the rules below follow.
-const HIDDEN_ELEMENTS = "video, audio";
+const HIDDEN_ELEMENTS: ReadonlySet<string> = new Set(["video", "script"]);
+
+// Where a block element starts or ends, the text either side belongs to separate
+// blocks, even inside one raw HTML block. This mark records that for the parser,
+// and reads as whitespace to everything else.
+export const BLOCK_BOUNDARY = "\f";
+
+const TABLE_PARTS: ReadonlySet<string> = new Set(["thead", "tbody", "tfoot", "tr", "td", "th"]);
+
+// The start tags that close an open p element, from the "in body" insertion mode of
+// the HTML parser GitHub runs. The sanitiser may then unwrap the element, but the
+// paragraph has already ended, so "A sh<address>y</address>all" shows "A sh" and
+// "yall" as two blocks. Outside a paragraph the same tag closes nothing. GitHub's
+// parser predates dialog and search joining this list, and GitHub's answers show it.
+const CLOSES_PARAGRAPH: ReadonlySet<string> = new Set([
+  "address", "article", "aside", "blockquote", "center", "details", "dir", "div", "dl",
+  "fieldset", "figcaption", "figure", "footer", "header", "hgroup", "main", "menu", "nav",
+  "ol", "p", "section", "summary", "ul", "h1", "h2", "h3", "h4", "h5", "h6", "pre",
+  "listing", "form", "table", "hr", "li", "dd", "dt",
+]);
 
 /** The longest run of backticks in the text. */
 function longestTickRun(text: string): number {
@@ -196,15 +215,37 @@ function escapedText(text: string): string {
  * line is the exception: it reads on the line the content opened on.
  */
 export function textOfHtml(html: string, reading: RenderedReading = {}): string {
+  return readHtml(html, reading, []).text;
+}
+
+/** What a fragment shows, and the hidden elements it leaves open for what follows. */
+export interface ReadFragment {
+  text: string;
+  /** Hidden elements opened and not closed, innermost last. */
+  open: string[];
+}
+
+/**
+ * Read a fragment that may sit inside hidden elements an earlier fragment opened.
+ *
+ * A raw HTML block can open a video element and leave it open across a blank line,
+ * and the paragraphs after it then sit inside the video, hidden, until it closes.
+ * Each block is rendered alone, so the elements still open are carried to the next.
+ */
+export function readHtml(html: string, reading: RenderedReading, carried: readonly string[]): ReadFragment {
   let text = "";
   let raw = "";
-  let hiddenDepth = 0;
+  // The carried elements are opened again by the tags written in front of the
+  // fragment, so the list starts empty and the handlers fill it.
+  const open: string[] = [];
+  let tables = 0;
+  let paragraphOpen = false;
   let inFallback = false;
   let codeDepth = 0;
   let code = "";
   let owedLineEndings = 0;
 
-  const hidden = (): boolean => hiddenDepth > 0 || inFallback;
+  const hidden = (): boolean => open.length > 0 || inFallback;
   const write = (fragment: string): void => {
     if (codeDepth > 0) {
       code += fragment;
@@ -218,6 +259,9 @@ export function textOfHtml(html: string, reading: RenderedReading = {}): string 
     text += fragment;
   };
   const separate = (): void => {
+    if (text !== "") write(BLOCK_BOUNDARY);
+  };
+  const breakLine = (): void => {
     if (text !== "" && !/\s$/.test(text)) write(" ");
   };
   const closeCode = (): void => {
@@ -229,38 +273,57 @@ export function textOfHtml(html: string, reading: RenderedReading = {}): string 
     write(fence + content + fence);
   };
 
-  new HTMLRewriter()
-    .on(HIDDEN_ELEMENTS, {
-      element(element) {
-        hiddenDepth += 1;
-        element.onEndTag(() => { hiddenDepth -= 1; });
-      },
-    })
-    .on("rp", {
-      element(element) {
-        inFallback = true;
-        element.onEndTag(() => { inFallback = false; });
-      },
-    })
-    .on("rt", { element() { inFallback = false; } })
-    .on("ruby", { element(element) { element.onEndTag(() => { inFallback = false; }); } })
-    .on("code", {
-      element(element) {
-        codeDepth += 1;
-        element.onEndTag(closeCode);
-      },
-    })
-    .on("img", {
-      element(element) {
-        const alt = element.getAttribute("alt");
-        if (!reading.altText || alt === null || hidden()) return;
+  // One handler reads every element. HTMLRewriter keeps a single end tag handler per
+  // element, so separate handlers for p, table and the separating elements replaced
+  // one another, and a paragraph and a table never closed.
+  const start = (name: string, element: HTMLRewriterTypes.Element): (() => void)[] => {
+    const atEnd: (() => void)[] = [];
+    if (CLOSES_PARAGRAPH.has(name)) {
+      if (paragraphOpen) separate();
+      paragraphOpen = false;
+    }
+    if (name === "p") {
+      paragraphOpen = true;
+      atEnd.push(() => { paragraphOpen = false; });
+    } else if (name === "table") {
+      tables += 1;
+      atEnd.push(() => { tables -= 1; });
+    } else if (HIDDEN_ELEMENTS.has(name)) {
+      open.push(name);
+      atEnd.push(() => { open.splice(open.lastIndexOf(name), 1); });
+    } else if (name === "rp") {
+      inFallback = true;
+      atEnd.push(() => { inFallback = false; });
+    } else if (name === "rt") {
+      inFallback = false;
+    } else if (name === "ruby") {
+      atEnd.push(() => { inFallback = false; });
+    } else if (name === "code") {
+      codeDepth += 1;
+      atEnd.push(closeCode);
+    } else if (name === "img") {
+      const alt = element.getAttribute("alt");
+      if (reading.altText && alt !== null && !hidden()) {
         write(escapedText(decodeHtmlText(alt).replace(/[\r\n]/g, " ")));
-      },
-    })
-    .on([...SEPARATING_ELEMENTS].join(", "), {
+      }
+    } else if (name === "br") {
+      breakLine();
+    }
+    // The HTML parser ignores a table part outside a table, so its text joins.
+    if (name !== "br" && SEPARATING_ELEMENTS.has(name) && !(TABLE_PARTS.has(name) && tables === 0)) {
+      separate();
+      atEnd.push(separate);
+    }
+    return atEnd;
+  };
+
+  new HTMLRewriter()
+    .on("*", {
       element(element) {
-        separate();
-        if (element.canHaveContent) element.onEndTag(separate);
+        const atEnd = start(element.tagName, element);
+        if (atEnd.length > 0 && element.canHaveContent) {
+          element.onEndTag(() => { for (const action of atEnd) action(); });
+        }
       },
     })
     .onDocument({
@@ -277,18 +340,25 @@ export function textOfHtml(html: string, reading: RenderedReading = {}): string 
         write(codeDepth > 0 ? decoded : escapedText(decoded));
       },
     })
-    .transform(lineEndingsOutsideMarkup(html));
+    // The HTML parser reads a "</br>" end tag as a line break, as the standard says it must.
+    .transform(carried.map((name) => `<${name}>`).join("")
+      + lineEndingsOutsideMarkup(html).replace(/<\/br[ \t\n]*>/gi, "<br>"));
 
   // A code element left open still shows its text, as the page shows it.
   if (codeDepth > 0) {
     codeDepth = 1;
     closeCode();
   }
-  return text.replace(/\s+$/, "");
+  return { text: text.replace(/\s+$/, ""), open };
 }
 
 /** The text a Markdown fragment shows on GitHub. */
 export function renderedText(markdown: string, reading: RenderedReading = {}): string {
+  return readMarkdown(markdown, reading, []).text;
+}
+
+/** Read a Markdown fragment inside the hidden elements an earlier one left open. */
+export function readMarkdown(markdown: string, reading: RenderedReading, carried: readonly string[]): ReadFragment {
   const html = Bun.markdown.html(markdown.replace(NEWLINE_REFERENCE, "&#32;"));
-  return textOfHtml(withTagFilter(html), reading);
+  return readHtml(withTagFilter(html), reading, carried);
 }

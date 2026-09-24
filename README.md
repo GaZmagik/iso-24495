@@ -114,6 +114,8 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 The parser decides where each block is, and the Markdown renderer decides what its text shows. GitHub's tag filter is applied to what the renderer writes, and an HTML tokeniser reads the text, so emphasis, links and inline HTML read as the page shows them. The rules about words and sentences read that text, and so does the check that a pull request description shows any text at all.
 
+GitHub also sanitises the page. It keeps the elements on its allowlist and unwraps the rest, so only a kept block element separates two words. The reader follows what GitHub's own Markdown API returned for 290 documents, recorded in `skills/iso-24495-4/tests/fixtures/github-rendered.ts`. It reads 284 of them the same way, and each of the other six carries its reason.
+
 **Measured, because a reader reads them:**
 
 - paragraphs, wherever they sit;
@@ -122,6 +124,7 @@ The parser decides where each block is, and the Markdown renderer decides what i
 - headings, at any depth and in any container;
 - HTML, because its text is prose a reader reads;
 - a script or style tag and what it holds, because GitHub's tag filter shows them as text;
+- a footnote something refers to, where it is written, without its label;
 - a character reference such as `&#97;`, decoded to the character the page shows, except inside code, where the page keeps it as written. Markdown text follows CommonMark, which needs the semicolon. A raw HTML block follows the HTML tokeniser instead, which accepts `&#97` without one, as the browser does.
 
 **Not measured, because they are not sentences:**
@@ -129,7 +132,9 @@ The parser decides where each block is, and the Markdown renderer decides what i
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid, except that `table-header` reads them;
 - YAML front matter, which is metadata, except in a pull request description, which has none;
-- the content of a `video`, `audio` or `rp` element, which a browser does not show;
+- the content of a `video` or `rp` element, which a browser does not show;
+- a script element the tag filter misses, such as `<script/x>`, which GitHub removes with everything after it;
+- a footnote nothing refers to, which GitHub leaves off the page;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 

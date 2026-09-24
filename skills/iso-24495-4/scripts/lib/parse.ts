@@ -10,7 +10,7 @@
 
 import { htmlReferenceAt, markdownReferenceAt } from "./character-references.ts";
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
-import { isFilteredTag, renderedText, SEPARATING_ELEMENTS } from "./rendered-text.ts";
+import { BLOCK_BOUNDARY, isFilteredTag, readMarkdown, SEPARATING_ELEMENTS } from "./rendered-text.ts";
 
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
@@ -19,6 +19,8 @@ export interface ProseBlock {
   lines: string[];
   /** Set on a raw HTML block, whose text is read by HTML's rules rather than Markdown's. */
   rawHtml?: boolean;
+  /** Set on a footnote's body, to the label its references name, in lower case. */
+  footnote?: string;
 }
 
 export interface Heading {
@@ -67,6 +69,8 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // which is why its label starts with "^" and it is not here.
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*/;
+const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\](?!:)/g;
 
 /**
  * A conservative single-line link reference definition.
@@ -265,6 +269,8 @@ interface Parsed {
   sources: string[][];
   /** The link reference definitions, as written, for rendering a block alone. */
   definitions: string[];
+  /** The footnote labels the document refers to, in lower case. */
+  footnoteReferences: Set<string>;
 }
 
 export function normaliseReference(label: string): string {
@@ -542,6 +548,16 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       closeParagraph();
       if (text.trim() === "") continue;
     }
+    // A footnote's body shows at the foot of the page without its label, and only
+    // where something refers to it, so the label comes off here and the block is
+    // marked with it.
+    const footnote = paragraph === null ? FOOTNOTE_DEFINITION.exec(text) : null;
+    if (footnote !== null) {
+      paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: footnote[1].toLowerCase() };
+      paragraphDepth = stack.length;
+      paragraphs.push(paragraph);
+      continue;
+    }
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
@@ -648,8 +664,15 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     block.lines = visibleInline(source, { rawHtml }).split("\n");
   }
 
+  const footnoteReferences = new Set<string>();
+  lines.forEach((line, index) => {
+    if (hidden.has(index)) return;
+    for (const match of line.matchAll(FOOTNOTE_REFERENCE)) footnoteReferences.add(match[1].toLowerCase());
+  });
+
   return {
     paragraphs, headings: found, hidden, tables, readable, markup, references, sources, definitions,
+    footnoteReferences,
   };
 }
 
@@ -658,23 +681,110 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
  *
  * The block is rendered alone, with the document's link reference definitions after
  * it, so a reference link resolves as it does in the whole document. A blank line
- * keeps the definitions out of the block's last paragraph.
- *
- * A footnote body such as "[^1]: A note." is text on GitHub, but the renderer has no
- * footnotes and reads it as a link reference definition, which shows nothing. Its
- * opening bracket is escaped, so the renderer shows it as the text it is.
+ * keeps the definitions out of the block's last paragraph. It is read inside any
+ * hidden element an earlier raw HTML block left open.
  *
  * Markdown can take a line ending with it and leave nothing in the HTML to show it
  * was there: a reference label or a code span that runs over a line. The block then
  * renders shorter than its source, and is realigned to it.
  */
-function renderedLines(lines: readonly string[], definitions: readonly string[]): string[] {
-  const source = lines.join("\n").replace(/^( {0,3})\[\^/, "$1\\[^");
+function renderedLines(
+  lines: readonly string[],
+  definitions: readonly string[],
+  carried: readonly string[],
+): { lines: string[]; open: string[] } {
+  const source = lines.join("\n");
   const withDefinitions = definitions.length > 0 && source.includes("[")
     ? `${source}\n\n${definitions.join("\n")}`
     : source;
-  const rendered = renderedText(withDefinitions, { altText: true, codeDelimiters: true }).split("\n");
-  return alignedToSource(rendered, lines);
+  const read = readMarkdown(withDefinitions, { altText: true, codeDelimiters: true }, carried);
+  return { lines: alignedToSource(read.text.split("\n"), lines), open: read.open };
+}
+
+/**
+ * A rendered block split where the page starts a new one.
+ *
+ * One raw HTML block can hold six paragraphs, and counting them as one reported a
+ * paragraph six sentences long that the page never shows. A block boundary at the
+ * start or end of a line starts a new block there. One inside a line only separates
+ * the words either side, because a block cannot start partway through a line here.
+ */
+function splitAtBoundaries(line: number, lines: readonly string[]): ProseBlock[] {
+  const blocks: ProseBlock[] = [];
+  let current: ProseBlock | null = null;
+  // Spaces and tabs are trimmed by hand, because trimStart counts the mark itself
+  // as whitespace and would remove it before it was seen.
+  lines.forEach((text, offset) => {
+    if (current === null || /^[ \t]*\f/.test(text)) {
+      current = { line: line + offset, lines: [] };
+      blocks.push(current);
+    }
+    current.lines.push(text.replace(/^[\s\f]*\f|\f[\s\f]*$/g, "").replaceAll(BLOCK_BOUNDARY, " "));
+    if (/\f[ \t]*$/.test(text)) current = null;
+  });
+  return blocks;
+}
+
+/** The blocks and headings of a document, as the page shows them. */
+interface Shown {
+  blocks: ProseBlock[];
+  headings: Heading[];
+}
+
+/** The last document read, because every rule asks for the same one in turn. */
+let shownCache: { text: string; frontMatter: boolean | undefined; shown: Shown } | null = null;
+
+/**
+ * Render every block and heading in the order they appear.
+ *
+ * They are read in order, because a hidden element a raw HTML block leaves open
+ * hides what follows it. Only a raw HTML block carries one on: a paragraph's own
+ * end tag closes whatever it opened, as a browser closes it. A footnote nothing
+ * refers to shows nothing, so its block is left out.
+ */
+function shownDocument(text: string, reading: Reading): Shown {
+  if (shownCache !== null && shownCache.text === text && shownCache.frontMatter === reading.frontMatter) {
+    return shownCache.shown;
+  }
+  const parsed = parse(toLines(text), reading);
+  const items: Array<{ line: number; block?: number; heading?: Heading }> = [
+    ...parsed.paragraphs.map((block, index) => ({ line: block.line, block: index })),
+    ...parsed.headings.map((heading) => ({ line: heading.line, heading })),
+  ].sort((a, b) => a.line - b.line);
+  const shown: Shown = { blocks: [], headings: [] };
+  let open: string[] = [];
+  for (const item of items) {
+    if (item.heading !== undefined) {
+      const read = renderedLines([`# ${item.heading.text}`], parsed.definitions, open);
+      const heading = (read.lines[0] as string).replaceAll(BLOCK_BOUNDARY, " ").trim();
+      shown.headings.push({ ...item.heading, text: heading });
+      continue;
+    }
+    const block = parsed.paragraphs[item.block as number] as ProseBlock;
+    if (block.footnote !== undefined && !parsed.footnoteReferences.has(block.footnote)) continue;
+    const read = renderedLines(parsed.sources[item.block as number] as string[], parsed.definitions, open);
+    if (block.rawHtml === true) open = read.open;
+    shown.blocks.push(...splitAtBoundaries(block.line, read.lines));
+  }
+  shownCache = { text, frontMatter: reading.frontMatter, shown };
+  return shown;
+}
+
+/**
+ * The document with every footnote nothing refers to removed, as the page removes it.
+ *
+ * The visibility check renders the whole document, and the renderer has no footnotes,
+ * so it would count an unused one as text.
+ */
+export function withoutUnreferencedFootnotes(text: string, reading: Reading = {}): string {
+  const lines = toLines(text);
+  const parsed = parse(lines, reading);
+  parsed.paragraphs.forEach((block, index) => {
+    if (block.footnote === undefined || parsed.footnoteReferences.has(block.footnote)) return;
+    const length = (parsed.sources[index] as string[]).length;
+    for (let at = block.line - 1; at < block.line - 1 + length; at++) lines[at] = "";
+  });
+  return lines.join("\n");
 }
 
 /**
@@ -788,14 +898,14 @@ function lineEndings(span: string): number {
 
 // The elements whose content never reaches a reader, so the whole element goes,
 // content and all, the way a comment does: the same three the renderer route hides.
-// A script element is not among them. GitHub's tag filter writes its "<" as text, so
-// the page shows the tag and everything in it. An rp element ends at its end tag, or
-// where an rt or rp element starts or its ruby element ends, because its end tag may
-// be left out there.
+// A script tag the tag filter names never reaches this, because it is read as text
+// first; one written "<script/x>" does, and GitHub removes it with its content. An rp
+// element ends at its end tag, or where an rt or rp element starts or its ruby element
+// ends, because its end tag may be left out there.
 const HIDDEN_CONTENT_ELEMENTS: ReadonlyMap<string, RegExp> = new Map([
   ["rp", /<\/rp[ \t\n]*>|(?=<(?:rt|rp)[ \t\n>/]|<\/ruby[ \t\n]*>)/ig],
   ["video", /<\/video[ \t\n]*>/ig],
-  ["audio", /<\/audio[ \t\n]*>/ig],
+  ["script", /<\/script[ \t\n]*>/ig],
 ]);
 
 /**
@@ -1180,11 +1290,7 @@ export function proseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
  * renderer decides what its text shows. The rules about words and sentences read this.
  */
 export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
-  const parsed = parse(toLines(text), reading);
-  return parsed.paragraphs.map((block, index) => ({
-    line: block.line,
-    lines: renderedLines(parsed.sources[index] as string[], parsed.definitions),
-  }));
+  return shownDocument(text, reading).blocks.map((block) => ({ ...block, lines: [...block.lines] }));
 }
 
 /**
@@ -1194,11 +1300,7 @@ export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlo
  * rather than becoming a list item.
  */
 export function headings(text: string, reading: Reading = {}): Heading[] {
-  const parsed = parse(toLines(text), reading);
-  return parsed.headings.map((heading) => ({
-    ...heading,
-    text: renderedLines([`# ${heading.text}`], parsed.definitions)[0] as string,
-  }));
+  return shownDocument(text, reading).headings.map((heading) => ({ ...heading }));
 }
 
 /**
