@@ -397,18 +397,22 @@ function acronymViolations(text: string, known: ReadonlySet<string>, reading: Re
   const violations: Violation[] = [];
   const defined = new Set<string>();
   const seen = new Set<string>();
-  const definitionLocations = new Map<string, { line: number; column: number }>();
+  const definitionLocations = new Map<string, { line: number; block: number; column: number }>();
   const document = readDocument(text, reading);
   const blocks = readerProseBlocks(text, reading);
-  // The block each line sits in. The words before a parenthesis carry across a soft
-  // line break, which is a space to the reader, so "identity and access" wrapped
-  // before "management (IAM)" still spells the acronym. They never carry across a
+  // The blocks each line holds, in order: one raw HTML line can hold several
+  // paragraphs. The words before a parenthesis carry across a soft line break, which
+  // is a space to the reader, so "identity and access" wrapped before
+  // "management (IAM)" still spells the acronym. They never carry across a
   // paragraph, a list item or a heading, which end the sentence the reader is in.
-  const blockOfLine = new Map<number, number>();
+  const fragmentsOfLine = new Map<number, Array<{ block: number; text: string }>>();
   blocks.forEach((block, id) => {
-    for (let offset = 0; offset < block.lines.length; offset++) {
-      blockOfLine.set(block.line - 1 + offset, id);
-    }
+    block.lines.forEach((line, offset) => {
+      const at = block.line - 1 + offset;
+      const fragments = fragmentsOfLine.get(at);
+      if (fragments === undefined) fragmentsOfLine.set(at, [{ block: id, text: line }]);
+      else fragments.push({ block: id, text: line });
+    });
   });
   // Only the last few words before a parenthesis can spell the acronym inside it, so
   // they are carried forward rather than recovered by slicing the line from its start
@@ -424,30 +428,28 @@ function acronymViolations(text: string, known: ReadonlySet<string>, reading: Re
   let previousBlock: number | undefined;
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
-    const block = blockOfLine.get(i);
-    if (block === undefined || block !== previousBlock) recent = [];
-    previousBlock = block;
     // A prose line is read as the page shows it, the text the uses below are found in,
     // so a definition and a use on one line are compared at the same columns. The
     // source line kept "**" that the page does not show, and put a definition after
     // its own use. A heading or a table row has no prose block, and is read as written.
-    const shown = block === undefined ? undefined : blocks[block] as ProseBlock;
-    const sourceLine = shown === undefined
-      ? document.lines[i] as string
-      : shown.lines[i - (shown.line - 1)] as string;
-    let scanned = 0;
-    for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
-      const key = match[1].replaceAll(".", "");
-      carry(sourceLine.slice(scanned, match.index));
-      scanned = match.index;
-      if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
-      if (!definitionLocations.has(key)) {
-        definitionLocations.set(key, { line: i + 1, column: match.index });
+    const fragments = fragmentsOfLine.get(i) ?? [{ block: -1, text: document.lines[i] as string }];
+    for (const fragment of fragments) {
+      if (fragment.block === -1 || fragment.block !== previousBlock) recent = [];
+      previousBlock = fragment.block;
+      let scanned = 0;
+      for (const match of fragment.text.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
+        const key = match[1].replaceAll(".", "");
+        carry(fragment.text.slice(scanned, match.index));
+        scanned = match.index;
+        if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
+        if (!definitionLocations.has(key)) {
+          definitionLocations.set(key, { line: i + 1, block: fragment.block, column: match.index });
+        }
       }
+      carry(fragment.text.slice(scanned));
     }
-    carry(sourceLine.slice(scanned));
   }
-  for (const block of blocks) {
+  for (const [blockId, block] of blocks.entries()) {
     const tokens = block.lines.flatMap((line, lineIndex) =>
       [...line.matchAll(/\S+/g)].map((match) => ({
         raw: match[0],
@@ -496,9 +498,12 @@ function acronymViolations(text: string, known: ReadonlySet<string>, reading: Re
       // sits in a run that is not shouting. "ENABLE MFA" reports MFA alone.
       if (COMMON_WORDS.has(acronym.key.toLowerCase())) continue;
       const definition = definitionLocations.get(acronym.key);
+      // On one line, an earlier block comes first, and within a block the column decides.
       const definitionPrecedes = definition !== undefined
         && (definition.line < tokens[i].line
-          || (definition.line === tokens[i].line && definition.column <= tokens[i].column));
+          || (definition.line === tokens[i].line
+            && (definition.block < blockId
+              || (definition.block === blockId && definition.column <= tokens[i].column))));
       if (definitionPrecedes
         || defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);

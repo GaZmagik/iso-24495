@@ -250,6 +250,13 @@ interface Container {
   kind: "quote" | "item";
   /** For an item, the column its content starts at. */
   column: number;
+  /** Set on a footnote's body, which holds its paragraphs the way a list item does. */
+  footnote?: string;
+}
+
+/** The footnote whose body holds the current line, if any. */
+function footnoteOf(stack: readonly Container[]): string | undefined {
+  return stack.findLast((container) => container.footnote !== undefined)?.footnote;
 }
 
 interface Parsed {
@@ -269,8 +276,6 @@ interface Parsed {
   sources: string[][];
   /** The link reference definitions, as written, for rendering a block alone. */
   definitions: string[];
-  /** The footnote labels the document refers to, in lower case. */
-  footnoteReferences: Set<string>;
 }
 
 export function normaliseReference(label: string): string {
@@ -525,7 +530,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const html = htmlBlockStart(text, paragraph !== null);
     if (html !== null) {
       closeParagraph();
-      const block: ProseBlock = { line: i + 1, lines: [text.trimStart()], rawHtml: true };
+      const block: ProseBlock = { line: i + 1, lines: [text.trimStart()], rawHtml: true, footnote: footnoteOf(stack) };
       paragraphs.push(block);
       // An element closed on its opening line is a block of that line alone.
       if (html.closes === null || !html.closes.test(text)) {
@@ -551,9 +556,13 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // A footnote's body shows at the foot of the page without its label, and only
     // where something refers to it, so the label comes off here and the block is
     // marked with it.
+    // Its body holds later paragraphs indented four columns, as a list item does, so
+    // it opens a container, and every block inside it carries the label.
     const footnote = paragraph === null ? FOOTNOTE_DEFINITION.exec(text) : null;
     if (footnote !== null) {
-      paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: footnote[1].toLowerCase() };
+      const label = footnote[1].toLowerCase();
+      stack.push({ kind: "item", column: 4, footnote: label });
+      paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: label };
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
       continue;
@@ -642,7 +651,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     }
 
     if (paragraph === null) {
-      paragraph = { line: i + 1, lines: [] };
+      paragraph = { line: i + 1, lines: [], footnote: footnoteOf(stack) };
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
@@ -664,15 +673,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     block.lines = visibleInline(source, { rawHtml }).split("\n");
   }
 
-  const footnoteReferences = new Set<string>();
-  lines.forEach((line, index) => {
-    if (hidden.has(index)) return;
-    for (const match of line.matchAll(FOOTNOTE_REFERENCE)) footnoteReferences.add(match[1].toLowerCase());
-  });
-
   return {
     paragraphs, headings: found, hidden, tables, readable, markup, references, sources, definitions,
-    footnoteReferences,
   };
 }
 
@@ -704,31 +706,47 @@ function renderedLines(
 /**
  * A rendered block split where the page starts a new one.
  *
- * One raw HTML block can hold six paragraphs, and counting them as one reported a
- * paragraph six sentences long that the page never shows. A block boundary at the
- * start or end of a line starts a new block there. One inside a line only separates
- * the words either side, because a block cannot start partway through a line here.
+ * One raw HTML block can hold six paragraphs, on six lines or on one, and counting
+ * them as one reported a paragraph six sentences long that the page never shows.
+ * Every block boundary starts a new block, partway through a line if it falls
+ * there; that block's first line is the rest of the line. A block holding no words,
+ * such as the line an opening tag stands on, is left out.
  */
 function splitAtBoundaries(line: number, lines: readonly string[]): ProseBlock[] {
   const blocks: ProseBlock[] = [];
   let current: ProseBlock | null = null;
-  // Spaces and tabs are trimmed by hand, because trimStart counts the mark itself
-  // as whitespace and would remove it before it was seen.
   lines.forEach((text, offset) => {
-    if (current === null || /^[ \t]*\f/.test(text)) {
-      current = { line: line + offset, lines: [] };
-      blocks.push(current);
-    }
-    current.lines.push(text.replace(/^[\s\f]*\f|\f[\s\f]*$/g, "").replaceAll(BLOCK_BOUNDARY, " "));
-    if (/\f[ \t]*$/.test(text)) current = null;
+    text.split(/[ \t]*\f[ \t\f]*/).forEach((part, index) => {
+      if (index > 0) current = null;
+      if (index > 0 && part === "") return;
+      if (current === null) {
+        current = { line: line + offset, lines: [] };
+        blocks.push(current);
+      }
+      current.lines.push(part);
+    });
   });
-  return blocks;
+  return blocks.filter((block) => block.lines.some((text) => text.trim() !== ""));
 }
 
 /** The blocks and headings of a document, as the page shows them. */
 interface Shown {
   blocks: ProseBlock[];
   headings: Heading[];
+  /** The footnote labels something on the page refers to, in lower case. */
+  footnotes: Set<string>;
+}
+
+/**
+ * The footnote labels a piece of shown text refers to.
+ *
+ * A reference is read from the text the page shows, so one inside an attribute,
+ * which the page never shows, refers to nothing. One inside a code span is code,
+ * so the spans come out first.
+ */
+function footnoteReferences(text: string): string[] {
+  const outsideCode = text.replace(/(`+)[\s\S]*?\1/g, " ");
+  return [...outsideCode.matchAll(FOOTNOTE_REFERENCE)].map((match) => (match[1] as string).toLowerCase());
 }
 
 /** The last document read, because every rule asks for the same one in turn. */
@@ -751,20 +769,29 @@ function shownDocument(text: string, reading: Reading): Shown {
     ...parsed.paragraphs.map((block, index) => ({ line: block.line, block: index })),
     ...parsed.headings.map((heading) => ({ line: heading.line, heading })),
   ].sort((a, b) => a.line - b.line);
-  const shown: Shown = { blocks: [], headings: [] };
+  const shown: Shown = { blocks: [], headings: [], footnotes: new Set() };
+  const rendered: Array<{ footnote?: string; blocks: ProseBlock[] }> = [];
   let open: string[] = [];
   for (const item of items) {
     if (item.heading !== undefined) {
       const read = renderedLines([`# ${item.heading.text}`], parsed.definitions, open);
       const heading = (read.lines[0] as string).replaceAll(BLOCK_BOUNDARY, " ").trim();
       shown.headings.push({ ...item.heading, text: heading });
+      for (const label of footnoteReferences(heading)) shown.footnotes.add(label);
       continue;
     }
     const block = parsed.paragraphs[item.block as number] as ProseBlock;
-    if (block.footnote !== undefined && !parsed.footnoteReferences.has(block.footnote)) continue;
     const read = renderedLines(parsed.sources[item.block as number] as string[], parsed.definitions, open);
     if (block.rawHtml === true) open = read.open;
-    shown.blocks.push(...splitAtBoundaries(block.line, read.lines));
+    for (const label of footnoteReferences(read.lines.join("\n"))) shown.footnotes.add(label);
+    rendered.push({ footnote: block.footnote, blocks: splitAtBoundaries(block.line, read.lines) });
+  }
+  // A table cell can refer to a footnote too.
+  for (const index of parsed.tables) {
+    for (const label of footnoteReferences(parsed.readable[index] as string)) shown.footnotes.add(label);
+  }
+  for (const entry of rendered) {
+    if (entry.footnote === undefined || shown.footnotes.has(entry.footnote)) shown.blocks.push(...entry.blocks);
   }
   shownCache = { text, frontMatter: reading.frontMatter, shown };
   return shown;
@@ -777,10 +804,11 @@ function shownDocument(text: string, reading: Reading): Shown {
  * so it would count an unused one as text.
  */
 export function withoutUnreferencedFootnotes(text: string, reading: Reading = {}): string {
+  const referenced = shownDocument(text, reading).footnotes;
   const lines = toLines(text);
   const parsed = parse(lines, reading);
   parsed.paragraphs.forEach((block, index) => {
-    if (block.footnote === undefined || parsed.footnoteReferences.has(block.footnote)) return;
+    if (block.footnote === undefined || referenced.has(block.footnote)) return;
     const length = (parsed.sources[index] as string[]).length;
     for (let at = block.line - 1; at < block.line - 1 + length; at++) lines[at] = "";
   });

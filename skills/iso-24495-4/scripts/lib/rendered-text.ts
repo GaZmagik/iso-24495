@@ -193,8 +193,17 @@ function lineEndingsOutsideMarkup(html: string): string {
  * at a time.
  */
 function decodedNode(raw: string): string {
-  return raw.split("\n").map((line) => decodeHtmlText(line).replace(/[\r\n]/g, " ")).join("\n");
+  return raw.split("\n")
+    .map((line) => decodeHtmlText(line).replace(/[\r\n]/g, " ").replace(DEFAULT_IGNORABLE, ""))
+    .join("\n");
 }
+
+// A character Unicode marks default-ignorable shows nothing where it stands: a word
+// joiner, a zero-width space, a soft hyphen that the line does not break at, a
+// variation selector. "sh&#8288;all" shows "shall", so these go before any rule
+// reads the word. The page never shows them as text, so the visibility check
+// loses nothing it should count.
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
 
 /**
  * Plain text as the rules read it, where a backslash and a backtick are syntax.
@@ -304,7 +313,7 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
     } else if (name === "img") {
       const alt = element.getAttribute("alt");
       if (reading.altText && alt !== null && !hidden()) {
-        write(escapedText(decodeHtmlText(alt).replace(/[\r\n]/g, " ")));
+        write(escapedText(decodeHtmlText(alt).replace(/[\r\n]/g, " ").replace(DEFAULT_IGNORABLE, "")));
       }
     } else if (name === "br") {
       breakLine();

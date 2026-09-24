@@ -1,7 +1,7 @@
-// What GitHub's Markdown API rendered for 290 documents, recorded by
+// What GitHub's Markdown API rendered for 298 documents, recorded by
 // `reference/build-github-fixture.ts`, which asked GitHub once and kept the answers.
 //
-// 284 are read the same way by this engine, and 6 differ, each for the reason it
+// 291 are read the same way by this engine, and 7 differ, each for the reason it
 // carries. Never edit an answer by hand to make a test pass: ask GitHub again.
 
 export interface GitHubRendering {
@@ -1421,7 +1421,7 @@ export const GITHUB_RENDERINGS: GitHubRendering[] = [
   {
     "name": "used footnote",
     "markdown": "Text[^1].\n\n[^1]: Plain words.",
-    "html": "<p>Text<sup><a href=\"#user-content-fn-1-4776eb618064320cb68cb8b021b66768\" id=\"user-content-fnref-1-4776eb618064320cb68cb8b021b66768\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-1-4776eb618064320cb68cb8b021b66768\">\n<p>Plain words. <a href=\"#user-content-fnref-1-4776eb618064320cb68cb8b021b66768\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
+    "html": "<p>Text<sup><a href=\"#user-content-fn-1-a49a1fce216e5a78ede6e48ad7c4ce48\" id=\"user-content-fnref-1-a49a1fce216e5a78ede6e48ad7c4ce48\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-1-a49a1fce216e5a78ede6e48ad7c4ce48\">\n<p>Plain words. <a href=\"#user-content-fnref-1-a49a1fce216e5a78ede6e48ad7c4ce48\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
     "differsFromGitHub": "GitHub renders a used footnote at the foot of the page with its number and a link back. The rules read its body where it is written."
   },
   {
@@ -1468,5 +1468,46 @@ export const GITHUB_RENDERINGS: GitHubRendering[] = [
     "name": "block tag after a paragraph's end tag",
     "markdown": "<p>A.</p>\nWe sh<address></address>all pay.",
     "html": "<p>A.</p>\nWe shall pay."
+  },
+  {
+    "name": "footnote referred to only in an attribute",
+    "markdown": "<span title=\"[^a]\"></span>\n\n[^a]: Plain words.",
+    "html": "<p><span title=\"[^a]\"></span></p>"
+  },
+  {
+    "name": "footnote referred to only in code",
+    "markdown": "Use `[^a]` here.\n\n[^a]: The tenant shall pay.",
+    "html": "<p>Use <code class=\"notranslate\">[^a]</code> here.</p>"
+  },
+  {
+    "name": "footnote with a second paragraph",
+    "markdown": "Read the note[^a].\n\n[^a]: First paragraph.\n\n    The tenant shall pay.",
+    "html": "<p>Read the note<sup><a href=\"#user-content-fn-a-3cebe8037aeb87dbd10296d2850cc7b3\" id=\"user-content-fnref-a-3cebe8037aeb87dbd10296d2850cc7b3\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-a-3cebe8037aeb87dbd10296d2850cc7b3\">\n<p>First paragraph.</p>\n<p>The tenant shall pay. <a href=\"#user-content-fnref-a-3cebe8037aeb87dbd10296d2850cc7b3\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
+    "differsFromGitHub": "GitHub renders a used footnote at the foot of the page with its number and a link back. The rules read its body where it is written."
+  },
+  {
+    "name": "six paragraphs on one line",
+    "markdown": "<p>One sentence here.</p><p>Two here.</p><p>Three here.</p><p>Four here.</p><p>Five here.</p><p>Six here.</p>",
+    "html": "<p>One sentence here.</p><p>Two here.</p><p>Three here.</p><p>Four here.</p><p>Five here.</p><p>Six here.</p>"
+  },
+  {
+    "name": "word joiner inside a word",
+    "markdown": "The tenant sh&#8288;all pay.",
+    "html": "<p>The tenant sh⁠all pay.</p>"
+  },
+  {
+    "name": "soft hyphen inside a word",
+    "markdown": "The tenant sh&shy;all pay.",
+    "html": "<p>The tenant sh­all pay.</p>"
+  },
+  {
+    "name": "zero-width space inside a word",
+    "markdown": "The tenant sh&#8203;all pay.",
+    "html": "<p>The tenant sh​all pay.</p>"
+  },
+  {
+    "name": "section inside a div",
+    "markdown": "<div>We <section>shall</section>pay.</div>",
+    "html": "<div>We <section>shall</section>pay.</div>"
   }
 ];

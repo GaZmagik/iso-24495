@@ -12,7 +12,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { shownText } from "../../../../scripts/visible-text.ts";
-import { textOfHtml } from "../../scripts/lib/rendered-text.ts";
+import { githubText } from "./github-text.ts";
 
 // Every element name the reader treats specially, and the ones it might meet, each
 // asked about in a div, where the sanitiser either keeps, unwraps or removes it.
@@ -70,6 +70,14 @@ const DOCUMENTS: Array<[string, string]> = [
   ["table cell after a closed table", "<table><tr><td>a</td></tr></table>\n<div>We sh<td></td>all pay.</div>"],
   ["block tag inside an open paragraph", "<p>We sh<address></address>all pay.</p>"],
   ["block tag after a paragraph's end tag", "<p>A.</p>\nWe sh<address></address>all pay."],
+  ["footnote referred to only in an attribute", "<span title=\"[^a]\"></span>\n\n[^a]: Plain words."],
+  ["footnote referred to only in code", "Use `[^a]` here.\n\n[^a]: The tenant shall pay."],
+  ["footnote with a second paragraph", "Read the note[^a].\n\n[^a]: First paragraph.\n\n    The tenant shall pay."],
+  ["six paragraphs on one line", "<p>One sentence here.</p><p>Two here.</p><p>Three here.</p><p>Four here.</p><p>Five here.</p><p>Six here.</p>"],
+  ["word joiner inside a word", "The tenant sh&#8288;all pay."],
+  ["soft hyphen inside a word", "The tenant sh&shy;all pay."],
+  ["zero-width space inside a word", "The tenant sh&#8203;all pay."],
+  ["section inside a div", "<div>We <section>shall</section>pay.</div>"],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */
@@ -105,14 +113,14 @@ for (const [name, markdown] of DOCUMENTS) {
   });
   if (!response.ok) throw new Error(`GitHub answered ${response.status} for "${name}"`);
   const html = (await response.text()).trim();
-  const same = normalised(shownText(markdown)) === normalised(textOfHtml(html));
+  const same = normalised(shownText(markdown)) === githubText(html);
   if (same) {
     entries.push({ name, markdown, html });
     continue;
   }
   const reason = reasonFor(markdown);
   if (reason === null) {
-    throw new Error(`Unexplained difference for "${name}": ours ${JSON.stringify(shownText(markdown))}, GitHub ${JSON.stringify(textOfHtml(html))}`);
+    throw new Error(`Unexplained difference for "${name}": ours ${JSON.stringify(shownText(markdown))}, GitHub ${JSON.stringify(githubText(html))}`);
   }
   differing += 1;
   entries.push({ name, markdown, html, differsFromGitHub: reason });

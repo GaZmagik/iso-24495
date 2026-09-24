@@ -18,7 +18,7 @@ It prints the counts and rewrites the fixture in place. Nothing else is needed, 
 
 ## Comparing the reader with GitHub
 
-`../fixtures/github-rendered.ts` records what GitHub's Markdown API returned for 290 documents, and `build-github-fixture.ts` produced it. The reader is tested against those answers, so what it claims about GitHub's sanitiser can be checked rather than believed. Run it from the repository root with the GitHub CLI signed in:
+`../fixtures/github-rendered.ts` records what GitHub's Markdown API returned for 298 documents, and `build-github-fixture.ts` produced it. `github-text.ts` reads GitHub's answers without the engine's reader, so the comparison cannot agree with a mistake in the engine. The reader is tested against those answers, so what it claims about GitHub's sanitiser can be checked rather than believed. Run it from the repository root with the GitHub CLI signed in:
 
 ```sh
 bun skills/iso-24495-4/tests/reference/build-github-fixture.ts

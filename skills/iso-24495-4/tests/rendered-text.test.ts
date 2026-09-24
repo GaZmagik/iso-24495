@@ -9,6 +9,7 @@ import {
 } from "../scripts/lib/rendered-text.ts";
 import { hasVisibleText, shownText } from "../../../scripts/visible-text.ts";
 import { GITHUB_RENDERINGS } from "./fixtures/github-rendered.ts";
+import { githubText } from "./reference/github-text.ts";
 
 const AUDIT = { altText: true, codeDelimiters: true };
 
@@ -20,15 +21,17 @@ describe("rendered text", () => {
   // GitHub's own answers, recorded by reference/build-github-fixture.ts. Every
   // document the engine reads the way GitHub shows it must go on doing so, and
   // every one it reads differently carries the reason why.
+  // GitHub's answer is read by its own small reader, not the engine's, so a mistake
+  // in the engine cannot appear on both sides and cancel out.
   test("the text this engine reads is the text GitHub shows", () => {
     const normalised = (text: string): string => text.replace(/[\s\f]+/g, " ").trim();
     const same = GITHUB_RENDERINGS.filter((entry) => entry.differsFromGitHub === undefined);
-    expect(same.length).toBeGreaterThan(250);
+    expect(same.length).toBeGreaterThan(280);
     for (const entry of same) {
-      expect(normalised(shownText(entry.markdown)), entry.name).toBe(normalised(textOfHtml(entry.html)));
+      expect(normalised(shownText(entry.markdown)), entry.name).toBe(githubText(entry.html));
     }
     for (const entry of GITHUB_RENDERINGS.filter((each) => each.differsFromGitHub !== undefined)) {
-      expect(normalised(shownText(entry.markdown)), entry.name).not.toBe(normalised(textOfHtml(entry.html)));
+      expect(normalised(shownText(entry.markdown)), entry.name).not.toBe(githubText(entry.html));
     }
   });
 
@@ -146,7 +149,40 @@ describe("rendered text", () => {
     expect(rulesFor(`<p>${"A sentence. ".repeat(6).trim()}</p>`)).toContain("paragraph-length");
   });
 
+  test("a word joiner, a soft hyphen or a zero-width space inside a word leaves the word whole", () => {
+    for (const text of ["The tenant sh&#8288;all pay.", "The tenant sh&shy;all pay.", "The tenant sh&#8203;all pay."]) {
+      expect(rulesFor(text), text).toContain("legalese");
+    }
+    expect(hasVisibleText("&#8203;&#8288;")).toBe(false);
+    expect(renderedText("![sh&#8288;all](i.png)", AUDIT)).toBe("shall");
+  });
+
+  test("paragraphs on one line are separate blocks, as the page shows them", () => {
+    const line = ["One sentence.", "Two here.", "Three here.", "Four here.", "Five here.", "Six here."]
+      .map((sentence) => `<p>${sentence}</p>`).join("");
+    expect(rulesFor(line)).not.toContain("paragraph-length");
+    expect(readerProseBlocks(line).map((block) => [block.line, block.lines.join("")])).toEqual([
+      [1, "One sentence."], [1, "Two here."], [1, "Three here."], [1, "Four here."], [1, "Five here."], [1, "Six here."],
+    ]);
+    // A block element inside a line starts a block of its own.
+    expect(readerProseBlocks("<div>We <section>shall</section>pay.</div>").map((block) => block.lines[0]))
+      .toEqual(["We", "shall", "pay."]);
+    // An acronym defined in one paragraph on a line counts for the next one there.
+    expect(rulesFor("<p>Identity and access management (IAM).</p><p>Use IAM.</p>")).not.toContain("acronym-undefined");
+    expect(rulesFor("<p>Use IAM.</p><p>Identity and access management (IAM).</p>")).toContain("acronym-undefined");
+  });
+
   test("a footnote shows only where something refers to it, and without its label", () => {
+    // A reference inside an attribute or a code span refers to nothing on the page.
+    expect(hasVisibleText("<span title=\"[^a]\"></span>\n\n[^a]: Plain words.")).toBe(false);
+    expect(rulesFor("Use `[^a]` here.\n\n[^a]: The tenant shall pay.")).not.toContain("legalese");
+    // A footnote's later paragraphs, indented four columns, are part of it.
+    const paragraphs = "Read the note[^a].\n\n[^a]: First paragraph.\n\n    The tenant shall pay.";
+    expect(auditText(paragraphs).filter((violation) => violation.rule === "legalese").map((violation) => violation.line))
+      .toEqual([5]);
+    expect(rulesFor("[^a]: First paragraph.\n\n    The tenant shall pay.")).not.toContain("legalese");
+    // A reference in a table cell refers to it too.
+    expect(rulesFor("| A | B |\n| - | - |\n| x[^a] | y |\n\n[^a]: The tenant shall pay.")).toContain("legalese");
     expect(rulesFor("[^1]: The party shall act.")).not.toContain("legalese");
     expect(hasVisibleText("[^1]: Plain words.")).toBe(false);
     const used = "Text[^Note].\n\n[^note]: The party shall act.";
