@@ -78,6 +78,13 @@ const DOCUMENTS: Array<[string, string]> = [
   ["soft hyphen inside a word", "The tenant sh&shy;all pay."],
   ["zero-width space inside a word", "The tenant sh&#8203;all pay."],
   ["section inside a div", "<div>We <section>shall</section>pay.</div>"],
+  ["video left open in a quotation", "> <video>\n\nThe tenant shall pay."],
+  ["video left open in a list item", "- <video>\n\nThe tenant shall pay."],
+  ["unused footnote holding a heading", "[^a]: Plain words.\n\n    # Plain heading"],
+  ["escaped footnote reference", "Read \\[^a].\n\n[^a]: The tenant shall pay."],
+  ["footnote reference written as a character reference", "Read &#91;^a].\n\n[^a]: The tenant shall pay."],
+  ["footnote reference in a raw HTML block", "<div>Read [^a].</div>\n\n[^a]: The tenant shall pay."],
+  ["footnote reference in a link destination", "Read [x](/[^a]).\n\n[^a]: The tenant shall pay."],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */

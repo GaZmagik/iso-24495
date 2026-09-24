@@ -1,7 +1,7 @@
-// What GitHub's Markdown API rendered for 298 documents, recorded by
+// What GitHub's Markdown API rendered for 305 documents, recorded by
 // `reference/build-github-fixture.ts`, which asked GitHub once and kept the answers.
 //
-// 291 are read the same way by this engine, and 7 differ, each for the reason it
+// 298 are read the same way by this engine, and 7 differ, each for the reason it
 // carries. Never edit an answer by hand to make a test pass: ask GitHub again.
 
 export interface GitHubRendering {
@@ -1421,7 +1421,7 @@ export const GITHUB_RENDERINGS: GitHubRendering[] = [
   {
     "name": "used footnote",
     "markdown": "Text[^1].\n\n[^1]: Plain words.",
-    "html": "<p>Text<sup><a href=\"#user-content-fn-1-a49a1fce216e5a78ede6e48ad7c4ce48\" id=\"user-content-fnref-1-a49a1fce216e5a78ede6e48ad7c4ce48\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-1-a49a1fce216e5a78ede6e48ad7c4ce48\">\n<p>Plain words. <a href=\"#user-content-fnref-1-a49a1fce216e5a78ede6e48ad7c4ce48\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
+    "html": "<p>Text<sup><a href=\"#user-content-fn-1-6554a9187aa7c3ce380364ca5fdd2a14\" id=\"user-content-fnref-1-6554a9187aa7c3ce380364ca5fdd2a14\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-1-6554a9187aa7c3ce380364ca5fdd2a14\">\n<p>Plain words. <a href=\"#user-content-fnref-1-6554a9187aa7c3ce380364ca5fdd2a14\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
     "differsFromGitHub": "GitHub renders a used footnote at the foot of the page with its number and a link back. The rules read its body where it is written."
   },
   {
@@ -1482,7 +1482,7 @@ export const GITHUB_RENDERINGS: GitHubRendering[] = [
   {
     "name": "footnote with a second paragraph",
     "markdown": "Read the note[^a].\n\n[^a]: First paragraph.\n\n    The tenant shall pay.",
-    "html": "<p>Read the note<sup><a href=\"#user-content-fn-a-3cebe8037aeb87dbd10296d2850cc7b3\" id=\"user-content-fnref-a-3cebe8037aeb87dbd10296d2850cc7b3\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-a-3cebe8037aeb87dbd10296d2850cc7b3\">\n<p>First paragraph.</p>\n<p>The tenant shall pay. <a href=\"#user-content-fnref-a-3cebe8037aeb87dbd10296d2850cc7b3\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
+    "html": "<p>Read the note<sup><a href=\"#user-content-fn-a-a326e9bda4bca86eaa5271f79f25da95\" id=\"user-content-fnref-a-a326e9bda4bca86eaa5271f79f25da95\" data-footnote-ref=\"\" aria-describedby=\"footnote-label\">1</a></sup>.</p>\n<section data-footnotes=\"\" class=\"footnotes\"><h2 id=\"footnote-label\" class=\"sr-only\">Footnotes</h2>\n<ol>\n<li id=\"user-content-fn-a-a326e9bda4bca86eaa5271f79f25da95\">\n<p>First paragraph.</p>\n<p>The tenant shall pay. <a href=\"#user-content-fnref-a-a326e9bda4bca86eaa5271f79f25da95\" data-footnote-backref=\"\" aria-label=\"Back to reference 1\" class=\"data-footnote-backref\">↩</a></p>\n</li>\n</ol>\n</section>",
     "differsFromGitHub": "GitHub renders a used footnote at the foot of the page with its number and a link back. The rules read its body where it is written."
   },
   {
@@ -1509,5 +1509,40 @@ export const GITHUB_RENDERINGS: GitHubRendering[] = [
     "name": "section inside a div",
     "markdown": "<div>We <section>shall</section>pay.</div>",
     "html": "<div>We <section>shall</section>pay.</div>"
+  },
+  {
+    "name": "video left open in a quotation",
+    "markdown": "> <video>\n\nThe tenant shall pay.",
+    "html": "<blockquote>\n<video>\n</video></blockquote>\n<p>The tenant shall pay.</p>"
+  },
+  {
+    "name": "video left open in a list item",
+    "markdown": "- <video>\n\nThe tenant shall pay.",
+    "html": "<ul>\n<li>\n<video>\n</video></li>\n</ul>\n<p>The tenant shall pay.</p>"
+  },
+  {
+    "name": "unused footnote holding a heading",
+    "markdown": "[^a]: Plain words.\n\n    # Plain heading",
+    "html": ""
+  },
+  {
+    "name": "escaped footnote reference",
+    "markdown": "Read \\[^a].\n\n[^a]: The tenant shall pay.",
+    "html": "<p>Read [^a].</p>"
+  },
+  {
+    "name": "footnote reference written as a character reference",
+    "markdown": "Read &#91;^a].\n\n[^a]: The tenant shall pay.",
+    "html": "<p>Read [^a].</p>"
+  },
+  {
+    "name": "footnote reference in a raw HTML block",
+    "markdown": "<div>Read [^a].</div>\n\n[^a]: The tenant shall pay.",
+    "html": "<div>Read [^a].</div>"
+  },
+  {
+    "name": "footnote reference in a link destination",
+    "markdown": "Read [x](/[^a]).\n\n[^a]: The tenant shall pay.",
+    "html": "<p>Read <a href=\"/%5B%5Ea%5D\">x</a>.</p>"
   }
 ];

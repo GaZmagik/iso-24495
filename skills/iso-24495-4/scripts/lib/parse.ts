@@ -70,7 +70,6 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*/;
-const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\](?!:)/g;
 
 /**
  * A conservative single-line link reference definition.
@@ -247,6 +246,8 @@ function startsBlock(line: string): boolean {
 }
 
 interface Container {
+  /** Unique within a document, so a line can name the containers it sits in. */
+  id: number;
   kind: "quote" | "item";
   /** For an item, the column its content starts at. */
   column: number;
@@ -276,6 +277,10 @@ interface Parsed {
   sources: string[][];
   /** The link reference definitions, as written, for rendering a block alone. */
   definitions: string[];
+  /** For each line, the ids of the containers it sits in, outermost first. */
+  pathOfLine: number[][];
+  /** For each line, the footnote whose body holds it, if any. */
+  footnoteOfLine: Array<string | undefined>;
 }
 
 export function normaliseReference(label: string): string {
@@ -396,8 +401,18 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const closeParagraph = (): void => {
     paragraph = null;
   };
+  let nextContainer = 0;
+  const pathOfLine: number[][] = [];
+  const footnoteOfLine: Array<string | undefined> = [];
+  // The containers a line sits in are the ones still open once it has been read,
+  // which is where the next line starts, so each line is recorded then.
+  const record = (index: number): void => {
+    pathOfLine[index] = stack.map((container) => container.id);
+    footnoteOfLine[index] = footnoteOf(stack);
+  };
 
   for (let i = 0; i < lines.length; i++) {
+    if (i > 0) record(i - 1);
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
@@ -495,7 +510,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         if (quote !== null) {
           closeParagraph();
           text = text.slice(quote[0].length);
-          stack.push({ kind: "quote", column: 0 });
+          stack.push({ id: nextContainer++, kind: "quote", column: 0 });
           openedQuote = true;
           continue;
         }
@@ -511,7 +526,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
           closeParagraph();
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
-          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
+          stack.push({ id: nextContainer++, kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
           continue;
         }
         break;
@@ -561,7 +576,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const footnote = paragraph === null ? FOOTNOTE_DEFINITION.exec(text) : null;
     if (footnote !== null) {
       const label = footnote[1].toLowerCase();
-      stack.push({ kind: "item", column: 4, footnote: label });
+      stack.push({ id: nextContainer++, kind: "item", column: 4, footnote: label });
       paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: label };
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
@@ -673,8 +688,11 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     block.lines = visibleInline(source, { rawHtml }).split("\n");
   }
 
+  if (lines.length > 0) record(lines.length - 1);
+
   return {
     paragraphs, headings: found, hidden, tables, readable, markup, references, sources, definitions,
+    pathOfLine, footnoteOfLine,
   };
 }
 
@@ -737,16 +755,73 @@ interface Shown {
   footnotes: Set<string>;
 }
 
+const AUTOLINK_AT = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>/y;
+const FOOTNOTE_REFERENCE_AT = /\[\^([^\]\s]+)\]/y;
+
 /**
- * The footnote labels a piece of shown text refers to.
+ * The footnote labels a piece of Markdown refers to.
  *
- * A reference is read from the text the page shows, so one inside an attribute,
- * which the page never shows, refers to nothing. One inside a code span is code,
- * so the spans come out first.
+ * The Markdown decides what is a reference, not the text it renders to: an escaped
+ * "\[^a]", a bracket written "&#91;" and one inside a code span, a tag, an autolink
+ * or a link destination all render as the same characters and refer to nothing.
+ * So the source is read, stepping over each of those. A raw HTML block is never
+ * read here, because the renderer passes it through without reading it.
  */
 function footnoteReferences(text: string): string[] {
-  const outsideCode = text.replace(/(`+)[\s\S]*?\1/g, " ");
-  return [...outsideCode.matchAll(FOOTNOTE_REFERENCE)].map((match) => (match[1] as string).toLowerCase());
+  const labels: string[] = [];
+  const ends = codeSpanEnds(text);
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    if (character === BACKSLASH) {
+      index += 2;
+      continue;
+    }
+    if (character === "`") {
+      index = ends.get(index) ?? index + tickRun(text, index);
+      continue;
+    }
+    if (character === "<") {
+      TAG_AT.lastIndex = index;
+      AUTOLINK_AT.lastIndex = index;
+      const markup = TAG_AT.exec(text) ?? AUTOLINK_AT.exec(text);
+      index += markup === null ? 1 : markup[0].length;
+      continue;
+    }
+    if (character === "]" && text[index + 1] === "(") {
+      const close = text.indexOf(")", index + 2);
+      index = close === -1 ? index + 1 : close + 1;
+      continue;
+    }
+    FOOTNOTE_REFERENCE_AT.lastIndex = index;
+    const reference = character === "[" ? FOOTNOTE_REFERENCE_AT.exec(text) : null;
+    if (reference !== null) {
+      labels.push((reference[1] as string).toLowerCase());
+      index += reference[0].length;
+      continue;
+    }
+    index += 1;
+  }
+  return labels;
+}
+
+/** The footnote labels the document refers to, from its prose, headings and table rows. */
+function referencedFootnotes(parsed: Parsed, lines: readonly string[]): Set<string> {
+  const referenced = new Set<string>();
+  const add = (text: string): void => {
+    for (const label of footnoteReferences(text)) referenced.add(label);
+  };
+  parsed.paragraphs.forEach((block, index) => {
+    if (block.rawHtml !== true) add((parsed.sources[index] as string[]).join("\n"));
+  });
+  for (const heading of parsed.headings) add(heading.text);
+  for (const index of parsed.tables) add(lines[index] as string);
+  return referenced;
+}
+
+/** True when the path lies inside the container the outer path ends in. */
+function within(path: readonly number[], outer: readonly number[]): boolean {
+  return outer.length <= path.length && outer.every((id, depth) => path[depth] === id);
 }
 
 /** The last document read, because every rule asks for the same one in turn. */
@@ -756,42 +831,44 @@ let shownCache: { text: string; frontMatter: boolean | undefined; shown: Shown }
  * Render every block and heading in the order they appear.
  *
  * They are read in order, because a hidden element a raw HTML block leaves open
- * hides what follows it. Only a raw HTML block carries one on: a paragraph's own
- * end tag closes whatever it opened, as a browser closes it. A footnote nothing
- * refers to shows nothing, so its block is left out.
+ * hides what follows it, until the quotation or list item holding that block ends.
+ * Only a raw HTML block carries one on: a paragraph's own end tag closes whatever it
+ * opened, as a browser closes it. A footnote nothing refers to shows nothing, so
+ * everything inside it is left out. One something refers to is shown at the foot of
+ * the page, so nothing open above it hides it.
  */
 function shownDocument(text: string, reading: Reading): Shown {
   if (shownCache !== null && shownCache.text === text && shownCache.frontMatter === reading.frontMatter) {
     return shownCache.shown;
   }
-  const parsed = parse(toLines(text), reading);
+  const lines = toLines(text);
+  const parsed = parse(lines, reading);
   const items: Array<{ line: number; block?: number; heading?: Heading }> = [
     ...parsed.paragraphs.map((block, index) => ({ line: block.line, block: index })),
     ...parsed.headings.map((heading) => ({ line: heading.line, heading })),
   ].sort((a, b) => a.line - b.line);
-  const shown: Shown = { blocks: [], headings: [], footnotes: new Set() };
-  const rendered: Array<{ footnote?: string; blocks: ProseBlock[] }> = [];
+  const shown: Shown = { blocks: [], headings: [], footnotes: referencedFootnotes(parsed, lines) };
   let open: string[] = [];
+  let openPath: readonly number[] = [];
   for (const item of items) {
+    const footnote = parsed.footnoteOfLine[item.line - 1];
+    if (footnote !== undefined && !shown.footnotes.has(footnote)) continue;
+    const path = parsed.pathOfLine[item.line - 1] ?? [];
+    if (!within(path, openPath)) open = [];
+    const carried = footnote === undefined ? open : [];
     if (item.heading !== undefined) {
-      const read = renderedLines([`# ${item.heading.text}`], parsed.definitions, open);
+      const read = renderedLines([`# ${item.heading.text}`], parsed.definitions, carried);
       const heading = (read.lines[0] as string).replaceAll(BLOCK_BOUNDARY, " ").trim();
       shown.headings.push({ ...item.heading, text: heading });
-      for (const label of footnoteReferences(heading)) shown.footnotes.add(label);
       continue;
     }
     const block = parsed.paragraphs[item.block as number] as ProseBlock;
-    const read = renderedLines(parsed.sources[item.block as number] as string[], parsed.definitions, open);
-    if (block.rawHtml === true) open = read.open;
-    for (const label of footnoteReferences(read.lines.join("\n"))) shown.footnotes.add(label);
-    rendered.push({ footnote: block.footnote, blocks: splitAtBoundaries(block.line, read.lines) });
-  }
-  // A table cell can refer to a footnote too.
-  for (const index of parsed.tables) {
-    for (const label of footnoteReferences(parsed.readable[index] as string)) shown.footnotes.add(label);
-  }
-  for (const entry of rendered) {
-    if (entry.footnote === undefined || shown.footnotes.has(entry.footnote)) shown.blocks.push(...entry.blocks);
+    const read = renderedLines(parsed.sources[item.block as number] as string[], parsed.definitions, carried);
+    if (block.rawHtml === true && footnote === undefined) {
+      open = read.open;
+      openPath = path;
+    }
+    shown.blocks.push(...splitAtBoundaries(block.line, read.lines));
   }
   shownCache = { text, frontMatter: reading.frontMatter, shown };
   return shown;
@@ -801,18 +878,19 @@ function shownDocument(text: string, reading: Reading): Shown {
  * The document with every footnote nothing refers to removed, as the page removes it.
  *
  * The visibility check renders the whole document, and the renderer has no footnotes,
- * so it would count an unused one as text.
+ * so it would count an unused one as text. Every line inside the footnote goes,
+ * whatever block it forms, a heading included.
  */
 export function withoutUnreferencedFootnotes(text: string, reading: Reading = {}): string {
-  const referenced = shownDocument(text, reading).footnotes;
   const lines = toLines(text);
   const parsed = parse(lines, reading);
-  parsed.paragraphs.forEach((block, index) => {
-    if (block.footnote === undefined || referenced.has(block.footnote)) return;
-    const length = (parsed.sources[index] as string[]).length;
-    for (let at = block.line - 1; at < block.line - 1 + length; at++) lines[at] = "";
-  });
-  return lines.join("\n");
+  const referenced = referencedFootnotes(parsed, lines);
+  return lines
+    .map((line, index) => {
+      const footnote = parsed.footnoteOfLine[index];
+      return footnote !== undefined && !referenced.has(footnote) ? "" : line;
+    })
+    .join("\n");
 }
 
 /**
@@ -886,6 +964,8 @@ function withoutInvisible(
 
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
+// The same tag, matched where the index stands rather than at the start of a slice.
+const TAG_AT = new RegExp(HTML_TAG_AT_START.source.slice(1), "y");
 // CommonMark's HTML block start conditions 1, 6 and 7, which open a block whose
 // text a reader sees. Conditions 2 to 4 are BLOCK_INVISIBLE_OPEN, because a
 // comment, a processing instruction and a declaration show nothing. The renderer

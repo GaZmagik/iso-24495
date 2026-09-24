@@ -131,6 +131,14 @@ describe("rendered text", () => {
       .toEqual([7, 9]);
     // A paragraph's own end tag closes a video it opened, so the next block shows.
     expect(rulesFor("A <video> b\n\nThe party shall act.")).toContain("legalese");
+    // A video left open inside a quotation or list item closes when that container ends.
+    for (const container of ["> <video>", "- <video>"]) {
+      expect(rulesFor(`${container}\n\nThe tenant shall pay.`), container).toContain("legalese");
+    }
+    // Inside the same container it still hides what follows.
+    expect(rulesFor("> <video>\n>\n> The tenant shall pay.")).not.toContain("legalese");
+    // A used footnote is shown at the foot of the page, outside any open video.
+    expect(rulesFor("A[^a].\n\n<video>\n\n[^a]: The tenant shall pay.")).toContain("legalese");
     // A heading inside an open video is hidden with it.
     expect(rulesFor("<video>\n\n## The party shall act\n\n</video>")).not.toContain("legalese");
   });
@@ -181,6 +189,19 @@ describe("rendered text", () => {
     expect(auditText(paragraphs).filter((violation) => violation.rule === "legalese").map((violation) => violation.line))
       .toEqual([5]);
     expect(rulesFor("[^a]: First paragraph.\n\n    The tenant shall pay.")).not.toContain("legalese");
+    // A reference is what the Markdown makes one: an escaped bracket, a bracket written
+    // as a reference, a link destination and an autolink refer to nothing.
+    for (const reference of ["\\[^a]", "&#91;^a]", "[x](/[^a])", "<https://e.com/[^a]>"]) {
+      const text = `Read ${reference}.\n\n[^a]: The tenant shall pay.`;
+      expect(rulesFor(text), text).not.toContain("legalese");
+    }
+    // A raw HTML block is never read as Markdown, so it refers to nothing, while
+    // inline HTML inside a paragraph leaves the Markdown between its tags live.
+    expect(rulesFor("<div>Read [^a].</div>\n\n[^a]: The tenant shall pay.")).not.toContain("legalese");
+    expect(rulesFor("Read <div>[^a]</div>.\n\n[^a]: The tenant shall pay.")).toContain("legalese");
+    // Everything inside an unused footnote goes, a heading included.
+    expect(hasVisibleText("[^a]: Plain words.\n\n    # Plain heading")).toBe(false);
+    expect(rulesFor("Plain words.\n\n[^a]: Plain words.\n\n    # The tenant shall pay")).not.toContain("legalese");
     // A reference in a table cell refers to it too.
     expect(rulesFor("| A | B |\n| - | - |\n| x[^a] | y |\n\n[^a]: The tenant shall pay.")).toContain("legalese");
     expect(rulesFor("[^1]: The party shall act.")).not.toContain("legalese");
