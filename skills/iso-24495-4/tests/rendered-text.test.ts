@@ -225,6 +225,10 @@ describe("rendered text", () => {
     // destination, however it nests, holds none.
     expect(rulesFor("Read [the guide](bad [^a]).\n\n[^a]: The tenant shall pay.")).toContain("legalese");
     expect(hasVisibleText("[&#8203;](https://example.com/a(b)[^x])\n\n[^x]: This change works.")).toBe(false);
+    // An author cannot forge a resolved reference: a plain link to "#fn0", or the same
+    // text in another attribute, refers to nothing.
+    expect(hasVisibleText('<span href="#fn0" title="[^a]"></span>\n\n[^a]: This change works.')).toBe(false);
+    expect(rulesFor("Read [the note](#fn0) [^b].\n\n[^a]: We shall pay.\n\n[^b]: Plain.")).not.toContain("legalese");
     // A document with no footnote definition has nothing to resolve.
     expect(rulesFor("Read [^a] here.")).toEqual([]);
     // The first definition of a label is the footnote; a later one shows nothing.

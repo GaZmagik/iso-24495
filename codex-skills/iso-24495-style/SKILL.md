@@ -157,13 +157,13 @@ These examples apply `iso-24495-2`. Plain legal text must never change a right, 
 Use *must* for an obligation, and put the party who carries it at the front.
 
 ```text
-Before: When the notice period ends, the premises shall be vacated by the tenant,
-        and all keys shall be returned by the tenant to the landlord.
-After:  When the notice period ends, the tenant must vacate the premises and return
-        all keys to the landlord.
+Before: 5.1 When the notice period ends, the premises shall be vacated by the
+            tenant, and all keys shall be returned by the tenant to the landlord.
+After:  5.1 When the notice period ends, the tenant must vacate the premises and
+            return all keys to the landlord.
 ```
 
-The "after" keeps "vacate", because it is the legal term the clause relies on.
+The "after" keeps "vacate", because it is the legal term the clause relies on. It keeps the identifier 5.1 too, because an operative clause carries one.
 
 #### 8. One defined term, used unchanged
 

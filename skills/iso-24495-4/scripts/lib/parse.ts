@@ -775,15 +775,23 @@ interface Shown {
  * link destination all refer to nothing, because the renderer reads them as they are.
  * A raw HTML block is not read, because the renderer passes it through unread.
  */
+// The stand-ins link to a fragment no author can write, fresh for each run. A fixed one
+// such as "#fn0" let a description link to it, or name it in an attribute, and
+// activate a footnote the page never shows.
+const STAND_IN = `iso24495-footnote-${crypto.randomUUID()}-`;
+const STAND_IN_LINK = new RegExp(`href="#${STAND_IN}(\\d+)"`, "g");
+
 function referencedFootnotes(parsed: Parsed, lines: readonly string[]): Set<string> {
   const referenced = new Set<string>();
   if (parsed.footnoteLabels.length === 0) return referenced;
-  const standIns = parsed.footnoteLabels.map((label, index) => `[^${label}]: #fn${index}`).join("\n");
+  const standIns = parsed.footnoteLabels.map((label, index) => `[^${label}]: #${STAND_IN}${index}`).join("\n");
   const add = (text: string): void => {
     // A reference is written with "[^", however the rest of it is spelled.
     if (!text.includes("[^")) return;
-    for (const match of Bun.markdown.html(`${text}\n\n${standIns}`).matchAll(/href="#(fn\d+)"/g)) {
-      referenced.add(match[1] as string);
+    // Only the renderer can have written the marker, so wherever it appears, the
+    // renderer resolved a reference to that footnote.
+    for (const match of Bun.markdown.html(`${text}\n\n${standIns}`).matchAll(STAND_IN_LINK)) {
+      referenced.add(`fn${match[1] as string}`);
     }
   };
   for (const source of parsed.sources) add(source.join("\n"));

@@ -98,6 +98,8 @@ const DOCUMENTS: Array<[string, string]> = [
   ["footnote reference in a destination with nested parentheses", "[&#8203;](https://example.com/a(b)[^x])\n\n[^x]: This change works."],
   ["dotless i kept apart from i", "Read the note[^i].\n\n[^ı]: This change works.\n\n[^i]: The tenant shall pay."],
   ["rp left open by a raw HTML block", "This change works.\n\n<rp>\n\nThe tenant shall pay."],
+  ["stand-in fragment written in an attribute", "<span href=\"#fn0\" title=\"[^a]\"></span>\n\n[^a]: This change works."],
+  ["plain link to a stand-in fragment", "Read [the note](#fn0) [^b].\n\n[^a]: We shall pay.\n\n[^b]: Plain."],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */
