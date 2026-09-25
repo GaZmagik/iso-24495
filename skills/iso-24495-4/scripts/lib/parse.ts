@@ -8,38 +8,19 @@
 // that continues without its marker, or an item whose content sits four
 // columns in. This is the algorithm those scanners were approximating.
 
-import { htmlReferenceAt, markdownReferenceAt } from "./character-references.ts";
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
-import {
-  BLOCK_BOUNDARY, FOOTNOTE_STAND_IN, isFilteredTag, readMarkdown, renderedText, SEPARATING_ELEMENTS,
-} from "./rendered-text.ts";
 
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
   /** The block's lines, in order, with container markers removed. */
   lines: string[];
-  /** Set on a raw HTML block, whose text is read by HTML's rules rather than Markdown's. */
-  rawHtml?: boolean;
-  /** Set on a footnote's body, to the label its references name, in lower case. */
-  footnote?: string;
 }
 
 export interface Heading {
   level: number;
   line: number;
   text: string;
-}
-
-/** How a document is read, where the page it is shown on decides. */
-export interface Reading {
-  /**
-   * Whether a leading "---" block is front matter, which is metadata no rule reads.
-   * A file in a repository may carry it, so that is the default. A pull request
-   * description cannot, and GitHub shows the block as a rule and a heading, so the
-   * check that reads a description passes false and the block is read as text.
-   */
-  frontMatter?: boolean;
 }
 
 export interface Document {
@@ -71,8 +52,6 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // which is why its label starts with "^" and it is not here.
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
-// A footnote label follows a link label's rules, so it holds no bracket, and no space.
-const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^[\]\s\\]+)\]:[ \t]*/;
 
 /**
  * A conservative single-line link reference definition.
@@ -249,18 +228,9 @@ function startsBlock(line: string): boolean {
 }
 
 interface Container {
-  /** Unique within a document, so a line can name the containers it sits in. */
-  id: number;
   kind: "quote" | "item";
   /** For an item, the column its content starts at. */
   column: number;
-  /** Set on a footnote's body, which holds its paragraphs the way a list item does. */
-  footnote?: string;
-}
-
-/** The footnote whose body holds the current line, if any. */
-function footnoteOf(stack: readonly Container[]): string | undefined {
-  return stack.findLast((container) => container.footnote !== undefined)?.footnote;
 }
 
 interface Parsed {
@@ -276,16 +246,6 @@ interface Parsed {
   markup: string[];
   /** Valid link reference labels in this document. */
   references: Set<string>;
-  /** Each prose block's source lines, before the inline reader touched them. */
-  sources: string[][];
-  /** The link reference definitions, as written, for rendering a block alone. */
-  definitions: string[];
-  /** For each line, the ids of the containers it sits in, outermost first. */
-  pathOfLine: number[][];
-  /** For each line, the footnote whose body holds it, if any, named by its position. */
-  footnoteOfLine: Array<string | undefined>;
-  /** Each footnote definition's label, as written, in order. */
-  footnoteLabels: string[];
 }
 
 export function normaliseReference(label: string): string {
@@ -354,37 +314,16 @@ function listMarkerAt(line: string, midParagraph: boolean): { length: number; co
   return { length: consumed, column };
 }
 
-/**
- * Whether the line opens an HTML block a reader sees text in, and what closes it.
- *
- * A closing pattern is returned for a pre, script, style or textarea element, which
- * ends on the line holding one of their closing tags. The other two kinds end at a
- * blank line, so they carry no pattern. A complete tag alone on its line is the only
- * kind that cannot interrupt a paragraph, and it opens a block whatever its name: the
- * specification's text excludes an open pre, script, style or textarea tag there, but
- * the reference implementation and the renderer both open a block for "<pre/>" alone
- * on a line, and the fixture is checked against the reference.
- */
-function htmlBlockStart(text: string, paragraphOpen: boolean): { closes: RegExp | null } | null {
-  if (RAW_TEXT_ELEMENT_OPEN.test(text)) return { closes: RAW_TEXT_ELEMENT_CLOSE };
-  const element = BLOCK_ELEMENT_TAG.exec(text);
-  if (element !== null && BLOCK_ELEMENT_NAMES.has(element[1].toLowerCase())) {
-    return { closes: null };
-  }
-  return paragraphOpen || !COMPLETE_TAG_LINE.test(text) ? null : { closes: null };
-}
-
 /** True when the text starts a block, so it cannot lazily continue a paragraph. */
 function startsAnyBlock(text: string): boolean {
   return ATX_HEADING.test(text)
     || THEMATIC_BREAK.test(text)
     || FENCE_OPEN.test(text)
     || QUOTE_MARKER.test(text)
-    || LIST_MARKER.test(text)
-    || htmlBlockStart(text, true) !== null;
+    || LIST_MARKER.test(text);
 }
 
-function parse(lines: string[], reading: Reading = {}): Parsed {
+function parse(lines: string[]): Parsed {
   const paragraphs: ProseBlock[] = [];
   const found: Heading[] = [];
   const hidden = new Set<number>();
@@ -392,33 +331,20 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const readable = [...lines];
   const markup = [...lines];
   const references = new Set<string>();
-  const definitions: string[] = [];
   const stack: Container[] = [];
-  const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
+  const frontMatter = frontMatterRange(lines);
 
   let paragraph: ProseBlock | null = null;
   let paragraphDepth = 0;
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
-  let htmlBlock: { closes: RegExp | null; depth: number; block: ProseBlock } | null = null;
 
   const closeParagraph = (): void => {
     paragraph = null;
   };
-  let nextContainer = 0;
-  const footnoteLabels: string[] = [];
-  const pathOfLine: number[][] = [];
-  const footnoteOfLine: Array<string | undefined> = [];
-  // The containers a line sits in are the ones still open once it has been read,
-  // which is where the next line starts, so each line is recorded then.
-  const record = (index: number): void => {
-    pathOfLine[index] = stack.map((container) => container.id);
-    footnoteOfLine[index] = footnoteOf(stack);
-  };
 
   for (let i = 0; i < lines.length; i++) {
-    if (i > 0) record(i - 1);
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
@@ -477,24 +403,6 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       stack.length = matched;
     }
 
-    if (htmlBlock !== null) {
-      if (matched < htmlBlock.depth) {
-        // An HTML block has no lazy continuation, so it ends with the container
-        // that holds it, and the line is read afresh outside that container.
-        htmlBlock = null;
-        stack.length = matched;
-      } else if (htmlBlock.closes === null && rest.trim() === "") {
-        htmlBlock = null;
-        continue;
-      } else {
-        // Every line to the block's end is its text, whatever Markdown it resembles:
-        // the page shows "# Heading" inside a div as those words.
-        htmlBlock.block.lines.push(text.trimStart());
-        if (htmlBlock.closes !== null && htmlBlock.closes.test(text)) htmlBlock = null;
-        continue;
-      }
-    }
-
     if (rest.trim() === "") {
       closeParagraph();
       if (!allMatched) stack.length = matched;
@@ -516,7 +424,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         if (quote !== null) {
           closeParagraph();
           text = text.slice(quote[0].length);
-          stack.push({ id: nextContainer++, kind: "quote", column: 0 });
+          stack.push({ kind: "quote", column: 0 });
           openedQuote = true;
           continue;
         }
@@ -532,7 +440,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
           closeParagraph();
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
-          stack.push({ id: nextContainer++, kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
           continue;
         }
         break;
@@ -545,18 +453,6 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // the quotation. Later inside the same quotation GitHub renders it as
     // ordinary text, and a reader meets it as a word.
     if (openedQuote && stack.length === 1 && ALERT_MARKER.test(text.trim())) {
-      continue;
-    }
-
-    const html = htmlBlockStart(text, paragraph !== null);
-    if (html !== null) {
-      closeParagraph();
-      const block: ProseBlock = { line: i + 1, lines: [text.trimStart()], rawHtml: true, footnote: footnoteOf(stack) };
-      paragraphs.push(block);
-      // An element closed on its opening line is a block of that line alone.
-      if (html.closes === null || !html.closes.test(text)) {
-        htmlBlock = { closes: html.closes, depth: stack.length, block };
-      }
       continue;
     }
 
@@ -574,30 +470,12 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       closeParagraph();
       if (text.trim() === "") continue;
     }
-    // A footnote's body shows at the foot of the page without its label, and only
-    // where something refers to it, so the label comes off here and the block is
-    // marked with it.
-    // Its body holds later paragraphs indented four columns, as a list item does, so
-    // it opens a container, and every block inside it carries the label.
-    const footnote = paragraph === null ? FOOTNOTE_DEFINITION.exec(text) : null;
-    if (footnote !== null) {
-      // Each definition is named by its position. Which one a reference reaches is left
-      // to the renderer, which compares labels as CommonMark does.
-      const label = `fn${footnoteLabels.length}`;
-      footnoteLabels.push(footnote[1] as string);
-      stack.push({ id: nextContainer++, kind: "item", column: 4, footnote: label });
-      paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: label };
-      paragraphDepth = stack.length;
-      paragraphs.push(paragraph);
-      continue;
-    }
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
     if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
       const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
       if (label !== undefined) references.add(normaliseReference(label));
-      definitions.push(text.trim());
       readable[i] = "";
       markup[i] = "";
       continue;
@@ -675,256 +553,28 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     }
 
     if (paragraph === null) {
-      paragraph = { line: i + 1, lines: [], footnote: footnoteOf(stack) };
+      paragraph = { line: i + 1, lines: [] };
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
     paragraph.lines.push(text.trimStart());
   }
 
-  const sources: string[][] = [];
   for (const block of paragraphs) {
-    sources.push(block.lines);
     const source = block.lines.join("\n");
-    const rawHtml = block.rawHtml === true;
-    const forLineRules = visibleInline(source, { keepLiteralSyntax: false, rawHtml }).split("\n");
-    const withTags = visibleInline(source, { keepLiteralSyntax: false, keepHtmlTags: true, rawHtml })
-      .split("\n");
+    const forLineRules = visibleInline(source, false).split("\n");
+    const withTags = visibleInline(source, false, true).split("\n");
     for (let offset = 0; offset < forLineRules.length; offset++) {
       readable[block.line - 1 + offset] = forLineRules[offset];
       markup[block.line - 1 + offset] = withTags[offset];
     }
-    block.lines = visibleInline(source, { rawHtml }).split("\n");
+    block.lines = visibleInline(source).split("\n");
+  }
+  for (const heading of found) {
+    heading.text = visibleText(heading.text, references);
   }
 
-  if (lines.length > 0) record(lines.length - 1);
-
-  return {
-    paragraphs, headings: found, hidden, tables, readable, markup, references, sources, definitions,
-    pathOfLine, footnoteOfLine, footnoteLabels,
-  };
-}
-
-/**
- * The lines of a block as the page shows them, one for each source line.
- *
- * The block is rendered alone, with the document's link reference definitions after
- * it, so a reference link resolves as it does in the whole document. A blank line
- * keeps the definitions out of the block's last paragraph. It is read inside any
- * hidden element an earlier raw HTML block left open.
- *
- * Markdown can take a line ending with it and leave nothing in the HTML to show it
- * was there: a reference label or a code span that runs over a line. The block then
- * renders shorter than its source, and is realigned to it.
- */
-function renderedLines(
-  lines: readonly string[],
-  definitions: readonly string[],
-  carried: readonly string[],
-): { lines: string[]; open: string[] } {
-  const source = lines.join("\n");
-  const withDefinitions = definitions.length > 0 && source.includes("[")
-    ? `${source}\n\n${definitions.join("\n")}`
-    : source;
-  const read = readMarkdown(withDefinitions, { altText: true, codeDelimiters: true }, carried);
-  return { lines: alignedToSource(read.text.split("\n"), lines), open: read.open };
-}
-
-/**
- * A rendered block split where the page starts a new one.
- *
- * One raw HTML block can hold six paragraphs, on six lines or on one, and counting
- * them as one reported a paragraph six sentences long that the page never shows.
- * Every block boundary starts a new block, partway through a line if it falls
- * there; that block's first line is the rest of the line. A block holding no words,
- * such as the line an opening tag stands on, is left out.
- */
-function splitAtBoundaries(line: number, lines: readonly string[]): ProseBlock[] {
-  const blocks: ProseBlock[] = [];
-  let current: ProseBlock | null = null;
-  lines.forEach((text, offset) => {
-    text.split(/[ \t]*\f[ \t\f]*/).forEach((part, index) => {
-      if (index > 0) current = null;
-      if (index > 0 && part === "") return;
-      if (current === null) {
-        current = { line: line + offset, lines: [] };
-        blocks.push(current);
-      }
-      current.lines.push(part);
-    });
-  });
-  return blocks.filter((block) => block.lines.some((text) => text.trim() !== ""));
-}
-
-/** The blocks and headings of a document, as the page shows them. */
-interface Shown {
-  blocks: ProseBlock[];
-  headings: Heading[];
-  /** The footnote labels something on the page refers to, case-folded. */
-  footnotes: Set<string>;
-}
-
-/**
- * The footnotes the document refers to, named by position, as the renderer resolves them.
- *
- * Deciding what is a reference took a hand-written scanner, and every review found a
- * construct it read differently from GitHub: a link that was not one, a label two
- * letters folded into, a comment. So each footnote stands in as a link reference
- * definition, and the renderer reads the Markdown: a reference is whatever it resolves
- * to a stand-in. CommonMark matches link labels exactly as GitHub matches footnote
- * labels, case-folded, and keeps the first definition of a label, so a duplicate is
- * never reached and shows nothing. An escaped bracket, code, a comment, a tag and a
- * link destination all refer to nothing, because the renderer reads them as they are.
- * A raw HTML block is not read, because the renderer passes it through unread.
- */
-// The renderer resolves a stand-in into a link, or into an image where "!" comes first.
-const STAND_IN_LINK = new RegExp(`(?:href|src)="#${FOOTNOTE_STAND_IN}(\\d+)"`, "g");
-
-/** Each footnote as a link reference definition standing in for it. */
-function footnoteStandIns(parsed: Parsed): string[] {
-  return parsed.footnoteLabels.map((label, index) => `[^${label}]: #${FOOTNOTE_STAND_IN}${index}`);
-}
-
-function referencedFootnotes(parsed: Parsed, lines: readonly string[]): Set<string> {
-  const referenced = new Set<string>();
-  if (parsed.footnoteLabels.length === 0) return referenced;
-  const standIns = footnoteStandIns(parsed).join("\n");
-  const add = (text: string): void => {
-    // A reference is written with "[^", however the rest of it is spelled.
-    if (!text.includes("[^")) return;
-    // Only the renderer can have written the marker, so wherever it appears, the
-    // renderer resolved a reference to that footnote.
-    for (const match of Bun.markdown.html(`${text}\n\n${standIns}`).matchAll(STAND_IN_LINK)) {
-      referenced.add(`fn${match[1] as string}`);
-    }
-  };
-  for (const source of parsed.sources) add(source.join("\n"));
-  for (const heading of parsed.headings) add(heading.text);
-  for (const index of parsed.tables) add(lines[index] as string);
-  return referenced;
-}
-
-/** True when the path lies inside the container the outer path ends in. */
-function within(path: readonly number[], outer: readonly number[]): boolean {
-  return outer.length <= path.length && outer.every((id, depth) => path[depth] === id);
-}
-
-/**
- * Link reference definitions the parser left as prose, found by the renderer.
- *
- * The parser recognises only a definition written on one line, and reads any other
- * as a paragraph, so that a malformed one never hides a sentence. CommonMark lets a
- * definition run over several lines, and GitHub resolves references to it. So a
- * paragraph that opens with a bracket is rendered alone, and where it shows nothing,
- * it was definitions, and every block is rendered with it.
- */
-function spreadDefinitions(parsed: Parsed): string[] {
-  const found: string[] = [];
-  parsed.paragraphs.forEach((block, index) => {
-    const source = (parsed.sources[index] as string[]).join("\n");
-    if (block.rawHtml === true || block.footnote !== undefined || !/^ {0,3}\[/.test(source)) return;
-    if (renderedText(source) === "") found.push(source);
-  });
-  return found;
-}
-
-/** The last document read, because every rule asks for the same one in turn. */
-let shownCache: { text: string; frontMatter: boolean | undefined; shown: Shown } | null = null;
-
-/**
- * Render every block and heading in the order they appear.
- *
- * They are read in order, because a hidden element a raw HTML block leaves open
- * hides what follows it, until the quotation or list item holding that block ends.
- * Only a raw HTML block carries one on: a paragraph's own end tag closes whatever it
- * opened, as a browser closes it. A footnote nothing refers to shows nothing, so
- * everything inside it is left out. One something refers to is shown at the foot of
- * the page, so nothing open above it hides it.
- */
-function shownDocument(text: string, reading: Reading): Shown {
-  if (shownCache !== null && shownCache.text === text && shownCache.frontMatter === reading.frontMatter) {
-    return shownCache.shown;
-  }
-  const lines = toLines(text);
-  const parsed = parse(lines, reading);
-  const items: Array<{ line: number; block?: number; heading?: Heading }> = [
-    ...parsed.paragraphs.map((block, index) => ({ line: block.line, block: index })),
-    ...parsed.headings.map((heading) => ({ line: heading.line, heading })),
-  ].sort((a, b) => a.line - b.line);
-  const shown: Shown = { blocks: [], headings: [], footnotes: referencedFootnotes(parsed, lines) };
-  // Every block is rendered with every definition in the document, and with a stand-in
-  // for each footnote, so a reference reads as it does on the page.
-  const definitions = [...parsed.definitions, ...spreadDefinitions(parsed), ...footnoteStandIns(parsed)];
-  let open: string[] = [];
-  let openPath: readonly number[] = [];
-  for (const item of items) {
-    const footnote = parsed.footnoteOfLine[item.line - 1];
-    if (footnote !== undefined && !shown.footnotes.has(footnote)) continue;
-    const path = parsed.pathOfLine[item.line - 1] ?? [];
-    if (!within(path, openPath)) open = [];
-    const carried = footnote === undefined ? open : [];
-    if (item.heading !== undefined) {
-      const read = renderedLines([`# ${item.heading.text}`], definitions, carried);
-      const heading = (read.lines[0] as string).replaceAll(BLOCK_BOUNDARY, " ").trim();
-      shown.headings.push({ ...item.heading, text: heading });
-      continue;
-    }
-    const block = parsed.paragraphs[item.block as number] as ProseBlock;
-    const read = renderedLines(parsed.sources[item.block as number] as string[], definitions, carried);
-    if (block.rawHtml === true && footnote === undefined) {
-      open = read.open;
-      openPath = path;
-    }
-    shown.blocks.push(...splitAtBoundaries(block.line, read.lines));
-  }
-  shownCache = { text, frontMatter: reading.frontMatter, shown };
-  return shown;
-}
-
-/**
- * The document with every footnote nothing refers to removed, as the page removes it.
- *
- * The visibility check renders the whole document, and the renderer has no footnotes,
- * so it would count an unused one as text. Every line inside the footnote goes,
- * whatever block it forms, a heading included.
- */
-export function withoutUnreferencedFootnotes(text: string, reading: Reading = {}): string {
-  const lines = toLines(text);
-  const parsed = parse(lines, reading);
-  const referenced = referencedFootnotes(parsed, lines);
-  return lines
-    .map((line, index) => {
-      const footnote = parsed.footnoteOfLine[index];
-      return footnote !== undefined && !referenced.has(footnote) ? "" : line;
-    })
-    .join("\n");
-}
-
-/**
- * Rendered lines placed on the source lines they came from.
- *
- * Each rendered line goes on the next source line that holds its first word, and no
- * later than leaves room for the lines still to place. Padding the end instead moved
- * every sentence after a wrapped reference label up a line.
- */
-function alignedToSource(rendered: string[], source: readonly string[]): string[] {
-  if (rendered.length >= source.length) return rendered;
-  const aligned: string[] = [];
-  rendered.forEach((line, index) => {
-    const latest = source.length - (rendered.length - index);
-    const word = line.trim().split(/\s+/)[0] as string;
-    let target = aligned.length;
-    for (let at = aligned.length; word !== "" && at <= latest; at++) {
-      if ((source[at] as string).includes(word)) {
-        target = at;
-        break;
-      }
-    }
-    while (aligned.length < target) aligned.push("");
-    aligned.push(line);
-  });
-  while (aligned.length < source.length) aligned.push("");
-  return aligned;
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references };
 }
 
 /** The next line's text, with the same containers stripped, or none. */
@@ -970,70 +620,7 @@ function withoutInvisible(
 }
 
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
-const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;// CommonMark's HTML block start conditions 1, 6 and 7, which open a block whose
-// text a reader sees. Conditions 2 to 4 are BLOCK_INVISIBLE_OPEN, because a
-// comment, a processing instruction and a declaration show nothing. The renderer
-// passes such a block to the page unchanged, so its text is read by HTML's rules:
-// no escape, no code span, and a character reference as the browser decodes it.
-// A pre, script, style or textarea element runs to the line holding any of the
-// four closing tags, across blank lines. A block-level element, and a complete
-// tag alone on its line, run to a blank line. Only the last cannot interrupt a
-// paragraph, and none continues past the container that holds it.
-const RAW_TEXT_ELEMENT_OPEN = /^ {0,3}<(?:pre|script|style|textarea)(?=[ \t>]|$)/i;
-const RAW_TEXT_ELEMENT_CLOSE = /<\/(?:pre|script|style|textarea)>/i;
-const BLOCK_ELEMENT_TAG = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9]*)(?=[ \t>]|\/>|$)/;
-const BLOCK_ELEMENT_NAMES: ReadonlySet<string> = new Set([
-  "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center",
-  "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption",
-  "figure", "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head",
-  "header", "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem", "nav",
-  "noframes", "ol", "optgroup", "option", "p", "param", "search", "section", "summary", "table",
-  "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul",
-]);
-const COMPLETE_TAG_LINE = new RegExp("^ {0,3}" + HTML_TAG_AT_START.source.slice(1) + "[ \\t]*$");
-
-// The line rules read markup through this reader rather than the renderer, because
-// they need the tags. It joins and separates text at the same elements the renderer
-// route does, so "sh<em>all</em>" and "sh<!-- x -->all" show one word here too.
-const TAG_NAME = /^<\/?([A-Za-z][A-Za-z0-9-]*)/;
-
-/** True when the tag's element separates the text on either side of it. */
-function separatesText(tag: string): boolean {
-  const name = (TAG_NAME.exec(tag) as RegExpExecArray)[1].toLowerCase();
-  return SEPARATING_ELEMENTS.has(name);
-}
-
-/** How many line endings a span of removed markup held. */
-function lineEndings(span: string): number {
-  return span.split("\n").length - 1;
-}
-
-// The elements whose content never reaches a reader, so the whole element goes,
-// content and all, the way a comment does: the same three the renderer route hides.
-// A script tag the tag filter names never reaches this, because it is read as text
-// first; one written "<script/x>" does, and GitHub removes it with its content. An rp
-// element ends at its end tag, or where an rt or rp element starts or its ruby element
-// ends, because its end tag may be left out there.
-const HIDDEN_CONTENT_ELEMENTS: ReadonlyMap<string, RegExp> = new Map([
-  ["rp", /<\/rp[ \t\n]*>|(?=<(?:rt|rp)[ \t\n>/]|<\/ruby[ \t\n]*>)/ig],
-  ["video", /<\/video[ \t\n]*>/ig],
-  ["script", /<\/script[ \t\n]*>/ig],
-]);
-
-/**
- * Where the element the tag opens ends, content and all, or null where the page
- * shows its content. An element left open runs to the end of the text, as it does
- * on the page, where everything after it vanishes.
- */
-function hiddenContentEnd(text: string, start: number, tag: string): number | null {
-  if (tag.startsWith("</")) return null;
-  const name = (TAG_NAME.exec(tag) as RegExpExecArray)[1].toLowerCase();
-  const closing = HIDDEN_CONTENT_ELEMENTS.get(name);
-  if (closing === undefined) return null;
-  closing.lastIndex = start + tag.length;
-  const match = closing.exec(text);
-  return match === null ? text.length : match.index + match[0].length;
-}
+const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
 
 function abruptCommentClose(afterOpening: string): number {
   if (afterOpening.startsWith("->")) return 2;
@@ -1063,66 +650,17 @@ function tickRun(text: string, start: number): number {
   return end - start;
 }
 
-/**
- * Decoded text, written as the mode already writes an escaped character.
- *
- * A reader sees the character, but a decoded bracket opens no link and a decoded pipe
- * divides no cell, because GitHub decodes after it has read the syntax. ASCII
- * punctuation therefore goes out as the escape CommonMark uses for the same literal,
- * which the link pass and the line rules already read that way. A line ending becomes
- * a space, or every sentence after it would move down a line.
- */
-function literalText(decoded: string, keepLiteralSyntax: boolean): string {
-  let literal = "";
-  for (const character of decoded) {
-    if (character === "\n" || character === "\r") literal += " ";
-    else if (ESCAPABLE.test(character)) literal += keepLiteralSyntax ? "\\" + character : "  ";
-    else literal += character;
-  }
-  return literal;
-}
-
-/** How the inline reader treats the markup it meets. */
-interface InlineReading {
-  /** Keep an escape and a code span as written, for the prose rules; blank them for the line rules. */
-  keepLiteralSyntax?: boolean;
-  /** Keep HTML tags, for the rules that read an anchor or an image from the line. */
-  keepHtmlTags?: boolean;
-  /**
-   * Read a raw HTML block. The page shows a backslash and a backtick there as
-   * text, and decodes a reference by HTML's rules rather than CommonMark's.
-   */
-  rawHtml?: boolean;
-}
-
-/** Remove only inline markup that the page keeps out of rendered text. */
-function visibleInline(text: string, reading: InlineReading = {}): string {
-  const keepLiteralSyntax = reading.keepLiteralSyntax ?? true;
-  const keepHtmlTags = reading.keepHtmlTags ?? false;
-  const rawHtml = reading.rawHtml ?? false;
+/** Remove only inline markup that CommonMark keeps out of rendered text. */
+function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = false): string {
   let visible = "";
   let index = 0;
-  // Line endings inside removed joining markup. Leaving them where they were split
-  // "sh<!--\n-->all" into two words on two lines, and dropping them moved every later
-  // sentence up a line. They are owed to the next line ending instead, so the word
-  // joins and the lines after it keep their numbers.
-  let owedLineEndings = 0;
-  const emit = (fragment: string): void => {
-    if (owedLineEndings > 0 && fragment.includes("\n")) {
-      visible += fragment.replace("\n", "\n".repeat(owedLineEndings + 1));
-      owedLineEndings = 0;
-      return;
-    }
-    visible += fragment;
-  };
   while (index < text.length) {
-    if (!rawHtml && text[index] === "\\" && index + 1 < text.length
-      && ESCAPABLE.test(text[index + 1])) {
-      emit(keepLiteralSyntax ? text.slice(index, index + 2) : "  ");
+    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1])) {
+      visible += keepLiteralSyntax ? text.slice(index, index + 2) : "  ";
       index += 2;
       continue;
     }
-    if (!rawHtml && text[index] === "`") {
+    if (text[index] === "`") {
       const length = tickRun(text, index);
       // The shared index knows where every span ends. Searching the rest of the text for
       // each unmatched run was quadratic: 10,000 backticks cost 4.6 seconds.
@@ -1131,62 +669,39 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
         const closing = end - length;
         const span = text.slice(index, end);
         if (keepLiteralSyntax) {
-          emit(span);
+          visible += span;
         } else {
           // Keep the words a reader sees in a code-formatted link label, but
           // neutralise syntax that would turn a Markdown example into a link.
           const content = text.slice(index + length, closing)
             .replace(/[!<>[\]()]/g, " ");
-          emit(" ".repeat(length) + content + " ".repeat(length));
+          visible += " ".repeat(length) + content + " ".repeat(length);
         }
         index = end;
         continue;
       }
       // An unmatched run is literal text. Emitting one character and looking again made
       // the next backtick rescan the rest of the run, which cost 4.6 seconds at 10,000.
-      emit(text.slice(index, index + length));
+      visible += text.slice(index, index + length);
       index += length;
       continue;
     }
-    // A reference is read here and nowhere earlier, because a code span keeps it
-    // literal and a tag's attributes are consumed whole below. "sh&#97;ll" rendered
-    // as "shall" and reported nothing while the audit read the source. A raw HTML
-    // block reads by HTML's rules, where "sh&#97ll" renders the same word.
-    if (text[index] === "&") {
-      const reference = rawHtml ? htmlReferenceAt(text, index) : markdownReferenceAt(text, index);
-      if (reference !== null) {
-        emit(literalText(reference.decoded, keepLiteralSyntax));
-        index += reference.length;
-        continue;
-      }
-    }
     if (text[index] !== "<") {
-      emit(text[index]);
+      visible += text[index];
       index++;
       continue;
     }
 
     const rest = text.slice(index);
     const tag = HTML_TAG_AT_START.exec(rest);
-    if (tag !== null && !isFilteredTag(tag[0])) {
-      // An element whose content the page never shows goes whole, in every reading:
-      // an anchor inside a script is no link, so the markup lines lose it too.
-      const hiddenEnd = hiddenContentEnd(text, index, tag[0]);
-      if (hiddenEnd !== null) {
-        owedLineEndings += lineEndings(text.slice(index, hiddenEnd));
-        index = hiddenEnd;
-        continue;
-      }
-      // A separating element's tag leaves a space where its box begins or ends. Any
-      // other tag leaves nothing, and its line endings are owed to the next one.
-      if (keepHtmlTags) emit(tag[0]);
-      else if (separatesText(tag[0])) emit(" " + tag[0].replace(/[^\n]/g, ""));
-      else owedLineEndings += lineEndings(tag[0]);
+    if (tag !== null) {
+      visible += keepHtmlTags ? tag[0] : " " + tag[0].replace(/[^\n]/g, "");
       index += tag[0].length;
       continue;
     }
     const abrupt = rest.startsWith("<!--") ? abruptCommentClose(rest.slice(4)) : 0;
     if (abrupt > 0) {
+      visible += " ";
       index += 4 + abrupt;
       continue;
     }
@@ -1201,18 +716,35 @@ function visibleInline(text: string, reading: InlineReading = {}): string {
       const closing = closingMarkup(rest, invisible.close, invisible.offset);
       if (closing !== null) {
         const length = closing.at + closing.length;
-        owedLineEndings += lineEndings(rest.slice(0, length));
+        visible += " " + rest.slice(0, length).replace(/[^\n]/g, "");
         index += length;
         continue;
       }
     }
-    emit("<");
+    visible += "<";
     index++;
   }
-  return visible + "\n".repeat(owedLineEndings);
+  return visible;
 }
 
 const BACKSLASH = "\\";
+const NEWLINE = "\n";
+
+function countLines(text: string): number {
+  return text.split(NEWLINE).length;
+}
+
+/**
+ * Keep the label, and keep the line count.
+ *
+ * A link destination or title may hold a line ending. Deleting it with the rest of the
+ * markup moved every later sentence in the block one line up, so a finding pointed at an
+ * innocent line. The removed text always follows the label, so the endings go on the end.
+ */
+function keepLines(whole: string, kept: string): string {
+  const removed = countLines(whole) - countLines(kept);
+  return removed > 0 ? kept + NEWLINE.repeat(removed) : kept;
+}
 
 /**
  * Where each "[" meets its partner, matched in one pass.
@@ -1390,29 +922,84 @@ export function markdownLinks(text: string): MarkdownLink[] {
   return links;
 }
 
+/** Where a link's label begins, past the "[" and any "!" before it. */
+function labelStart(link: MarkdownLink): number {
+  return link.start + (link.image ? 2 : 1);
+}
+
+/** The label a reader sees in place of a link, or the link untouched where it stays. */
+function flattenedLink(
+  link: MarkdownLink,
+  whole: string,
+  label: string,
+  references?: ReadonlySet<string>,
+): string {
+  // An empty label is still a link, and a reader sees nothing where it stands. Leaving it
+  // as written counted its destination and title as prose. The rule that reports a link
+  // with no text reads the source lines, so it is unaffected.
+  if (link.kind === "inline") return keepLines(whole, label);
+  const named = link.kind === "reference" ? link.target || link.label : link.label;
+  return references?.has(normaliseReference(named)) ? keepLines(whole, label) : whole;
+}
+
+/**
+ * Replace every link and image with the label a reader sees.
+ *
+ * A label may hold a link or an image of its own, so the labels are closed with a stack
+ * rather than by reading each one again from the start. Every character is then read
+ * once, however deeply the text nests.
+ */
+function flattenLinks(text: string, references?: ReadonlySet<string>): string {
+  const open: Array<{ link: MarkdownLink; label: string }> = [];
+  let flattened = "";
+  let at = 0;
+  const write = (fragment: string): void => {
+    const inner = open.at(-1);
+    if (inner === undefined) flattened += fragment;
+    else inner.label += fragment;
+  };
+  const close = (): void => {
+    const inner = open.pop() as { link: MarkdownLink; label: string };
+    inner.label += text.slice(at, labelStart(inner.link) + inner.link.label.length);
+    at = inner.link.end;
+    write(flattenedLink(inner.link, text.slice(inner.link.start, at), inner.label, references));
+  };
+  for (const link of markdownLinks(text)) {
+    while (open.length > 0) {
+      const inner = open.at(-1) as { link: MarkdownLink; label: string };
+      if (link.start < labelStart(inner.link) + inner.link.label.length) break;
+      close();
+    }
+    write(text.slice(at, link.start));
+    at = labelStart(link);
+    open.push({ link, label: "" });
+  }
+  while (open.length > 0) close();
+  return flattened + text.slice(at);
+}
+
+
+function visibleText(text: string, references?: ReadonlySet<string>): string {
+  return flattenLinks(visibleInline(text), references);
+}
+
 /** Collect prose paragraphs: what a reader reads as sentences. */
-export function proseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
-  return parse(toLines(text), reading).paragraphs;
+export function proseBlocks(text: string): ProseBlock[] {
+  return parse(toLines(text)).paragraphs;
 }
 
-/**
- * Prose reduced to the words a reader meets, as the page shows them.
- *
- * The block parser decides where each block is and which lines it holds, and the
- * renderer decides what its text shows. The rules about words and sentences read this.
- */
-export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
-  return shownDocument(text, reading).blocks.map((block) => ({ ...block, lines: [...block.lines] }));
+/** Prose reduced to the words a reader meets, without link destinations. */
+export function readerProseBlocks(text: string): ProseBlock[] {
+  const parsed = parse(toLines(text));
+  return parsed.paragraphs.map((block) => ({
+    line: block.line,
+    lines: visibleText(block.lines.join("\n"), parsed.references).split("\n"),
+  }));
 }
 
-/**
- * Heading levels with their 1-indexed line numbers, and the text each shows.
- *
- * The text is rendered as a heading's content, so "1. Scope" stays a heading's words
- * rather than becoming a list item.
- */
-export function headings(text: string, reading: Reading = {}): Heading[] {
-  return shownDocument(text, reading).headings.map((heading) => ({ ...heading }));
+/** Heading levels with their 1-indexed line numbers. */
+export function headings(text: string): Heading[] {
+  return parse(toLines(text)).headings;
 }
 
 /**
@@ -1421,16 +1008,12 @@ export function headings(text: string, reading: Reading = {}): Heading[] {
  * They skip metadata and code, and deliberately not tables: a rule about
  * links, images or table headings has to look at a table to do its job.
  */
-export function readDocument(text: string, reading: Reading = {}): Document {
+export function readDocument(text: string): Document {
   const lines = toLines(text);
-  const parsed = parse(lines, reading);
+  const parsed = parse(lines);
   return {
-    lines: parsed.readable.map((line) => visibleInline(line, { keepLiteralSyntax: false })),
-    // A paragraph's markup was read as a block above, but a heading's or a table
-    // row's was still the source line, so an anchor there kept its references and
-    // its code spans: "cl&#105;ck here" passed, and a quoted tag counted as a link.
-    markupLines: parsed.markup.map((line) =>
-      visibleInline(line, { keepLiteralSyntax: false, keepHtmlTags: true })),
+    lines: parsed.readable.map((line) => visibleInline(line, false)),
+    markupLines: parsed.markup,
     references: parsed.references,
     hidden: (index) => parsed.hidden.has(index),
   };

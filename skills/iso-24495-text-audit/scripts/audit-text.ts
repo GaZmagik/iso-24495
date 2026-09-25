@@ -7,7 +7,6 @@ import {
   listTextFiles,
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
-import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 
 export interface TextAuditResult extends Findings {
@@ -24,7 +23,6 @@ export function auditTarget(
   target: string,
   projectDir: string,
   readText: ReadTextFile = readFileSync,
-  reading: Reading = {},
 ): TextAuditResult {
   const absoluteTarget = resolve(target);
   const absoluteProject = resolve(projectDir);
@@ -55,7 +53,7 @@ export function auditTarget(
       skipped.push(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms, frontMatter: reading.frontMatter });
+    const violations = auditText(text, { knownAcronyms });
     findings.files[displayPath(path, absoluteProject)] = { violations };
     for (const violation of violations) {
       findings.totals[violation.rule] = (findings.totals[violation.rule] ?? 0) + 1;
@@ -98,20 +96,16 @@ export function runCli(
   const target = argv[2];
   if (!target) {
     stderr(
-      "Usage: bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]",
+      "Usage: bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>]",
     );
     return 2;
   }
   let jsonPath: string | undefined;
   let projectDir = process.cwd();
-  // A file in a repository may open with front matter, which is metadata. A pull
-  // request description cannot, and GitHub shows a leading "---" block as a rule
-  // and a heading, so the check that reads one says there is no front matter.
-  let frontMatter = true;
   const seenOptions = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
-    if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
+    if (option !== "--json" && option !== "--project-dir") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
       stderr(`audit-text: ${kind}: ${option}`);
       return 2;
@@ -121,10 +115,6 @@ export function runCli(
       return 2;
     }
     seenOptions.add(option);
-    if (option === "--no-front-matter") {
-      frontMatter = false;
-      continue;
-    }
     const value = argv[index + 1];
     if (!value || value.startsWith("--")) {
       const expected = option === "--json" ? "an output file" : "a directory";
@@ -140,7 +130,7 @@ export function runCli(
   }
 
   try {
-    const findings = auditTarget(target, projectDir, readFileSync, { frontMatter });
+    const findings = auditTarget(target, projectDir);
     for (const path of findings.skipped) {
       stderr(`warning: skipped unreadable entry: ${path}`);
     }

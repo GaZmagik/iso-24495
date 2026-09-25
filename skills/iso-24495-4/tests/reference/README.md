@@ -16,16 +16,4 @@ It prints the counts and rewrites the fixture in place. Nothing else is needed, 
 
 **A difference the engine cannot explain stops the run.** `reasonFor` decides whether this engine reads a document differently on purpose. It decides from what the document contains, not from a word in its name. An earlier version classified by name, which would have let an unrelated defect wear an unrelated excuse.
 
-## Comparing the reader with GitHub
-
-`../fixtures/github-rendered.ts` records what GitHub's Markdown API returned for 336 documents, and `build-github-fixture.ts` produced it. `github-text.ts` reads GitHub's answers without the engine's reader, so the comparison cannot agree with a mistake in the engine. The reader is tested against those answers, so what it claims about GitHub's sanitiser can be checked rather than believed. Run it from the repository root with the GitHub CLI signed in:
-
-```sh
-bun skills/iso-24495-4/tests/reference/build-github-fixture.ts
-```
-
-As with the CommonMark fixture, a difference it cannot explain stops the run, and a reason is decided from what a document contains.
-
-## One adjustment
-
 One adjustment makes the comparison meaningful. The reference renders inline markup, while this engine keeps the source, because its rules read link syntax and code spans. The comparison flattens ours. Without that, 153 documents looked like disagreements and every one was the comparison's fault.

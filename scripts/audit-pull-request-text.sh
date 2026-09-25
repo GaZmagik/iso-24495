@@ -76,11 +76,7 @@ fi
 FINDINGS="$(mktemp)"
 trap 'rm -f "$FINDINGS"' EXIT
 
-# A description has no front matter. GitHub shows a leading "---" block as a rule
-# and a heading, so the audit is told there is none and reads the block as that
-# text, where a file in a repository would have it hidden as metadata. A review
-# found a description whose only text sat inside such a block, and it passed.
-bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts "$TEXT" --no-front-matter --json "$FINDINGS"
+bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts "$TEXT" --json "$FINDINGS"
 
 # The audit is advisory by design and exits 0 whatever it finds, so the decision
 # is made here, and it is made on evidence rather than on silence. The first

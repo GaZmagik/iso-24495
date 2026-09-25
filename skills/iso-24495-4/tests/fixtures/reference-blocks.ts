@@ -3543,8 +3543,7 @@ export const REFERENCE_SHAPES: ReferenceShape[] = [
       "  [link](https://example.com)"
     ],
     "paragraphs": [
-      "Inline html.",
-      "[link](https://example.com)"
+      "Inline html. [link](https://example.com)"
     ],
     "headings": [],
     "differsFromReference": "HTML carries prose a reader reads; its tags are markup and its text is measured."

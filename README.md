@@ -112,31 +112,18 @@ The ISO texts are licensed, so the standards themselves cost money. Everything i
 
 A rule can only be as right as the text it reads. So the engine parses Markdown the way CommonMark describes it: each line is matched against the containers already open, then against any container it starts. What remains is the block a rule measures. That is what lets a wrapped list item, a quotation continuing without its marker, and a heading written inside a list all be read correctly.
 
-The parser decides where each block is, and the Markdown renderer decides what its text shows. GitHub's tag filter is applied to what the renderer writes, and an HTML tokeniser reads the text, so emphasis, links and inline HTML read as the page shows them. The rules about words and sentences read that text, and so does the check that a pull request description shows any text at all.
-
-GitHub also sanitises the page. It keeps the elements on its allowlist and unwraps the rest, so only a kept block element separates two words. The reader follows what GitHub's own Markdown API returned for 336 documents, recorded in `skills/iso-24495-4/tests/fixtures/github-rendered.ts`. A small reader of its own reads GitHub's answers, so a mistake in the engine cannot appear on both sides of the comparison. The engine reads 319 of them the same way, and each of the other seventeen carries its reason.
-
-Some characters show nothing where they stand, such as a word joiner or a soft hyphen. Unicode marks them default-ignorable, and the reader removes them before a rule reads the word around them.
-
 **Measured, because a reader reads them:**
 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container;
-- HTML, because its text is prose a reader reads;
-- a script or style tag and what it holds, because GitHub's tag filter shows them as text;
-- a footnote something refers to, where it is written, without its label;
-- a character reference such as `&#97;`, decoded to the character the page shows, except inside code, where the page keeps it as written. Markdown text follows CommonMark, which needs the semicolon. A raw HTML block follows the HTML tokeniser instead, which accepts `&#97` without one, as the browser does.
+- headings, at any depth and in any container, through the heading rules.
 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid, except that `table-header` reads them;
-- YAML front matter, which is metadata, except in a pull request description, which has none;
-- the content of a `video` or `rp` element, which a browser does not show;
-- a script element the tag filter misses, such as `<script/x>`, which GitHub removes with everything after it;
-- a footnote nothing refers to, which GitHub leaves off the page;
+- YAML front matter, which is metadata;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 
@@ -146,9 +133,19 @@ The parser is checked against the CommonMark reference implementation. 302 docum
 
 The `iso-24495-text-audit` skill audits a selected `.md`, `.markdown`, or `.txt` file or directory. It uses the same rule engine as the Part 4 corpus audit. It reports each finding with its file, line, rule, and explanation.
 
+The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
+
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` looks for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+
+The `sentence-length` and `sentence-average` rules count words separated by whitespace, including spaces and line breaks, and use English benchmarks. The `paragraph-length` rule counts sentences, with a limit of five.
+
+The `prose-enumeration` rule flags three or more distinct ranks in a prose block, including rank one. It recognises English ordinal words and numbered markers from one to six.
+
+The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
+
 The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
-The last two serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
+The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
 The result reports zero findings when no implemented rule fires. That result does not prove the text suits its audience or purpose.
 
@@ -175,8 +172,6 @@ bash scripts/audit-pull-request-text.sh <file>
 ```
 
 The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all. Whitespace is not text, because a reader gets as much from a page of spaces as from an empty one.
-
-A description has no front matter, so the script passes `--no-front-matter` to the audit. A leading `---` block is then read as the rule and heading GitHub shows, rather than hidden as metadata the way a repository file's is.
 
 A file the script cannot read stops it with a different code, rather than any verdict about text. A review found the reason for that: a mistyped name beginning with a dash reached `dirname` as an option, and the script audited a neighbouring file and passed. A check that passes for the wrong target is worse than one that fails.
 

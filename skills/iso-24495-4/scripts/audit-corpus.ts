@@ -11,8 +11,6 @@ import {
   normaliseReference,
   readerProseBlocks,
   readDocument,
-  type ProseBlock,
-  type Reading,
   locateSentences,
   wordCount,
 } from "./lib/parse.ts";
@@ -393,63 +391,35 @@ function expansionSpelling(
   return first + initials.slice(carried[open + 1], carried[close]).join("") + last;
 }
 
-function acronymViolations(text: string, known: ReadonlySet<string>, reading: Reading): Violation[] {
+function acronymViolations(text: string, known: ReadonlySet<string>): Violation[] {
   const violations: Violation[] = [];
   const defined = new Set<string>();
   const seen = new Set<string>();
-  const definitionLocations = new Map<string, { line: number; block: number; column: number }>();
-  const document = readDocument(text, reading);
-  const blocks = readerProseBlocks(text, reading);
-  // The blocks each line holds, in order: one raw HTML line can hold several
-  // paragraphs. The words before a parenthesis carry across a soft line break, which
-  // is a space to the reader, so "identity and access" wrapped before
-  // "management (IAM)" still spells the acronym. They never carry across a
-  // paragraph, a list item or a heading, which end the sentence the reader is in.
-  const fragmentsOfLine = new Map<number, Array<{ block: number; text: string }>>();
-  blocks.forEach((block, id) => {
-    block.lines.forEach((line, offset) => {
-      const at = block.line - 1 + offset;
-      const fragments = fragmentsOfLine.get(at);
-      if (fragments === undefined) fragmentsOfLine.set(at, [{ block: id, text: line }]);
-      else fragments.push({ block: id, text: line });
-    });
-  });
-  // Only the last few words before a parenthesis can spell the acronym inside it, so
-  // they are carried forward rather than recovered by slicing the line from its start
-  // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
-  let recent: string[] = [];
-  const carry = (fragment: string): void => {
-    for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
-      if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
-      recent.push(word);
-      if (recent.length > LONGEST_ACRONYM) recent.shift();
-    }
-  };
-  let previousBlock: number | undefined;
+  const definitionLocations = new Map<string, { line: number; column: number }>();
+  const document = readDocument(text);
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
-    // A prose line is read as the page shows it, the text the uses below are found in,
-    // so a definition and a use on one line are compared at the same columns. The
-    // source line kept "**" that the page does not show, and put a definition after
-    // its own use. A heading or a table row has no prose block, and is read as written.
-    const fragments = fragmentsOfLine.get(i) ?? [{ block: -1, text: document.lines[i] as string }];
-    for (const fragment of fragments) {
-      if (fragment.block === -1 || fragment.block !== previousBlock) recent = [];
-      previousBlock = fragment.block;
-      let scanned = 0;
-      for (const match of fragment.text.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
-        const key = match[1].replaceAll(".", "");
-        carry(fragment.text.slice(scanned, match.index));
-        scanned = match.index;
-        if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
-        if (!definitionLocations.has(key)) {
-          definitionLocations.set(key, { line: i + 1, block: fragment.block, column: match.index });
-        }
+    // Only the last few words before a parenthesis can spell the acronym inside it, so
+    // they are carried forward rather than recovered by slicing the line from its start
+    // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
+    const sourceLine = document.lines[i] as string;
+    const recent: string[] = [];
+    let scanned = 0;
+    for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
+      const key = match[1].replaceAll(".", "");
+      for (const word of sourceLine.slice(scanned, match.index).match(/[A-Za-z]+/g) ?? []) {
+        if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
+        recent.push(word);
+        if (recent.length > LONGEST_ACRONYM) recent.shift();
       }
-      carry(fragment.text.slice(scanned));
+      scanned = match.index;
+      if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
+      if (!definitionLocations.has(key)) {
+        definitionLocations.set(key, { line: i + 1, column: match.index });
+      }
     }
   }
-  for (const [blockId, block] of blocks.entries()) {
+  for (const block of readerProseBlocks(text)) {
     const tokens = block.lines.flatMap((line, lineIndex) =>
       [...line.matchAll(/\S+/g)].map((match) => ({
         raw: match[0],
@@ -498,12 +468,9 @@ function acronymViolations(text: string, known: ReadonlySet<string>, reading: Re
       // sits in a run that is not shouting. "ENABLE MFA" reports MFA alone.
       if (COMMON_WORDS.has(acronym.key.toLowerCase())) continue;
       const definition = definitionLocations.get(acronym.key);
-      // On one line, an earlier block comes first, and within a block the column decides.
       const definitionPrecedes = definition !== undefined
         && (definition.line < tokens[i].line
-          || (definition.line === tokens[i].line
-            && (definition.block < blockId
-              || (definition.block === blockId && definition.column <= tokens[i].column))));
+          || (definition.line === tokens[i].line && definition.column <= tokens[i].column));
       if (definitionPrecedes
         || defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);
@@ -524,48 +491,9 @@ const PROPER_NAME_CONTEXT = new RegExp(
   "i",
 );
 
-/**
- * The blocks a reader reads as words: every prose block, and every heading as a
- * block of one line, in the order they appear.
- *
- * The rules about words read these. The rules about sentences read prose alone,
- * because a heading is not a sentence, and heading-style already bounds its length.
- * The acronym rule reads prose alone too: the definition scan already reads a
- * heading, a use in the prose beneath one reports there, and a heading that holds
- * an acronym is usually the name of the thing, so a use there is not reported.
- */
-function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
-  const blocks = [
-    ...readerProseBlocks(text, reading),
-    ...headings(text, reading).map((heading) => ({ line: heading.line, lines: [heading.text] })),
-  ];
-  return blocks.sort((a, b) => a.line - b.line);
-}
-
-function legaleseViolations(text: string, reading: Reading): Violation[] {
+function doubletViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerTextBlocks(text, reading)) {
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
-      for (const term of LEGALESE) {
-        const matches = withoutNamedTerms(line, term)
-          .match(new RegExp(`\\b${term}\\b`, "gi"));
-        for (let n = 0; n < (matches?.length ?? 0); n++) {
-          violations.push({
-            rule: "legalese",
-            line: block.line + i,
-            detail: `banned term "${term}"`,
-          });
-        }
-      }
-    }
-  }
-  return violations;
-}
-
-function doubletViolations(text: string, reading: Reading): Violation[] {
-  const violations: Violation[] = [];
-  for (const block of readerTextBlocks(text, reading)) {
+  for (const block of readerProseBlocks(text)) {
     // The advice itself names "to" and "in order to" rather than using them.
     const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
@@ -624,9 +552,9 @@ function htmlAttribute(attributes: string, name: string): string | null {
   return match === null ? null : match[1] ?? match[2] ?? match[3] ?? "";
 }
 
-function linkTextViolations(text: string, reading: Reading): Violation[] {
+function linkTextViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, markupLines, references, hidden } = readDocument(text, reading);
+  const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     // One scan serves all three forms. Reading each with its own pattern was quadratic:
@@ -706,9 +634,9 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
 // An image with no alternative text is silence to a reader who cannot see it.
 // An empty alt is legitimate for a purely decorative image, so the writer can
 // mark that intent explicitly rather than leaving the alt blank by accident.
-function imageAltViolations(text: string, reading: Reading): Violation[] {
+function imageAltViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, markupLines, references, hidden } = readDocument(text, reading);
+  const { lines, markupLines, references, hidden } = readDocument(text);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     // One scan finds both image forms, filtered to the ones with no alternative text.
@@ -761,9 +689,9 @@ function withoutNamedTerms(line: string, term: string): string {
   });
 }
 
-function complexWordViolations(text: string, reading: Reading): Violation[] {
+function complexWordViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerTextBlocks(text, reading)) {
+  for (const block of readerProseBlocks(text)) {
     for (let i = 0; i < block.lines.length; i++) {
       const line = block.lines[i];
       for (const match of line.matchAll(/[A-Za-z']+/g)) {
@@ -781,9 +709,9 @@ function complexWordViolations(text: string, reading: Reading): Violation[] {
   return violations;
 }
 
-function doubleNegativeViolations(text: string, reading: Reading): Violation[] {
+function doubleNegativeViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerTextBlocks(text, reading)) {
+  for (const block of readerProseBlocks(text)) {
     // Named rather than used: the rule's own description quotes the phrase.
     const paragraph = block.lines.join("\n");
     for (const phrase of DOUBLE_NEGATIVES) {
@@ -803,11 +731,11 @@ function doubleNegativeViolations(text: string, reading: Reading): Violation[] {
 // The skill's first rule is to open with the answer. A filler opening spends
 // the reader's first sentence saying nothing, and it is only a fault at the
 // very start: "let me know" mid-document is ordinary English.
-function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
+function fillerOpeningViolations(text: string): Violation[] {
   // Front matter is metadata, not the opening sentence. It arrives as an
   // ordinary prose block, so without this the first real sentence of every
   // templated document escaped the rule entirely.
-  const blocks = readerProseBlocks(text, reading);
+  const blocks = readerProseBlocks(text);
   if (blocks.length === 0) return [];
   // Emphasis markers are stripped, not the words inside them: "**Certainly!**"
   // is still a filler opening, and removing the emphasised text hid it. Smart
@@ -839,9 +767,9 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
 
 // A listener hears each cell announced against its column name, so a table
 // whose header cells are blank tells them nothing about what they are hearing.
-function tableHeaderViolations(text: string, reading: Reading): Violation[] {
+function tableHeaderViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  const { lines, hidden } = readDocument(text, reading);
+  const { lines, hidden } = readDocument(text);
   for (let i = 0; i < lines.length - 1; i++) {
     if (hidden(i)) continue;
     const row = lines[i].trim();
@@ -865,9 +793,9 @@ function tableHeaderViolations(text: string, reading: Reading): Violation[] {
   return violations;
 }
 
-function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
+function wordyPhraseViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerTextBlocks(text, reading)) {
+  for (const block of readerProseBlocks(text)) {
     // The advice itself names "to" and "in order to" rather than using them.
     const paragraph = block.lines.join("\n");
     const occupied: Array<{ start: number; end: number }> = [];
@@ -891,9 +819,9 @@ function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
   return violations;
 }
 
-function proseEnumerationViolations(text: string, reading: Reading): Violation[] {
+function proseEnumerationViolations(text: string): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of readerProseBlocks(text)) {
     const paragraph = block.lines.join(" ");
     const ranks = new Set<number>();
     // A hyphenated compound is one word, not a rank: "third-party service" is
@@ -943,17 +871,16 @@ export function projectAcronyms(directory: string): ReadonlySet<string> {
   }
 }
 
-export interface AuditOptions extends Reading {
+export interface AuditOptions {
   /** Extra acronyms this project treats as known. */
   knownAcronyms?: ReadonlySet<string>;
 }
 
 export function auditText(text: string, options: AuditOptions = {}): Violation[] {
-  const reading: Reading = options;
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
   const mergedLengths: number[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of readerProseBlocks(text)) {
     const paragraph = block.lines.join("\n");
     // The splitter reports where each sentence starts, so nothing needs locating twice.
     // Rebuilding a sentence as a regular expression threw on a long one.
@@ -982,8 +909,21 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
         detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
       });
     }
+    for (let i = 0; i < block.lines.length; i++) {
+      const line = block.lines[i];
+      for (const term of LEGALESE) {
+        const matches = withoutNamedTerms(line, term)
+          .match(new RegExp(`\\b${term}\\b`, "gi"));
+        for (let n = 0; n < (matches?.length ?? 0); n++) {
+          violations.push({
+            rule: "legalese",
+            line: block.line + i,
+            detail: `banned term "${term}"`,
+          });
+        }
+      }
+    }
   }
-  violations.push(...legaleseViolations(text, reading));
   // The standards specify an average across the document, not a cap; the cap
   // above only catches genuine sprawl. Small samples are exempt because an
   // average over a handful of sentences is noise, not judgement.
@@ -1004,7 +944,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
       detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
     });
   }
-  const documentHeadings = headings(text, reading);
+  const documentHeadings = headings(text);
   for (let i = 0; i < documentHeadings.length; i++) {
     const heading = documentHeadings[i];
     if (heading.level > MAX_HEADING_LEVEL) {
@@ -1054,24 +994,24 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   }
 
   // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set(), reading));
+  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set()));
 
   // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...doubletViolations(text, reading));
+  violations.push(...doubletViolations(text));
 
   // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...proseEnumerationViolations(text, reading));
+  violations.push(...proseEnumerationViolations(text));
 
   // The intended readers of a document include everyone who uses it, whether
   // they see it, hear it or touch it. These two rules are the only ones here
   // that serve a reader who is not looking at the page.
-  violations.push(...wordyPhraseViolations(text, reading));
-  violations.push(...complexWordViolations(text, reading));
-  violations.push(...doubleNegativeViolations(text, reading));
-  violations.push(...fillerOpeningViolations(text, reading));
-  violations.push(...tableHeaderViolations(text, reading));
-  violations.push(...linkTextViolations(text, reading));
-  violations.push(...imageAltViolations(text, reading));
+  violations.push(...wordyPhraseViolations(text));
+  violations.push(...complexWordViolations(text));
+  violations.push(...doubleNegativeViolations(text));
+  violations.push(...fillerOpeningViolations(text));
+  violations.push(...tableHeaderViolations(text));
+  violations.push(...linkTextViolations(text));
+  violations.push(...imageAltViolations(text));
   return violations;
 }
 

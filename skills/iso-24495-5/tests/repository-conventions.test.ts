@@ -1428,18 +1428,6 @@ describe("repository writing conventions", () => {
         expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
       });
 
-      // A description has no front matter, so GitHub shows a leading "---" block as
-      // a rule and a heading. The audit read it as metadata, and passed a
-      // description whose only text sat inside it.
-      test("a leading front matter block is read as the text GitHub shows", () => {
-        const script = readFileSync(auditScript, "utf8");
-        expect(script, "the script must tell the audit there is no front matter")
-          .toMatch(/audit-text-cli\.ts.*--no-front-matter/);
-        const result = audit("---\nnote: The tenant shall pay.\n---\n");
-        expect(result.status, result.output).toBe(1);
-        expect(result.output).toContain("heading-style");
-      });
-
       // The script promises exit 2 for a file it cannot read, but a permission
       // error from grep fell through to "no text" with exit 1.
       test("an unreadable file exits 2, not 1", () => {
