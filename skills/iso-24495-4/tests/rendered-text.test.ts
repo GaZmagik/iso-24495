@@ -93,6 +93,19 @@ describe("rendered text", () => {
     expect(renderedText("<rp><rp>a</rp>b</rp>c")).toBe("c");
     // Inside a ruby, a second rp closes the first, and an rt closes it too.
     expect(renderedText("<ruby><rp>a<rp>b</rp>c</ruby>")).toBe("c");
+    // Inside a select the HTML parser ignores every tag but its options, so an "</rp>"
+    // there closes nothing, and a select or a control start tag ends the select.
+    expect(hasVisibleText("<rp><select></rp>This change works.</select></rp>")).toBe(false);
+    // GitHub renders these "<rp>abc</rp>d", "xy" and "xy&lt;textarea&gt;z": text inside
+    // a select stays, and a second select ends the first, so the "</rp>" after it counts.
+    expect(renderedText("<rp><select><option>a</option></rp>b<select>c</rp>d")).toBe("d");
+    expect(renderedText("x<select></rp><input>y")).toBe("xy");
+    // An input or keygen ends the select, so the "</rp>" after it closes the rp. A
+    // textarea does not, because the tag filter has already escaped it to text.
+    expect(renderedText("<rp><select><input></rp>x")).toBe("x");
+    expect(renderedText("<rp><select><keygen></rp>x")).toBe("x");
+    expect(renderedText("<rp><select><textarea></rp>x")).toBe("");
+    expect(renderedText("x<select><span>y</span><textarea>z")).toBe("xy<textarea>z");
   });
 
   test("the rules keep a code span's backticks and an image's words, and the visibility check does not", () => {
@@ -149,6 +162,8 @@ describe("rendered text", () => {
     }
     // Inside the same container it still hides what follows.
     expect(rulesFor("> <video>\n>\n> The tenant shall pay.")).not.toContain("legalese");
+    // An rp left open with its ruby is carried with it, so an rt in a later block closes it.
+    expect(rulesFor("<div><ruby><rp>\n\n<rt>We shall pay.</rt></ruby></div>")).toContain("legalese");
     // An rp left open by a raw HTML block hides what follows, as a video does.
     expect(rulesFor("This change works.\n\n<rp>\n\nThe tenant shall pay.")).not.toContain("legalese");
     expect(rulesFor("<rp>\n\n</rp>\n\nThe tenant shall pay.")).toContain("legalese");
@@ -234,6 +249,9 @@ describe("rendered text", () => {
     // text in another attribute, refers to nothing.
     expect(hasVisibleText('<span href="#fn0" title="[^a]"></span>\n\n[^a]: This change works.')).toBe(false);
     expect(rulesFor("Read [the note](#fn0) [^b].\n\n[^a]: We shall pay.\n\n[^b]: Plain.")).not.toContain("legalese");
+    // "[text][^a]" shows "[text]" and the number, so its text is read.
+    expect(rulesFor("[We shall pay.][^a]\n\n[^a]: This change works.")).toContain("legalese");
+    expect(readerProseBlocks("[Plain words.][^a]\n\n[^a]: Plain.")[0]?.lines[0]).toBe("[Plain words.]");
     // A reference shows its number, never its label, and "![^a]" is "!" and a reference.
     expect(rulesFor("This works.[^shall]\n\n[^shall]: This passes.")).not.toContain("legalese");
     expect(readerProseBlocks("This works.[^shall]\n\n[^shall]: This passes.")[0]?.lines[0]).toBe("This works.");

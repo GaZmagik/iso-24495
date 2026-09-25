@@ -155,6 +155,7 @@ function lineEndingsOutsideMarkup(html: string): string {
   let out = "";
   let owed = 0;
   let index = 0;
+  let inSelect = false;
   const special = /[<\n]/g;
   while (index < html.length) {
     special.lastIndex = index;
@@ -180,13 +181,38 @@ function lineEndingsOutsideMarkup(html: string): string {
     const markup = html.slice(index, end);
     const endings = lineEndings(markup);
     const name = TAG_NAME.exec(markup)?.[1]?.toLowerCase();
+    index = end;
+    // Inside a select, the HTML parser ignores every tag but a few, so "</rp>" there
+    // closes nothing and the rp it seems to close stays open. A select or a control
+    // start tag ends the select first.
+    if (inSelect && name !== undefined) {
+      const closing = markup.startsWith("</");
+      if (!closing && SELECT_ENDERS.has(name)) {
+        inSelect = false;
+        out += name === "select" ? "</select>" : `</select>${markup.replace(/\n/g, " ")}`;
+        owed += endings;
+        continue;
+      }
+      if (closing && name === "select") inSelect = false;
+      else if (!SELECT_CONTENT.has(name)) {
+        owed += endings;
+        continue;
+      }
+    } else if (name === "select" && !markup.startsWith("</")) {
+      inSelect = true;
+    }
     out += markup.replace(/\n/g, " ");
     if (name !== undefined && SEPARATING_ELEMENTS.has(name)) out += "\n".repeat(endings);
     else owed += endings;
-    index = end;
   }
   return out + "\n".repeat(owed);
 }
+
+// The tags the HTML parser reads inside a select: its options, and the scripts and
+// templates it runs everywhere. It ignores every other tag there.
+const SELECT_CONTENT: ReadonlySet<string> = new Set(["option", "optgroup", "script", "template"]);
+// The start tags that end an open select: another select, and a form control.
+const SELECT_ENDERS: ReadonlySet<string> = new Set(["select", "input", "keygen", "textarea"]);
 
 /**
  * A text node's characters, decoded as the browser decodes them.
@@ -258,13 +284,17 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
   // entry stands for no ruby at all, where an rp still hides its content and one rp can
   // sit inside another. Inside a ruby, a new rp or an rt closes the rp before it.
   const fallbacks: number[] = [0];
-  // A footnote reference shows its number on GitHub, never its label.
+  // A footnote reference shows its number on GitHub, never its label. "[^a]" renders
+  // as a stand-in link whose text is the label, "^a". "[text][^a]" renders as one
+  // whose text is "text", and GitHub shows "[text]" before the number, so that text
+  // is kept, in its brackets.
   let footnoteLinks = 0;
+  let footnoteText = "";
   let codeDepth = 0;
   let code = "";
   let owedLineEndings = 0;
 
-  const hidden = (): boolean => open.length > 0 || footnoteLinks > 0 || fallbacks.some((count) => count > 0);
+  const hidden = (): boolean => open.length > 0 || fallbacks.some((count) => count > 0);
   const write = (fragment: string): void => {
     if (codeDepth > 0) {
       code += fragment;
@@ -322,7 +352,13 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
       atEnd.push(() => { if (fallbacks.length > 1) fallbacks.pop(); });
     } else if (name === "a" && (element.getAttribute("href") ?? "").startsWith(`#${FOOTNOTE_STAND_IN}`)) {
       footnoteLinks += 1;
-      atEnd.push(() => { footnoteLinks -= 1; });
+      atEnd.push(() => {
+        footnoteLinks -= 1;
+        if (footnoteLinks > 0) return;
+        const shown = footnoteText;
+        footnoteText = "";
+        if (!shown.startsWith("^")) write(`[${shown}]`);
+      });
     } else if (name === "code") {
       codeDepth += 1;
       atEnd.push(closeCode);
@@ -365,7 +401,8 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
           return;
         }
         const decoded = decodedNode(node);
-        write(codeDepth > 0 ? decoded : escapedText(decoded));
+        if (footnoteLinks > 0) footnoteText += decoded;
+        else write(codeDepth > 0 ? decoded : escapedText(decoded));
       },
     })
     // The HTML parser reads a "</br>" end tag as a line break, as the standard says it must.
@@ -378,8 +415,13 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
     closeCode();
   }
   // An rp left open hides what follows it too: GitHub keeps the paragraph after a lone
-  // "<rp>" block inside the element. It is carried on like a video, and reopened.
-  return { text: text.replace(/\s+$/, ""), open: fallbacks.some((count) => count > 0) ? [...open, "rp"] : open };
+  // "<rp>" block inside the element. It is carried on like a video, and reopened with
+  // the ruby holding it, so that an rt in a later block still closes it.
+  const rubies = fallbacks.flatMap((count, depth) => [
+    ...(depth > 0 ? ["ruby"] : []),
+    ...(count > 0 ? ["rp"] : []),
+  ]);
+  return { text: text.replace(/\s+$/, ""), open: [...open, ...rubies] };
 }
 
 /** The text a Markdown fragment shows on GitHub. */

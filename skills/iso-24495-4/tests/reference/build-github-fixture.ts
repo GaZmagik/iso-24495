@@ -105,6 +105,17 @@ const DOCUMENTS: Array<[string, string]> = [
   ["link label holding a banned word, defined over several lines", "Read [plain][shall].\n\n[shall]:\n  /guide"],
   ["exclamation mark before a footnote reference", "![^a]\n\n[^a]: We shall pay."],
   ["footnote label holding a banned word", "This works.[^shall]\n\n[^shall]: This passes."],
+  ["select inside rp", "<rp><select></rp>This change works.</select></rp>"],
+  ["rp inside select", "<select><rp></select>We shall pay.</rp>"],
+  ["full reference link to a footnote label", "[We shall pay.][^a]\n\n[^a]: This change works."],
+  ["ruby with its rp left open across blocks", "<div><ruby><rp>\n\n<rt>We shall pay.</rt></ruby></div>"],
+  ["second select ends the first", "<rp><select><option>a</option></rp>b<select>c</rp>d"],
+  ["control start tag ends a select", "x<select></rp><input>y"],
+  ["tags inside a select are ignored", "x<select><span>y</span><textarea>z"],
+  ["input ends a select inside rp", "<rp><select><input></rp>We shall pay."],
+  ["keygen ends a select inside rp", "<rp><select><keygen></rp>We shall pay."],
+  ["filtered textarea does not end a select inside rp", "<rp><select><textarea></rp>This change works."],
+  ["ruby opening a paragraph closes at its end", "<ruby><rp>\n\nWe shall pay.\n\n<rt></rt>This change works.</ruby>"],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */
