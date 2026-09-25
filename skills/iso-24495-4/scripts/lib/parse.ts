@@ -10,7 +10,9 @@
 
 import { htmlReferenceAt, markdownReferenceAt } from "./character-references.ts";
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
-import { BLOCK_BOUNDARY, isFilteredTag, readMarkdown, SEPARATING_ELEMENTS } from "./rendered-text.ts";
+import {
+  BLOCK_BOUNDARY, FOOTNOTE_STAND_IN, isFilteredTag, readMarkdown, renderedText, SEPARATING_ELEMENTS,
+} from "./rendered-text.ts";
 
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
@@ -775,16 +777,18 @@ interface Shown {
  * link destination all refer to nothing, because the renderer reads them as they are.
  * A raw HTML block is not read, because the renderer passes it through unread.
  */
-// The stand-ins link to a fragment no author can write, fresh for each run. A fixed one
-// such as "#fn0" let a description link to it, or name it in an attribute, and
-// activate a footnote the page never shows.
-const STAND_IN = `iso24495-footnote-${crypto.randomUUID()}-`;
-const STAND_IN_LINK = new RegExp(`href="#${STAND_IN}(\\d+)"`, "g");
+// The renderer resolves a stand-in into a link, or into an image where "!" comes first.
+const STAND_IN_LINK = new RegExp(`(?:href|src)="#${FOOTNOTE_STAND_IN}(\\d+)"`, "g");
+
+/** Each footnote as a link reference definition standing in for it. */
+function footnoteStandIns(parsed: Parsed): string[] {
+  return parsed.footnoteLabels.map((label, index) => `[^${label}]: #${FOOTNOTE_STAND_IN}${index}`);
+}
 
 function referencedFootnotes(parsed: Parsed, lines: readonly string[]): Set<string> {
   const referenced = new Set<string>();
   if (parsed.footnoteLabels.length === 0) return referenced;
-  const standIns = parsed.footnoteLabels.map((label, index) => `[^${label}]: #${STAND_IN}${index}`).join("\n");
+  const standIns = footnoteStandIns(parsed).join("\n");
   const add = (text: string): void => {
     // A reference is written with "[^", however the rest of it is spelled.
     if (!text.includes("[^")) return;
@@ -803,6 +807,25 @@ function referencedFootnotes(parsed: Parsed, lines: readonly string[]): Set<stri
 /** True when the path lies inside the container the outer path ends in. */
 function within(path: readonly number[], outer: readonly number[]): boolean {
   return outer.length <= path.length && outer.every((id, depth) => path[depth] === id);
+}
+
+/**
+ * Link reference definitions the parser left as prose, found by the renderer.
+ *
+ * The parser recognises only a definition written on one line, and reads any other
+ * as a paragraph, so that a malformed one never hides a sentence. CommonMark lets a
+ * definition run over several lines, and GitHub resolves references to it. So a
+ * paragraph that opens with a bracket is rendered alone, and where it shows nothing,
+ * it was definitions, and every block is rendered with it.
+ */
+function spreadDefinitions(parsed: Parsed): string[] {
+  const found: string[] = [];
+  parsed.paragraphs.forEach((block, index) => {
+    const source = (parsed.sources[index] as string[]).join("\n");
+    if (block.rawHtml === true || block.footnote !== undefined || !/^ {0,3}\[/.test(source)) return;
+    if (renderedText(source) === "") found.push(source);
+  });
+  return found;
 }
 
 /** The last document read, because every rule asks for the same one in turn. */
@@ -829,6 +852,9 @@ function shownDocument(text: string, reading: Reading): Shown {
     ...parsed.headings.map((heading) => ({ line: heading.line, heading })),
   ].sort((a, b) => a.line - b.line);
   const shown: Shown = { blocks: [], headings: [], footnotes: referencedFootnotes(parsed, lines) };
+  // Every block is rendered with every definition in the document, and with a stand-in
+  // for each footnote, so a reference reads as it does on the page.
+  const definitions = [...parsed.definitions, ...spreadDefinitions(parsed), ...footnoteStandIns(parsed)];
   let open: string[] = [];
   let openPath: readonly number[] = [];
   for (const item of items) {
@@ -838,13 +864,13 @@ function shownDocument(text: string, reading: Reading): Shown {
     if (!within(path, openPath)) open = [];
     const carried = footnote === undefined ? open : [];
     if (item.heading !== undefined) {
-      const read = renderedLines([`# ${item.heading.text}`], parsed.definitions, carried);
+      const read = renderedLines([`# ${item.heading.text}`], definitions, carried);
       const heading = (read.lines[0] as string).replaceAll(BLOCK_BOUNDARY, " ").trim();
       shown.headings.push({ ...item.heading, text: heading });
       continue;
     }
     const block = parsed.paragraphs[item.block as number] as ProseBlock;
-    const read = renderedLines(parsed.sources[item.block as number] as string[], parsed.definitions, carried);
+    const read = renderedLines(parsed.sources[item.block as number] as string[], definitions, carried);
     if (block.rawHtml === true && footnote === undefined) {
       open = read.open;
       openPath = path;

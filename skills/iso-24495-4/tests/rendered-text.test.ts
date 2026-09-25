@@ -86,8 +86,13 @@ describe("rendered text", () => {
     expect(renderedText("<ruby><rp><ruby>x</ruby>y</rp>z</ruby> w")).toBe("z w");
     // An rt in the nested ruby ends that ruby's rp only, not the outer one.
     expect(renderedText("<ruby><rp><ruby>x<rt>y</rt></ruby>z</rp></ruby> w").trim()).toBe("w");
-    // An rp outside any ruby still hides its content.
+    // An rp outside any ruby still hides its content, and one rp inside another keeps
+    // the outer one hiding when it closes.
     expect(renderedText("a<rp>b</rp>c")).toBe("ac");
+    expect(hasVisibleText("<rp><rp></rp>Plain words.</rp>")).toBe(false);
+    expect(renderedText("<rp><rp>a</rp>b</rp>c")).toBe("c");
+    // Inside a ruby, a second rp closes the first, and an rt closes it too.
+    expect(renderedText("<ruby><rp>a<rp>b</rp>c</ruby>")).toBe("c");
   });
 
   test("the rules keep a code span's backticks and an image's words, and the visibility check does not", () => {
@@ -229,6 +234,11 @@ describe("rendered text", () => {
     // text in another attribute, refers to nothing.
     expect(hasVisibleText('<span href="#fn0" title="[^a]"></span>\n\n[^a]: This change works.')).toBe(false);
     expect(rulesFor("Read [the note](#fn0) [^b].\n\n[^a]: We shall pay.\n\n[^b]: Plain.")).not.toContain("legalese");
+    // A reference shows its number, never its label, and "![^a]" is "!" and a reference.
+    expect(rulesFor("This works.[^shall]\n\n[^shall]: This passes.")).not.toContain("legalese");
+    expect(readerProseBlocks("This works.[^shall]\n\n[^shall]: This passes.")[0]?.lines[0]).toBe("This works.");
+    expect(rulesFor("![^a]\n\n[^a]: We shall pay.")).toContain("legalese");
+    expect(readerProseBlocks("![^a]\n\n[^a]: Plain.")[0]?.lines[0]).toBe("!");
     // A document with no footnote definition has nothing to resolve.
     expect(rulesFor("Read [^a] here.")).toEqual([]);
     // The first definition of a label is the footnote; a later one shows nothing.
@@ -245,11 +255,21 @@ describe("rendered text", () => {
     const used = "Text[^Note].\n\n[^note]: The party shall act.";
     expect(auditText(used).filter((violation) => violation.rule === "legalese").map((violation) => violation.line))
       .toEqual([3]);
-    expect(readerProseBlocks(used).map((block) => block.lines.join(" "))).toEqual(["Text[^Note].", "The party shall act."]);
+    // The reference shows as a number on the page, so its label is not read.
+    expect(readerProseBlocks(used).map((block) => block.lines.join(" "))).toEqual(["Text.", "The party shall act."]);
     // An indented line continues the footnote.
     expect(readerProseBlocks("A[^n].\n\n[^n]: First line\n    continued.")[1]?.lines).toEqual(["First line", "continued."]);
     // A footnote inside code is not a footnote, and a reference there refers to nothing.
     expect(rulesFor("```\nA[^1].\n```\n\n[^1]: The party shall act.")).not.toContain("legalese");
+  });
+
+  test("a link reference definition over several lines resolves as it does on the page", () => {
+    expect(rulesFor("We sh[all][d] pay.\n\n[d]:\n  /guide")).toContain("legalese");
+    expect(rulesFor("Read [plain][shall].\n\n[shall]:\n  /guide")).not.toContain("legalese");
+    // The definition itself shows nothing, so it is not read as prose.
+    expect(readerProseBlocks("Read [x][d].\n\n[d]:\n  /guide")).toHaveLength(1);
+    // A bracket that opens no definition is prose, as before.
+    expect(readerProseBlocks("[Note] The tenant shall pay.")[0]?.lines[0]).toBe("[Note] The tenant shall pay.");
   });
 
   test("a sentence after a reference label or code span that runs over a line keeps its line", () => {

@@ -79,6 +79,11 @@ const HIDDEN_ELEMENTS: ReadonlySet<string> = new Set(["video", "script"]);
 // and reads as whitespace to everything else.
 export const BLOCK_BOUNDARY = "\f";
 
+// Each footnote stands in as a link reference definition whose destination is this
+// fragment, made fresh for each run so that no author can write it. A fixed one such as
+// "#fn0" let a description link to it and activate a footnote the page never shows.
+export const FOOTNOTE_STAND_IN = `iso24495-footnote-${crypto.randomUUID()}-`;
+
 const TABLE_PARTS: ReadonlySet<string> = new Set(["thead", "tbody", "tfoot", "tr", "td", "th"]);
 
 // The start tags that close an open p element, from the "in body" insertion mode of
@@ -249,14 +254,17 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
   const open: string[] = [];
   let tables = 0;
   let paragraphOpen = false;
-  // Whether each open ruby element is inside an rp, outermost first. The first entry
-  // stands for no ruby at all, where an rp still hides its content.
-  const fallbacks: boolean[] = [false];
+  // How many rp elements are open in each open ruby element, outermost first. The first
+  // entry stands for no ruby at all, where an rp still hides its content and one rp can
+  // sit inside another. Inside a ruby, a new rp or an rt closes the rp before it.
+  const fallbacks: number[] = [0];
+  // A footnote reference shows its number on GitHub, never its label.
+  let footnoteLinks = 0;
   let codeDepth = 0;
   let code = "";
   let owedLineEndings = 0;
 
-  const hidden = (): boolean => open.length > 0 || fallbacks.includes(true);
+  const hidden = (): boolean => open.length > 0 || footnoteLinks > 0 || fallbacks.some((count) => count > 0);
   const write = (fragment: string): void => {
     if (codeDepth > 0) {
       code += fragment;
@@ -305,16 +313,22 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
     } else if (name === "rp") {
       // An rp belongs to the ruby it sits in, and a ruby nested inside it cannot end it.
       const ruby = fallbacks.length - 1;
-      fallbacks[ruby] = true;
-      atEnd.push(() => { fallbacks[ruby] = false; });
+      fallbacks[ruby] = ruby > 0 ? 1 : (fallbacks[ruby] as number) + 1;
+      atEnd.push(() => { fallbacks[ruby] = Math.max(0, (fallbacks[ruby] as number) - 1); });
     } else if (name === "rt") {
-      fallbacks[fallbacks.length - 1] = false;
+      if (fallbacks.length > 1) fallbacks[fallbacks.length - 1] = 0;
     } else if (name === "ruby") {
-      fallbacks.push(false);
+      fallbacks.push(0);
       atEnd.push(() => { if (fallbacks.length > 1) fallbacks.pop(); });
+    } else if (name === "a" && (element.getAttribute("href") ?? "").startsWith(`#${FOOTNOTE_STAND_IN}`)) {
+      footnoteLinks += 1;
+      atEnd.push(() => { footnoteLinks -= 1; });
     } else if (name === "code") {
       codeDepth += 1;
       atEnd.push(closeCode);
+    } else if (name === "img" && (element.getAttribute("src") ?? "").startsWith(`#${FOOTNOTE_STAND_IN}`)) {
+      // "![^a]" is an exclamation mark and a footnote reference on GitHub, not an image.
+      if (!hidden()) write("!");
     } else if (name === "img") {
       const alt = element.getAttribute("alt");
       if (reading.altText && alt !== null && !hidden()) {
@@ -365,7 +379,7 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
   }
   // An rp left open hides what follows it too: GitHub keeps the paragraph after a lone
   // "<rp>" block inside the element. It is carried on like a video, and reopened.
-  return { text: text.replace(/\s+$/, ""), open: fallbacks.includes(true) ? [...open, "rp"] : open };
+  return { text: text.replace(/\s+$/, ""), open: fallbacks.some((count) => count > 0) ? [...open, "rp"] : open };
 }
 
 /** The text a Markdown fragment shows on GitHub. */

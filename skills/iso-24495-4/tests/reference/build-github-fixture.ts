@@ -100,6 +100,11 @@ const DOCUMENTS: Array<[string, string]> = [
   ["rp left open by a raw HTML block", "This change works.\n\n<rp>\n\nThe tenant shall pay."],
   ["stand-in fragment written in an attribute", "<span href=\"#fn0\" title=\"[^a]\"></span>\n\n[^a]: This change works."],
   ["plain link to a stand-in fragment", "Read [the note](#fn0) [^b].\n\n[^a]: We shall pay.\n\n[^b]: Plain."],
+  ["rp nested inside rp", "<rp><rp></rp>Plain words.</rp>"],
+  ["link definition over several lines", "We sh[all][d] pay.\n\n[d]:\n  /guide"],
+  ["link label holding a banned word, defined over several lines", "Read [plain][shall].\n\n[shall]:\n  /guide"],
+  ["exclamation mark before a footnote reference", "![^a]\n\n[^a]: We shall pay."],
+  ["footnote label holding a banned word", "This works.[^shall]\n\n[^shall]: This passes."],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */
