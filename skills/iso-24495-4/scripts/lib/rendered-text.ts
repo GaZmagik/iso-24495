@@ -249,12 +249,14 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
   const open: string[] = [];
   let tables = 0;
   let paragraphOpen = false;
-  let inFallback = false;
+  // Whether each open ruby element is inside an rp, outermost first. The first entry
+  // stands for no ruby at all, where an rp still hides its content.
+  const fallbacks: boolean[] = [false];
   let codeDepth = 0;
   let code = "";
   let owedLineEndings = 0;
 
-  const hidden = (): boolean => open.length > 0 || inFallback;
+  const hidden = (): boolean => open.length > 0 || fallbacks.includes(true);
   const write = (fragment: string): void => {
     if (codeDepth > 0) {
       code += fragment;
@@ -301,12 +303,15 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
       open.push(name);
       atEnd.push(() => { open.splice(open.lastIndexOf(name), 1); });
     } else if (name === "rp") {
-      inFallback = true;
-      atEnd.push(() => { inFallback = false; });
+      // An rp belongs to the ruby it sits in, and a ruby nested inside it cannot end it.
+      const ruby = fallbacks.length - 1;
+      fallbacks[ruby] = true;
+      atEnd.push(() => { fallbacks[ruby] = false; });
     } else if (name === "rt") {
-      inFallback = false;
+      fallbacks[fallbacks.length - 1] = false;
     } else if (name === "ruby") {
-      atEnd.push(() => { inFallback = false; });
+      fallbacks.push(false);
+      atEnd.push(() => { if (fallbacks.length > 1) fallbacks.pop(); });
     } else if (name === "code") {
       codeDepth += 1;
       atEnd.push(closeCode);

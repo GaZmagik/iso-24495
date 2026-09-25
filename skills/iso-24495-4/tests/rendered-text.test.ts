@@ -81,6 +81,13 @@ describe("rendered text", () => {
     expect(renderedText("<ruby>a<rp>(</rp><rt>b</rt><rp>)</rp></ruby> c")).toBe("ab c");
     expect(renderedText("<ruby>a<rp>(</ruby> c")).toBe("a c");
     expect(renderedText("<ruby>a<rp>(<rp>)</ruby> c")).toBe("a c");
+    // A ruby nested inside an rp cannot end it.
+    expect(hasVisibleText("<ruby><rp><ruby></ruby>This change works.</rp></ruby>")).toBe(false);
+    expect(renderedText("<ruby><rp><ruby>x</ruby>y</rp>z</ruby> w")).toBe("z w");
+    // An rt in the nested ruby ends that ruby's rp only, not the outer one.
+    expect(renderedText("<ruby><rp><ruby>x<rt>y</rt></ruby>z</rp></ruby> w").trim()).toBe("w");
+    // An rp outside any ruby still hides its content.
+    expect(renderedText("a<rp>b</rp>c")).toBe("ac");
   });
 
   test("the rules keep a code span's backticks and an image's words, and the visibility check does not", () => {
@@ -199,6 +206,21 @@ describe("rendered text", () => {
     // inline HTML inside a paragraph leaves the Markdown between its tags live.
     expect(rulesFor("<div>Read [^a].</div>\n\n[^a]: The tenant shall pay.")).not.toContain("legalese");
     expect(rulesFor("Read <div>[^a]</div>.\n\n[^a]: The tenant shall pay.")).toContain("legalese");
+    // A reference inside a comment, a processing instruction or a declaration refers
+    // to nothing; one after an unclosed comment is text, and live.
+    for (const hidden of ["<!-- [^a] -->", "<!-->[^a]", "<? [^a] ?>", "<!X [^a]>", "<![CDATA[ [^a] ]]>"]) {
+      const text = `&#32;${hidden}\n\n[^a]: The tenant shall pay.`;
+      if (hidden === "<!-->[^a]") expect(rulesFor(text), text).toContain("legalese");
+      else expect(rulesFor(text), text).not.toContain("legalese");
+    }
+    expect(hasVisibleText("&#32;<!-- [^a] -->\n\n[^a]: This change works.")).toBe(false);
+    expect(rulesFor("Read <!-- [^a]\n\n[^a]: The tenant shall pay.")).toContain("legalese");
+    // Labels compare case-folded, so "SS" names "ß".
+    expect(rulesFor("This change works.[^SS]\n\n[^ß]: We shall pay.")).toContain("legalese");
+    // The first definition of a label is the footnote; a later one shows nothing.
+    const twice = "This change works.[^a]\n\n[^a]: It works.\n\n[^a]: We shall pay.";
+    expect(rulesFor(twice)).not.toContain("legalese");
+    expect(rulesFor("A.[^a]\n\n[^a]: We shall pay.\n\n[^a]: It works.")).toContain("legalese");
     // Everything inside an unused footnote goes, a heading included.
     expect(hasVisibleText("[^a]: Plain words.\n\n    # Plain heading")).toBe(false);
     expect(rulesFor("Plain words.\n\n[^a]: Plain words.\n\n    # The tenant shall pay")).not.toContain("legalese");

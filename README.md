@@ -114,7 +114,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 The parser decides where each block is, and the Markdown renderer decides what its text shows. GitHub's tag filter is applied to what the renderer writes, and an HTML tokeniser reads the text, so emphasis, links and inline HTML read as the page shows them. The rules about words and sentences read that text, and so does the check that a pull request description shows any text at all.
 
-GitHub also sanitises the page. It keeps the elements on its allowlist and unwraps the rest, so only a kept block element separates two words. The reader follows what GitHub's own Markdown API returned for 305 documents, recorded in `skills/iso-24495-4/tests/fixtures/github-rendered.ts`. A small reader of its own reads GitHub's answers, so a mistake in the engine cannot appear on both sides of the comparison. The engine reads 298 of them the same way, and each of the other seven carries its reason.
+GitHub also sanitises the page. It keeps the elements on its allowlist and unwraps the rest, so only a kept block element separates two words. The reader follows what GitHub's own Markdown API returned for 314 documents, recorded in `skills/iso-24495-4/tests/fixtures/github-rendered.ts`. A small reader of its own reads GitHub's answers, so a mistake in the engine cannot appear on both sides of the comparison. The engine reads 303 of them the same way, and each of the other eleven carries its reason.
 
 Some characters show nothing where they stand, such as a word joiner or a soft hyphen. Unicode marks them default-ignorable, and the reader removes them before a rule reads the word around them.
 

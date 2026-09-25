@@ -85,6 +85,15 @@ const DOCUMENTS: Array<[string, string]> = [
   ["footnote reference written as a character reference", "Read &#91;^a].\n\n[^a]: The tenant shall pay."],
   ["footnote reference in a raw HTML block", "<div>Read [^a].</div>\n\n[^a]: The tenant shall pay."],
   ["footnote reference in a link destination", "Read [x](/[^a]).\n\n[^a]: The tenant shall pay."],
+  ["footnote reference inside a comment", "&#32;<!-- [^a] -->\n\n[^a]: This change works."],
+  ["footnote label that case-folds", "This change works.[^SS]\n\n[^ß]: We shall pay."],
+  ["footnote defined twice", "This change works.[^a]\n\n[^a]: It works.\n\n[^a]: We shall pay."],
+  ["ruby nested inside rp", "<ruby><rp><ruby></ruby>This change works.</rp></ruby>"],
+  ["footnote reference after an abrupt comment", "&#32;<!-->[^a]\n\n[^a]: The tenant shall pay."],
+  ["footnote reference inside a processing instruction", "&#32;<? [^a] ?>\n\n[^a]: The tenant shall pay."],
+  ["footnote reference inside a declaration", "&#32;<!X [^a]>\n\n[^a]: The tenant shall pay."],
+  ["footnote reference inside CDATA", "&#32;<![CDATA[ [^a] ]]>\n\n[^a]: The tenant shall pay."],
+  ["footnote reference after an unclosed comment", "Read <!-- [^a]\n\n[^a]: The tenant shall pay."],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */

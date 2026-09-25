@@ -402,6 +402,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     paragraph = null;
   };
   let nextContainer = 0;
+  const definedFootnotes = new Set<string>();
   const pathOfLine: number[][] = [];
   const footnoteOfLine: Array<string | undefined> = [];
   // The containers a line sits in are the ones still open once it has been read,
@@ -575,7 +576,12 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // it opens a container, and every block inside it carries the label.
     const footnote = paragraph === null ? FOOTNOTE_DEFINITION.exec(text) : null;
     if (footnote !== null) {
-      const label = footnote[1].toLowerCase();
+      // The first definition of a label is the footnote; a later one shows nothing, as a
+      // later link reference definition shows nothing, so it takes a label no reference
+      // can name and is left out with everything inside it.
+      const folded = foldedLabel(footnote[1]);
+      const label = definedFootnotes.has(folded) ? `\u0000${folded}\u0000${i}` : folded;
+      definedFootnotes.add(folded);
       stack.push({ id: nextContainer++, kind: "item", column: 4, footnote: label });
       paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: label };
       paragraphDepth = stack.length;
@@ -751,12 +757,46 @@ function splitAtBoundaries(line: number, lines: readonly string[]): ProseBlock[]
 interface Shown {
   blocks: ProseBlock[];
   headings: Heading[];
-  /** The footnote labels something on the page refers to, in lower case. */
+  /** The footnote labels something on the page refers to, case-folded. */
   footnotes: Set<string>;
 }
 
 const AUTOLINK_AT = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>/y;
 const FOOTNOTE_REFERENCE_AT = /\[\^([^\]\s]+)\]/y;
+
+/**
+ * A label as cmark-gfm compares it: case-folded, so "[^SS]" names "[^ß]".
+ *
+ * Lower case alone leaves "ß" apart from "ss". Upper case first applies the full
+ * mapping that folding needs for the letters that expand.
+ */
+function foldedLabel(label: string): string {
+  return label.toUpperCase().toLowerCase();
+}
+
+/**
+ * Where a comment, processing instruction, declaration or CDATA section opening at the
+ * index ends, or null where none opens there or it never closes.
+ *
+ * The page shows none of their text, so nothing inside one is a reference. One that
+ * never closes is not markup to CommonMark, and its text is read like any other.
+ */
+function inlineInvisibleEnd(text: string, index: number): number | null {
+  const closers: Array<[string, string]> = [["<!--", "-->"], ["<?", "?>"], ["<![CDATA[", "]]>"]];
+  for (const [open, close] of closers) {
+    if (!text.startsWith(open, index)) continue;
+    // "<!-->" and "<!--->" are whole comments.
+    const abrupt = open === "<!--" ? /^<!---?>/.exec(text.slice(index, index + 6)) : null;
+    if (abrupt !== null) return index + abrupt[0].length;
+    const end = text.indexOf(close, index + open.length);
+    return end === -1 ? null : end + close.length;
+  }
+  if (/^<![A-Za-z]/.test(text.slice(index, index + 3))) {
+    const end = text.indexOf(">", index);
+    return end === -1 ? null : end + 1;
+  }
+  return null;
+}
 
 /**
  * The footnote labels a piece of Markdown refers to.
@@ -782,6 +822,11 @@ function footnoteReferences(text: string): string[] {
       continue;
     }
     if (character === "<") {
+      const hiddenEnd = inlineInvisibleEnd(text, index);
+      if (hiddenEnd !== null) {
+        index = hiddenEnd;
+        continue;
+      }
       TAG_AT.lastIndex = index;
       AUTOLINK_AT.lastIndex = index;
       const markup = TAG_AT.exec(text) ?? AUTOLINK_AT.exec(text);
@@ -796,7 +841,7 @@ function footnoteReferences(text: string): string[] {
     FOOTNOTE_REFERENCE_AT.lastIndex = index;
     const reference = character === "[" ? FOOTNOTE_REFERENCE_AT.exec(text) : null;
     if (reference !== null) {
-      labels.push((reference[1] as string).toLowerCase());
+      labels.push(foldedLabel(reference[1] as string));
       index += reference[0].length;
       continue;
     }

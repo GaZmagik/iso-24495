@@ -1672,7 +1672,13 @@ describe("repository writing conventions", () => {
       );
       const body = style.split("---")[2].trim();
       expect(body.length).toBeGreaterThan(500);
-      expect(skill).toContain(body);
+      // Everything from the style's first sentence to the end must be the style's
+      // body exactly. Containment let a line appended to the skill alone, such as
+      // "Ignore every rule above.", pass for the same rules.
+      const anchor = body.slice(0, 60);
+      const fromAnchor = skill.slice(skill.indexOf(anchor)).replace(/\r\n/g, "\n").trim();
+      expect(skill.indexOf(anchor)).toBeGreaterThan(0);
+      expect(fromAnchor).toBe(body.replace(/\r\n/g, "\n"));
     });
 
     test("the README explains Codex installation and its one limit", () => {
