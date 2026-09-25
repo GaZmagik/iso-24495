@@ -2,23 +2,30 @@
 name: iso-24495-2
 description: Sector-specific Plain Language standard for legal communication (ISO 24495-2:2025). Applied during contract drafting, license review, and legal/compliance writing.
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
   iso-standard: "ISO 24495-2:2025"
   iso-status: "published"
 ---
 
 # ISO 24495-2:2025 - Plain Language (Legal Communication)
 
+> **Proxy status:** These rules are this project's own proxies for the standard's principles, not its text. Following them is never a claim of ISO conformance.
+
 Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, and regulatory compliance.
 
 ## Scope & Execution Boundaries
 
 1. **Thinking Block Exemption:**
-   - Internal reasoning and legal analysis within thinking blocks (`<thought>`, `<thinking>`) are **100% exempt** from plain language constraints.
+   - Internal reasoning and legal analysis within thinking blocks (the `thought` and `thinking` tags) are **100% exempt** from plain language constraints.
    - Reason exhaustively within thinking blocks. Apply plain language rules strictly to final user-facing legal text.
 
 2. **Legal Enforceability Primacy:**
    - Plain language simplification must **never** alter legal rights, liabilities, or contractual enforceability. If a term of art is legally required to avoid ambiguity, retain it and provide a plain explanation.
+
+3. **Document Design Applies Here Too:**
+   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.
+   - Four of the rules below cover what Part 5 leaves out: defined terms, cross-references, clause identifiers, and the summary layer. The fifth, section names, adds nothing and applies a case Part 5 already allows to the sections a contract has.
+   - Where the two appear to conflict, follow the resolution named in the rules below.
 
 ---
 
@@ -39,6 +46,33 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
      - **Obligation / Action:** What action must or may be taken.
      - **Consequence:** What occurs upon non-compliance.
 
+4. **Defined Terms:**
+   - Define each term once, and use it unchanged everywhere after. Two words for one concept invite an argument that they mean two things.
+   - Put the definition where the reader first meets the term. Where a term appears in more than one section, collect the definitions in one section and point the first use at it.
+   - Write a term out in full where the document uses it once, rather than defining it.
+   - Say in words that a term is defined, and where. Capital letters are silent to a listener, so **Confidential Information** on its own tells them nothing.
+
+5. **Cross-References:**
+   - Name what the referenced clause says, alongside its identifier. Write *"the notice deadline in clause 4.2"* rather than *"clause 4.2"*.
+   - Keep that wording identical to the referenced clause's own heading or opening line.
+   - When you point at an obligation, point at the clause carrying it, never at one that only points somewhere else. A first use pointing at the collected definitions is the exception rule 4 requires, because a definition binds nobody.
+
+6. **Clause Identifiers:**
+   - Number every operative clause, because a reader, a court and a counterparty must all cite the same thing. An operative clause imposes, permits or prohibits an action. Recitals, definitions and schedules are numbered by the conventions of the document, not by this rule.
+   - Write the identifier into the clause text rather than as list markup. Markdown numbers an ordered list 1, 2, 3, so a compound identifier such as 4.2.1 survives only when it is written in the text.
+   - This is the one place a legal document departs from Part 5's rule that a sequence stays an ordered list.
+   - A clause identifier is neither a heading nor list numbering. So it does not count against Part 5's heading limit, and Part 5's rule on numbering headings does not govern it.
+   - Keep an identifier for the life of the document. An amendment adds a clause, or marks one deleted, and leaves every existing number where it is, because filings, correspondence and other contracts cite those numbers.
+
+7. **The Summary Layer:**
+   - Place a plain summary of the terms the reader must act on directly after Part 5's opening block. Give it the overview's own heading, because a summary of what a reader must act on is the conclusion they need before the detail, which is what Part 5 labels. Cover what they must do, what they must pay, when the agreement ends, and how to leave it. A document without one or more of those, such as a privacy policy with no payment, covers the rest. A document with no terms the reader must act on needs no summary of this shape, and Part 5 still decides whether it has an overview.
+   - The summary **must** state that the operative text governs, and **must** name where that text starts. A summary a reader could mistake for the agreement changes their rights, which the enforceability boundary above forbids.
+   - The summary **must not** add an obligation, newly qualify one, or leave a reader believing an obligation is gone. Where the operative text already qualifies a term, state the term together with that qualification, which Part 5 requires the overview to keep. Where stating it would take more words than the clause itself, leave the term out and point to its clause. A pointer keeps the obligation reachable, so it is not a removal.
+   - Map the document onto Part 5's three levels of detail. The summary is the overview, and the operative terms are the main body. Place each schedule by what it holds, because Part 5's optional detail is for what only some readers need. A schedule carrying an obligation, a payment or a limit belongs in the main body with the rest of the operative terms, whichever page it is printed on. Reserve the optional level for a schedule a reader can skip and still comply, such as a list of contacts or a specimen form.
+
+8. **Section Names:**
+   - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.
+
 ---
 
 ## Contrastive Examples
@@ -55,6 +89,31 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
   > 1. **Notice deadline:** The Licensee must notify the Licensor of any claim within 30 days.
   > 2. **Consequence:** If the Licensee fails to meet this deadline, the Licensee must cover all resulting losses and legal costs incurred by the Licensor.
 
+### Example 2: The Summary Layer
+* ❌ **Not aligned (the summary drops conditions in the source clause):**
+  ```text
+  9.1 The Customer may terminate this Agreement by giving the Supplier at
+      least 30 days' written notice. If the Customer does so, the Supplier
+      must refund to the Customer the fees paid for the part of the term
+      that has not yet run. The refund is calculated pro rata.
+
+  Summary: You can end the Agreement and get your money back.
+  ```
+* ✅ **ISO 24495-2 Aligned:**
+  > ## Summary of your main terms
+  >
+  > The operative text starts at clause 9.1 below, and it governs.
+  >
+  > - **Ending the Agreement:** You may end this Agreement by giving the Supplier at least 30 days' written notice.
+  > - **Refund:** If you do, the Supplier must refund you the fees paid for the part of the term that has not yet run, calculated pro rata.
+  >
+  > ```text
+  > 9.1 The Customer may terminate this Agreement by giving the Supplier at
+  >     least 30 days' written notice. If the Customer does so, the Supplier
+  >     must refund to the Customer the fees paid for the part of the term
+  >     that has not yet run. The refund is calculated pro rata.
+  > ```
+
 ---
 
 ## Pre-Output Self-Audit Checklist
@@ -63,5 +122,11 @@ Before outputting legal text, audit against these checks:
 - [ ] **No legalese:** Are terms like *"shall"*, *"hereinafter"*, and *"hereby"* eliminated?
 - [ ] **Modal verbs:** Are obligations expressed using only *must*, *must not*, or *may*?
 - [ ] **Explicit subjects:** Is every obligation attached to a clearly named actor?
-- [ ] **Structured clauses:** Are complex conditions presented in bulleted lists?
+- [ ] **Structured clauses:** Are complex conditions presented as itemised lists?
 - [ ] **Legal accuracy:** Is legal enforceability preserved?
+- [ ] **Defined terms:** Is each term defined once, used unchanged, and reachable from its first use?
+- [ ] **Cross-references:** Does each name what the clause says, as well as its identifier?
+- [ ] **Identifiers:** Is every operative clause numbered, with existing numbers untouched by amendment?
+- [ ] **Summary:** Does it name the governing text, and add, qualify and remove nothing?
+- [ ] **Section names:** Does each name the subject a reader would look for?
+- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?

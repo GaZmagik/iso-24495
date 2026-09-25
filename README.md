@@ -11,14 +11,14 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | Skill | Scope |
 |-------|-------|
 | `iso-24495-1` | **Core principles.** Governs all user-facing output: no filler preambles, short sentences and paragraphs, active voice, scannable structure, concrete instructions. |
-| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses. |
-| `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms. |
+| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses, defined terms, cross-references that name what they point at, stable clause identifiers, a summary layer over the operative text, and section names a reader can navigate by. |
+| `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms, text alternatives for diagrams, and the stages placed inside the document levels of `iso-24495-5`. |
 | `iso-24495-4` | **Organisational implementation (provisional).** A task skill for plain language gap analysis in organisations: a process-artefact sweep, a corpus audit, a five-dimension maturity model with deterministic scoring, and an append-only audit trend. Ships TypeScript tooling run with [Bun](https://bun.sh) (`bun test` covered). Based on the unpublished ISO/CD 24495-4 committee draft. |
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
 
-The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. The text audit never activates automatically.
+The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
 All skills exempt internal reasoning. The writing skills preserve code blocks, commands, and logs untouched; `iso-24495-code` is the exception, because governing code is its subject. Technical and legal accuracy always supersede formatting rules.
 
@@ -42,8 +42,7 @@ Or from a local clone:
 
 ## Installation (Codex CLI)
 
-Codex reads the same marketplace manifest, so the plugin installs from the same
-address:
+Codex reads the same marketplace manifest, so the plugin installs from the same address:
 
 ```
 codex plugin marketplace add https://github.com/GaZmagik/iso-24495.git
@@ -57,15 +56,9 @@ codex plugin marketplace add .
 codex plugin add iso-24495-plain-language@iso-24495
 ```
 
-Every skill carries `agents/openai.yaml`, which gives Codex its display name,
-its short description, and the prompt Codex offers for it. Invoke a skill by
-name, as in `$iso-24495-1`, or ask for it in words.
+Every skill carries `agents/openai.yaml`, which gives Codex its display name, its short description, and the prompt Codex offers for it. Invoke a skill by name, as in `$iso-24495-1`, or ask for it in words.
 
-Codex has no output style, so the same rules are a skill there:
-`iso-24495-style` holds the output style word for word, and a test keeps the
-two identical. It lives in `codex-skills/` rather than `skills/`, because
-Claude Code scans `skills/` and would otherwise offer a skill its output style
-already covers. Codex reads both directories, named in `.codex-plugin/plugin.json`.
+Codex has no output style, so the same rules are a skill there: `iso-24495-style` holds the output style word for word, and a test keeps the two identical. It lives in `codex-skills/` rather than `skills/`, because Claude Code scans `skills/` and would otherwise offer a skill its output style already covers. Codex reads both directories, named in `.codex-plugin/plugin.json`.
 
 Name the skill in your `AGENTS.md` to apply it to every response:
 
@@ -73,8 +66,7 @@ Name the skill in your `AGENTS.md` to apply it to every response:
 Apply `iso-24495-style` to every response.
 ```
 
-Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. An
-`AGENTS.md` inside a plugin is ignored, so a plugin cannot apply itself.
+Put that in your project's `AGENTS.md` or in `~/.codex/AGENTS.md`. An `AGENTS.md` inside a plugin is ignored, so a plugin cannot apply itself.
 
 ## Usage
 
@@ -118,43 +110,42 @@ The ISO texts are licensed, so the standards themselves cost money. Everything i
 
 ## What the engine reads
 
-A rule can only be as right as the text it reads. So the engine parses
-Markdown the way CommonMark describes it: each line is matched against the
-containers already open, then against any container it starts. What remains
-is the block a rule measures. That is what lets a wrapped list item, a
-quotation continuing without its marker, and a heading written inside a list
-all be read correctly.
+A rule can only be as right as the text it reads. So the engine parses Markdown the way CommonMark describes it: each line is matched against the containers already open, then against any container it starts. What remains is the block a rule measures. That is what lets a wrapped list item, a quotation continuing without its marker, and a heading written inside a list all be read correctly.
 
 **Measured, because a reader reads them:**
 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container;
-- HTML, because its text is prose a reader reads.
+- headings, at any depth and in any container, through the heading rules.
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give
-  back to the writer;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid, except that `table-header` reads them;
 - YAML front matter, which is metadata;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
 
-The parser is checked against the CommonMark reference implementation. 302
-documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`,
-and every one that this engine reads differently carries the reason why. The
-reference is not a dependency: it was installed outside the repository, asked
-once, and its answers kept.
+The parser is checked against the CommonMark reference implementation. 302 documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`, and every one that this engine reads differently carries the reason why. The reference is not a dependency: it was installed outside the repository, asked once, and its answers kept.
 
 ## User-invoked text audit
 
 The `iso-24495-text-audit` skill audits a selected `.md`, `.markdown`, or `.txt` file or directory. It uses the same rule engine as the Part 4 corpus audit. It reports each finding with its file, line, rule, and explanation.
 
+The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
+
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` looks for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+
+The `sentence-length` and `sentence-average` rules count words separated by whitespace, including spaces and line breaks, and use English benchmarks. The `paragraph-length` rule counts sentences, with a limit of five.
+
+The `prose-enumeration` rule flags three or more distinct ranks in a prose block, including rank one. It recognises English ordinal words and numbered markers from one to six.
+
+The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
+
 The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
-The last two serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
+The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
 The result reports zero findings when no implemented rule fires. That result does not prove the text suits its audience or purpose.
 
@@ -173,6 +164,18 @@ Directory audits skip selected or nested symbolic links and directory junctions.
 ## Testing policy
 
 Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
+
+A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
+
+```bash
+bash scripts/audit-pull-request-text.sh <file>
+```
+
+The check passes when the audit reads the text and finds nothing. It fails when the text has findings, and when there is no text at all. Whitespace is not text, because a reader gets as much from a page of spaces as from an empty one.
+
+A file the script cannot read stops it with a different code, rather than any verdict about text. A review found the reason for that: a mistyped name beginning with a dash reached `dirname` as an option, and the script audited a neighbouring file and passed. A check that passes for the wrong target is worse than one that fails.
+
+Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
 
 `bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.
 

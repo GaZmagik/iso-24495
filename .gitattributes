@@ -1,0 +1,4 @@
+# Every text file is checked out with LF line endings, whatever core.autocrlf
+# says. The tests read the shipped documents and split them on "\n", so a
+# Windows checkout with CRLF endings failed the gate on files nobody changed.
+* text=auto eol=lf

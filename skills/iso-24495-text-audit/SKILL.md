@@ -4,12 +4,24 @@ description: Audit user-selected Markdown or text files for deterministic plain-
 disable-model-invocation: true
 argument-hint: "[file-or-directory]"
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
 ---
 
 # ISO 24495 Text Audit
 
 Audit only the path the user selects. Report mechanical findings so the user can decide whether the text suits its readers and purpose.
+
+## Language and input scope
+
+The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
+
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` looks for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+
+The `sentence-length` and `sentence-average` rules count words separated by whitespace, including spaces and line breaks, and use English benchmarks. The `paragraph-length` rule counts sentences, with a limit of five.
+
+The `prose-enumeration` rule flags three or more distinct ranks in a prose block, including rank one. It recognises English ordinal words and numbered markers from one to six.
+
+The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
 
 ## Workflow
 
