@@ -144,6 +144,9 @@ describe("rendered text", () => {
     }
     // Inside the same container it still hides what follows.
     expect(rulesFor("> <video>\n>\n> The tenant shall pay.")).not.toContain("legalese");
+    // An rp left open by a raw HTML block hides what follows, as a video does.
+    expect(rulesFor("This change works.\n\n<rp>\n\nThe tenant shall pay.")).not.toContain("legalese");
+    expect(rulesFor("<rp>\n\n</rp>\n\nThe tenant shall pay.")).toContain("legalese");
     // A used footnote is shown at the foot of the page, outside any open video.
     expect(rulesFor("A[^a].\n\n<video>\n\n[^a]: The tenant shall pay.")).toContain("legalese");
     // A heading inside an open video is hidden with it.
@@ -215,8 +218,15 @@ describe("rendered text", () => {
     }
     expect(hasVisibleText("&#32;<!-- [^a] -->\n\n[^a]: This change works.")).toBe(false);
     expect(rulesFor("Read <!-- [^a]\n\n[^a]: The tenant shall pay.")).toContain("legalese");
-    // Labels compare case-folded, so "SS" names "ß".
+    // Labels compare case-folded, so "SS" names "ß", while a dotless "ı" stays apart from "i".
     expect(rulesFor("This change works.[^SS]\n\n[^ß]: We shall pay.")).toContain("legalese");
+    expect(rulesFor("Read the note[^i].\n\n[^ı]: This change works.\n\n[^i]: The tenant shall pay.")).toContain("legalese");
+    // Text that only looks like a link leaves its reference live, and a real link's
+    // destination, however it nests, holds none.
+    expect(rulesFor("Read [the guide](bad [^a]).\n\n[^a]: The tenant shall pay.")).toContain("legalese");
+    expect(hasVisibleText("[&#8203;](https://example.com/a(b)[^x])\n\n[^x]: This change works.")).toBe(false);
+    // A document with no footnote definition has nothing to resolve.
+    expect(rulesFor("Read [^a] here.")).toEqual([]);
     // The first definition of a label is the footnote; a later one shows nothing.
     const twice = "This change works.[^a]\n\n[^a]: It works.\n\n[^a]: We shall pay.";
     expect(rulesFor(twice)).not.toContain("legalese");

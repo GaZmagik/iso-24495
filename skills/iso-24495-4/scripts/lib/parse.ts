@@ -69,7 +69,8 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // which is why its label starts with "^" and it is not here.
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
-const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*/;
+// A footnote label follows a link label's rules, so it holds no bracket, and no space.
+const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^[\]\s\\]+)\]:[ \t]*/;
 
 /**
  * A conservative single-line link reference definition.
@@ -279,8 +280,10 @@ interface Parsed {
   definitions: string[];
   /** For each line, the ids of the containers it sits in, outermost first. */
   pathOfLine: number[][];
-  /** For each line, the footnote whose body holds it, if any. */
+  /** For each line, the footnote whose body holds it, if any, named by its position. */
   footnoteOfLine: Array<string | undefined>;
+  /** Each footnote definition's label, as written, in order. */
+  footnoteLabels: string[];
 }
 
 export function normaliseReference(label: string): string {
@@ -402,7 +405,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     paragraph = null;
   };
   let nextContainer = 0;
-  const definedFootnotes = new Set<string>();
+  const footnoteLabels: string[] = [];
   const pathOfLine: number[][] = [];
   const footnoteOfLine: Array<string | undefined> = [];
   // The containers a line sits in are the ones still open once it has been read,
@@ -576,12 +579,10 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // it opens a container, and every block inside it carries the label.
     const footnote = paragraph === null ? FOOTNOTE_DEFINITION.exec(text) : null;
     if (footnote !== null) {
-      // The first definition of a label is the footnote; a later one shows nothing, as a
-      // later link reference definition shows nothing, so it takes a label no reference
-      // can name and is left out with everything inside it.
-      const folded = foldedLabel(footnote[1]);
-      const label = definedFootnotes.has(folded) ? `\u0000${folded}\u0000${i}` : folded;
-      definedFootnotes.add(folded);
+      // Each definition is named by its position. Which one a reference reaches is left
+      // to the renderer, which compares labels as CommonMark does.
+      const label = `fn${footnoteLabels.length}`;
+      footnoteLabels.push(footnote[1] as string);
       stack.push({ id: nextContainer++, kind: "item", column: 4, footnote: label });
       paragraph = { line: i + 1, lines: [text.slice(footnote[0].length)], footnote: label };
       paragraphDepth = stack.length;
@@ -698,7 +699,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
 
   return {
     paragraphs, headings: found, hidden, tables, readable, markup, references, sources, definitions,
-    pathOfLine, footnoteOfLine,
+    pathOfLine, footnoteOfLine, footnoteLabels,
   };
 }
 
@@ -761,104 +762,31 @@ interface Shown {
   footnotes: Set<string>;
 }
 
-const AUTOLINK_AT = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>/y;
-const FOOTNOTE_REFERENCE_AT = /\[\^([^\]\s]+)\]/y;
-
 /**
- * A label as cmark-gfm compares it: case-folded, so "[^SS]" names "[^ß]".
+ * The footnotes the document refers to, named by position, as the renderer resolves them.
  *
- * Lower case alone leaves "ß" apart from "ss". Upper case first applies the full
- * mapping that folding needs for the letters that expand.
+ * Deciding what is a reference took a hand-written scanner, and every review found a
+ * construct it read differently from GitHub: a link that was not one, a label two
+ * letters folded into, a comment. So each footnote stands in as a link reference
+ * definition, and the renderer reads the Markdown: a reference is whatever it resolves
+ * to a stand-in. CommonMark matches link labels exactly as GitHub matches footnote
+ * labels, case-folded, and keeps the first definition of a label, so a duplicate is
+ * never reached and shows nothing. An escaped bracket, code, a comment, a tag and a
+ * link destination all refer to nothing, because the renderer reads them as they are.
+ * A raw HTML block is not read, because the renderer passes it through unread.
  */
-function foldedLabel(label: string): string {
-  return label.toUpperCase().toLowerCase();
-}
-
-/**
- * Where a comment, processing instruction, declaration or CDATA section opening at the
- * index ends, or null where none opens there or it never closes.
- *
- * The page shows none of their text, so nothing inside one is a reference. One that
- * never closes is not markup to CommonMark, and its text is read like any other.
- */
-function inlineInvisibleEnd(text: string, index: number): number | null {
-  const closers: Array<[string, string]> = [["<!--", "-->"], ["<?", "?>"], ["<![CDATA[", "]]>"]];
-  for (const [open, close] of closers) {
-    if (!text.startsWith(open, index)) continue;
-    // "<!-->" and "<!--->" are whole comments.
-    const abrupt = open === "<!--" ? /^<!---?>/.exec(text.slice(index, index + 6)) : null;
-    if (abrupt !== null) return index + abrupt[0].length;
-    const end = text.indexOf(close, index + open.length);
-    return end === -1 ? null : end + close.length;
-  }
-  if (/^<![A-Za-z]/.test(text.slice(index, index + 3))) {
-    const end = text.indexOf(">", index);
-    return end === -1 ? null : end + 1;
-  }
-  return null;
-}
-
-/**
- * The footnote labels a piece of Markdown refers to.
- *
- * The Markdown decides what is a reference, not the text it renders to: an escaped
- * "\[^a]", a bracket written "&#91;" and one inside a code span, a tag, an autolink
- * or a link destination all render as the same characters and refer to nothing.
- * So the source is read, stepping over each of those. A raw HTML block is never
- * read here, because the renderer passes it through without reading it.
- */
-function footnoteReferences(text: string): string[] {
-  const labels: string[] = [];
-  const ends = codeSpanEnds(text);
-  let index = 0;
-  while (index < text.length) {
-    const character = text[index];
-    if (character === BACKSLASH) {
-      index += 2;
-      continue;
-    }
-    if (character === "`") {
-      index = ends.get(index) ?? index + tickRun(text, index);
-      continue;
-    }
-    if (character === "<") {
-      const hiddenEnd = inlineInvisibleEnd(text, index);
-      if (hiddenEnd !== null) {
-        index = hiddenEnd;
-        continue;
-      }
-      TAG_AT.lastIndex = index;
-      AUTOLINK_AT.lastIndex = index;
-      const markup = TAG_AT.exec(text) ?? AUTOLINK_AT.exec(text);
-      index += markup === null ? 1 : markup[0].length;
-      continue;
-    }
-    if (character === "]" && text[index + 1] === "(") {
-      const close = text.indexOf(")", index + 2);
-      index = close === -1 ? index + 1 : close + 1;
-      continue;
-    }
-    FOOTNOTE_REFERENCE_AT.lastIndex = index;
-    const reference = character === "[" ? FOOTNOTE_REFERENCE_AT.exec(text) : null;
-    if (reference !== null) {
-      labels.push(foldedLabel(reference[1] as string));
-      index += reference[0].length;
-      continue;
-    }
-    index += 1;
-  }
-  return labels;
-}
-
-/** The footnote labels the document refers to, from its prose, headings and table rows. */
 function referencedFootnotes(parsed: Parsed, lines: readonly string[]): Set<string> {
   const referenced = new Set<string>();
+  if (parsed.footnoteLabels.length === 0) return referenced;
+  const standIns = parsed.footnoteLabels.map((label, index) => `[^${label}]: #fn${index}`).join("\n");
   const add = (text: string): void => {
-    for (const label of footnoteReferences(text)) referenced.add(label);
+    // A reference is written with "[^", however the rest of it is spelled.
+    if (!text.includes("[^")) return;
+    for (const match of Bun.markdown.html(`${text}\n\n${standIns}`).matchAll(/href="#(fn\d+)"/g)) {
+      referenced.add(match[1] as string);
+    }
   };
-  parsed.paragraphs.forEach((block, index) => {
-    if (block.rawHtml !== true) add((parsed.sources[index] as string[]).join("\n"));
-  });
+  for (const source of parsed.sources) add(source.join("\n"));
   for (const heading of parsed.headings) add(heading.text);
   for (const index of parsed.tables) add(lines[index] as string);
   return referenced;
@@ -1008,10 +936,7 @@ function withoutInvisible(
 }
 
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
-const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
-// The same tag, matched where the index stands rather than at the start of a slice.
-const TAG_AT = new RegExp(HTML_TAG_AT_START.source.slice(1), "y");
-// CommonMark's HTML block start conditions 1, 6 and 7, which open a block whose
+const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;// CommonMark's HTML block start conditions 1, 6 and 7, which open a block whose
 // text a reader sees. Conditions 2 to 4 are BLOCK_INVISIBLE_OPEN, because a
 // comment, a processing instruction and a declaration show nothing. The renderer
 // passes such a block to the page unchanged, so its text is read by HTML's rules:

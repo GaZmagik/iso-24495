@@ -363,7 +363,9 @@ export function readHtml(html: string, reading: RenderedReading, carried: readon
     codeDepth = 1;
     closeCode();
   }
-  return { text: text.replace(/\s+$/, ""), open };
+  // An rp left open hides what follows it too: GitHub keeps the paragraph after a lone
+  // "<rp>" block inside the element. It is carried on like a video, and reopened.
+  return { text: text.replace(/\s+$/, ""), open: fallbacks.includes(true) ? [...open, "rp"] : open };
 }
 
 /** The text a Markdown fragment shows on GitHub. */

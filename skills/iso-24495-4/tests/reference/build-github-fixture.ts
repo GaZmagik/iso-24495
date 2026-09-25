@@ -94,6 +94,10 @@ const DOCUMENTS: Array<[string, string]> = [
   ["footnote reference inside a declaration", "&#32;<!X [^a]>\n\n[^a]: The tenant shall pay."],
   ["footnote reference inside CDATA", "&#32;<![CDATA[ [^a] ]]>\n\n[^a]: The tenant shall pay."],
   ["footnote reference after an unclosed comment", "Read <!-- [^a]\n\n[^a]: The tenant shall pay."],
+  ["footnote reference in text that only looks like a link", "Read [the guide](bad [^a]).\n\n[^a]: The tenant shall pay."],
+  ["footnote reference in a destination with nested parentheses", "[&#8203;](https://example.com/a(b)[^x])\n\n[^x]: This change works."],
+  ["dotless i kept apart from i", "Read the note[^i].\n\n[^ı]: This change works.\n\n[^i]: The tenant shall pay."],
+  ["rp left open by a raw HTML block", "This change works.\n\n<rp>\n\nThe tenant shall pay."],
 ];
 
 /** Why the engine reads the document differently from GitHub, or null where that is unexplained. */
