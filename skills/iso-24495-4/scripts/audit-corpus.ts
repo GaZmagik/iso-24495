@@ -22,6 +22,233 @@ import {
 } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
+  if (!dir) {
+    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
+    return 2;
+  }
+  let jsonPath: string | undefined;
+  const seenOptions = new Set<string>();
+  for (let index = 3; index < argv.length; index++) {
+    const option = argv[index];
+    if (option !== "--json") {
+      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
+      stderr(`audit-corpus: ${kind}: ${option}`);
+      return 2;
+    }
+    if (seenOptions.has(option)) {
+      stderr(`audit-corpus: ${option} appears more than once`);
+      return 2;
+    }
+    seenOptions.add(option);
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) {
+      stderr("audit-corpus: --json requires an output file");
+      return 2;
+    }
+    jsonPath = value;
+    index++;
+  }
+  try {
+    const skipped: string[] = [];
+    const findings = auditCorpus(dir, (path) => skipped.push(path));
+    for (const path of skipped) {
+      stderr(`warning: skipped unreadable entry: ${path}`);
+    }
+    if (jsonPath !== undefined) {
+      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
+    }
+    stdout("| Rule | Violations |");
+    stdout("|------|------------|");
+    for (const [rule, count] of Object.entries(findings.totals)) {
+      stdout(`| ${rule} | ${count} |`);
+    }
+    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
+    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
+    return 0;
+  } catch (error) {
+    stderr(`audit-corpus: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
+export function auditCorpus(
+  dir: string,
+  onSkip?: (path: string) => void,
+  readText: ReadTextFile = readFileSync,
+): Findings {
+  const paths = listTextFiles(dir, onSkip);
+  // A corpus is audited from its own directory, so the project's acronyms
+  // apply to every document in it.
+  const knownAcronyms = projectAcronyms(dir);
+  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
+  for (const path of paths) {
+    const key = relative(dir, path).replaceAll("\\", "/");
+    let text: string;
+    try {
+      text = readText(path, "utf8");
+    } catch {
+      onSkip?.(path);
+      continue;
+    }
+    const violations = auditText(text, { knownAcronyms });
+    findings.files[key] = { violations };
+    for (const v of violations) {
+      findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
+    }
+  }
+  return findings;
+}
+
+export interface AuditOptions {
+  /** Extra acronyms this project treats as known. */
+  knownAcronyms?: ReadonlySet<string>;
+}
+
+export function auditText(text: string, options: AuditOptions = {}): Violation[] {
+  const violations: Violation[] = [];
+  const sentenceLengths: number[] = [];
+  const mergedLengths: number[] = [];
+  for (const block of readerProseBlocks(text)) {
+    const paragraph = block.lines.join("\n");
+    // The splitter reports where each sentence starts, so nothing needs locating twice.
+    // Rebuilding a sentence as a regular expression threw on a long one.
+    for (const sentence of locateSentences(paragraph)) {
+      const words = wordCount(sentence.text);
+      if (words > 0) sentenceLengths.push(words);
+      if (words > SENTENCE_WORD_LIMIT) {
+        violations.push({
+          rule: "sentence-length",
+          line: lineAtOffset(block.line, paragraph, sentence.start),
+          detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
+        });
+      }
+    }
+    // Counted from the fewest sentences the paragraph can hold. An unresolved
+    // full stop must never manufacture the sentence that breaks the limit.
+    const fewest = mergedSentences(paragraph).length;
+    for (const sentence of mergedSentences(paragraph)) {
+      const words = wordCount(sentence);
+      if (words > 0) mergedLengths.push(words);
+    }
+    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
+      violations.push({
+        rule: "paragraph-length",
+        line: block.line,
+        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
+      });
+    }
+    for (let i = 0; i < block.lines.length; i++) {
+      const line = block.lines[i];
+      for (const term of LEGALESE) {
+        const matches = withoutNamedTerms(line, term)
+          .match(new RegExp(`\\b${term}\\b`, "gi"));
+        for (let n = 0; n < (matches?.length ?? 0); n++) {
+          violations.push({
+            rule: "legalese",
+            line: block.line + i,
+            detail: `banned term "${term}"`,
+          });
+        }
+      }
+    }
+  }
+  // The standards specify an average across the document, not a cap; the cap
+  // above only catches genuine sprawl. Small samples are exempt because an
+  // average over a handful of sentences is noise, not judgement.
+  //
+  // Both readings must agree. Taking the longer reading alone let an undecided
+  // full stop lift a document over the ten-sentence sample floor and produce a
+  // finding the joined-up reading could not, which is the opposite of what
+  // abstention is for.
+  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
+    count: lengths.length,
+    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
+  }));
+  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
+    const reported = readings[0];
+    violations.push({
+      rule: "sentence-average",
+      line: 1,
+      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
+    });
+  }
+  const documentHeadings = headings(text);
+  for (let i = 0; i < documentHeadings.length; i++) {
+    const heading = documentHeadings[i];
+    if (heading.level > MAX_HEADING_LEVEL) {
+      violations.push({
+        rule: "heading-depth",
+        line: heading.line,
+        detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const previous = documentHeadings[i - 1];
+    if (previous && heading.level > previous.level + 1) {
+      violations.push({
+        rule: "heading-skip",
+        line: heading.line,
+        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
+    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
+    const headingWords = wordCount(headingText);
+    // Same abstention as the paragraph rule: a heading is only two sentences
+    // if it is two even when every doubtful stop is joined up.
+    const headingSentences = mergedSentences(headingText);
+    if (headingWords > HEADING_WORD_LIMIT) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
+      });
+    } else if (headingSentences.length >= 2) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingSentences.length} sentences in heading`,
+      });
+    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: "heading ends with a full stop",
+      });
+    }
+  }
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set()));
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...doubletViolations(text));
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...proseEnumerationViolations(text));
+
+  // The intended readers of a document include everyone who uses it, whether
+  // they see it, hear it or touch it. These two rules are the only ones here
+  // that serve a reader who is not looking at the page.
+  violations.push(...wordyPhraseViolations(text));
+  violations.push(...complexWordViolations(text));
+  violations.push(...doubleNegativeViolations(text));
+  violations.push(...fillerOpeningViolations(text));
+  violations.push(...tableHeaderViolations(text));
+  violations.push(...linkTextViolations(text));
+  violations.push(...imageAltViolations(text));
+  return violations;
+}
+
 // Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
 // English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
 // 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
@@ -871,150 +1098,6 @@ export function projectAcronyms(directory: string): ReadonlySet<string> {
   }
 }
 
-export interface AuditOptions {
-  /** Extra acronyms this project treats as known. */
-  knownAcronyms?: ReadonlySet<string>;
-}
-
-export function auditText(text: string, options: AuditOptions = {}): Violation[] {
-  const violations: Violation[] = [];
-  const sentenceLengths: number[] = [];
-  const mergedLengths: number[] = [];
-  for (const block of readerProseBlocks(text)) {
-    const paragraph = block.lines.join("\n");
-    // The splitter reports where each sentence starts, so nothing needs locating twice.
-    // Rebuilding a sentence as a regular expression threw on a long one.
-    for (const sentence of locateSentences(paragraph)) {
-      const words = wordCount(sentence.text);
-      if (words > 0) sentenceLengths.push(words);
-      if (words > SENTENCE_WORD_LIMIT) {
-        violations.push({
-          rule: "sentence-length",
-          line: lineAtOffset(block.line, paragraph, sentence.start),
-          detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
-        });
-      }
-    }
-    // Counted from the fewest sentences the paragraph can hold. An unresolved
-    // full stop must never manufacture the sentence that breaks the limit.
-    const fewest = mergedSentences(paragraph).length;
-    for (const sentence of mergedSentences(paragraph)) {
-      const words = wordCount(sentence);
-      if (words > 0) mergedLengths.push(words);
-    }
-    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
-      violations.push({
-        rule: "paragraph-length",
-        line: block.line,
-        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
-      });
-    }
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
-      for (const term of LEGALESE) {
-        const matches = withoutNamedTerms(line, term)
-          .match(new RegExp(`\\b${term}\\b`, "gi"));
-        for (let n = 0; n < (matches?.length ?? 0); n++) {
-          violations.push({
-            rule: "legalese",
-            line: block.line + i,
-            detail: `banned term "${term}"`,
-          });
-        }
-      }
-    }
-  }
-  // The standards specify an average across the document, not a cap; the cap
-  // above only catches genuine sprawl. Small samples are exempt because an
-  // average over a handful of sentences is noise, not judgement.
-  //
-  // Both readings must agree. Taking the longer reading alone let an undecided
-  // full stop lift a document over the ten-sentence sample floor and produce a
-  // finding the joined-up reading could not, which is the opposite of what
-  // abstention is for.
-  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
-    count: lengths.length,
-    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
-  }));
-  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
-    const reported = readings[0];
-    violations.push({
-      rule: "sentence-average",
-      line: 1,
-      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
-    });
-  }
-  const documentHeadings = headings(text);
-  for (let i = 0; i < documentHeadings.length; i++) {
-    const heading = documentHeadings[i];
-    if (heading.level > MAX_HEADING_LEVEL) {
-      violations.push({
-        rule: "heading-depth",
-        line: heading.line,
-        detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
-      });
-    }
-
-    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-    const previous = documentHeadings[i - 1];
-    if (previous && heading.level > previous.level + 1) {
-      violations.push({
-        rule: "heading-skip",
-        line: heading.line,
-        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
-      });
-    }
-
-    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
-    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
-    const headingWords = wordCount(headingText);
-    // Same abstention as the paragraph rule: a heading is only two sentences
-    // if it is two even when every doubtful stop is joined up.
-    const headingSentences = mergedSentences(headingText);
-    if (headingWords > HEADING_WORD_LIMIT) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
-      });
-    } else if (headingSentences.length >= 2) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: `${headingSentences.length} sentences in heading`,
-      });
-    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: "heading ends with a full stop",
-      });
-    }
-  }
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set()));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...doubletViolations(text));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...proseEnumerationViolations(text));
-
-  // The intended readers of a document include everyone who uses it, whether
-  // they see it, hear it or touch it. These two rules are the only ones here
-  // that serve a reader who is not looking at the page.
-  violations.push(...wordyPhraseViolations(text));
-  violations.push(...complexWordViolations(text));
-  violations.push(...doubleNegativeViolations(text));
-  violations.push(...fillerOpeningViolations(text));
-  violations.push(...tableHeaderViolations(text));
-  violations.push(...linkTextViolations(text));
-  violations.push(...imageAltViolations(text));
-  return violations;
-}
-
 function walk(
   dir: string,
   out: string[],
@@ -1072,86 +1155,3 @@ export function listTextFiles(
 }
 
 type ReadTextFile = (path: string, encoding: "utf8") => string;
-
-export function auditCorpus(
-  dir: string,
-  onSkip?: (path: string) => void,
-  readText: ReadTextFile = readFileSync,
-): Findings {
-  const paths = listTextFiles(dir, onSkip);
-  // A corpus is audited from its own directory, so the project's acronyms
-  // apply to every document in it.
-  const knownAcronyms = projectAcronyms(dir);
-  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
-  for (const path of paths) {
-    const key = relative(dir, path).replaceAll("\\", "/");
-    let text: string;
-    try {
-      text = readText(path, "utf8");
-    } catch {
-      onSkip?.(path);
-      continue;
-    }
-    const violations = auditText(text, { knownAcronyms });
-    findings.files[key] = { violations };
-    for (const v of violations) {
-      findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
-    }
-  }
-  return findings;
-}
-
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const dir = argv[2];
-  if (!dir) {
-    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
-    return 2;
-  }
-  let jsonPath: string | undefined;
-  const seenOptions = new Set<string>();
-  for (let index = 3; index < argv.length; index++) {
-    const option = argv[index];
-    if (option !== "--json") {
-      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(`audit-corpus: ${kind}: ${option}`);
-      return 2;
-    }
-    if (seenOptions.has(option)) {
-      stderr(`audit-corpus: ${option} appears more than once`);
-      return 2;
-    }
-    seenOptions.add(option);
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      stderr("audit-corpus: --json requires an output file");
-      return 2;
-    }
-    jsonPath = value;
-    index++;
-  }
-  try {
-    const skipped: string[] = [];
-    const findings = auditCorpus(dir, (path) => skipped.push(path));
-    for (const path of skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
-    }
-    if (jsonPath !== undefined) {
-      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
-    }
-    stdout("| Rule | Violations |");
-    stdout("|------|------------|");
-    for (const [rule, count] of Object.entries(findings.totals)) {
-      stdout(`| ${rule} | ${count} |`);
-    }
-    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
-    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
-    return 0;
-  } catch (error) {
-    stderr(`audit-corpus: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
-  }
-}

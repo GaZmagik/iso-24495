@@ -6,30 +6,6 @@ import { MATURITY_MODEL } from "./lib/types.ts";
 import type { Maturity } from "./lib/types.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 
-export interface Answers {
-  organisation?: string;
-  dimensions: Record<string, Record<string, boolean>>;
-}
-
-export function scoreMaturity(answers: Answers): Maturity {
-  const maturity: Maturity = { dimensions: {}, overall: 0 };
-  let overall = Number.POSITIVE_INFINITY;
-  for (const [dimension, levels] of Object.entries(MATURITY_MODEL)) {
-    const given = answers.dimensions?.[dimension] ?? {};
-    let level = 0;
-    while (level < levels.length && levels[level].every((c) => given[c] === true)) {
-      level++;
-    }
-    const missing = level < levels.length
-      ? levels[level].filter((c) => given[c] !== true)
-      : [];
-    maturity.dimensions[dimension] = { level, missing };
-    overall = Math.min(overall, level);
-  }
-  maturity.overall = Number.isFinite(overall) ? overall : 0;
-  return maturity;
-}
-
 export function runCli(
   argv: string[],
   stdout: (text: string) => void,
@@ -61,4 +37,28 @@ export function runCli(
     stderr(`score-maturity: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
+}
+
+export interface Answers {
+  organisation?: string;
+  dimensions: Record<string, Record<string, boolean>>;
+}
+
+export function scoreMaturity(answers: Answers): Maturity {
+  const maturity: Maturity = { dimensions: {}, overall: 0 };
+  let overall = Number.POSITIVE_INFINITY;
+  for (const [dimension, levels] of Object.entries(MATURITY_MODEL)) {
+    const given = answers.dimensions?.[dimension] ?? {};
+    let level = 0;
+    while (level < levels.length && levels[level].every((c) => given[c] === true)) {
+      level++;
+    }
+    const missing = level < levels.length
+      ? levels[level].filter((c) => given[c] !== true)
+      : [];
+    maturity.dimensions[dimension] = { level, missing };
+    overall = Math.min(overall, level);
+  }
+  maturity.overall = Number.isFinite(overall) ? overall : 0;
+  return maturity;
 }

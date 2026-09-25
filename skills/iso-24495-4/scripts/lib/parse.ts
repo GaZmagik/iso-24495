@@ -10,6 +10,23 @@
 
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
 
+/**
+ * Read a document once, for the rules that work line by line.
+ *
+ * They skip metadata and code, and deliberately not tables: a rule about
+ * links, images or table headings has to look at a table to do its job.
+ */
+export function readDocument(text: string): Document {
+  const lines = toLines(text);
+  const parsed = parse(lines);
+  return {
+    lines: parsed.readable.map((line) => visibleInline(line, false)),
+    markupLines: parsed.markup,
+    references: parsed.references,
+    hidden: (index) => parsed.hidden.has(index),
+  };
+}
+
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
@@ -1000,23 +1017,6 @@ export function readerProseBlocks(text: string): ProseBlock[] {
 /** Heading levels with their 1-indexed line numbers. */
 export function headings(text: string): Heading[] {
   return parse(toLines(text)).headings;
-}
-
-/**
- * Read a document once, for the rules that work line by line.
- *
- * They skip metadata and code, and deliberately not tables: a rule about
- * links, images or table headings has to look at a table to do its job.
- */
-export function readDocument(text: string): Document {
-  const lines = toLines(text);
-  const parsed = parse(lines);
-  return {
-    lines: parsed.readable.map((line) => visibleInline(line, false)),
-    markupLines: parsed.markup,
-    references: parsed.references,
-    hidden: (index) => parsed.hidden.has(index),
-  };
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and

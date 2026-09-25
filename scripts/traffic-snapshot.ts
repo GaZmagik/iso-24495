@@ -14,6 +14,93 @@
 
 import { join } from "node:path";
 
+export async function runCli(
+  argv: string[],
+  writeOut: (text: string) => void,
+  writeErr: (text: string) => void,
+  deps: Deps,
+): Promise<number> {
+  const args = argv.slice(2);
+  let directory = "";
+  let fromFile = "";
+  let dryRun = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] as string;
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--from-file") {
+      fromFile = args[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+    directory = arg;
+  }
+  if (directory === "") {
+    writeErr(USAGE);
+    return 2;
+  }
+
+  let raw: unknown;
+  if (fromFile === "") {
+    try {
+      raw = await deps.fetchSnapshot();
+    } catch (error) {
+      writeErr("Could not read the traffic API: " + describe(error));
+      return 1;
+    }
+  } else {
+    const text = deps.readText(fromFile);
+    if (text === null) {
+      writeErr("Could not read the fixture at " + fromFile);
+      return 1;
+    }
+    try {
+      raw = JSON.parse(text);
+    } catch (error) {
+      writeErr("The fixture is not valid JSON: " + describe(error));
+      return 1;
+    }
+  }
+
+  const parsed = parseSnapshot(raw);
+  if (!parsed.ok) {
+    writeErr("Refusing to write: " + parsed.problem);
+    return 1;
+  }
+
+  const snapshot = parsed.snapshot;
+  const date = deps.today();
+  const files = [
+    { name: "daily.csv", text: mergeDaily(deps.readText(join(directory, "daily.csv")), snapshot) },
+    { name: "windows.csv", text: mergeWindows(deps.readText(join(directory, "windows.csv")), date, snapshot) },
+    {
+      name: "referrers.csv",
+      text: mergeReferrers(deps.readText(join(directory, "referrers.csv")), date, snapshot),
+    },
+  ];
+  for (const file of files) {
+    if (dryRun) {
+      writeOut("--- " + file.name + " ---");
+      writeOut(file.text.trimEnd());
+      continue;
+    }
+    deps.writeText(join(directory, file.name), file.text);
+  }
+  writeOut(
+    date +
+      ": " +
+      snapshot.clones.uniques +
+      " unique cloners and " +
+      snapshot.views.uniques +
+      " unique visitors across the last " +
+      snapshot.clones.days.length +
+      " days",
+  );
+  return 0;
+}
+
 export interface DailyPoint {
   timestamp: string;
   count: number;
@@ -244,91 +331,4 @@ export function mergeReferrers(existing: string | null, date: string, snapshot: 
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-export async function runCli(
-  argv: string[],
-  writeOut: (text: string) => void,
-  writeErr: (text: string) => void,
-  deps: Deps,
-): Promise<number> {
-  const args = argv.slice(2);
-  let directory = "";
-  let fromFile = "";
-  let dryRun = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] as string;
-    if (arg === "--dry-run") {
-      dryRun = true;
-      continue;
-    }
-    if (arg === "--from-file") {
-      fromFile = args[index + 1] ?? "";
-      index += 1;
-      continue;
-    }
-    directory = arg;
-  }
-  if (directory === "") {
-    writeErr(USAGE);
-    return 2;
-  }
-
-  let raw: unknown;
-  if (fromFile === "") {
-    try {
-      raw = await deps.fetchSnapshot();
-    } catch (error) {
-      writeErr("Could not read the traffic API: " + describe(error));
-      return 1;
-    }
-  } else {
-    const text = deps.readText(fromFile);
-    if (text === null) {
-      writeErr("Could not read the fixture at " + fromFile);
-      return 1;
-    }
-    try {
-      raw = JSON.parse(text);
-    } catch (error) {
-      writeErr("The fixture is not valid JSON: " + describe(error));
-      return 1;
-    }
-  }
-
-  const parsed = parseSnapshot(raw);
-  if (!parsed.ok) {
-    writeErr("Refusing to write: " + parsed.problem);
-    return 1;
-  }
-
-  const snapshot = parsed.snapshot;
-  const date = deps.today();
-  const files = [
-    { name: "daily.csv", text: mergeDaily(deps.readText(join(directory, "daily.csv")), snapshot) },
-    { name: "windows.csv", text: mergeWindows(deps.readText(join(directory, "windows.csv")), date, snapshot) },
-    {
-      name: "referrers.csv",
-      text: mergeReferrers(deps.readText(join(directory, "referrers.csv")), date, snapshot),
-    },
-  ];
-  for (const file of files) {
-    if (dryRun) {
-      writeOut("--- " + file.name + " ---");
-      writeOut(file.text.trimEnd());
-      continue;
-    }
-    deps.writeText(join(directory, file.name), file.text);
-  }
-  writeOut(
-    date +
-      ": " +
-      snapshot.clones.uniques +
-      " unique cloners and " +
-      snapshot.views.uniques +
-      " unique visitors across the last " +
-      snapshot.clones.days.length +
-      " days",
-  );
-  return 0;
 }
