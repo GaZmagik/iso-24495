@@ -1793,6 +1793,22 @@ ${sentence}`)
   // A soft line break is a space to the reader, so a definition wrapped across two
   // lines is one definition. The scan read a source line at a time, so "identity and
   // access" and "management (IAM)" on the next line never met, and IAM was reported.
+  // Indented code is a specimen, as fenced code is, so the rules that read line by
+  // line skip it too. It was left out of prose but still read for links, images and
+  // acronym definitions, so a code example drew advice and defined an acronym.
+  test("indented code is skipped by the line rules, as fenced code is", () => {
+    for (const code of ["    ![](sample.png)", "    [click here](/sample)"]) {
+      expect(rulesFor(code), code).toEqual([]);
+      expect(rulesFor(["```", code.trim(), "```"].join(BREAK)), code).toEqual([]);
+    }
+    const defined = ["Identity and access management (IAM)", "", "The IAM endpoint works."];
+    expect(auditText(["    " + defined[0], ...defined.slice(1)].join(BREAK))
+      .filter((violation) => violation.rule === "acronym-undefined")
+      .map((violation) => violation.line)).toEqual([3]);
+    // The same line as prose still defines the acronym.
+    expect(rulesFor(defined.join(BREAK))).not.toContain("acronym-undefined");
+  });
+
   test("an acronym's definition is found across a wrapped line, and not across a block", () => {
     const use = ["", "The IAM endpoint works."];
     const wrapped = ["The identity and access", "management (IAM) endpoint works."];

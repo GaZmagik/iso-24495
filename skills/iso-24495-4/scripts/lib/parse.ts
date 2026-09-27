@@ -537,8 +537,14 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     }
 
     // Indented code cannot interrupt a paragraph, so four columns past the
-    // container is code only where a paragraph is not already open.
-    if (paragraph === null && indentOf(text) >= 4) continue;
+    // container is code only where a paragraph is not already open. It is hidden
+    // as fenced code is, so the rules that read line by line skip it too.
+    if (paragraph === null && indentOf(text) >= 4) {
+      hidden.add(i);
+      readable[i] = "";
+      markup[i] = "";
+      continue;
+    }
 
     const divider = nextContent(lines, i, stack);
     if (divider !== null
