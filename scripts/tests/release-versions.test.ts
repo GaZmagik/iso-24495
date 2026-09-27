@@ -216,8 +216,22 @@ describe("the release preflight", () => {
   test("the remote's tags are read with git, and a failure is reported, not thrown", () => {
     const workspace = mkdtempSync(join(tmpdir(), "iso-24495-remote-"));
     try {
+      // A CI runner has no git identity, and an annotated tag needs one. The
+      // machine's own configuration is set aside, so every machine runs this
+      // test as the runner does, and the identity is given here.
+      const emptyConfig = join(workspace, "empty.gitconfig");
+      writeFileSync(emptyConfig, "");
+      const env = {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: emptyConfig,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Test",
+        GIT_AUTHOR_EMAIL: "test@example.invalid",
+        GIT_COMMITTER_NAME: "Test",
+        GIT_COMMITTER_EMAIL: "test@example.invalid",
+      };
       const git = (cwd: string, ...args: string[]): void => {
-        const run = Bun.spawnSync(["git", ...args], { cwd });
+        const run = Bun.spawnSync(["git", ...args], { cwd, env });
         expect(run.exitCode, `git ${args.join(" ")}: ${new TextDecoder().decode(run.stderr)}`).toBe(0);
       };
       const remote = join(workspace, "remote.git");
@@ -225,8 +239,7 @@ describe("the release preflight", () => {
       mkdirSync(local);
       git(workspace, "init", "--quiet", "--bare", remote);
       git(local, "init", "--quiet");
-      git(local, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-        "commit", "--quiet", "--allow-empty", "-m", "Start");
+      git(local, "commit", "--quiet", "--allow-empty", "-m", "Start");
       git(local, "tag", "-a", "v0.9.0", "-m", "Release");
       git(local, "tag", "v0.10.0");
       git(local, "remote", "add", "origin", remote);
