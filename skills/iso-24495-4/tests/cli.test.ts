@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
+import { auditCorpus, runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
 import { runCli as runEvidenceCli } from "../scripts/audit-evidence.ts";
 import { runCli as runReportCli } from "../scripts/generate-report.ts";
 import { runCli as runMaturityCli } from "../scripts/score-maturity.ts";
+import { runCli as runTextAuditCli } from "../../iso-24495-text-audit/scripts/audit-text.ts";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const CORPUS = join(FIXTURES, "corpus");
@@ -30,6 +31,12 @@ function capture() {
     writeOut: (text: string) => stdout.push(text),
     writeErr: (text: string) => stderr.push(text),
   };
+}
+
+/** How many findings a totals map describes. */
+function countFrom(totals: unknown): number {
+  return Object.values((totals ?? {}) as Record<string, number>)
+    .reduce((sum, count) => sum + count, 0);
 }
 
 describe("audit-corpus runCli", () => {
@@ -376,4 +383,198 @@ describe("command line entry files", () => {
     const results = await Promise.all(entries.map((entry) => runScript(entry, [])));
     expect(results.map((result) => result.exitCode)).toEqual(entries.map(() => 2));
   }, ENTRY_TIMEOUT_MS);
+
+  // What a command saves must be what it would have shown.
+  //
+  // A review changed each writing call so the file differed from the
+  // terminal: a saved report claiming certification, saved findings
+  // recommending the legalese they had banned, saved evidence inventing
+  // paths, saved maturity levels raised to the top. My first attempt at this
+  // test read one side only, or looked for a shape rather than a value, and
+  // four of those mutations walked straight past it.
+  //
+  // So each command runs twice on the same input, once to a file and once to
+  // the terminal, and the two are compared whole. A reader keeps the file:
+  // it is the copy that gets circulated and the one nobody re-runs.
+  test("what a command writes is what it would have printed", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-write-through-"));
+    try {
+      // A command prints a table and saves JSON, so the two are compared
+      // by rebuilding the table the saved file implies and requiring the
+      // printed one to be exactly that.
+      //
+      // Reading the saved file and looking for its entries in the terminal
+      // was not enough, and a review proved it four ways: dropping every
+      // category but one, emptying the dimensions, renaming the file a
+      // finding belonged to, and keeping only the first finding of each. A
+      // check that walks what survived cannot see what did not.
+      const rows = (text: string): string[] => text.split(/\r?\n/)
+        .filter((line) => line.startsWith("| ") && !line.startsWith("|--"));
+
+      const findingsPath = join(workspace, "findings.json");
+      const printedCorpus = capture();
+      runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findingsPath],
+        () => {}, () => {});
+      runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS], printedCorpus.writeOut, () => {});
+      const savedFindings = JSON.parse(readFileSync(findingsPath, "utf8"));
+      expect(
+        rows(printedCorpus.stdout.join("\n")),
+        "the printed table must be exactly the saved totals",
+      ).toEqual([
+        "| Rule | Violations |",
+        ...Object.entries(savedFindings.totals as Record<string, number>)
+          .map(([rule, count]) => `| ${rule} | ${count} |`),
+      ]);
+
+      // The printed table carries counts, not details, so the saved detail has
+      // nowhere to be compared against. A review used that to reverse the
+      // advice in the file alone. It is compared against the library instead,
+      // which is what the command is supposed to be writing down.
+      const expectedCorpus = auditCorpus(CORPUS);
+      expect(
+        savedFindings.files,
+        "the saved findings must be the findings the engine produced",
+      ).toEqual(expectedCorpus.files);
+
+      const evidencePath = join(workspace, "evidence.json");
+      const printedEvidence = capture();
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidencePath],
+        () => {}, () => {});
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY],
+        printedEvidence.writeOut, () => {});
+      const savedEvidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+      expect(
+        rows(printedEvidence.stdout.join("\n")),
+        "the printed table must be exactly the saved artefacts",
+      ).toEqual([
+        "| Artefact category | Found | Paths |",
+        ...Object.entries(savedEvidence.artefacts as Record<string, {
+          found: boolean; paths: string[];
+        }>).map(([category, record]) =>
+          `| ${category} | ${record.found ? "yes" : "no"} | `
+          + `${record.paths.join("<br>") || "-"} |`),
+      ]);
+
+      const maturityPath = join(workspace, "maturity.json");
+      const printedMaturity = capture();
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", maturityPath],
+        () => {}, () => {});
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS],
+        printedMaturity.writeOut, () => {});
+      const savedMaturity = JSON.parse(readFileSync(maturityPath, "utf8"));
+      expect(
+        rows(printedMaturity.stdout.join("\n")),
+        "the printed table must be exactly the saved dimensions",
+      ).toEqual([
+        "| Dimension | Level | Blocking criteria |",
+        ...Object.entries(savedMaturity.dimensions as Record<string, {
+          level: number; missing: string[];
+        }>).map(([dimension, scored]) =>
+          `| ${dimension} | ${scored.level} | ${scored.missing.join(", ") || "-"} |`),
+      ]);
+      expect(printedMaturity.stdout.join("\n"),
+        "the saved overall level must be printed")
+        .toContain(`Overall (weakest dimension): ${savedMaturity.overall}`);
+      // The report, on a fixed clock and with no state, so neither run
+      // changes what the other would produce.
+      const reportPath = join(workspace, "report.md");
+      const printedReport = capture();
+      const reportArgv = ["bun", "generate-report-cli.ts", findingsPath, evidencePath,
+        maturityPath];
+      runReportCli(
+        [...reportArgv, "--out", reportPath],
+        () => {}, () => {}, () => "2026-08-13T12:00:00.000Z",
+      );
+      runReportCli(
+        reportArgv,
+        printedReport.writeOut, () => {}, () => "2026-08-13T12:00:00.000Z",
+      );
+      expect(readFileSync(reportPath, "utf8"),
+        "the saved report must be the report it prints")
+        .toBe(printedReport.stdout.join(""));
+
+      // And again with state, because a review made the saved copy differ
+      // only when a state file was asked for.
+      const statePath = join(workspace, "state.json");
+      const withState = [...reportArgv, "--state", statePath];
+      const statefulPath = join(workspace, "stateful.md");
+      const printedStateful = capture();
+      runReportCli(
+        [...withState, "--out", statefulPath],
+        () => {}, () => {}, () => "2026-08-14T12:00:00.000Z",
+      );
+      rmSync(statePath, { force: true });
+      runReportCli(
+        withState,
+        printedStateful.writeOut, () => {}, () => "2026-08-14T12:00:00.000Z",
+      );
+      expect(readFileSync(statefulPath, "utf8"),
+        "saving with a state file must not change the report")
+        .toBe(printedStateful.stdout.join(""));
+
+      // The text audit saves JSON and prints a table, so its findings are
+      // compared through the details they share.
+      const auditTarget = join(workspace, "notice.md");
+      writeFileSync(auditTarget, "The party shall comply with the terms herein.\n");
+      const auditJson = join(workspace, "audit.json");
+      const printedAudit = capture();
+      runTextAuditCli(
+        ["bun", "audit-text-cli.ts", auditTarget, "--json", auditJson],
+        () => {}, () => {},
+      );
+      runTextAuditCli(
+        ["bun", "audit-text-cli.ts", auditTarget],
+        printedAudit.writeOut, () => {},
+      );
+      // Every finding, with the file it belongs to, compared as the table.
+      // A review renamed the saved file key and kept only the first finding
+      // of each, and a check that walked the saved side saw neither.
+      const savedAudit = JSON.parse(readFileSync(auditJson, "utf8"));
+      const savedRows = Object.entries(savedAudit.files as Record<string, {
+        violations: Array<{ rule: string; line: number; detail: string }>;
+      }>).flatMap(([file, record]) => record.violations
+        .map((violation) =>
+          `| ${file} | ${violation.line} | ${violation.rule} | ${violation.detail} |`));
+      expect(savedRows.length, "the probe must produce findings").toBeGreaterThan(0);
+      expect(
+        rows(printedAudit.stdout.join("\n")),
+        "the printed table must be exactly the saved findings",
+      ).toEqual([
+        "| File | Line | Rule | Finding |",
+        ...savedRows,
+      ]);
+
+      // The summary line as well as the table. A review saved a total of one
+      // where the terminal reported two, and invented a skipped file the
+      // terminal never mentioned. Neither of those shows up in a row.
+      expect(
+        printedAudit.stdout.join("\n"),
+        "the saved counts must be the counts it printed",
+      ).toContain(
+        `Finding count: ${countFrom(savedAudit.totals)}. `
+        + `Files read: ${Object.keys(savedAudit.files as Record<string, unknown>).length}. `
+        + `Skipped entries: ${(savedAudit.skipped as string[]).length}.`,
+      );
+
+      // The totals rebuilt from the saved findings, rule by rule. Comparing the
+      // sum alone lost the names: a review moved every count onto one rule, so
+      // the file said two findings of legalese where it had recorded one of
+      // legalese and one complex word, and the sum still matched.
+      const countedByRule: Record<string, number> = {};
+      for (const file of Object.values(savedAudit.files as Record<string, {
+        violations: Array<{ rule: string }>;
+      }>)) {
+        for (const violation of file.violations) {
+          countedByRule[violation.rule] = (countedByRule[violation.rule] ?? 0) + 1;
+        }
+      }
+      expect(
+        savedAudit.totals,
+        "the saved totals must be the findings the saved file records",
+      ).toEqual(countedByRule);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });
+

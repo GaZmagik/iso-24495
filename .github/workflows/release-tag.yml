@@ -1,0 +1,33 @@
+# Checks a pushed release tag against the files it points at. Installs pin to
+# the tag the marketplace `ref` names, so a tag whose files declare another
+# version ships the wrong release to everyone who installs it.
+#
+# Every other check lives in scripts/check.sh, and this one cannot: it needs the
+# tag, which only a tag push has. It runs a checked-in script, so a maintainer
+# reproduces it with one local command, and then runs the same gate as every
+# pull request, against the tagged files:
+#
+#   bun scripts/release-tag-cli.ts v1.2.3
+#   bash scripts/check.sh
+name: Release tag
+
+on:
+  push:
+    # A push filter that names only branches never matches a tag, so the tags
+    # are named here.
+    tags: ["v*"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      # A tag push checks out the tagged commit.
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - name: Check the tag, then run the shared gate
+        run: |
+          set -euo pipefail
+          bun scripts/release-tag-cli.ts "$GITHUB_REF_NAME"
+          bash scripts/check.sh

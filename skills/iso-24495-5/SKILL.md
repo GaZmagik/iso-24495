@@ -2,7 +2,7 @@
 name: iso-24495-5
 description: Provisional sector-specific Plain Language standard for document design (based on ISO/WD 24495-5, under development). Applied when structuring complex documents so readers can find and navigate content through layout, visual hierarchy, and navigation aids.
 metadata:
-  version: "0.6.2"
+  version: "0.7.0"
   iso-standard: "ISO/WD 24495-5"
   iso-status: "working-draft"
 ---
@@ -22,7 +22,7 @@ A listener has no visual hierarchy. Their structure is the heading tree, the lin
 ## Scope & Execution Boundaries
 
 1. **Thinking Block Exemption:**
-   - Internal layout planning and structural reasoning within thinking blocks (`<thought>`, `<thinking>`) are **100% exempt** from these constraints.
+   - Internal layout planning and structural reasoning within thinking blocks (the `thought` and `thinking` tags) are **100% exempt** from these constraints.
    - Plan freely within thinking blocks. Apply document design rules strictly to final user-facing documents.
 
 2. **Design as Engineering, Not Decoration:**
@@ -61,7 +61,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 1. **Visual Hierarchy Limits:**
    - Use at most **3 heading levels** below the document title. Flatten deeper nesting into lists or tables.
    - Make headings state the section's message or task, not just its topic (*"Install the dependencies"* rather than *"Dependencies"*).
-   - Two exceptions, and no others. A document type with a published structure keeps that structure's section names, as a decision record keeps Context and Decision.
+   - Two exceptions here, one override in rule 8, and no others. A document type with a published structure keeps that structure's section names, as a decision record keeps Context and Decision.
    - A reference section a reader jumps to by subject keeps the subject as its name, as a specification keeps Data Model. A section read in sequence gets a message or a task.
    - Reject a heading that jokes, puns or plays with words. Reject one built on a term the document has not yet explained, because a reader skimming meets the heading first.
 
@@ -76,8 +76,8 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 4. **Choosing the Right Structure:**
    - **Comparisons:** Use a table when readers must compare 2 or more items across shared attributes. Name the narrowest presentation the table must survive, then read it back at that width. Where nobody has named one, use repeated labelled records instead of a table, rather than shipping both.
-   - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard.
-   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest no deeper than 2 levels. Promote longer material to a subsection.
+   - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard. A legal document's clause identifiers are the one exception, because no ordered list renders a compound identifier such as 4.2.1, and `iso-24495-2` governs them.
+   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest bulleted lists no deeper than 2 levels. Promote longer material to a subsection.
    - **Branching routes:** When a procedure forks, use a decision table or a labelled set of conditions rather than one numbered list. A decision table with labelled routes is already the written form. Add prose only where the routes are drawn as a picture.
    - **Warnings and conditions:** Reserve a callout for a warning or condition that changes what the reader does. Merge adjacent callouts serving one purpose, and give each a word naming what it is.
 
@@ -101,9 +101,9 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 8. **Layering the Detail:**
    - Label the overview explicitly in any document with 6 or more sections, or one whose conclusion readers need before the detail. A reader who stops at the overview then knows what they hold.
    - That label is the section's heading, and it names the section rather than its message. This rule overrides the heading rule for that one heading, and for no other. It keeps the document's conclusion, the action required, and any essential qualification.
-   - Give that label a heading or a word, never a visual treatment alone.
+   - Give that label a heading, never bold text or a visual treatment alone. A listener reaches it through the heading list or not at all.
    - Move detail that only some readers need into footnotes, an appendix, or a collapsible block, and keep it reachable from the main path.
-   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs how a technical explanation is worded across them.
+   - Use at most **3 levels**: overview, main body, and optional detail. Part 3 governs a technical explanation's stages, and states where each one lands in these levels.
 
 9. **Readers Who Have the Wrong Document:**
    - Tell a reader who needs something else where to go. Link the related documents, the other language versions, or a person to ask.
@@ -141,9 +141,9 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Navigation:** Does a document with 6 or more sections carry a table of contents worded identically to its headings?
 - [ ] **Numbering:** Are headings numbered only where a reader must cite one by its identifier?
 - [ ] **Chunking:** Does each chunk carry one idea, separated from the next by a blank line?
-- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions?
+- [ ] **Structure fit:** Are sequences in ordered lists, sets in bullets, and forks in a decision table or labelled conditions, with a legal document's clause identifiers exempt?
 - [ ] **Comparisons:** Is the table tested at a named target width, or are labelled records used because no width is named?
-- [ ] **Restraint:** Is every bullet one paragraph on one idea, nested no deeper than 2 levels, with longer material promoted to a subsection?
+- [ ] **Restraint:** Is every bulleted item one paragraph on one idea, nested no deeper than 2 levels, with longer material promoted to a subsection?
 - [ ] **Callouts:** Does each change what the reader does, with adjacent ones merged and each named in a word?
 - [ ] **Signal consistency:** Does each device carry one meaning, no two devices carry the same meaning, and no meaning ride on a device alone?
 - [ ] **Alternatives:** Is a text alternative present only beside a picture or diagram, or beside a table whose headers miss values or whose order breaks the comparison?
@@ -152,7 +152,7 @@ Before outputting a complex document, audit against these checks:
 - [ ] **Reading order:** Does document order match reading order, with each sidebar and displaced callout given its own heading?
 - [ ] **Opening block:** Does the document open with its title, a one-line purpose naming the reader's task and scope, the primary audience, and a version or date?
 - [ ] **Overview contents:** Where needed, does it keep the conclusion, the required action and every essential qualification?
-- [ ] **Overview label and detail:** Is it labelled in words, and has the detail moved to footnotes, an appendix or a collapsible block?
+- [ ] **Overview label and detail:** Is the label a heading rather than bold text alone, and has the detail moved to footnotes, an appendix or a collapsible block?
 - [ ] **Levels:** Are there 3 or fewer levels of detail, and is the optional detail still reachable?
 - [ ] **Signposting:** Is the referral near the top or ending the opening section, naming its destination and when to use it, and absent where nothing else exists?
 - [ ] **Preserved:** On a restructure, was every prose passage and content item kept, with no prose rewritten and no tone changed?

@@ -21,6 +21,19 @@ export interface Heading {
   level: number;
   line: number;
   text: string;
+  /** How many source lines the text spans: a setext heading's text can wrap. */
+  lines: number;
+}
+
+/** How a document is read, where the place it is shown decides. */
+export interface Reading {
+  /**
+   * Whether a leading "---" block is front matter, which is metadata no rule reads.
+   * A file in a repository may carry it, so that is the default. A pull request
+   * description cannot, and GitHub shows the block as a rule and a heading, so the
+   * check that reads a description passes false and the block is read as text.
+   */
+  frontMatter?: boolean;
 }
 
 export interface Document {
@@ -323,7 +336,7 @@ function startsAnyBlock(text: string): boolean {
     || LIST_MARKER.test(text);
 }
 
-function parse(lines: string[]): Parsed {
+function parse(lines: string[], reading: Reading = {}): Parsed {
   const paragraphs: ProseBlock[] = [];
   const found: Heading[] = [];
   const hidden = new Set<number>();
@@ -332,7 +345,7 @@ function parse(lines: string[]): Parsed {
   const markup = [...lines];
   const references = new Set<string>();
   const stack: Container[] = [];
-  const frontMatter = frontMatterRange(lines);
+  const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
   let paragraph: ProseBlock | null = null;
   let paragraphDepth = 0;
@@ -499,6 +512,7 @@ function parse(lines: string[]): Parsed {
         level: atx[1].length,
         line: i + 1,
         text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
+        lines: 1,
       });
       continue;
     }
@@ -510,6 +524,7 @@ function parse(lines: string[]): Parsed {
         level: underline[1][0] === "=" ? 1 : 2,
         line: paragraph.line,
         text: paragraph.lines.join(" ").trim(),
+        lines: paragraph.lines.length,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
       closeParagraph();
@@ -522,8 +537,14 @@ function parse(lines: string[]): Parsed {
     }
 
     // Indented code cannot interrupt a paragraph, so four columns past the
-    // container is code only where a paragraph is not already open.
-    if (paragraph === null && indentOf(text) >= 4) continue;
+    // container is code only where a paragraph is not already open. It is hidden
+    // as fenced code is, so the rules that read line by line skip it too.
+    if (paragraph === null && indentOf(text) >= 4) {
+      hidden.add(i);
+      readable[i] = "";
+      markup[i] = "";
+      continue;
+    }
 
     const divider = nextContent(lines, i, stack);
     if (divider !== null
@@ -984,13 +1005,13 @@ function visibleText(text: string, references?: ReadonlySet<string>): string {
 }
 
 /** Collect prose paragraphs: what a reader reads as sentences. */
-export function proseBlocks(text: string): ProseBlock[] {
-  return parse(toLines(text)).paragraphs;
+export function proseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
+  return parse(toLines(text), reading).paragraphs;
 }
 
 /** Prose reduced to the words a reader meets, without link destinations. */
-export function readerProseBlocks(text: string): ProseBlock[] {
-  const parsed = parse(toLines(text));
+export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
+  const parsed = parse(toLines(text), reading);
   return parsed.paragraphs.map((block) => ({
     line: block.line,
     lines: visibleText(block.lines.join("\n"), parsed.references).split("\n"),
@@ -998,8 +1019,8 @@ export function readerProseBlocks(text: string): ProseBlock[] {
 }
 
 /** Heading levels with their 1-indexed line numbers. */
-export function headings(text: string): Heading[] {
-  return parse(toLines(text)).headings;
+export function headings(text: string, reading: Reading = {}): Heading[] {
+  return parse(toLines(text), reading).headings;
 }
 
 /**
@@ -1008,9 +1029,9 @@ export function headings(text: string): Heading[] {
  * They skip metadata and code, and deliberately not tables: a rule about
  * links, images or table headings has to look at a table to do its job.
  */
-export function readDocument(text: string): Document {
+export function readDocument(text: string, reading: Reading = {}): Document {
   const lines = toLines(text);
-  const parsed = parse(lines);
+  const parsed = parse(lines, reading);
   return {
     lines: parsed.readable.map((line) => visibleInline(line, false)),
     markupLines: parsed.markup,

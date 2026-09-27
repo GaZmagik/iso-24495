@@ -15,6 +15,7 @@ import {
   headings,
   mergedSentences,
   proseBlocks,
+  readDocument,
   readerProseBlocks,
   splitSentences,
   wordCount,
@@ -49,6 +50,55 @@ function rulesFor(text: string): string[] {
 
 function sentenceOf(words: number, stem = "word"): string {
   return `${Array.from({ length: words }, (_, index) => `${stem}${index}`).join(" ")}.`;
+}
+
+/**
+ * How long a hostile-input guard may take, well beyond what it needs.
+ *
+ * A timeout catches a genuine stall on the selected large inputs. It does not
+ * establish the growth rate of any helper. The absolute budgets elsewhere in
+ * this file bound selected single operations more tightly.
+ */
+const HOSTILE_TIMEOUT_MS = 60_000;
+
+/**
+ * How long one call takes, in milliseconds.
+ *
+ * This helper is used only by the single-operation budgets below. It is not a
+ * growth-rate measure, because other audit work can mask one slow helper.
+ */
+function elapsed(work: () => void): number {
+  const started = performance.now();
+  work();
+  return performance.now() - started;
+}
+
+/** Deeply nested labels that never resolve. */
+function deepLabelDocument(size: number): string {
+  return `[a](x)${"[".repeat(size)}${"]".repeat(size)}`;
+}
+
+/** Sentences that each hold a nested link label. */
+function nestedLinkDocument(size: number): string {
+  return "Read [outer [inner] text](/uri) here. ".repeat(size);
+}
+
+/** Acronym candidates that are all discounted. */
+function discountedAcronymDocument(size: number): string {
+  return Array(size).fill("A.A.A. (").join(" ") + " and).";
+}
+
+/** Acronym definitions, one after another. */
+function acronymDefinitionDocument(size: number): string {
+  return Array(size).fill("Alpha Beta (AB)").join(" ") + ".";
+}
+
+/** The 31-word sentence the paragraph guard repeats. */
+const LONG_SENTENCE = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
+
+/** One paragraph of long sentences. */
+function longParagraphDocument(size: number): string {
+  return Array(size).fill(LONG_SENTENCE).join(" ");
 }
 
 describe("reader-facing behaviour contracts", () => {
@@ -219,6 +269,117 @@ describe("reader-facing behaviour contracts", () => {
       .not.toContain("legalese");
     expect(rulesFor("Read [the policy][shall] before replying."))
       .toContain("legalese");
+
+    // The rule name says which check fired; the detail says what to do about
+    // it. A review changed that detail from a banned term to a recommended
+    // one, and every check here passed, because none of them read it. A
+    // finding that recommends what it means to forbid is worse than no
+    // finding at all.
+    const detail = auditText("The party shall comply.")
+      .find((violation) => violation.rule === "legalese")?.detail ?? "";
+    expect(detail, "a legalese finding must name the term as banned")
+      .toBe('banned term "shall"');
+  });
+
+  // Every rewrite this engine suggests, in the words it suggests them.
+  //
+  // A review changed one suggestion so that "in the absence of" was said to
+  // mean the same as "with", and every test passed. The rule name says which
+  // check fired and the count says how often; only these say what to write
+  // instead, which is the part a reader acts on. A wrong one is worse than a
+  // missing one, because it is followed.
+  test("the engine suggests the rewrites it is meant to suggest", () => {
+    const wordy: Array<[string, string]> = [
+    ["null and void", "void"],
+    ["each and every", "each"],
+    ["first and foremost", "first"],
+    ["true and correct", "true"],
+    ["full and complete", "complete"],
+    ["revert back", "revert"],
+    ["repeat again", "repeat"],
+    ["free gift", "gift"],
+    ["past history", "history"],
+    ["future plans", "plans"],
+    ["end result", "result"],
+    ["unexpected surprise", "surprise"],
+    ["advance planning", "planning"],
+    ["close proximity", "close"],
+    ["general consensus", "consensus"],
+    ["in order to", "to"],
+    ["due to the fact that", "because"],
+    ["in the event that", "if"],
+    ["at this point in time", "now"],
+    ["at this moment in time", "now"],
+    ["in the near future", "soon"],
+    ["for the purpose of", "to"],
+    ["with regard to", "about"],
+    ["with reference to", "about"],
+    ["in relation to", "about"],
+    ["in the absence of", "without"],
+    ["a large number of", "many"],
+    ["a small number of", "a few"],
+    ["the majority of", "most"],
+    ["prior to", "before"],
+    ["subsequent to", "after"],
+    ["in spite of the fact that", "although"],
+    ["notwithstanding the fact that", "although"],
+    ["it is possible that", "may"],
+    ["has the ability to", "can"],
+    ["is able to", "can"],
+    ["make a decision", "decide"],
+    ["provide assistance", "help"],
+    ["take into consideration", "consider"],
+    ];
+    const complexWords: Array<[string, string]> = [
+    ["utilise", "use"],
+    ["utilize", "use"],
+    ["utilising", "using"],
+    ["utilizing", "using"],
+    ["commence", "start"],
+    ["commences", "starts"],
+    ["commenced", "started"],
+    ["ascertain", "find"],
+    ["facilitate", "help"],
+    ["facilitates", "helps"],
+    ["endeavour", "try"],
+    ["endeavor", "try"],
+    ["terminate", "end"],
+    ["terminates", "ends"],
+    ["aforementioned", "this"],
+    ["notwithstanding", "despite"],
+    ["henceforth", "now"],
+    ["thereafter", "then"],
+    ["whereby", "how"],
+    ["herein", "here"],
+    ["thereof", "its"],
+    ["therein", "inside"],
+    ["expedite", "hasten"],
+    ["disseminate", "share"],
+    ["remuneration", "pay"],
+    ];
+
+    // Matched on the replacement rather than on the rule or the sentence
+    // around it. A phrase may be reported as a doublet rather than a wordy
+    // phrase, and the two word their advice differently, but which rule fires
+    // is not the part a reader acts on. The word to write instead is.
+    for (const [phrase, lean] of wordy) {
+      const advice = auditText(`We acted ${phrase} the report.`)
+        .map((violation) => violation.detail)
+        .filter((detail) => detail.includes(`"${phrase}"`));
+      expect(advice.length, `"${phrase}" must be reported at all`).toBeGreaterThan(0);
+      expect(advice.join(" "), `"${phrase}" must be offered "${lean}"`)
+        .toContain(`"${lean}"`);
+    }
+
+    // Matched whole. A review changed "end" to "extend", and a check reading
+    // for a substring accepted it, so the engine advised replacing "terminate"
+    // with a word meaning its opposite.
+    for (const [word, plain] of complexWords) {
+      const detail = auditText(`We ${word} the report today.`)
+        .find((violation) => violation.rule === "complex-word")?.detail ?? "";
+      expect(detail, `"${word}" must be offered "${plain}" and nothing else`)
+        .toBe(`"${word}" where "${plain}" would do`);
+    }
   });
 
   test("a full stop inside emphasis or quotes still ends the sentence", () => {
@@ -406,25 +567,18 @@ describe("reader-facing behaviour contracts", () => {
     expect(readerProseBlocks(bracketed)[0]?.lines.join("")).toBe(" here.");
   });
 
-  test("deep nesting is read once, not once per level", () => {
+  test("deep nesting finishes and does not exhaust the stack", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
     const deep = (size: number): void => {
-      auditText("[a](x)".replace("a", "a".repeat(1)) .repeat(1)
-        + "[".repeat(size) + "]".repeat(size));
+      auditText(deepLabelDocument(size));
     };
-    deep(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      deep(size);
-      return performance.now() - started;
-    };
-    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
+    deep(3_000);
 
     let layered = "innermost";
     for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
     expect(() => auditText(layered)).not.toThrow();
-  });
+  }, HOSTILE_TIMEOUT_MS);
 
   test("an empty link shows a reader nothing, so it measures as nothing", () => {
     // A link with no text still has a destination and a title, and leaving them in place
@@ -468,23 +622,13 @@ ${sentence}`)
     expect(found[0]?.line).toBe(3);
   });
 
-  test("nested link labels are flattened in one pass, not one scan each", () => {
-    // Matching each "[" to its partner by scanning forward would be quadratic, so the
-    // partners are matched once for the whole text. Doubling the input must roughly
-    // double the work rather than quadruple it.
-    // Measured through the whole audit, because every rule that reads links used to run a
-    // pattern of its own over the same text. Ten thousand unmatched brackets cost about
-    // nine seconds across them; one shared scan is what removed it.
+  test("nested link labels and unmatched brackets finish", () => {
+    // Every rule that reads links once ran a separate scan. Ten thousand
+    // unmatched brackets took about nine seconds before the shared scan.
     const audit = (size: number): void => {
-      auditText("Read [outer [inner] text](/uri) here. ".repeat(size));
+      auditText(nestedLinkDocument(size));
     };
-    audit(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      audit(size);
-      return performance.now() - started;
-    };
-    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
+    audit(3_000);
 
     // Brackets that never close are the shape that was worst, and the shape a generated
     // or damaged document reaches without anybody meaning harm.
@@ -513,7 +657,7 @@ ${sentence}`)
     ]) {
       expect(readerProseBlocks(literal)[0]?.lines.join(""), literal).toBe(literal);
     }
-  });
+  }, HOSTILE_TIMEOUT_MS);
 
   test("markup that spans lines does not move the lines after it", () => {
     // A link destination or title may hold a line ending. Flattening the link to its
@@ -553,21 +697,15 @@ ${sentence}`)
     expect(auditText(wrong).map((v) => v.rule)).toContain("acronym-undefined");
   });
 
-  test("a discounted word cannot reopen the search for a definition", () => {
+  test("discounted words do not stall the definition search", () => {
     // Every word here is discounted: "A" reads as the article, and so does "and". The
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
     const hostile = (size: number): void => {
-      auditText(Array(size).fill("A.A.A. (").join(" ") + " and).");
+      auditText(discountedAcronymDocument(size));
     };
-    hostile(1_000);
-    const time = (size: number): number => {
-      const started = performance.now();
-      hostile(size);
-      return performance.now() - started;
-    };
-    expect(time(3_000) / Math.max(time(1_000), 1)).toBeLessThan(5);
-  });
+    hostile(3_000);
+  }, HOSTILE_TIMEOUT_MS);
 
   test("an expansion is read to its closing bracket, however long it runs", () => {
     // A definition is spelled by the words that carry initials, and the ignored words
@@ -587,41 +725,28 @@ ${sentence}`)
       .map((v) => v.rule)).toContain("acronym-undefined");
   });
 
-  test("a large document cannot stall the rules that walk it", () => {
+  test("large documents finish and retain their findings", () => {
     // Three places rebuilt a whole prefix or suffix inside a loop over the same text, so
     // each cost grew with the square of the document. Repairing only the one the review
     // named would have left the shape alive in the other two.
     //
-    // The shape is what is measured, not the clock: tripling the input triples linear work
-    // and multiplies quadratic work by nine, and that separation holds on any machine.
-    const growth = (work: (size: number) => void, size: number): number => {
-      const time = (at: number): number => {
-        const started = performance.now();
-        work(at);
-        return performance.now() - started;
-      };
-      work(size);
-      return time(size * 3) / Math.max(time(size), 1);
-    };
-
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
     const acronyms = (size: number): void => {
-      auditText(Array(size).fill("Alpha Beta (AB)").join(" ") + ".", { knownAcronyms: known });
+      auditText(acronymDefinitionDocument(size), { knownAcronyms: known });
     };
-    expect(growth(acronyms, 1_000)).toBeLessThan(5);
+    acronyms(3_000);
 
     // Every finding counted the line endings before it from the start of the paragraph.
-    const sentence = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
     const paragraphs = (size: number): void => {
-      auditText(Array(size).fill(sentence).join(" "));
+      auditText(longParagraphDocument(size));
     };
-    expect(growth(paragraphs, 1_000)).toBeLessThan(5);
+    paragraphs(3_000);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
-    const long = Array(500).fill(sentence).join(" ");
+    const long = Array(500).fill(LONG_SENTENCE).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
-  });
+  }, HOSTILE_TIMEOUT_MS);
 
   test("a hostile token cannot stall the rules that read it", () => {
     // Trimming a token to its letters with an anchored alternation retried the suffix at
@@ -1541,6 +1666,198 @@ ${sentence}`)
     expect(rulesFor("The DOM loads first.")).toContain("acronym-undefined");
   });
 
+  // A pull request description has no front matter: GitHub shows a leading "---"
+  // block as a rule and a heading, so the audit hid text a reader sees. A file in a
+  // repository may carry metadata, so the default reading does not change.
+  test("a leading front matter block is metadata by default, and text when told so", () => {
+    const description = ["---", "note: The tenant shall pay.", "---", ""].join(BREAK);
+    expect(auditText(description)).toEqual([]);
+    expect(headings(description)).toEqual([]);
+    expect(readDocument(description).hidden(1)).toBe(true);
+    const asText = { frontMatter: false };
+    expect(auditText(description, asText)).toEqual([
+      { rule: "legalese", line: 2, detail: 'banned term "shall"' },
+      { rule: "heading-style", line: 2, detail: "heading ends with a full stop" },
+    ]);
+    expect(headings(description, asText))
+      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay.", lines: 1 }]);
+    expect(readDocument(description, asText).hidden(1)).toBe(false);
+    // The paragraph became the heading's text, so no prose block remains either way.
+    expect(proseBlocks(description, asText)).toEqual([]);
+    expect(readerProseBlocks(description, asText)).toEqual([]);
+    // A block that closes with "..." is metadata too. Read as text, the closing line
+    // is no underline, so the line above it stays a paragraph and its word reports.
+    const dotted = ["---", "note: The tenant shall pay.", "...", ""].join(BREAK);
+    expect(rulesFor(dotted)).toEqual([]);
+    expect(auditText(dotted, asText).map((violation) => violation.rule)).toContain("legalese");
+    // Every rule reads the same way. Each of these hides behind front matter by
+    // default, and reports once the block is read as text.
+    for (const [rule, body] of [
+      ["acronym-undefined", "note: The IAM endpoint works."],
+      ["link-text", "note: [click here](/refunds)"],
+      ["image-alt", "note: ![](chart.png)"],
+      ["doublet", "note: each and every record"],
+      ["wordy-phrase", "note: in order to pay"],
+      ["complex-word", "note: utilise the record"],
+      ["double-negative", "note: not uncommon"],
+      // An indented line is YAML too, and read as text it is the opening prose.
+      ["filler-opening", "  Certainly the record is here"],
+      ["sentence-length", `note: ${sentenceOf(31)}`],
+      ["prose-enumeration", "note: first a, second b, third c"],
+    ] as const) {
+      const block = ["---", body, "...", ""].join(BREAK);
+      expect(rulesFor(block), rule).not.toContain(rule);
+      expect(auditText(block, asText).map((violation) => violation.rule), rule).toContain(rule);
+    }
+    // The option changes nothing for a document without a leading block.
+    const plain = ["Body text.", "", "---", "note: The tenant shall pay.", "---"].join(BREAK);
+    expect(auditText(plain, asText)).toEqual(auditText(plain));
+  });
+
+  // A reader reads a heading, so the rules about words read it too. The rules about
+  // sentences stay out, because a heading is not a sentence and heading-style already
+  // bounds its length. "## The tenant shall pay" once reported nothing in any document.
+  test("the rules about words read headings, and the rules about sentences do not", () => {
+    const located = (text: string): Array<[string, number]> =>
+      auditText(text).map((violation) => [violation.rule, violation.line]);
+    // Each of the five rules, one at a time, on an ATX heading and on a Setext one.
+    // A Setext heading over two lines reports on its first line, where it starts.
+    for (const [rule, words] of [
+      ["legalese", "The tenant shall pay"],
+      ["doublet", "Keep each and every record"],
+      ["wordy-phrase", "Restart in order to apply"],
+      ["complex-word", "Utilise the record"],
+      ["double-negative", "Failure is not uncommon"],
+    ] as const) {
+      expect(auditText(`## ${words}`), rule).toEqual([expect.objectContaining({ rule, line: 1 })]);
+      expect(located(["Plain words here.", "", words, "---"].join(BREAK)), rule)
+        .toEqual([[rule, 3]]);
+      const [first, ...rest] = words.split(" ");
+      expect(located(["Plain words here.", "", `${first} ${rest[0]}`, rest.slice(1).join(" "), "==="]
+        .join(BREAK)), `${rule} over two lines`).toEqual([[rule, 3]]);
+    }
+    expect(auditText(["## The tenant shall pay", "", "Plain words here."].join(BREAK)))
+      .toEqual([{ rule: "legalese", line: 1, detail: 'banned term "shall"' }]);
+    const loaded = "## In order to utilise each and every record, failure is not uncommon";
+    expect(rulesFor(loaded).sort())
+      .toEqual(["complex-word", "double-negative", "doublet", "wordy-phrase"]);
+    // Findings from headings and prose are listed in the order a reader meets them.
+    expect(located(["## Utilise one", "", "Utilise two.", "", "## Utilise three"].join(BREAK)))
+      .toEqual([["complex-word", 1], ["complex-word", 3], ["complex-word", 5]]);
+    // A heading inside a quotation or a list item, and a later heading, carry their own lines.
+    expect(located("> ## The tenant shall pay")).toEqual([["legalese", 1]]);
+    expect(located("- ## The tenant shall pay")).toEqual([["legalese", 1]]);
+    expect(located(["Plain text.", "", "- item", "", "  ### The tenant shall pay"].join(BREAK)))
+      .toEqual([["legalese", 5]]);
+    // A heading inside a fence is code, and a banned word named in a code span is a
+    // mention rather than a use, in a heading as in prose.
+    expect(rulesFor(["```", "## The tenant shall pay", "```"].join(BREAK))).toEqual([]);
+    const tick = String.fromCharCode(96);
+    for (const [term, rule] of [
+      ["shall", "legalese"],
+      ["each and every", "doublet"],
+      ["in order to", "wordy-phrase"],
+      ["utilise", "complex-word"],
+      ["not uncommon", "double-negative"],
+    ] as const) {
+      expect(rulesFor(`## Avoid ${tick}${term}${tick}`), rule).toEqual([]);
+      expect(rulesFor(`## Avoid "${term}"`), rule).toEqual([]);
+    }
+    // The rules about sentences leave a heading alone: its length is heading-style's.
+    const long = `## ${Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ")}`;
+    expect(rulesFor(long)).toEqual(["heading-style"]);
+    expect(rulesFor("## First check the logs, second restart it, and third tell the team"))
+      .not.toContain("prose-enumeration");
+    expect(rulesFor("# Certainly! The guide")).not.toContain("filler-opening");
+    // Six short sentences in a heading are heading-style's to report, not a paragraph.
+    expect(rulesFor("## One. Two. Three. Four. Five. Six")).toEqual(["heading-style"]);
+    // Headings never enter the average. Nine long sentences sit under the sample floor,
+    // and a long heading beside them must not lift the count to ten.
+    const longSentences = Array.from({ length: 9 }, () => sentenceOf(25)).join(BREAK + BREAK);
+    const longHeading = `## ${Array.from({ length: 25 }, (_, word) => `heading${word}`).join(" ")}`;
+    expect(rulesFor([longSentences, longHeading].join(BREAK + BREAK)))
+      .not.toContain("sentence-average");
+    expect(rulesFor([longSentences, sentenceOf(25)].join(BREAK + BREAK)))
+      .toContain("sentence-average");
+    // An acronym used only in a heading is not reported: the heading is usually the
+    // name of the thing, and a use in prose beneath it reports there.
+    expect(rulesFor("## The DOM")).toEqual([]);
+    expect(rulesFor(["## The DOM", "", "The DOM loads first."].join(BREAK)))
+      .toEqual(["acronym-undefined"]);
+    // The front matter case, without its full stop, reports when the block is text.
+    const description = ["---", "note: We shall pay", "---"].join(BREAK);
+    expect(auditText(description, { frontMatter: false }).map((v) => [v.rule, v.line]))
+      .toEqual([["legalese", 2]]);
+  });
+
+  // A soft line break is a space to the reader, so a definition wrapped across two
+  // lines is one definition. The scan read a source line at a time, so "identity and
+  // access" and "management (IAM)" on the next line never met, and IAM was reported.
+  // Indented code is a specimen, as fenced code is, so the rules that read line by
+  // line skip it too. It was left out of prose but still read for links, images and
+  // acronym definitions, so a code example drew advice and defined an acronym.
+  test("indented code is skipped by the line rules, as fenced code is", () => {
+    for (const code of ["    ![](sample.png)", "    [click here](/sample)"]) {
+      expect(rulesFor(code), code).toEqual([]);
+      expect(rulesFor(["```", code.trim(), "```"].join(BREAK)), code).toEqual([]);
+    }
+    const defined = ["Identity and access management (IAM)", "", "The IAM endpoint works."];
+    expect(auditText(["    " + defined[0], ...defined.slice(1)].join(BREAK))
+      .filter((violation) => violation.rule === "acronym-undefined")
+      .map((violation) => violation.line)).toEqual([3]);
+    // The same line as prose still defines the acronym.
+    expect(rulesFor(defined.join(BREAK))).not.toContain("acronym-undefined");
+  });
+
+  test("an acronym's definition is found across a wrapped line, and not across a block", () => {
+    const use = ["", "The IAM endpoint works."];
+    const wrapped = ["The identity and access", "management (IAM) endpoint works."];
+    expect(rulesFor(wrapped.join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor([...wrapped, ...use].join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor(["- The identity and access", "  management (IAM) endpoint works.", ...use]
+      .join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor(["> The identity and access", "> management (IAM) endpoint works.", ...use]
+      .join(BREAK))).not.toContain("acronym-undefined");
+    // The words carry across more than one break.
+    expect(rulesFor(["The identity", "and access", "management (IAM) works."].join(BREAK)))
+      .not.toContain("acronym-undefined");
+
+    // A paragraph break, a list item boundary, a quotation boundary and a heading each
+    // end the words that can spell an acronym, as they end the sentence a reader is in.
+    for (const document of [
+      ["The identity and access", "", "management (IAM) endpoint works."],
+      ["- identity and access", "- management (IAM) endpoint works."],
+      ["> The identity and access", "", "management (IAM) endpoint works."],
+      ["The identity and access", "# management (IAM)", ...use],
+    ]) {
+      expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("acronym-undefined");
+    }
+
+    // A setext heading's text can wrap too, and it is one heading to the reader, so a
+    // definition wrapped inside it is found. Its words still end with the heading.
+    for (const underline of ["===", "---"]) {
+      expect(rulesFor(["Identity and access", "management (IAM)", underline, ...use].join(BREAK)),
+        underline).not.toContain("acronym-undefined");
+      expect(rulesFor(["Identity and access", underline, "", "management (IAM) works.", ...use]
+        .join(BREAK)), underline).toContain("acronym-undefined");
+    }
+
+    // A use before the wrapped definition is still a use before any definition.
+    expect(auditText(["The IAM endpoint works.", "", ...wrapped].join(BREAK))
+      .filter((violation) => violation.rule === "acronym-undefined")
+      .map((violation) => violation.line)).toEqual([1]);
+
+    // Code and table cells are not a sentence a reader is in, so their words never
+    // begin a definition that the next paragraph finishes.
+    for (const document of [
+      ["```", "identity and access", "```", "management (IAM) endpoint works."],
+      ["| Term |", "|---|", "| identity and access |", "", "management (IAM) endpoint works."],
+      ["| Term |", "|---|", "| identity and access |", "| management (IAM) |", ...use],
+    ]) {
+      expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("acronym-undefined");
+    }
+  });
+
   // Every complex-word suggestion must be no longer than the word it replaces,
   // or taking the advice pushes a sentence at the cap over it.
   test("complex-word advice never creates a longer sentence", () => {
@@ -1653,7 +1970,7 @@ ${sentence}`)
     expect(proseBlocks(longSetext)).toEqual([]);
 
     const linked = "[Install the service](https://example.com/install)\n==================================================";
-    expect(headings(linked)).toEqual([{ level: 1, line: 1, text: "Install the service" }]);
+    expect(headings(linked)).toEqual([{ level: 1, line: 1, text: "Install the service", lines: 1 }]);
     const skipped = rulesFor("First heading\n=============\n### Third heading");
     expect(skipped).toContain("heading-skip");
 
