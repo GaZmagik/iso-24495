@@ -17,6 +17,8 @@ The audit is written for English and supports English only. The skills and outpu
 
 Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` looks for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
 
+Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
+
 The `sentence-length` and `sentence-average` rules count words separated by whitespace, including spaces and line breaks, and use English benchmarks. The `paragraph-length` rule counts sentences, with a limit of five.
 
 The `prose-enumeration` rule flags three or more distinct ranks in a prose block, including rank one. It recognises English ordinal words and numbered markers from one to six.
@@ -35,6 +37,8 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 ```text
 bun <skill-directory>/scripts/audit-text-cli.ts <file-or-directory> --project-dir <project-directory>
 ```
+
+   Add `--no-front-matter` for text that cannot carry metadata, such as a pull request description. A leading `---` block is then read as text, not set aside as front matter.
 
 7. Report every finding with its file, line, rule, and explanation.
 8. Report skipped or unreadable entries. Never treat an incomplete audit as clean.

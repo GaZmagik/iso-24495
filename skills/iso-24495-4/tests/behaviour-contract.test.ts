@@ -15,6 +15,7 @@ import {
   headings,
   mergedSentences,
   proseBlocks,
+  readDocument,
   readerProseBlocks,
   splitSentences,
   wordCount,
@@ -1663,6 +1664,173 @@ ${sentence}`)
     ].join("\n")))
       .not.toContain("acronym-undefined");
     expect(rulesFor("The DOM loads first.")).toContain("acronym-undefined");
+  });
+
+  // A pull request description has no front matter: GitHub shows a leading "---"
+  // block as a rule and a heading, so the audit hid text a reader sees. A file in a
+  // repository may carry metadata, so the default reading does not change.
+  test("a leading front matter block is metadata by default, and text when told so", () => {
+    const description = ["---", "note: The tenant shall pay.", "---", ""].join(BREAK);
+    expect(auditText(description)).toEqual([]);
+    expect(headings(description)).toEqual([]);
+    expect(readDocument(description).hidden(1)).toBe(true);
+    const asText = { frontMatter: false };
+    expect(auditText(description, asText)).toEqual([
+      { rule: "legalese", line: 2, detail: 'banned term "shall"' },
+      { rule: "heading-style", line: 2, detail: "heading ends with a full stop" },
+    ]);
+    expect(headings(description, asText))
+      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay." }]);
+    expect(readDocument(description, asText).hidden(1)).toBe(false);
+    // The paragraph became the heading's text, so no prose block remains either way.
+    expect(proseBlocks(description, asText)).toEqual([]);
+    expect(readerProseBlocks(description, asText)).toEqual([]);
+    // A block that closes with "..." is metadata too. Read as text, the closing line
+    // is no underline, so the line above it stays a paragraph and its word reports.
+    const dotted = ["---", "note: The tenant shall pay.", "...", ""].join(BREAK);
+    expect(rulesFor(dotted)).toEqual([]);
+    expect(auditText(dotted, asText).map((violation) => violation.rule)).toContain("legalese");
+    // Every rule reads the same way. Each of these hides behind front matter by
+    // default, and reports once the block is read as text.
+    for (const [rule, body] of [
+      ["acronym-undefined", "note: The IAM endpoint works."],
+      ["link-text", "note: [click here](/refunds)"],
+      ["image-alt", "note: ![](chart.png)"],
+      ["doublet", "note: each and every record"],
+      ["wordy-phrase", "note: in order to pay"],
+      ["complex-word", "note: utilise the record"],
+      ["double-negative", "note: not uncommon"],
+      // An indented line is YAML too, and read as text it is the opening prose.
+      ["filler-opening", "  Certainly the record is here"],
+      ["sentence-length", `note: ${sentenceOf(31)}`],
+      ["prose-enumeration", "note: first a, second b, third c"],
+    ] as const) {
+      const block = ["---", body, "...", ""].join(BREAK);
+      expect(rulesFor(block), rule).not.toContain(rule);
+      expect(auditText(block, asText).map((violation) => violation.rule), rule).toContain(rule);
+    }
+    // The option changes nothing for a document without a leading block.
+    const plain = ["Body text.", "", "---", "note: The tenant shall pay.", "---"].join(BREAK);
+    expect(auditText(plain, asText)).toEqual(auditText(plain));
+  });
+
+  // A reader reads a heading, so the rules about words read it too. The rules about
+  // sentences stay out, because a heading is not a sentence and heading-style already
+  // bounds its length. "## The tenant shall pay" once reported nothing in any document.
+  test("the rules about words read headings, and the rules about sentences do not", () => {
+    const located = (text: string): Array<[string, number]> =>
+      auditText(text).map((violation) => [violation.rule, violation.line]);
+    // Each of the five rules, one at a time, on an ATX heading and on a Setext one.
+    // A Setext heading over two lines reports on its first line, where it starts.
+    for (const [rule, words] of [
+      ["legalese", "The tenant shall pay"],
+      ["doublet", "Keep each and every record"],
+      ["wordy-phrase", "Restart in order to apply"],
+      ["complex-word", "Utilise the record"],
+      ["double-negative", "Failure is not uncommon"],
+    ] as const) {
+      expect(auditText(`## ${words}`), rule).toEqual([expect.objectContaining({ rule, line: 1 })]);
+      expect(located(["Plain words here.", "", words, "---"].join(BREAK)), rule)
+        .toEqual([[rule, 3]]);
+      const [first, ...rest] = words.split(" ");
+      expect(located(["Plain words here.", "", `${first} ${rest[0]}`, rest.slice(1).join(" "), "==="]
+        .join(BREAK)), `${rule} over two lines`).toEqual([[rule, 3]]);
+    }
+    expect(auditText(["## The tenant shall pay", "", "Plain words here."].join(BREAK)))
+      .toEqual([{ rule: "legalese", line: 1, detail: 'banned term "shall"' }]);
+    const loaded = "## In order to utilise each and every record, failure is not uncommon";
+    expect(rulesFor(loaded).sort())
+      .toEqual(["complex-word", "double-negative", "doublet", "wordy-phrase"]);
+    // Findings from headings and prose are listed in the order a reader meets them.
+    expect(located(["## Utilise one", "", "Utilise two.", "", "## Utilise three"].join(BREAK)))
+      .toEqual([["complex-word", 1], ["complex-word", 3], ["complex-word", 5]]);
+    // A heading inside a quotation or a list item, and a later heading, carry their own lines.
+    expect(located("> ## The tenant shall pay")).toEqual([["legalese", 1]]);
+    expect(located("- ## The tenant shall pay")).toEqual([["legalese", 1]]);
+    expect(located(["Plain text.", "", "- item", "", "  ### The tenant shall pay"].join(BREAK)))
+      .toEqual([["legalese", 5]]);
+    // A heading inside a fence is code, and a banned word named in a code span is a
+    // mention rather than a use, in a heading as in prose.
+    expect(rulesFor(["```", "## The tenant shall pay", "```"].join(BREAK))).toEqual([]);
+    const tick = String.fromCharCode(96);
+    for (const [term, rule] of [
+      ["shall", "legalese"],
+      ["each and every", "doublet"],
+      ["in order to", "wordy-phrase"],
+      ["utilise", "complex-word"],
+      ["not uncommon", "double-negative"],
+    ] as const) {
+      expect(rulesFor(`## Avoid ${tick}${term}${tick}`), rule).toEqual([]);
+      expect(rulesFor(`## Avoid "${term}"`), rule).toEqual([]);
+    }
+    // The rules about sentences leave a heading alone: its length is heading-style's.
+    const long = `## ${Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ")}`;
+    expect(rulesFor(long)).toEqual(["heading-style"]);
+    expect(rulesFor("## First check the logs, second restart it, and third tell the team"))
+      .not.toContain("prose-enumeration");
+    expect(rulesFor("# Certainly! The guide")).not.toContain("filler-opening");
+    // Six short sentences in a heading are heading-style's to report, not a paragraph.
+    expect(rulesFor("## One. Two. Three. Four. Five. Six")).toEqual(["heading-style"]);
+    // Headings never enter the average. Nine long sentences sit under the sample floor,
+    // and a long heading beside them must not lift the count to ten.
+    const longSentences = Array.from({ length: 9 }, () => sentenceOf(25)).join(BREAK + BREAK);
+    const longHeading = `## ${Array.from({ length: 25 }, (_, word) => `heading${word}`).join(" ")}`;
+    expect(rulesFor([longSentences, longHeading].join(BREAK + BREAK)))
+      .not.toContain("sentence-average");
+    expect(rulesFor([longSentences, sentenceOf(25)].join(BREAK + BREAK)))
+      .toContain("sentence-average");
+    // An acronym used only in a heading is not reported: the heading is usually the
+    // name of the thing, and a use in prose beneath it reports there.
+    expect(rulesFor("## The DOM")).toEqual([]);
+    expect(rulesFor(["## The DOM", "", "The DOM loads first."].join(BREAK)))
+      .toEqual(["acronym-undefined"]);
+    // The front matter case, without its full stop, reports when the block is text.
+    const description = ["---", "note: We shall pay", "---"].join(BREAK);
+    expect(auditText(description, { frontMatter: false }).map((v) => [v.rule, v.line]))
+      .toEqual([["legalese", 2]]);
+  });
+
+  // A soft line break is a space to the reader, so a definition wrapped across two
+  // lines is one definition. The scan read a source line at a time, so "identity and
+  // access" and "management (IAM)" on the next line never met, and IAM was reported.
+  test("an acronym's definition is found across a wrapped line, and not across a block", () => {
+    const use = ["", "The IAM endpoint works."];
+    const wrapped = ["The identity and access", "management (IAM) endpoint works."];
+    expect(rulesFor(wrapped.join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor([...wrapped, ...use].join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor(["- The identity and access", "  management (IAM) endpoint works.", ...use]
+      .join(BREAK))).not.toContain("acronym-undefined");
+    expect(rulesFor(["> The identity and access", "> management (IAM) endpoint works.", ...use]
+      .join(BREAK))).not.toContain("acronym-undefined");
+    // The words carry across more than one break.
+    expect(rulesFor(["The identity", "and access", "management (IAM) works."].join(BREAK)))
+      .not.toContain("acronym-undefined");
+
+    // A paragraph break, a list item boundary, a quotation boundary and a heading each
+    // end the words that can spell an acronym, as they end the sentence a reader is in.
+    for (const document of [
+      ["The identity and access", "", "management (IAM) endpoint works."],
+      ["- identity and access", "- management (IAM) endpoint works."],
+      ["> The identity and access", "", "management (IAM) endpoint works."],
+      ["The identity and access", "# management (IAM)", ...use],
+    ]) {
+      expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("acronym-undefined");
+    }
+
+    // A use before the wrapped definition is still a use before any definition.
+    expect(auditText(["The IAM endpoint works.", "", ...wrapped].join(BREAK))
+      .filter((violation) => violation.rule === "acronym-undefined")
+      .map((violation) => violation.line)).toEqual([1]);
+
+    // Code and table cells are not a sentence a reader is in, so their words never
+    // begin a definition that the next paragraph finishes.
+    for (const document of [
+      ["```", "identity and access", "```", "management (IAM) endpoint works."],
+      ["| Term |", "|---|", "| identity and access |", "", "management (IAM) endpoint works."],
+      ["| Term |", "|---|", "| identity and access |", "| management (IAM) |", ...use],
+    ]) {
+      expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("acronym-undefined");
+    }
   });
 
   // Every complex-word suggestion must be no longer than the word it replaces,

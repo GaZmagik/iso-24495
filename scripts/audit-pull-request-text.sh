@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Audits one piece of text and decides whether it passes.
+# Audits one piece of text and reports what the audit found.
 #
 # The suite audits the documents in this repository. A pull request description
 # is text a reader receives too, and it lives on GitHub rather than in the tree,
@@ -8,9 +8,21 @@
 #
 #   bash scripts/audit-pull-request-text.sh <file>
 #
-# Exit 0 means the text passed. Exit 1 means it has findings, or holds no text.
-# Exit 2 means the arguments were wrong, which includes naming a file that
-# cannot be read.
+# Findings are advice. They are mechanical proxies, not an ISO judgement, and no
+# explanation of why a text suits its readers could ever satisfy a check that
+# failed on them, so they never block. The check blocks only where there is
+# nothing to audit, or where the audit did not do its job:
+#
+#   0  The audit ran on a description that is not empty. Any findings are
+#      listed, as advice. A pass does not mean the description is clear.
+#   1  The description is empty, or holds only whitespace.
+#   2  The arguments were wrong, which includes naming a file that cannot be
+#      read.
+#   3  The audit did not run, or its report does not show that it read the file.
+#
+# The findings are printed here. Where GITHUB_STEP_SUMMARY names a file, as it
+# does on a GitHub runner, they are appended to it as well, because the job's
+# summary page is where a contributor looks.
 set -euo pipefail
 
 TEXT="${1:-}"
@@ -34,6 +46,16 @@ TEXT="$DIRECTORY/$(basename -- "$TEXT")"
 
 cd -- "$(dirname -- "$0")/.."
 
+SUMMARY="${GITHUB_STEP_SUMMARY:-}"
+
+# Prints a paragraph, and appends it to the step summary where there is one.
+report() {
+  echo "$1"
+  if [ -n "$SUMMARY" ]; then
+    printf '%s\n\n' "$1" >> "$SUMMARY"
+  fi
+}
+
 # The audit must read the file the caller named. Anything else is a mistake in
 # the call rather than a judgement about text, so it exits 2 and says which.
 if [ ! -f "$TEXT" ]; then
@@ -43,56 +65,77 @@ fi
 
 # The audit must be able to read the file, not merely know it exists. A test of
 # permission bits is not enough: a review held a Windows exclusive lock on the
-# file, which `-r` still called readable, and the content check below then
-# failed to read it and reported "no text" with exit 1. So the file is read
-# here, and any failure to read it is the exit 2 this header promises.
+# file, which `-r` still called readable, and every later read failed. So the
+# file is read here, and any failure to read it is the exit 2 this header
+# promises.
 if ! cat -- "$TEXT" > /dev/null 2>&1; then
   echo "The file at $TEXT exists but cannot be read." >&2
   exit 2
 fi
 
-# An audit of nothing finds nothing, so a description holding no text would earn
-# a green tick. A reader gets nothing from one either.
-#
-# The Markdown renderer decides what a reader sees, so a comment, a link
-# reference definition or a page of Unicode spaces all count as no text. An
-# earlier version stripped such constructs one pattern at a time, and each
-# review found one the list had missed. scripts/visible-text.ts says what it
-# accepts.
-#
-# The check exits 0 for text and 1 for none. Any other status means the file
-# could not be read after all, which is exit 2 rather than a judgement about text.
-TEXT_STATUS=0
-bun scripts/visible-text-cli.ts "$TEXT" || TEXT_STATUS=$?
-if [ "$TEXT_STATUS" -eq 1 ]; then
-  echo "There is no text to read, so there is nothing for a reader to read."
+if [ -n "$SUMMARY" ]; then
+  printf '## Pull request description audit\n\n' >> "$SUMMARY"
+fi
+
+# An audit of nothing finds nothing, so an empty description would pass having
+# been read by nobody. This tests the Markdown source, not what a page would
+# show: a description holding a comment or an image is not empty, and the audit
+# reads it. Whitespace is whatever JavaScript's \s matches, which includes the
+# no-break space, the other Unicode space characters and the byte order mark,
+# so the answer is the same on every platform whatever its locale.
+EMPTY_STATUS=0
+DESCRIPTION_FILE="$TEXT" bun -e '
+  const source = require("node:fs").readFileSync(process.env.DESCRIPTION_FILE, "utf8");
+  process.exit(/\S/.test(source) ? 0 : 1);
+' || EMPTY_STATUS=$?
+if [ "$EMPTY_STATUS" -eq 1 ]; then
+  report "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why."
   exit 1
 fi
-if [ "$TEXT_STATUS" -ne 0 ]; then
+if [ "$EMPTY_STATUS" -ne 0 ]; then
   echo "The file at $TEXT exists but cannot be read." >&2
   exit 2
 fi
 
 FINDINGS="$(mktemp)"
-trap 'rm -f "$FINDINGS"' EXIT
+TABLE="$(mktemp)"
+trap 'rm -f "$FINDINGS" "$TABLE"' EXIT
 
-bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts "$TEXT" --json "$FINDINGS"
-
-# The audit is advisory by design and exits 0 whatever it finds, so the decision
-# is made here, and it is made on evidence rather than on silence. The first
-# marker says a file was read and was clean, and the second says the run as a
-# whole found nothing.
-#
-# Both are read, because they can disagree. A review selected a symbolic link:
-# the audit skips those rather than following them, so it reported empty totals
-# with no file entry at all. Totals alone would have called that a pass. The
-# pair is what distinguishes a clean read from a read that never happened.
-if grep -q '"violations": \[\]' "$FINDINGS" && grep -q '"totals": {}' "$FINDINGS"; then
-  echo "==> The text reads plainly against the engine's checks"
-  exit 0
+# A description has no front matter. GitHub shows a leading "---" block as a rule
+# and a heading, so the audit is told there is none and reads the block as that
+# text, where a file in a repository would have it hidden as metadata. A review
+# found a description whose only text sat inside such a block, and it passed.
+AUDIT_STATUS=0
+bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts "$TEXT" --no-front-matter \
+  --json "$FINDINGS" > "$TABLE" || AUDIT_STATUS=$?
+if [ "$AUDIT_STATUS" -ne 0 ]; then
+  report "The audit did not run to completion (exit $AUDIT_STATUS), so the description was not checked."
+  exit 3
 fi
 
+# A report must show that the file was read. The audit skips a symbolic link
+# rather than following it, and then reports empty totals with no file entry at
+# all, so totals alone would call a read that never happened a pass. A file
+# entry carries a "violations" list, even an empty one.
+if ! grep -q '"violations":' "$FINDINGS"; then
+  report "The audit's report does not show that it read the description, so the description was not checked."
+  exit 3
+fi
+
+cat "$TABLE"
 echo
-echo "The findings above are mechanical proxies, not an ISO judgement."
-echo "Edit the text, or say why it suits its readers and purpose."
-exit 1
+if [ -n "$SUMMARY" ]; then
+  cat "$TABLE" >> "$SUMMARY"
+  printf '\n' >> "$SUMMARY"
+fi
+
+FINDING_COUNT="$(grep -c '"rule":' "$FINDINGS" || true)"
+if [ "$FINDING_COUNT" -eq 1 ]; then
+  report "The audit reported 1 finding. It is advice, and does not block this pull request. Edit the text if the finding points at a real problem for its readers."
+elif [ "$FINDING_COUNT" -gt 1 ]; then
+  report "The audit reported $FINDING_COUNT findings. They are advice, and do not block this pull request. Edit the text where a finding points at a real problem for its readers."
+else
+  report "The audit reported no findings."
+fi
+report "A pass means the audit ran on a description that is not empty. It is not a judgement that the description is clear, and a description holding only a comment or an image gives it little to read."
+exit 0

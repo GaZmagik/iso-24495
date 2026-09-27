@@ -1,7 +1,13 @@
 # A pull request description is text a reader receives, so this plugin's own
 # audit reads it. The decision lives in scripts/audit-pull-request-text.sh, and
 # this file only fetches the description and hands it over, so that a
-# contributor can reproduce a failure here with one local command.
+# contributor can reproduce a result here with one local command.
+#
+# Findings are advice. They appear in the job's log and on its summary page,
+# and they never fail this job. It fails only when the description is empty or
+# holds only whitespace, or when the audit did not run or cannot show that it
+# read the text. A pass therefore means the audit ran, not that the
+# description is clear.
 name: Pull request text
 
 on:

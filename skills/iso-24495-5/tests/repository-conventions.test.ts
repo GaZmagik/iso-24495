@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import {
@@ -10,6 +20,7 @@ import {
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
+import { checkVersionSites } from "../../../scripts/release-versions.ts";
 import { PINNED_DOCUMENT_TEXT } from "./fixtures/pinned-documents.ts";
 import { SHIPPED_DOCUMENTS } from "./reference/shipped-documents.ts";
 
@@ -1315,14 +1326,6 @@ describe("repository writing conventions", () => {
       const workflow = readFileSync(workflowPath, "utf8");
       expect(workflow, "the workflow must run on pull requests").toMatch(/^\s*pull_request:/m);
 
-      // The version test reads git tags, and a default checkout fetches none.
-      // It already refuses an empty tag list, so a shallow checkout fails the
-      // build rather than passing quietly. This says so here instead, where
-      // the cause is one line away from the reader, because a run that dies
-      // in the version test names the symptom and not this setting.
-      expect(workflow, "a shallow checkout leaves the version test no tags to read")
-        .toMatch(/^\s*fetch-depth:\s*0\s*$/m);
-
       const block = runBlock(workflowPath, "check");
       for (const status of [0, 1]) {
         const repository = mkdtempSync(join(tmpdir(), "iso-24495-gate-"));
@@ -1341,6 +1344,53 @@ describe("repository writing conventions", () => {
       expect(readme).toMatch(/scripts\/check\.sh/);
     });
 
+    // A pushed tag is checked by its own workflow, because only a tag push has
+    // the tag. The script it runs has its own tests, so these confirm the
+    // workflow reaches it: that tags trigger the run, and that the run fails
+    // when the tag check or the gate fails.
+    describe("the pushed tag check", () => {
+      const tagWorkflow = join(REPOSITORY_ROOT, ".github", "workflows", "release-tag.yml");
+
+      test("a pushed tag beginning with v starts the run, with the pinned Bun", () => {
+        const parsed = Bun.YAML.parse(readFileSync(tagWorkflow, "utf8")) as {
+          on: { push: { tags?: string[]; branches?: string[] } };
+          jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, string> }> }>;
+        };
+        expect(parsed.on.push.tags).toEqual(["v*"]);
+        // A branch filter beside the tag filter would still let tags through,
+        // but a branch filter alone would not, so none is allowed here.
+        expect(parsed.on.push.branches).toBeUndefined();
+        const steps = parsed.jobs.validate.steps;
+        expect(steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(true);
+        const bun = steps.find((step) => step.uses?.startsWith("oven-sh/setup-bun@"));
+        expect(bun?.with?.["bun-version"]).toBe("1.4.2");
+      });
+
+      // Stand-ins replace the tag check and the gate, so the real gate never
+      // runs inside itself. The tag check passes only for the tag it is given.
+      test("the run fails when the tag check fails, and when the gate fails", () => {
+        const block = runBlock(tagWorkflow, "validate");
+        const run = (tag: string, gate: number): number | null => {
+          const repository = mkdtempSync(join(tmpdir(), "iso-24495-tag-"));
+          try {
+            mkdirSync(join(repository, "scripts"));
+            writeFileSync(
+              join(repository, "scripts", "release-tag-cli.ts"),
+              "process.exit(process.argv[2] === \"v9.9.9\" ? 0 : 1);\n",
+              "utf8",
+            );
+            writeFileSync(join(repository, "scripts", "check.sh"), `exit ${gate}\n`, "utf8");
+            return runBlockIn(block, repository, { GITHUB_REF_NAME: tag });
+          } finally {
+            rmSync(repository, { recursive: true, force: true });
+          }
+        };
+        expect(run("v9.9.9", 0), "a matching tag and a passing gate").toBe(0);
+        expect(run("v9.9.8", 0), "a tag that does not match").not.toBe(0);
+        expect(run("v9.9.9", 1), "a gate that fails").not.toBe(0);
+      });
+    });
+
     // A pull request description is text a reader receives, and until now the
     // suite read every document in this repository except that one. It lives on
     // GitHub rather than in the tree, so a second workflow fetches it and hands
@@ -1354,22 +1404,50 @@ describe("repository writing conventions", () => {
         "pull-request-text.yml",
       );
 
+      /** The environment the check runs in, with no step summary unless one is given. */
+      const checkEnvironment = (extra: Record<string, string> = {}): Record<string, string> => {
+        const environment: Record<string, string> = {};
+        for (const [key, value] of Object.entries(process.env)) {
+          if (value !== undefined && key !== "GITHUB_STEP_SUMMARY") environment[key] = value;
+        }
+        return { ...environment, ...extra };
+      };
+
+      /** Runs a copy of the check, and reports its exit code and everything it printed. */
+      const runCheck = (
+        script: string,
+        file: string,
+        extra: Record<string, string> = {},
+      ): { status: number | null; output: string } => {
+        const run = Bun.spawnSync(["bash", forBash(script), forBash(file)], {
+          env: checkEnvironment(extra),
+        });
+        const decoder = new TextDecoder();
+        return {
+          status: run.exitCode,
+          output: `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`,
+        };
+      };
+
       /** Runs the check over one piece of text, and reports what a reader sees. */
-      const audit = (text: string): { status: number | null; output: string } => {
+      const audit = (
+        text: string,
+        name = "description.md",
+        extra: Record<string, string> = {},
+      ): { status: number | null; output: string } => {
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-description-"));
         try {
-          const file = join(directory, "description.md");
+          const file = join(directory, name);
           writeFileSync(file, text, "utf8");
-          const run = Bun.spawnSync(["bash", forBash(auditScript), forBash(file)]);
-          const decoder = new TextDecoder();
-          return {
-            status: run.exitCode,
-            output: `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`,
-          };
+          return runCheck(auditScript, file, extra);
         } finally {
           rmSync(directory, { recursive: true, force: true });
         }
       };
+
+      // Every pass says what a pass means, so nobody reads a green tick as a
+      // judgement that the description is clear.
+      const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
 
       test("the decision lives in a script a contributor can run", () => {
         expect(existsSync(auditScript), "scripts/audit-pull-request-text.sh must exist").toBe(true);
@@ -1390,42 +1468,152 @@ describe("repository writing conventions", () => {
         for (const ending of ["\n", "\r\n"]) {
           const result = audit(lines.join(ending) + ending);
           expect(result.status, `${JSON.stringify(ending)} gave: ${result.output}`).toBe(0);
+          expect(result.output).toContain(PASS_MEANING);
         }
       });
 
-      test("a sentence past the ceiling fails, and the log names the rule", () => {
+      // No explanation could satisfy a check that failed on any finding, so a
+      // finding is advice: the log names it, and the check still passes.
+      test("findings are listed as advice, and do not block", () => {
         const result = audit(`${"word ".repeat(40)}stop.`);
-        expect(result.status, result.output).toBe(1);
+        expect(result.status, result.output).toBe(0);
         // A bare exit code leaves the author nothing to act on, so the findings
         // themselves have to reach the log.
         expect(result.output, "the log must name the rule").toContain("sentence-length");
+        expect(result.output).toContain("The audit reported 1 finding. It is advice");
+        expect(result.output).toContain(PASS_MEANING);
+        const two = audit(`${"word ".repeat(40)}stop.\n\nWe shall pay.\n`);
+        expect(two.status, two.output).toBe(0);
+        expect(two.output).toContain("The audit reported 2 findings. They are advice");
       });
 
       // A byte count called a description of spaces and newlines text, while a
-      // reader gets exactly as much from it as from an empty one.
-      test("a description holding no text fails, whitespace included", () => {
-        for (const empty of ["", " \t\r\n  \n", "\n\n\n"]) {
+      // reader gets exactly as much from it as from an empty one. Whitespace is
+      // whatever JavaScript's \s matches, so a no-break space, an ideographic
+      // space and a byte order mark are whitespace too.
+      test("a description that is empty or only whitespace blocks", () => {
+        for (const empty of ["", " \t\r\n  \n", "\n\n\n", "\u00a0\u3000\ufeff\n"]) {
           const result = audit(empty);
           expect(result.status, `${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
-          expect(result.output).toContain("no text to read");
+          expect(result.output).toContain("empty or holds only whitespace");
         }
       });
 
-      // The Markdown renderer decides what a reader sees, and the unit tests in
-      // scripts/tests/visible-text.test.ts hold the cases. These prove that the
-      // script asks it: a comment and a definition spread over two lines each
-      // render as nothing.
-      test("markup that renders nothing fails, like whitespace", () => {
-        for (const empty of [
+      // Emptiness is a test of the source, not of what a page shows. A comment
+      // or an image is not whitespace, so the audit runs, and the pass says
+      // what little it had to read rather than blocking the merge.
+      test("a description of only a comment or only an image passes, as advice", () => {
+        for (const sparse of [
           "<!-- Describe your change here. -->\n",
-          "[x]:\n  https://example.invalid\n",
+          "<!-- One. -->\n<!-- Two. -->\n",
+          "![](screenshot.png)\n",
+          "![The new settings page](screenshot.png)\n",
         ]) {
-          const result = audit(empty);
-          expect(result.status, `${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
-          expect(result.output).toContain("no text to read");
+          const result = audit(sparse);
+          expect(result.status, `${JSON.stringify(sparse)} gave: ${result.output}`).toBe(0);
+          expect(result.output).toContain("only a comment or an image gives it little to read");
         }
-        const visible = audit("<!-- Context for authors. -->\nThis description reads plainly.\n");
-        expect(visible.status, `visible text after a comment gave: ${visible.output}`).toBe(0);
+        // An image without alternative text is still reported, as advice.
+        expect(audit("![](screenshot.png)\n").output).toContain("image-alt");
+      });
+
+      // A description has no front matter, so GitHub shows a leading "---" block
+      // as a rule and a heading. The audit read it as metadata, and passed a
+      // description whose only text sat inside it.
+      test("a leading front matter block is read as text", () => {
+        const script = readFileSync(auditScript, "utf8");
+        expect(script, "the script must tell the audit there is no front matter")
+          .toMatch(/audit-text-cli\.ts.*--no-front-matter/);
+        const result = audit("---\nnote: We shall pay.\n---\n");
+        expect(result.status, result.output).toBe(0);
+        expect(result.output).toContain("legalese");
+        expect(result.output).toContain("heading-style");
+      });
+
+      // A contributor reads the job's summary page, not its raw log, so the
+      // findings go there too. The log keeps them as well.
+      test("the findings reach the step summary when there is one", () => {
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-summary-"));
+        try {
+          const summary = join(directory, "summary.md");
+          writeFileSync(summary, "Earlier step.\n", "utf8");
+          const result = audit(`${"word ".repeat(40)}stop.`, "description.md", {
+            GITHUB_STEP_SUMMARY: forBash(summary),
+          });
+          expect(result.status, result.output).toBe(0);
+          expect(result.output, "the log keeps the findings").toContain("sentence-length");
+          const written = readFileSync(summary, "utf8");
+          expect(written, "the summary is appended to, never replaced").toStartWith("Earlier step.\n");
+          expect(written).toContain("sentence-length");
+          expect(written).toContain("| Line | Rule |");
+          expect(written).toContain(PASS_MEANING);
+
+          const blocked = audit(" \n", "description.md", { GITHUB_STEP_SUMMARY: forBash(summary) });
+          expect(blocked.status).toBe(1);
+          expect(readFileSync(summary, "utf8")).toContain("empty or holds only whitespace");
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      });
+
+      // The audit refuses a file type it does not read. That is a failure to
+      // run, not a verdict about text, so it blocks with a code of its own.
+      test("an audit that fails to run blocks with its own code", () => {
+        const result = audit("This description reads plainly.\n", "description.rst");
+        expect(result.status, result.output).toBe(3);
+        expect(result.output).toContain("did not run");
+      });
+
+      // A report that does not show a file was read proves nothing, so it cannot
+      // pass. The audit skips a symbolic link rather than following it, and
+      // reports empty totals with no file entry at all: totals alone would have
+      // called that a pass. A Windows account without the right to make a file
+      // link cannot build that case, so a stand-in audit writes each bad report
+      // into a copy of the repository, which every platform can run.
+      test("a report that shows no file was read blocks with the same code", () => {
+        const repository = mkdtempSync(join(tmpdir(), "iso-24495-report-"));
+        try {
+          mkdirSync(join(repository, "scripts"));
+          const script = join(repository, "scripts", "audit-pull-request-text.sh");
+          writeFileSync(script, readFileSync(auditScript, "utf8"), "utf8");
+          const auditDirectory = join(repository, "skills", "iso-24495-text-audit", "scripts");
+          mkdirSync(auditDirectory, { recursive: true });
+          const description = join(repository, "description.md");
+          writeFileSync(description, "This description reads plainly.\n", "utf8");
+          const standIn = (body: string): number | null => {
+            writeFileSync(join(auditDirectory, "audit-text-cli.ts"), [
+              "const out = process.argv[process.argv.indexOf(\"--json\") + 1];",
+              "const { writeFileSync } = await import(\"node:fs\");",
+              body,
+            ].join("\n"), "utf8");
+            return runCheck(script, description).status;
+          };
+          const fileEntry = "{\"files\": {\"d.md\": {\"violations\": []}}, \"totals\": {}}";
+          expect(standIn(`writeFileSync(out, ${JSON.stringify(fileEntry)});`), "a sound report")
+            .toBe(0);
+          expect(standIn("writeFileSync(out, \"\");"), "an empty report").toBe(3);
+          expect(standIn("writeFileSync(out, '{\"files\": {}, \"totals\": {}}');"), "no file read")
+            .toBe(3);
+          expect(standIn("process.exit(0);"), "no report written").toBe(3);
+          expect(standIn("process.exit(1);"), "an audit that fails").toBe(3);
+        } finally {
+          rmSync(repository, { recursive: true, force: true });
+        }
+
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-link-"));
+        try {
+          const target = join(directory, "target.md");
+          writeFileSync(target, "This description reads plainly.\n", "utf8");
+          const link = join(directory, "description.md");
+          try {
+            symlinkSync(target, link, "file");
+          } catch {
+            return; // this account cannot make a file link; the stand-in above covers it
+          }
+          expect(runCheck(auditScript, link).status, "a linked description").toBe(3);
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
       });
 
       // The script promises exit 2 for a file it cannot read, but a permission
@@ -1522,28 +1710,29 @@ describe("repository writing conventions", () => {
           // the bare name is what makes the dash lead the argument.
           const present = Bun.spawnSync(
             ["bash", forBash(auditScript), "-description.md"],
-            { cwd: directory },
+            { cwd: directory, env: checkEnvironment() },
           );
           expect(present.exitCode, "a real file must be audited, whatever its name").toBe(0);
 
           const absent = Bun.spawnSync(
             ["bash", forBash(auditScript), "-missing.md"],
-            { cwd: directory },
+            { cwd: directory, env: checkEnvironment() },
           );
           expect(absent.exitCode, "a file that is not there cannot pass").toBe(2);
 
           // A bare name exercises `basename` and leaves `dirname` reading ".",
           // so a review removed only the "--" before `dirname` and every test
           // still passed. A directory whose name begins with a dash makes
-          // `dirname` receive it. The file inside fails and the neighbour
-          // beside the script's argument passes, so auditing the wrong one
+          // `dirname` receive it. Findings no longer block, so the file inside
+          // holds only whitespace, which does. The neighbour beside the
+          // script's argument holds text and passes, so auditing the wrong one
           // turns this red.
           mkdirSync(join(directory, "-dashdir"));
-          writeFileSync(join(directory, "-dashdir", "file.md"), `${"word ".repeat(40)}stop.\n`, "utf8");
+          writeFileSync(join(directory, "-dashdir", "file.md"), " \n", "utf8");
           writeFileSync(join(directory, "file.md"), "This neighbour reads plainly.\n", "utf8");
           const nested = Bun.spawnSync(
             ["bash", forBash(auditScript), "-dashdir/file.md"],
-            { cwd: directory },
+            { cwd: directory, env: checkEnvironment() },
           );
           expect(nested.exitCode, "the file inside the dashed directory must be the one audited")
             .toBe(1);
@@ -1579,7 +1768,7 @@ describe("repository writing conventions", () => {
           .toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
       });
 
-      // Execute the checked-in shell block with clean and rejected descriptions.
+      // Execute the checked-in shell block with clean, advised and empty descriptions.
       // This catches a missing invocation or swallowed failure, but it does not
       // validate the GitHub workflow settings that decide whether the job runs.
       //
@@ -1590,13 +1779,16 @@ describe("repository writing conventions", () => {
       // proved the first, and advised documenting the limit rather than adding
       // assertions: each structural assertion added before this broke on the
       // next setting it did not know, so none is added here.
-      test("the workflow's own shell passes plain text and fails the rest", () => {
+      test("the workflow's own shell passes any text and fails an empty description", () => {
         const block = runBlock(descriptionWorkflow, "audit");
+        // An empty summary path stands for none, so this run never writes to
+        // the summary of the job running the suite.
         const run = (description: string): number | null =>
-          runBlockIn(block, REPOSITORY_ROOT, { PR_BODY: description });
+          runBlockIn(block, REPOSITORY_ROOT, { PR_BODY: description, GITHUB_STEP_SUMMARY: "" });
         expect(run("This description reads plainly.\n")).toBe(0);
-        expect(run(`${"word ".repeat(40)}stop.`), "a sentence past the ceiling must fail").toBe(1);
+        expect(run(`${"word ".repeat(40)}stop.`), "findings are advice, so they pass").toBe(0);
         expect(run(" \t\r\n  \n"), "whitespace is not text a reader can read").toBe(1);
+        expect(run(""), "an empty description is not text either").toBe(1);
       });
     });
 
@@ -1718,94 +1910,18 @@ describe("repository writing conventions", () => {
   // `.codex-plugin/plugin.json`, so a Codex user read a version one release
   // behind the skills beside it. The changelog names the cause: nothing
   // checked that the versions agree. This does.
+  //
+  // The gate asks for agreement and nothing more. Whether the version is later
+  // than every release is the release preflight's question, asked before a tag
+  // exists, because a checkout of a tagged release is consistent and has to
+  // pass. scripts/release-versions.ts holds all three stages, and its own tests
+  // hold the cases, on fixtures rather than this repository's history.
   describe("release versions", () => {
-    const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
-    const FRONTMATTER_VERSION = /^\s*version:\s*"([^"]+)"/m;
-
-    /** The version the rest of the repository has to match. */
-    function declaredVersion(): string {
-      const manifest = JSON.parse(
-        readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "plugin.json"), "utf8"),
-      ) as { version: string };
-      return manifest.version;
-    }
-
-    /** A dotted version as numbers, so 0.10.0 sorts above 0.9.0 rather than below. */
-    function ordered(version: string): number[] {
-      return version.split(".").map(Number);
-    }
-
-    /** True when `candidate` is a later release than `existing`. */
-    function isLater(candidate: number[], existing: number[]): boolean {
-      for (let part = 0; part < 3; part += 1) {
-        if (candidate[part] !== existing[part]) return candidate[part] > existing[part];
-      }
-      return false;
-    }
-
-    test("every manifest and every skill names the same version", () => {
-      const version = declaredVersion();
-      expect(version, "the Claude manifest states a dotted version").toMatch(/^\d+\.\d+\.\d+$/);
-
-      const codex = JSON.parse(
-        readFileSync(join(REPOSITORY_ROOT, ".codex-plugin", "plugin.json"), "utf8"),
-      ) as { version: string };
-      expect(codex.version, ".codex-plugin/plugin.json").toBe(version);
-
-      const marketplace = JSON.parse(
-        readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "marketplace.json"), "utf8"),
-      ) as { plugins: Array<{ version: string; source: { ref: string } }> };
-      expect(marketplace.plugins[0].version, "marketplace version").toBe(version);
-      // The ref is the half that gets forgotten, because it reads as a
-      // separate fact rather than as the same number wearing a "v".
-      expect(marketplace.plugins[0].source.ref, "marketplace source.ref").toBe(`v${version}`);
-
-      const skills = everySkillDirectory();
-      expect(skills.length, "seven skills and the Codex style skill").toBe(8);
-      for (const { name, path: directory } of skills) {
-        const frontmatter = readFileSync(join(directory, "SKILL.md"), "utf8").split("---")[1] ?? "";
-        const stated = FRONTMATTER_VERSION.exec(frontmatter);
-        expect(stated, `${name} states metadata.version`).not.toBeNull();
-        expect(stated?.[1], `${name} metadata.version`).toBe(version);
-      }
-    });
-
-    // Matching the whole file would print all 36 KB of it on a failure, which
-    // buries the one line the reader needs. The headings alone are the answer.
-    test("the changelog records the version being shipped", () => {
-      const recorded = readFileSync(join(REPOSITORY_ROOT, "CHANGELOG.md"), "utf8")
-        .split("\n")
-        .map((line) => /^## \[([^\]]+)\]/.exec(line))
-        .filter((match): match is RegExpExecArray => match !== null)
-        .map((match) => match[1]);
-
-      expect(recorded, `the changelog holds ${recorded.length} release headings`).toContain(
-        declaredVersion(),
-      );
-    });
-
-    // Agreement alone passes when nobody touched the version at all, so this
-    // asks the harder question: is the working version ahead of what has
-    // already been released? Continuous integration must fetch tags for it,
-    // which is why the workflow sets `fetch-depth: 0`.
-    test("the version is ahead of every release already tagged", () => {
-      const released = execSync("git tag --list", { cwd: REPOSITORY_ROOT, encoding: "utf8" })
-        .split("\n")
-        .map((tag) => RELEASE_TAG.exec(tag.trim()))
-        .filter((match): match is RegExpExecArray => match !== null)
-        .map((match) => match.slice(1, 4).map(Number));
-
-      // An empty list means the tags were never fetched, not that nothing has
-      // been released. Saying so beats passing a check that examined nothing.
-      expect(released.length, "release tags are present; CI needs fetch-depth: 0").toBeGreaterThan(0);
-
-      const working = ordered(declaredVersion());
-      for (const tag of released) {
-        expect(
-          isLater(working, tag),
-          `${working.join(".")} must be later than the released ${tag.join(".")}`,
-        ).toBe(true);
-      }
+    test("every manifest and every skill names the same version, and the changelog records it", () => {
+      const report = checkVersionSites(REPOSITORY_ROOT);
+      expect(report.skills.length, "seven skills and the Codex style skill").toBe(8);
+      expect(report.version, "the Claude manifest states a dotted version").toMatch(/^\d+\.\d+\.\d+$/);
+      expect(report.problems).toEqual([]);
     });
   });
 });
