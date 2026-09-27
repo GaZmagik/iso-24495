@@ -1366,6 +1366,57 @@ describe("repository writing conventions", () => {
         expect(bun?.with?.["bun-version"]).toBe("1.4.2");
       });
 
+      // The run must check the commit the pushed tag names. A checkout given
+      // `ref: main` validates main instead, and a review showed every test
+      // still passed. The triggering commit is the default, or it can be
+      // named as github.ref or github.sha; any other ref or repository is
+      // refused.
+      test("every checkout takes the commit the pushed tag names", () => {
+        type Workflow = {
+          jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
+        };
+        const TRIGGERING_REF = /^\$\{\{\s*github\.(?:ref|sha)\s*\}\}$/;
+        const TRIGGERING_REPOSITORY = /^\$\{\{\s*github\.repository\s*\}\}$/;
+        /** Every checkout step's problem with what it checks out, if any. */
+        const wrongCheckouts = (text: string): string[] => {
+          const parsed = Bun.YAML.parse(text) as Workflow;
+          const checkouts = Object.values(parsed.jobs).flatMap((job) =>
+            job.steps.filter((step) => step.uses?.startsWith("actions/checkout@")));
+          expect(checkouts.length, "the workflow checks the repository out").toBeGreaterThan(0);
+          return checkouts.flatMap((step) => {
+            const ref = step.with?.ref;
+            const repository = step.with?.repository;
+            return [
+              ...(ref === undefined || TRIGGERING_REF.test(String(ref)) ? [] : [`ref: ${ref}`]),
+              ...(repository === undefined || TRIGGERING_REPOSITORY.test(String(repository))
+                ? []
+                : [`repository: ${repository}`]),
+            ];
+          });
+        };
+
+        const workflow = readFileSync(tagWorkflow, "utf8").replace(/\r\n/g, "\n");
+        expect(wrongCheckouts(workflow)).toEqual([]);
+
+        // The rule itself, on edited copies of the workflow.
+        const checkoutWith = (lines: string[]): string => {
+          const edited = workflow.replace(
+            /^( *)- uses: actions\/checkout@(\S+)\n/m,
+            (_, indent: string, version: string) =>
+              [`${indent}- uses: actions/checkout@${version}`, `${indent}  with:`,
+                ...lines.map((line) => `${indent}    ${line}`), ""].join("\n"),
+          );
+          expect(edited, "the edit must reach the checkout step").not.toBe(workflow);
+          return edited;
+        };
+        expect(wrongCheckouts(checkoutWith(["ref: main"]))).toEqual(["ref: main"]);
+        expect(wrongCheckouts(checkoutWith(["repository: someone/fork"])))
+          .toEqual(["repository: someone/fork"]);
+        expect(wrongCheckouts(checkoutWith(["ref: ${{ github.ref }}"]))).toEqual([]);
+        expect(wrongCheckouts(checkoutWith(["ref: ${{ github.sha }}"]))).toEqual([]);
+        expect(wrongCheckouts(checkoutWith(["repository: ${{ github.repository }}"]))).toEqual([]);
+      });
+
       // Stand-ins replace the tag check and the gate, so the real gate never
       // runs inside itself. The tag check passes only for the tag it is given.
       test("the run fails when the tag check fails, and when the gate fails", () => {
@@ -1576,26 +1627,57 @@ describe("repository writing conventions", () => {
           mkdirSync(join(repository, "scripts"));
           const script = join(repository, "scripts", "audit-pull-request-text.sh");
           writeFileSync(script, readFileSync(auditScript, "utf8"), "utf8");
+          // The script reads the report through this checker, so the copy needs it too.
+          for (const helper of ["description-report.ts", "description-report-cli.ts"]) {
+            writeFileSync(join(repository, "scripts", helper),
+              readFileSync(join(REPOSITORY_ROOT, "scripts", helper), "utf8"), "utf8");
+          }
           const auditDirectory = join(repository, "skills", "iso-24495-text-audit", "scripts");
           mkdirSync(auditDirectory, { recursive: true });
           const description = join(repository, "description.md");
           writeFileSync(description, "This description reads plainly.\n", "utf8");
-          const standIn = (body: string): number | null => {
+          const standIn = (body: string): { status: number | null; output: string } => {
             writeFileSync(join(auditDirectory, "audit-text-cli.ts"), [
               "const out = process.argv[process.argv.indexOf(\"--json\") + 1];",
               "const { writeFileSync } = await import(\"node:fs\");",
               body,
             ].join("\n"), "utf8");
-            return runCheck(script, description).status;
+            return runCheck(script, description);
           };
-          const fileEntry = "{\"files\": {\"d.md\": {\"violations\": []}}, \"totals\": {}}";
-          expect(standIn(`writeFileSync(out, ${JSON.stringify(fileEntry)});`), "a sound report")
+          const writes = (reportText: string): number | null =>
+            standIn(`writeFileSync(out, ${JSON.stringify(reportText)});`).status;
+          const entries = (files: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+            JSON.stringify({ files, totals: {}, skipped: [], ...extra });
+
+          // The rows a review measured against a search for the text
+          // "violations": four of these five were decided wrongly.
+          expect(writes(entries({ "description.md": { violations: [] } })), "a sound report")
             .toBe(0);
-          expect(standIn("writeFileSync(out, \"\");"), "an empty report").toBe(3);
-          expect(standIn("writeFileSync(out, '{\"files\": {}, \"totals\": {}}');"), "no file read")
+          expect(writes(entries({ "other.md": { violations: [] } })), "a report naming another file")
             .toBe(3);
-          expect(standIn("process.exit(0);"), "no report written").toBe(3);
-          expect(standIn("process.exit(1);"), "an audit that fails").toBe(3);
+          expect(writes("\"violations\":"), "invalid JSON holding the searched text").toBe(3);
+          expect(writes(entries({}, { skipped: [description], violations: [] })),
+            "the description skipped, with a violations list at the top level").toBe(3);
+          expect(writes("{\"files\" : {\"description.md\" : {\"violations\" : []}}, \"skipped\" : []}"),
+            "a sound report spaced differently").toBe(0);
+
+          // A report naming the description beside another file, or one that
+          // skipped anything, did not read the description alone.
+          expect(writes(entries({ "description.md": { violations: [] }, "other.md": { violations: [] } })),
+            "a report naming a second file").toBe(3);
+          expect(writes(entries({ "description.md": { violations: [] } }, { skipped: ["other.md"] })),
+            "a report that skipped an entry").toBe(3);
+
+          // The count the script states comes from the report it checked.
+          const one = entries({ "description.md": { violations: [{ rule: "legalese" }] } });
+          expect(standIn(`writeFileSync(out, ${JSON.stringify(one)});`).output)
+            .toContain("The audit reported 1 finding.");
+
+          expect(standIn("writeFileSync(out, \"\");").status, "an empty report").toBe(3);
+          expect(standIn("writeFileSync(out, '{\"files\": {}, \"totals\": {}}');").status,
+            "no file read").toBe(3);
+          expect(standIn("process.exit(0);").status, "no report written").toBe(3);
+          expect(standIn("process.exit(1);").status, "an audit that fails").toBe(3);
         } finally {
           rmSync(repository, { recursive: true, force: true });
         }
@@ -1614,7 +1696,7 @@ describe("repository writing conventions", () => {
         } finally {
           rmSync(directory, { recursive: true, force: true });
         }
-      });
+      }, 60_000);
 
       // The script promises exit 2 for a file it cannot read, but a permission
       // error from grep fell through to "no text" with exit 1.

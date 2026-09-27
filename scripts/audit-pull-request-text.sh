@@ -113,11 +113,14 @@ if [ "$AUDIT_STATUS" -ne 0 ]; then
   exit 3
 fi
 
-# A report must show that the file was read. The audit skips a symbolic link
-# rather than following it, and then reports empty totals with no file entry at
-# all, so totals alone would call a read that never happened a pass. A file
-# entry carries a "violations" list, even an empty one.
-if ! grep -q '"violations":' "$FINDINGS"; then
+# A report must show that the description was read, and nothing else. The audit
+# skips a symbolic link rather than following it, and then reports no file at
+# all, so an empty report would call a read that never happened a pass. A search
+# for the text "violations": stood in for this, and a review broke it both ways,
+# so scripts/description-report.ts parses the report and says what it requires.
+# It prints the number of findings when the report is sound.
+FINDING_COUNT=0
+if ! FINDING_COUNT="$(bun scripts/description-report-cli.ts "$FINDINGS" "$TEXT")"; then
   report "The audit's report does not show that it read the description, so the description was not checked."
   exit 3
 fi
@@ -129,7 +132,6 @@ if [ -n "$SUMMARY" ]; then
   printf '\n' >> "$SUMMARY"
 fi
 
-FINDING_COUNT="$(grep -c '"rule":' "$FINDINGS" || true)"
 if [ "$FINDING_COUNT" -eq 1 ]; then
   report "The audit reported 1 finding. It is advice, and does not block this pull request. Edit the text if the finding points at a real problem for its readers."
 elif [ "$FINDING_COUNT" -gt 1 ]; then
@@ -137,5 +139,8 @@ elif [ "$FINDING_COUNT" -gt 1 ]; then
 else
   report "The audit reported no findings."
 fi
+# General advice, printed on every pass. The script does not detect a description
+# holding only a comment or an image; that would need a renderer, and the audit
+# reads Markdown as written.
 report "A pass means the audit ran on a description that is not empty. It is not a judgement that the description is clear, and a description holding only a comment or an image gives it little to read."
 exit 0

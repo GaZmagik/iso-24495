@@ -129,6 +129,73 @@ describe("checkVersionSites, which the normal gate runs", () => {
       expect(checkVersionSites(root).problems).toEqual(["codex-skills cannot be listed."]);
     });
   });
+
+  // A pattern over the whole front matter took the first "version:" line it
+  // met, wherever it sat. A review hid one inside a description and left
+  // metadata.version stale, and every stage passed. So the front matter is
+  // read as YAML, and only metadata.version counts.
+  test("a skill's version is metadata.version, read as YAML, and nothing else", () => {
+    const SKILL = "skills/iso-24495-1/SKILL.md";
+    const problemsFor = (frontMatter: string[], body = "\n# Skill\n"): string[] => {
+      let problems: string[] = [];
+      withCheckout("0.7.0", (root) => {
+        writeFileSync(join(root, SKILL), ["---", ...frontMatter, "---", body].join("\n"), "utf8");
+        problems = checkVersionSites(root).problems;
+      });
+      return problems;
+    };
+    const stale = `${SKILL} metadata.version states "0.6.2", not "0.7.0".`;
+
+    // Version-like text inside a description, above a stale metadata.version.
+    expect(problemsFor([
+      "description: |",
+      "  Audit selected text.",
+      "  version: \"0.7.0\"",
+      "metadata:",
+      "  version: \"0.6.2\"",
+    ])).toEqual([stale]);
+    // Another nested field named version, above a stale metadata.version.
+    expect(problemsFor([
+      "other:",
+      "  version: \"0.7.0\"",
+      "metadata:",
+      "  iso-standard: \"ISO 24495-1:2023\"",
+      "  version: \"0.6.2\"",
+    ])).toEqual([stale]);
+    // A stale metadata.version on its own.
+    expect(problemsFor(["name: x", "metadata:", "  version: \"0.6.2\""])).toEqual([stale]);
+
+    // Missing metadata, and metadata missing its version.
+    expect(problemsFor(["name: x", "version: \"0.7.0\""]))
+      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+    expect(problemsFor(["name: x", "metadata:", "  iso-standard: \"ISO 24495-1:2023\""]))
+      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+    // An unquoted version that YAML reads as a number is not the string declared.
+    expect(problemsFor(["name: x", "metadata:", "  version: 7"]))
+      .toEqual([`${SKILL} metadata.version states 7, not "0.7.0".`]);
+
+    // Front matter that is not YAML, or is not there at all.
+    expect(problemsFor(["name: [unclosed", "metadata:", "  version: \"0.7.0\""]))
+      .toEqual([`${SKILL} front matter is not valid YAML.`]);
+    expect(problemsFor(["- a list", "- not a mapping"]))
+      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+    let noFrontMatter: string[] = [];
+    withCheckout("0.7.0", (root) => {
+      writeFileSync(join(root, SKILL), "# Skill\n\nmetadata:\n  version: \"0.7.0\"\n", "utf8");
+      noFrontMatter = checkVersionSites(root).problems;
+    });
+    expect(noFrontMatter).toEqual([`${SKILL} has no front matter.`]);
+
+    // Sound front matter passes, whatever sits around the version, and a "---"
+    // inside a value or in the body below does not end the front matter.
+    expect(problemsFor([
+      "name: x",
+      "description: \"One --- two\"",
+      "metadata:",
+      "  version: \"0.7.0\"",
+      "  iso-standard: \"ISO 24495-1:2023\"",
+    ], "\n# Skill\n\n---\n\nversion: \"0.6.2\"\n")).toEqual([]);
+  });
 });
 
 describe("version ordering", () => {
@@ -258,7 +325,7 @@ describe("the release preflight", () => {
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
 
 describe("the pushed tag check", () => {
@@ -326,6 +393,25 @@ describe("the pushed tag check", () => {
         rmSync(remote, { recursive: true, force: true });
       }
     });
+  }, 60_000);
+
+  // The release steps live in the preflight's header. They published the
+  // release straight after pushing the tag, and nothing waited for the tag
+  // workflow, so a tag that failed it could still be released.
+  test("the release steps wait for the tag workflow before publishing", () => {
+    const header = readFileSync(join(import.meta.dir, "..", "release-preflight-cli.ts"), "utf8");
+    const find = (text: string): number => {
+      const at = header.indexOf(text);
+      expect(at, `the header names ${text}`).toBeGreaterThan(-1);
+      return at;
+    };
+    const push = find("git push origin v<version>");
+    const list = find("gh run list --workflow release-tag.yml --commit");
+    const watch = find("gh run watch <run-id> --exit-status");
+    const publish = find("gh release create v<version>");
+    expect(push).toBeLessThan(list);
+    expect(list).toBeLessThan(watch);
+    expect(watch).toBeLessThan(publish);
   });
 
   test("a missing tag is a usage error", () => {

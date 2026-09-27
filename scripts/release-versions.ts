@@ -26,7 +26,6 @@ import { join } from "node:path";
 
 const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
 const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/;
-const FRONTMATTER_VERSION = /^\s*version:\s*"([^"]+)"/m;
 const CHANGELOG_HEADING = /^## \[([^\]]+)\]/gm;
 const SKILL_ROOTS = ["skills", "codex-skills"];
 
@@ -41,6 +40,33 @@ export interface VersionReport {
 
 /** The outcome of listing the release tags on `origin`. */
 export type RemoteTags = { ok: true; output: string } | { ok: false; reason: string };
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A skill's `metadata.version`, read from its front matter as YAML.
+ *
+ * A pattern over the front matter took the first "version:" line anywhere in
+ * it, so a line inside a description could stand in for a stale
+ * `metadata.version`. The front matter runs from a "---" first line to the next
+ * line that is "---" and nothing else. Returns a problem when there is none, or
+ * it is not YAML.
+ */
+function skillVersion(text: string): { stated: unknown } | { problem: string } {
+  const lines = text.split(/\r?\n/);
+  const closing = lines.findIndex((line, index) => index > 0 && /^---[ \t]*$/.test(line));
+  if (!/^---[ \t]*$/.test(lines[0] ?? "") || closing === -1) return { problem: "has no front matter." };
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(lines.slice(1, closing).join("\n"));
+  } catch {
+    return { problem: "front matter is not valid YAML." };
+  }
+  const metadata = isObject(parsed) ? parsed.metadata : undefined;
+  return { stated: isObject(metadata) ? metadata.version : undefined };
+}
 
 /**
  * Whether every version site in a checkout agrees, and the changelog records the
@@ -106,8 +132,12 @@ export function checkVersionSites(root: string): VersionReport {
   for (const skill of skills) {
     const text = read(skill);
     if (text === null) continue;
-    const frontmatter = text.split("---")[1] ?? "";
-    requireValue(`${skill} metadata.version`, FRONTMATTER_VERSION.exec(frontmatter)?.[1], version);
+    const found = skillVersion(text);
+    if ("problem" in found) {
+      problems.push(`${skill} ${found.problem}`);
+      continue;
+    }
+    requireValue(`${skill} metadata.version`, found.stated, version);
   }
 
   const changelog = read("CHANGELOG.md");

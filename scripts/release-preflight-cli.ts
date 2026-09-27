@@ -13,8 +13,27 @@
 //
 //        bun scripts/release-preflight-cli.ts
 //
-//   5. Tag `v<version>` from `origin/main`, push the tag, and run
-//      `gh release create`. The tag workflow then checks the pushed tag.
+//   5. Tag `v<version>` from `origin/main`, and push the tag:
+//
+//        git tag v<version> origin/main
+//        git push origin v<version>
+//
+//   6. Wait for the tag workflow to pass on that tag's commit. Nothing else
+//      waits for it, and a release published first ships whatever the tag
+//      holds. The run takes a few seconds to appear, so repeat the list until
+//      it prints a run ID, then watch that run:
+//
+//        gh run list --workflow release-tag.yml --commit "$(git rev-list -n 1 v<version>)" \
+//          --event push --json databaseId,headBranch \
+//          --jq '.[] | select(.headBranch == "v<version>") | .databaseId'
+//        gh run watch <run-id> --exit-status
+//
+//   7. Only when the watch exits 0, publish the release:
+//
+//        gh release create v<version>
+//
+//      If the run fails, nothing has been published. Delete the tag on origin
+//      and locally, fix the cause, and start again from step 1.
 //
 // It reads the release tags on origin with `git ls-remote --tags origin`, so it
 // needs the network. Exit 0 means the tag can be created. Exit 1 means the
