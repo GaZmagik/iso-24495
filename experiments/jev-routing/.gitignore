@@ -1,0 +1,4 @@
+results*.jsonl
+labels.jsonl
+labels.*.jsonl
+!labels.template.jsonl
