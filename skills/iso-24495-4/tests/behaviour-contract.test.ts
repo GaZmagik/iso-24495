@@ -1680,7 +1680,7 @@ ${sentence}`)
       { rule: "heading-style", line: 2, detail: "heading ends with a full stop" },
     ]);
     expect(headings(description, asText))
-      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay." }]);
+      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay.", lines: 1 }]);
     expect(readDocument(description, asText).hidden(1)).toBe(false);
     // The paragraph became the heading's text, so no prose block remains either way.
     expect(proseBlocks(description, asText)).toEqual([]);
@@ -1817,6 +1817,15 @@ ${sentence}`)
       expect(rulesFor(document.join(BREAK)), document.join(" / ")).toContain("acronym-undefined");
     }
 
+    // A setext heading's text can wrap too, and it is one heading to the reader, so a
+    // definition wrapped inside it is found. Its words still end with the heading.
+    for (const underline of ["===", "---"]) {
+      expect(rulesFor(["Identity and access", "management (IAM)", underline, ...use].join(BREAK)),
+        underline).not.toContain("acronym-undefined");
+      expect(rulesFor(["Identity and access", underline, "", "management (IAM) works.", ...use]
+        .join(BREAK)), underline).toContain("acronym-undefined");
+    }
+
     // A use before the wrapped definition is still a use before any definition.
     expect(auditText(["The IAM endpoint works.", "", ...wrapped].join(BREAK))
       .filter((violation) => violation.rule === "acronym-undefined")
@@ -1945,7 +1954,7 @@ ${sentence}`)
     expect(proseBlocks(longSetext)).toEqual([]);
 
     const linked = "[Install the service](https://example.com/install)\n==================================================";
-    expect(headings(linked)).toEqual([{ level: 1, line: 1, text: "Install the service" }]);
+    expect(headings(linked)).toEqual([{ level: 1, line: 1, text: "Install the service", lines: 1 }]);
     const skipped = rulesFor("First heading\n=============\n### Third heading");
     expect(skipped).toContain("heading-skip");
 

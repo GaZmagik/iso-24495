@@ -414,6 +414,13 @@ function acronymViolations(
       blockOfLine.set(block.line - 1 + offset, id);
     }
   });
+  // The text of a setext heading can wrap across lines, and it is one heading, so
+  // those lines are one block too, numbered after the prose blocks.
+  headings(text, reading).forEach((heading, index) => {
+    for (let offset = 0; offset < heading.lines; offset++) {
+      blockOfLine.set(heading.line - 1 + offset, blocks.length + index);
+    }
+  });
   // Only the last few words before a parenthesis can spell the acronym inside it, so
   // they are carried forward rather than recovered by slicing the line from its start
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.

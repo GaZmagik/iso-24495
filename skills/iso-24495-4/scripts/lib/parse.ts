@@ -21,6 +21,8 @@ export interface Heading {
   level: number;
   line: number;
   text: string;
+  /** How many source lines the text spans: a setext heading's text can wrap. */
+  lines: number;
 }
 
 /** How a document is read, where the place it is shown decides. */
@@ -510,6 +512,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         level: atx[1].length,
         line: i + 1,
         text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
+        lines: 1,
       });
       continue;
     }
@@ -521,6 +524,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         level: underline[1][0] === "=" ? 1 : 2,
         line: paragraph.line,
         text: paragraph.lines.join(" ").trim(),
+        lines: paragraph.lines.length,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
       closeParagraph();
