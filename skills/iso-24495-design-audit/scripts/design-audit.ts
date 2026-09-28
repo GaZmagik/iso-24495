@@ -33,9 +33,21 @@ const EXIT_MISSING_KEY = 4;
 
 const SECTION_START_LENGTH = 300;
 const MARKDOWN = /\.(?:md|markdown)$/i;
-const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
-const OVERVIEW_LABEL = /^(?:\d+(?:\.\d+)*\.?\s+)?(?:summary|overview)$/i;
-const EMPHASIS_AND_CODE_MARKS = /[*_`]/g;
+// A line holding nothing but quote markers is a blank line inside a quote.
+const BLANK_QUOTE_LINE = /^\s*>[\s>]*$/;
+// A rule between blocks, inside any quote, carries no words for a reader.
+const THEMATIC_BREAK = /^[\s>]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const LEADING_NUMBER = "(?:\\d+(?:\\.\\d+)*\\.?\\s+)?";
+// One emphasis pair or code span around the whole label, matched by the
+// backreference, so a mark that belongs to the words is never removed.
+const WRAPPING_MARKS = "(\\*\\*|__|\\*|_|`|)";
+const OVERVIEW_LABEL = new RegExp(
+  `^${LEADING_NUMBER}${WRAPPING_MARKS}${LEADING_NUMBER}(?:summary|overview)\\1$`,
+  "i",
+);
+
+const PRIVACY_POLICY = "https://typesafe.ai/legal/privacy-policy";
+const DATA_PROCESSING_AGREEMENT = "https://typesafe.ai/legal/data-processing";
 
 const MISSING_KEY =
   "design-audit: this audit requires Jev, the TypeSafe judgement model, and a TypeSafe API key. Set TYPESAFE_API_KEY to your key. Get one from https://docs.typesafe.ai";
@@ -237,12 +249,13 @@ function bandOf(question: string, probability: number): Band | null {
 
 /**
  * Part 5 rule 8 lets one overview heading name its section, so "Summary" and
- * "Overview" are exempt before Jev is asked. The plain text decides, so
- * emphasis, code marks and a leading number such as "1." are ignored. The
- * measurement spike flagged "Summary" three times without this.
+ * "Overview" are exempt before Jev is asked. A leading number such as "1."
+ * is ignored, and so is one emphasis pair or code span wrapping the whole
+ * label. A mark inside the words is not formatting, so "Sum_mary" is asked
+ * about. The measurement spike flagged "Summary" three times without this.
  */
 export function isOverviewLabel(text: string): boolean {
-  return OVERVIEW_LABEL.test(text.replace(EMPHASIS_AND_CODE_MARKS, "").trim());
+  return OVERVIEW_LABEL.test(text.trim());
 }
 
 function judgeEach(line: number, checks: Check[], answers: Probabilities): DesignFinding[] {
@@ -257,14 +270,20 @@ function judgeEach(line: number, checks: Check[], answers: Probabilities): Desig
   return findings;
 }
 
-/** The visible text below a heading and above the next one, with code left out. */
+/**
+ * The visible text below a heading and above the next one, with code left out.
+ * The parser records a setext heading, whose underline is the line after its
+ * text, so the underline is skipped whatever quote or list holds it.
+ */
 function sectionText(document: Document, all: Heading[], heading: Heading): string {
-  const from = heading.line - 1 + heading.lines;
+  const afterText = heading.line - 1 + heading.lines;
+  const from = heading.setext ? afterText + 1 : afterText;
   const next = all.find((other) => other.line > heading.line);
   const to = next === undefined ? document.lines.length : next.line - 1;
   return document.lines
     .slice(from, to)
-    .filter((line, offset) => !document.hidden(from + offset) && !SETEXT_UNDERLINE.test(line))
+    .filter((line, offset) => !document.hidden(from + offset)
+      && !BLANK_QUOTE_LINE.test(line) && !THEMATIC_BREAK.test(line))
     .join("\n")
     .trim();
 }
@@ -298,18 +317,28 @@ function headingCandidate(heading: Heading, documentTitle: string, body: string)
   };
 }
 
-function paragraphCandidate(line: number, paragraph: string): Candidate {
+/**
+ * Colour and position can mislead in a paragraph of any length. Whether a
+ * paragraph holds one idea is only asked of two sentences or more.
+ */
+function paragraphCandidate(line: number, paragraph: string, severalSentences: boolean): Candidate {
+  const checks = severalSentences
+    ? PARAGRAPH_CHECKS
+    : PARAGRAPH_CHECKS.filter((check) => check.question !== "one_idea");
+  const questions = Object.fromEntries(
+    checks.map((check) => [check.question, PARAGRAPH_QUESTIONS[check.question] as NoulQuestion]),
+  );
   return {
     line,
-    request: { state: { paragraph }, questions: PARAGRAPH_QUESTIONS },
-    judge: (answers) => judgeEach(line, PARAGRAPH_CHECKS, answers),
+    request: { state: { paragraph }, questions },
+    judge: (answers) => judgeEach(line, checks, answers),
   };
 }
 
 /**
  * Find what to ask about, without asking. The opening block is the level-1
  * title and everything before the next heading. Every heading below that level
- * is a candidate, and so is every paragraph of two sentences or more.
+ * is a candidate, and so is every paragraph.
  */
 export function planDocument(text: string): DocumentPlan {
   const document = readDocument(text);
@@ -337,11 +366,10 @@ export function planDocument(text: string): DocumentPlan {
   }
 
   // The fewest sentences the text can hold, so an ambiguous full stop cannot
-  // turn a one-sentence paragraph into a candidate.
+  // turn a one-sentence paragraph into a question about one idea.
   for (const block of readerProseBlocks(text)) {
     const paragraph = block.lines.join(" ").replace(/\s+/g, " ").trim();
-    if (mergedSentences(paragraph).length < 2) continue;
-    candidates.push(paragraphCandidate(block.line, paragraph));
+    candidates.push(paragraphCandidate(block.line, paragraph, mergedSentences(paragraph).length >= 2));
   }
   return { candidates, findings };
 }
@@ -429,7 +457,10 @@ export function formatPlan(selection: Selection): string {
   }
   lines.push(
     `Total: ${countOf(total, "question")} from ${countOf(selection.documents.length, "file")}.`,
-    "TypeSafe's published API documentation states no data retention policy.",
+    "How TypeSafe handles that text is set out in its privacy policy and its Data Processing Agreement:",
+    `- ${PRIVACY_POLICY}`,
+    `- ${DATA_PROCESSING_AGREEMENT}`,
+    "TypeSafe offers zero data retention to enterprise customers.",
   );
   return lines.join("\n");
 }

@@ -56,7 +56,7 @@ It reads `.md` and `.markdown` files only, as one file or a directory. It sets c
 bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-dir <project-directory>
 ```
 
-7. Before sending anything, tell the user that the text of each document goes to the TypeSafe service. Tell them that the published TypeSafe API documentation states no data retention policy. Wait for their agreement.
+7. Before sending anything, tell the user that the text of each document goes to the TypeSafe service. Point them to the TypeSafe privacy policy at https://typesafe.ai/legal/privacy-policy and its Data Processing Agreement at https://typesafe.ai/legal/data-processing. Tell them that TypeSafe offers zero data retention to enterprise customers. Wait for their agreement.
 8. With that agreement, run the same command with `--send` added.
 9. Report every finding with its file, line, rule, band, explanation, and the probability Jev gave.
 10. Report skipped or unreadable entries. Never treat an incomplete audit as clean.

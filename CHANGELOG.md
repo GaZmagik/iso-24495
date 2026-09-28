@@ -7,7 +7,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Added
 
 - **A document design audit that uses Jev.** The text audit's seventeen rules are mechanical, so a document with no purpose line or named reader still reported zero findings. The new `iso-24495-design-audit` skill asks Jev, the TypeSafe judgement model, narrow yes-or-no questions about the opening block, each heading and each paragraph. It also reports meaning carried only by colour or only by position. It runs only when the user invokes it, and it needs a TypeSafe API key.
-- **Nothing is sent without `--send`.** Without it, the audit prints which files it would send and how many questions it would ask. Before sending, the skill tells the user that the text goes to the TypeSafe service. It also says that the published TypeSafe API documentation states no data retention policy.
+- **Nothing is sent without `--send`.** Without it, the audit prints which files it would send and how many questions it would ask. Before sending, the skill tells the user that the text goes to the TypeSafe service. It points to the TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing), and says that TypeSafe offers zero data retention to enterprise customers.
 - **Three bands, not one line between pass and fail.** Each answer passes, needs improvement, or fails, and the audit reports the last two with the band named. A borderline answer is not a pass. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents. Each sits where blind labels agreed with Jev at least 95% of the time.
 
 ### Known limits

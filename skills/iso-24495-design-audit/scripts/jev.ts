@@ -111,12 +111,15 @@ async function askWithRetries(
 
 async function readProbabilities(response: Response, ids: string[]): Promise<Probabilities> {
   const payload = (await response.json().catch(() => null)) as
-    | { answers?: Record<string, { noul?: unknown }> }
+    | { answers?: Record<string, { type?: unknown; noul?: unknown }> }
     | null;
   const probabilities: Probabilities = {};
   for (const id of ids) {
-    const noul = payload?.answers?.[id]?.noul;
-    if (typeof noul !== "number" || noul < 0 || noul > 1) {
+    // Every question asked is a noul question, so an answer of any other type
+    // is not an answer to it, whatever number it carries.
+    const answer = payload?.answers?.[id];
+    const noul = answer?.noul;
+    if (answer?.type !== "noul" || typeof noul !== "number" || noul < 0 || noul > 1) {
       throw new JevServiceError("Jev answered, but not with a probability for every question asked.");
     }
     probabilities[id] = noul;

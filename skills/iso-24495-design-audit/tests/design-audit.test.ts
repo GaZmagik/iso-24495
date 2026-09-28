@@ -149,10 +149,19 @@ describe("isOverviewLabel", () => {
       expect(isOverviewLabel(text), text).toBe(false);
     }
   });
+
+  test("strips only formatting that wraps the whole label, never a mark inside the words", () => {
+    for (const text of ["**Summary**", "`Overview`", "1. Summary", "_Summary_"]) {
+      expect(isOverviewLabel(text), text).toBe(true);
+    }
+    for (const text of ["`Summary_`", "Summary *", "Sum_mary", "*Summary", "**Summary*", "_Summary*"]) {
+      expect(isOverviewLabel(text), text).toBe(false);
+    }
+  });
 });
 
 describe("planDocument", () => {
-  test("asks about the opening block, each heading below the title, and each longer paragraph", () => {
+  test("asks about the opening block, each heading below the title, and each paragraph", () => {
     const plan = planDocument(GUIDE);
 
     expect(plan.findings).toEqual([]);
@@ -175,9 +184,42 @@ describe("planDocument", () => {
       }],
       [3, { paragraph: "This guide is for on-call engineers. It explains how to deploy the billing service." }],
       [7, { paragraph: "Deploy on weekdays only. Roll back if errors rise." }],
+      [11, { paragraph: "One line." }],
       [15, { paragraph: "The service moved to a new cluster in May. Invoices are generated nightly." }],
+      [24, { paragraph: "Single sentence paragraph." }],
     ]);
-    expect(questionCount(plan)).toBe(2 + 2 * 1 + 3 * 3);
+    expect(questionCount(plan)).toBe(2 + 2 * 1 + 3 * 3 + 2 * 2);
+  });
+
+  test("asks every paragraph about colour and position, and only a longer one about one idea", async () => {
+    const plan = planDocument(
+      "# Controls\n\nPress the blue button.\n\nClick the button on the right.\n\nOne idea here. A second sentence.\n",
+    );
+    const paragraphs = plan.candidates.filter((candidate) => "paragraph" in candidate.request.state);
+    expect(paragraphs.map((candidate) => [candidate.request.state.paragraph, candidate.request.questions]))
+      .toEqual([
+        ["Press the blue button.", {
+          colour_only: PARAGRAPH_QUESTIONS.colour_only,
+          position_only: PARAGRAPH_QUESTIONS.position_only,
+        }],
+        ["Click the button on the right.", {
+          colour_only: PARAGRAPH_QUESTIONS.colour_only,
+          position_only: PARAGRAPH_QUESTIONS.position_only,
+        }],
+        ["One idea here. A second sentence.", PARAGRAPH_QUESTIONS],
+      ]);
+
+    const findings = await auditDocument(plan, standIn({ one_idea: 0.1, colour_only: 0.73, position_only: 0.61 }));
+    expect(findings.map((finding) => `${finding.line} ${finding.rule} ${finding.band} ${finding.probability}`))
+      .toEqual([
+        "3 colour-only fails 0.73",
+        "3 position-only fails 0.61",
+        "5 colour-only fails 0.73",
+        "5 position-only fails 0.61",
+        "7 one-idea fails 0.10",
+        "7 colour-only fails 0.73",
+        "7 position-only fails 0.61",
+      ]);
   });
 
   test("uses the measured question wordings, and asks a heading only about its message", () => {
@@ -189,10 +231,95 @@ describe("planDocument", () => {
 
   test("exempts a formatted overview label before asking", () => {
     const plan = planDocument(
-      "# Title\n\n## **Summary**\n\nText.\n\n## `Overview`\n\nText.\n\n## 1. Summary\n\nText.\n\n## Steps\n\nText.\n",
+      "# Title\n\n## **Summary**\n\nText.\n\n## `Overview`\n\nText.\n\n## 1. Summary\n\nText.\n\n## _Summary_\n\nText.\n\n## `Summary_`\n\nText.\n\n## Summary *\n\nText.\n\n## Steps\n\nText.\n",
     );
-    expect(plan.candidates.map((candidate) => candidate.request.state.heading))
-      .toEqual([undefined, "Steps"]);
+    expect(plan.candidates.flatMap((candidate) => {
+      const heading = candidate.request.state.heading;
+      return heading === undefined ? [] : [heading];
+    })).toEqual(["`Summary_`", "Summary *", "Steps"]);
+  });
+
+  // Finding each setext underline by reading the document again once per
+  // heading made planning quadratic: 4,000 headings took 50 seconds. One call
+  // at N and one at 3N, each against a fixed budget, with no repeated samples
+  // and no salt. The engine suite gave up ratio guards at 7dec2ae for budgets
+  // like these, because a ratio of two short timings is noise on a busy machine.
+  test("plans a document with thousands of headings in linear time", () => {
+    const manyHeadings = (count: number): string => {
+      const lines = ["# Reference", "", "This reference is for maintainers. It lists every setting.", ""];
+      for (let index = 0; index < count; index += 1) {
+        if (index % 2 === 0) {
+          lines.push(`## Setting ${index}`);
+        } else {
+          lines.push(`Setting ${index}`, "-".repeat(12));
+        }
+        lines.push("", "Set this value before the service starts.", "");
+      }
+      return lines.join("\n");
+    };
+    const timed = (count: number): number => {
+      const text = manyHeadings(count);
+      const started = performance.now();
+      planDocument(text);
+      return performance.now() - started;
+    };
+    const atN = timed(1_000);
+    const at3N = timed(3_000);
+    expect(atN, `1,000 headings took ${Math.round(atN)} ms`).toBeLessThan(1_500);
+    expect(at3N, `3,000 headings took ${Math.round(at3N)} ms`).toBeLessThan(4_500);
+  }, 60_000);
+
+  test("leaves a thematic break out of the section start, in a quote too", () => {
+    const plan = planDocument([
+      "# Doc", "",
+      "## Dashes", "", "---", "", "Prose after dashes.", "",
+      "## Stars", "", "***", "", "Prose after stars.", "",
+      "## Spaced", "", "- - -", "", "Prose after spaced.", "",
+      "## Quoted", "", "> ***", ">", "> Prose after the quoted rule.", "",
+    ].join("\n"));
+    expect(plan.candidates.flatMap((candidate) => {
+      const { heading, section_start: start } = candidate.request.state;
+      return heading === undefined ? [] : [[heading, start]];
+    })).toEqual([
+      ["Dashes", "Prose after dashes."],
+      ["Stars", "Prose after stars."],
+      ["Spaced", "Prose after spaced."],
+      ["Quoted", "Prose after the quoted rule."],
+    ]);
+  });
+
+  // An underline of equals signs is no thematic break, so only the parser
+  // knowing the heading is setext keeps it out of the opening block.
+  test("leaves an equals-sign underline out of the opening block, in a quote or a list too", () => {
+    const underline = "=".repeat(60);
+    const openings = [
+      ["Plain title", underline, "", "This guide is for maintainers."],
+      ["> Quoted title", `> ${underline}`, ">", "> This guide is for maintainers."],
+      ["10. Listed title", `    ${underline}`, "", "    This guide is for maintainers."],
+    ].map((lines) => planDocument(lines.join("\n")).candidates[0]?.request.state.opening);
+    expect(openings).toEqual([
+      "# Plain title\n\nThis guide is for maintainers.",
+      "# Quoted title\n\nThis guide is for maintainers.",
+      "# Listed title\n\nThis guide is for maintainers.",
+    ]);
+  });
+
+  test("starts a section after the underline of a setext heading, in a quote or a list too", () => {
+    const underline = "-".repeat(60);
+    const plan = planDocument([
+      "# Doc", "",
+      "Plain heading", underline, "", "Prose after plain.", "",
+      "> Quoted heading", `> ${underline}`, ">", "> Prose after quoted.", "",
+      "10. Listed heading", `    ${underline}`, "", "    Prose after listed.", "",
+    ].join("\n"));
+    expect(plan.candidates.flatMap((candidate) => {
+      const { heading, section_start: start } = candidate.request.state;
+      return heading === undefined ? [] : [[heading, start]];
+    })).toEqual([
+      ["Plain heading", "Prose after plain."],
+      ["Quoted heading", "Prose after quoted."],
+      ["Listed heading", "Prose after listed."],
+    ]);
   });
 
   test("gives a section start of at most 300 characters, with code left out", () => {
@@ -217,6 +344,7 @@ describe("planDocument", () => {
     expect(plan.candidates.map((candidate) => candidate.request.state)).toEqual([
       { document_title: "", heading: "Steps", level: 2, section_start: "Do this." },
       { paragraph: "Some text here. More text here." },
+      { paragraph: "Do this." },
     ]);
   });
 });
@@ -259,13 +387,13 @@ describe("auditDocument", () => {
       [{ one_idea: 0.51 }, ["3 one-idea needs improvement 0.51"]],
       [{ one_idea: 0.5 }, ["3 one-idea fails 0.50"]],
       [{ colour_only: 0.3 }, []],
-      [{ colour_only: 0.31 }, ["3 colour-only needs improvement 0.31"]],
-      [{ colour_only: 0.49 }, ["3 colour-only needs improvement 0.49"]],
-      [{ colour_only: 0.5 }, ["3 colour-only fails 0.50"]],
+      [{ colour_only: 0.31 }, ["3 colour-only needs improvement 0.31", "7 colour-only needs improvement 0.31"]],
+      [{ colour_only: 0.49 }, ["3 colour-only needs improvement 0.49", "7 colour-only needs improvement 0.49"]],
+      [{ colour_only: 0.5 }, ["3 colour-only fails 0.50", "7 colour-only fails 0.50"]],
       [{ position_only: 0.3 }, []],
-      [{ position_only: 0.31 }, ["3 position-only needs improvement 0.31"]],
-      [{ position_only: 0.49 }, ["3 position-only needs improvement 0.49"]],
-      [{ position_only: 0.5 }, ["3 position-only fails 0.50"]],
+      [{ position_only: 0.31 }, ["3 position-only needs improvement 0.31", "7 position-only needs improvement 0.31"]],
+      [{ position_only: 0.49 }, ["3 position-only needs improvement 0.49", "7 position-only needs improvement 0.49"]],
+      [{ position_only: 0.5 }, ["3 position-only fails 0.50", "7 position-only fails 0.50"]],
     ];
     for (const [chosen, expected] of cases) {
       expect(await rulesFor(chosen), JSON.stringify(chosen)).toEqual(expected);
@@ -389,9 +517,12 @@ describe("formatFindings and formatPlan", () => {
     const plan = planDocument(GUIDE);
     expect(formatPlan({ documents: [{ file: "guide.md", plan }], skipped: [] })).toBe([
       "Nothing was sent. With --send, this audit sends the text of these files to TypeSafe's Jev service:",
-      "- guide.md: 13 questions in 6 requests",
-      "Total: 13 questions from 1 file.",
-      "TypeSafe's published API documentation states no data retention policy.",
+      "- guide.md: 17 questions in 8 requests",
+      "Total: 17 questions from 1 file.",
+      "How TypeSafe handles that text is set out in its privacy policy and its Data Processing Agreement:",
+      "- https://typesafe.ai/legal/privacy-policy",
+      "- https://typesafe.ai/legal/data-processing",
+      "TypeSafe offers zero data retention to enterprise customers.",
     ].join("\n"));
   });
 });
@@ -460,6 +591,20 @@ describe("runCli", () => {
       expect(output.stdout.join("\n")).toContain("- doc.md: 5 questions in 2 requests");
       expect(output.stdout.join("\n")).toContain("Nothing was sent.");
       expect(keys).toEqual([]);
+    }));
+
+  test("without --send it sends nothing even when a key is set", () =>
+    withProject(async (project) => {
+      const file = join(project, "doc.md");
+      writeFileSync(file, DOCUMENT);
+      const asked: JevRequest[] = [];
+      const { deps, keys } = dependencies(standIn({}, asked), { TYPESAFE_API_KEY: "key" });
+      const output = capture();
+
+      expect(await runCli(["bun", "cli", file], output.writeOut, output.writeErr, deps)).toBe(0);
+      expect(output.stdout.join("\n")).toContain("Nothing was sent.");
+      expect(keys).toEqual([]);
+      expect(asked).toEqual([]);
     }));
 
   test("with --send and no key it stops with exit code 4 and says where to get one", () =>

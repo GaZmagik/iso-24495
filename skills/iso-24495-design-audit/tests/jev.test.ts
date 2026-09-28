@@ -37,6 +37,14 @@ function scriptedFetch(answers: Array<Response | Error>): { fetch: Fetch; sent: 
   return { fetch, sent };
 }
 
+const TWO_QUESTIONS: JevRequest = {
+  state: { paragraph: "Press the blue button." },
+  questions: {
+    colour_only: { instructions: "Colour alone?", criteria: { true: "Yes.", false: "No." } },
+    position_only: { instructions: "Position alone?", criteria: { true: "Yes.", false: "No." } },
+  },
+};
+
 function answered(noul: number): Response {
   return Response.json({
     model: "jev-1.13.0",
@@ -91,6 +99,34 @@ describe("createAsk", () => {
     expect(network.sent[0]?.headers.Authorization).toBe("Bearer secret");
     expect(network.sent[0]?.headers["Content-Type"]).toBe("application/json");
     expect(network.sent[0]?.body).toEqual(requestBody(REQUEST));
+  });
+
+  test("returns the probability of every question in the request, not only the first", async () => {
+    const network = scriptedFetch([Response.json({
+      answers: {
+        colour_only: { type: "noul", noul: 0.73 },
+        position_only: { type: "noul", noul: 0.04 },
+      },
+    })]);
+    const ask = createAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep });
+
+    expect(await ask(TWO_QUESTIONS)).toEqual({ colour_only: 0.73, position_only: 0.04 });
+  });
+
+  test("rejects a response where any answer is not a noul answer", async () => {
+    const network = scriptedFetch([Response.json({
+      answers: {
+        colour_only: { type: "noul", noul: 0.2 },
+        position_only: { type: "score", noul: 0.2 },
+      },
+    })]);
+    const ask = createAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep });
+
+    const failure = await ask(TWO_QUESTIONS).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(JevServiceError);
+    expect((failure as Error).message).toBe(
+      "Jev answered, but not with a probability for every question asked.",
+    );
   });
 
   test("retries a 429, a 5xx and a failed connection, doubling the wait each time", async () => {
@@ -154,6 +190,8 @@ describe("createAsk", () => {
       Response.json({ answers: {} }),
       Response.json({ answers: { message: { type: "noul", noul: "high" } } }),
       Response.json({ answers: { message: { type: "noul", noul: 1.5 } } }),
+      Response.json({ answers: { message: { type: "score", noul: 0.5 } } }),
+      Response.json({ answers: { message: { noul: 0.5 } } }),
     ];
     for (const shape of shapes) {
       const network = scriptedFetch([shape]);

@@ -191,7 +191,7 @@ Link text and alternative text are left out. On real documents Jev flagged good 
 
 The audit requires Jev and a TypeSafe API key, set in the `TYPESAFE_API_KEY` environment variable. Get a key from https://docs.typesafe.ai. Without a key, the audit stops and says so.
 
-Nothing leaves your machine unless the command has `--send`. Without it, the audit prints which files it would send and how many questions it would ask. With it, the text of each document goes to the TypeSafe service. The published TypeSafe API documentation states no data retention policy, so the skill tells you that before it sends anything.
+Nothing leaves your machine unless the command has `--send`. Without it, the audit prints which files it would send and how many questions it would ask. With it, the text of each document goes to the TypeSafe service, and the skill tells you so before it sends anything. The TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing) say how TypeSafe handles that text. TypeSafe offers zero data retention to enterprise customers.
 
 Every finding comes from a model and can be wrong. Like a text audit finding, it is a proxy and not an ISO judgement. The audit supports English only.
 
