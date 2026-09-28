@@ -92,8 +92,10 @@ async function askWithRetries(
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(requestBody(request)),
       });
-    } catch (error) {
-      lastProblem = `The last attempt could not connect: ${(error as Error).message}.`;
+    } catch {
+      // The error text is dropped on purpose. Bun and Node both quote a rejected
+      // header value in it, and the Authorization header carries the key.
+      lastProblem = "The last attempt could not connect.";
       continue;
     }
     if (response.ok) return readProbabilities(response, Object.keys(request.questions));

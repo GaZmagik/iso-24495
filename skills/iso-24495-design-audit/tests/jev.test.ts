@@ -120,6 +120,22 @@ describe("createAsk", () => {
     expect(network.sent).toHaveLength(6);
   });
 
+  // A runtime error can quote the request, key included: Bun and Node both put a
+  // rejected Authorization value in their message. So none of its text is kept.
+  test("never repeats a connection error's text, which can hold the key", async () => {
+    const network = scriptedFetch([
+      new Error("Header 'Authorization' has invalid value: 'Bearer SECRET-first\nsecond'"),
+    ]);
+    const ask = createAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep });
+
+    const failure = await ask(REQUEST).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(JevServiceError);
+    expect((failure as Error).message).toBe(
+      "Jev did not answer after 6 attempts. The last attempt could not connect.",
+    );
+    expect((failure as Error).message).not.toContain("SECRET");
+  });
+
   test("fails at once on a refusal that a retry cannot fix", async () => {
     const network = scriptedFetch([new Response("", { status: 401 })]);
     const ask = createAsk("wrong", { fetch: network.fetch, sleep: recordingSleep().sleep });

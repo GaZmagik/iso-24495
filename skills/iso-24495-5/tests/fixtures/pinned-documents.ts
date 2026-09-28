@@ -2682,7 +2682,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "| 0 | The audit ran, or printed what it would send. Findings never change the code. |",
     "| 2 | The arguments were wrong, or a selected file cannot be read or is not Markdown. |",
     "| 3 | Jev failed after its retries. No findings are printed, because the audit is incomplete. |",
-    "| 4 | The command had `--send` but no key in `TYPESAFE_API_KEY`. Tell the user that this audit requires Jev and a TypeSafe API key, and where to get one. |",
+    "| 4 | The command had `--send` but no usable key in `TYPESAFE_API_KEY`: none at all, or one holding a line break or other control character. Tell the user that this audit requires Jev and a TypeSafe API key, and where to get one. A key with a control character is never sent or printed. |",
     "",
     "## Boundaries",
     "",

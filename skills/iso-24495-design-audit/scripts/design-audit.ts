@@ -39,6 +39,11 @@ const EMPHASIS_AND_CODE_MARKS = /[*_`]/g;
 
 const MISSING_KEY =
   "design-audit: this audit requires Jev, the TypeSafe judgement model, and a TypeSafe API key. Set TYPESAFE_API_KEY to your key. Get one from https://docs.typesafe.ai";
+const KEY_HAS_CONTROL_CHARACTER =
+  "design-audit: TYPESAFE_API_KEY contains a line break or another control character, so it was not sent. Set it again with the key alone.";
+// A key is sent in a header, where a control character is invalid, and a runtime
+// quotes the invalid header value in its error. Such a key is refused unsent.
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 const USAGE =
   "Usage: bun design-audit-cli.ts <file-or-directory> [--send] [--project-dir <directory>]";
 
@@ -498,7 +503,8 @@ function readArguments(argv: string[]): Arguments | { problem: string } {
  *   2  bad arguments, or a selected file that cannot be read or is not Markdown.
  *   3  Jev failed after its retries. No findings are printed, because an
  *      incomplete audit must never read as a clean one.
- *   4  --send was given without a key in TYPESAFE_API_KEY.
+ *   4  --send was given without a usable key in TYPESAFE_API_KEY: none, or one
+ *      holding a control character, which is refused unsent and unprinted.
  */
 export async function runCli(
   argv: string[],
@@ -530,6 +536,10 @@ export async function runCli(
   const apiKey = (dependencies.env.TYPESAFE_API_KEY ?? "").trim();
   if (apiKey === "") {
     stderr(MISSING_KEY);
+    return EXIT_MISSING_KEY;
+  }
+  if (CONTROL_CHARACTER.test(apiKey)) {
+    stderr(KEY_HAS_CONTROL_CHARACTER);
     return EXIT_MISSING_KEY;
   }
 

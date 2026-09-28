@@ -478,6 +478,26 @@ describe("runCli", () => {
       }
     }));
 
+  // Bun and Node both quote a rejected header value in their error, so a key with
+  // a line break inside it would be printed. The key is refused before anything
+  // is sent, and the message never repeats it.
+  test("with --send and a key holding a control character it stops with exit code 4 and never prints the key", () =>
+    withProject(async (project) => {
+      const file = join(project, "doc.md");
+      writeFileSync(file, DOCUMENT);
+      for (const key of ["SECRET-first\nsecond", "SECRET-a\tb", "SECRET-c\u0000d"]) {
+        const { deps, keys } = dependencies(standIn({}), { TYPESAFE_API_KEY: key });
+        const output = capture();
+        expect(await runCli(["bun", "cli", file, "--send"], output.writeOut, output.writeErr, deps))
+          .toBe(4);
+        expect(output.stderr).toEqual([
+          "design-audit: TYPESAFE_API_KEY contains a line break or another control character, so it was not sent. Set it again with the key alone.",
+        ]);
+        expect([...output.stdout, ...output.stderr].join("\n")).not.toContain("SECRET");
+        expect(keys).toEqual([]);
+      }
+    }));
+
   test("with --send and a key it prints the findings and exits 0 whatever they are", () =>
     withProject(async (project) => {
       mkdirSync(join(project, "docs"));
