@@ -59,8 +59,15 @@ const HEADING_QUESTIONS = {
 
 const OPENING_QUESTIONS = {
   purpose: {
-    instructions: "Does `opening` state the document's purpose, as the reader's task and the document's scope?",
-    criteria: { true: "It states the purpose.", false: "It does not state the purpose." },
+    instructions: [
+      "Does `opening` state in words what the document is for: what the reader can do with it, or what it covers for them?",
+      "These count: a sentence saying what the document explains or lets the reader do ('This guide explains how to install and configure the server', 'This document describes how to report a security vulnerability', 'This guide will help you get started with development'); a list of what the document covers, introduced as its contents.",
+      "These do not count: a description of the product or project ('X is a fast library for Y', 'X is an open model for developers'), a greeting, badges or links, a notice about the product's status, or the title alone ('Security Policy', 'Contributing to X').",
+    ],
+    criteria: {
+      true: "It states in words what the document is for.",
+      false: "It does not state in words what the document is for.",
+    },
   },
   reader: {
     instructions: [
@@ -422,8 +429,8 @@ describe("auditDocument", () => {
   test("keeps every cut-off in one table", () => {
     expect(CUTOFFS).toEqual({
       message: { passAt: 0.6, failAt: 0.28, yesIsAProblem: false },
-      purpose: { passAt: 0.53, failAt: 0.35, yesIsAProblem: false },
-      reader: { passAt: 0.75, failAt: 0.3, yesIsAProblem: false },
+      purpose: { passAt: 0.95, failAt: 0.4, yesIsAProblem: false },
+      reader: { passAt: 0.75, failAt: 0.25, yesIsAProblem: false },
       one_idea: { passAt: 0.9, failAt: 0.5, yesIsAProblem: false },
       colour_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
       position_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
@@ -436,14 +443,14 @@ describe("auditDocument", () => {
       [{ message: 0.59 }, ["5 heading-message needs improvement 0.59"]],
       [{ message: 0.29 }, ["5 heading-message needs improvement 0.29"]],
       [{ message: 0.28 }, ["5 heading-message fails 0.28"]],
-      [{ purpose: 0.53 }, []],
-      [{ purpose: 0.52 }, ["1 opening-purpose needs improvement 0.52"]],
-      [{ purpose: 0.36 }, ["1 opening-purpose needs improvement 0.36"]],
-      [{ purpose: 0.35 }, ["1 opening-purpose fails 0.35"]],
+      [{ purpose: 0.95 }, []],
+      [{ purpose: 0.94 }, ["1 opening-purpose needs improvement 0.94"]],
+      [{ purpose: 0.41 }, ["1 opening-purpose needs improvement 0.41"]],
+      [{ purpose: 0.4 }, ["1 opening-purpose fails 0.40"]],
       [{ reader: 0.75 }, []],
       [{ reader: 0.74 }, ["1 opening-reader needs improvement 0.74"]],
-      [{ reader: 0.31 }, ["1 opening-reader needs improvement 0.31"]],
-      [{ reader: 0.3 }, ["1 opening-reader fails 0.30"]],
+      [{ reader: 0.26 }, ["1 opening-reader needs improvement 0.26"]],
+      [{ reader: 0.25 }, ["1 opening-reader fails 0.25"]],
       [{ one_idea: 0.9 }, []],
       [{ one_idea: 0.89 }, ["3 one-idea needs improvement 0.89"]],
       [{ one_idea: 0.51 }, ["3 one-idea needs improvement 0.51"]],

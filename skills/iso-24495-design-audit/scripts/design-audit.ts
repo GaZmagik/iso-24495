@@ -88,13 +88,20 @@ export interface Cutoffs {
 
 /**
  * The cut-offs for every question, kept here so they can be recalibrated in
- * one place. Each was set on 2026-09-28 where blind labels on samples from
- * popular open-source documents agreed with Jev at least 95% of the time.
- * A borderline answer is not a pass, so the band between them is reported.
+ * one place. A borderline answer is not a pass, so the band between them is
+ * reported. Each was set on 2026-09-28 against labels two model families
+ * agreed on, blind to Jev, and is chosen from and measured on the same items.
+ * The purpose, reader, colour_only and position_only figures come from the
+ * requests this audit sends; message and one_idea come from an earlier sample.
  *
- * The fail cut-off for one_idea is provisional: real documents held too few
- * failures to calibrate it. No labelled real failure has been measured for
- * colour_only or position_only, so they have no fail band at all.
+ * - message: pass band right on 14 of 14 headings, fail band on 10 of 10.
+ * - purpose: pass band 12 of 12 openings, fail band 49 of 50.
+ * - reader: pass band 11 of 11 openings, fail band 62 of 65.
+ * - one_idea: pass band 13 of 13; the fail cut-off is provisional, because
+ *   real documents held too few failures to calibrate it.
+ * - colour_only and position_only: pass band 200 of 201 and 199 of 199
+ *   blocks. No fail band: no labelled real colour failure exists, and one
+ *   real position failure cannot set one.
  */
 /**
  * The Jev model the cut-offs were calibrated on. The audit asks for
@@ -105,8 +112,8 @@ export const CALIBRATED_MODEL = "jev-1.13.0";
 
 export const CUTOFFS: Readonly<Record<string, Cutoffs>> = Object.freeze({
   message: { passAt: 0.6, failAt: 0.28, yesIsAProblem: false },
-  purpose: { passAt: 0.53, failAt: 0.35, yesIsAProblem: false },
-  reader: { passAt: 0.75, failAt: 0.3, yesIsAProblem: false },
+  purpose: { passAt: 0.95, failAt: 0.4, yesIsAProblem: false },
+  reader: { passAt: 0.75, failAt: 0.25, yesIsAProblem: false },
   one_idea: { passAt: 0.9, failAt: 0.5, yesIsAProblem: false },
   colour_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
   position_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
@@ -115,12 +122,20 @@ export const CUTOFFS: Readonly<Record<string, Cutoffs>> = Object.freeze({
 // The wordings below are the ones measured, and changing one changes what
 // the probabilities and the cut-offs mean. The reader question needs an
 // explicit statement, as the IPLF Audience identifier pattern and the
-// Massachusetts plain language review both ask. It scored 36 of 37 on
-// held-out openings.
+// Massachusetts plain language review both ask. The purpose question holds
+// the same explicit standard, because Jev scored product descriptions highly
+// under a shorter wording.
 const OPENING_QUESTIONS: Record<string, NoulQuestion> = {
   purpose: {
-    instructions: "Does `opening` state the document's purpose, as the reader's task and the document's scope?",
-    criteria: { true: "It states the purpose.", false: "It does not state the purpose." },
+    instructions: [
+      "Does `opening` state in words what the document is for: what the reader can do with it, or what it covers for them?",
+      "These count: a sentence saying what the document explains or lets the reader do ('This guide explains how to install and configure the server', 'This document describes how to report a security vulnerability', 'This guide will help you get started with development'); a list of what the document covers, introduced as its contents.",
+      "These do not count: a description of the product or project ('X is a fast library for Y', 'X is an open model for developers'), a greeting, badges or links, a notice about the product's status, or the title alone ('Security Policy', 'Contributing to X').",
+    ],
+    criteria: {
+      true: "It states in words what the document is for.",
+      false: "It does not state in words what the document is for.",
+    },
   },
   reader: {
     instructions: [
