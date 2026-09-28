@@ -605,7 +605,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "",
     "Nothing leaves your machine unless the command has `--send`. Without it, the audit prints which files it would send and how many questions it would ask. With it, the text of each document goes to the TypeSafe service, and the skill tells you so before it sends anything. The TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing) say how TypeSafe handles that text. TypeSafe offers zero data retention to enterprise customers.",
     "",
-    "Every finding comes from a model and can be wrong. Like a text audit finding, it is a proxy and not an ISO judgement. The audit supports English only.",
+    "Every finding except a missing title comes from a model and can be wrong. Like a text audit finding, it is a proxy and not an ISO judgement. The audit supports English only.",
     "",
     "The skill never runs automatically. It requires Bun and does not alter the selected text.",
     "",

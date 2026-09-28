@@ -9,12 +9,14 @@ import {
   formatPlan,
   isOverviewLabel,
   planDocument,
+  planSections,
   questionCount,
   runCli,
   selectDocuments,
   type CliDependencies,
 } from "../scripts/design-audit.ts";
 import { JevServiceError, type Ask, type JevRequest, type Probabilities } from "../scripts/jev.ts";
+import { headings, readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
 
 const GUIDE = [
   "# Deploying the billing service",
@@ -173,6 +175,12 @@ describe("isOverviewLabel", () => {
       expect(isOverviewLabel(text), text).toBe(false);
     }
   });
+
+  test("keeps marks with a space just inside them literal, as CommonMark does", () => {
+    for (const text of ["* Summary *", "** Summary**", "**Summary **", "_ Overview _", "**_ Summary_**"]) {
+      expect(isOverviewLabel(text), text).toBe(false);
+    }
+  });
 });
 
 describe("planDocument", () => {
@@ -259,7 +267,25 @@ describe("planDocument", () => {
   // at N and one at 3N, each against a fixed budget, with no repeated samples
   // and no salt. The engine suite gave up ratio guards at 7dec2ae for budgets
   // like these, because a ratio of two short timings is noise on a busy machine.
-  test("plans a document with thousands of headings in linear time", () => {
+  test("reads each heading a fixed number of times while planning sections", () => {
+    const lines = ["# Reference", "", "This reference is for maintainers.", ""];
+    for (let index = 0; index < 1_000; index += 1) {
+      lines.push(`## Setting ${index}`, "", "Set this value before the service starts.", "");
+    }
+    const text = lines.join("\n");
+    const found = headings(text);
+    let reads = 0;
+    const counted = new Proxy(found, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    planSections(readDocument(text), counted);
+    expect(reads, `${reads} heading reads for ${found.length} headings`).toBeLessThanOrEqual(3 * found.length + 4);
+  });
+
+  test("plans a document with thousands of headings within a fixed time budget", () => {
     const manyHeadings = (count: number): string => {
       const lines = ["# Reference", "", "This reference is for maintainers. It lists every setting.", ""];
       for (let index = 0; index < count; index += 1) {

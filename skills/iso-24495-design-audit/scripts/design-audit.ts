@@ -40,7 +40,9 @@ const THEMATIC_BREAK = /^[\s>]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const LEADING_NUMBER = /^\d+(?:\.\d+)*\.?\s+/;
 // An emphasis run of up to three marks around the whole label, matched by the
 // backreference, so a mark that belongs to the words is never removed.
-const WRAPPING_EMPHASIS = /^(\*{1,3}|_{1,3})(.+)\1$/;
+// CommonMark reads a mark with a space just inside it as a literal character,
+// so the wrapped text must start and end with something other than a space.
+const WRAPPING_EMPHASIS = /^(\*{1,3}|_{1,3})(\S(?:.*\S)?)\1$/;
 // A code span of any number of backticks around the whole label. Its content is
 // literal, so nothing inside it is unwrapped further.
 const WRAPPING_CODE = /^(`+)(.+)\1$/;
@@ -266,7 +268,7 @@ export function isOverviewLabel(text: string): boolean {
     }
     const emphasis = WRAPPING_EMPHASIS.exec(label);
     if (emphasis === null) break;
-    label = (emphasis[2] as string).trim().replace(LEADING_NUMBER, "");
+    label = (emphasis[2] as string).replace(LEADING_NUMBER, "");
   }
   return OVERVIEW_LABEL.test(label);
 }
@@ -287,7 +289,7 @@ function judgeEach(line: number, checks: Check[], answers: Probabilities): Desig
  * The visible text below a heading and above the next one, with code left out.
  * The parser records a setext heading, whose underline is the line after its
  * text, so the underline is skipped whatever quote or list holds it. The next
- * heading is passed in, so planning stays linear in the number of headings.
+ * heading is passed in, so no heading is searched for again.
  */
 function sectionText(document: Document, heading: Heading, next: Heading | undefined): string {
   const afterText = heading.line - 1 + heading.lines;
@@ -354,9 +356,23 @@ function paragraphCandidate(line: number, paragraph: string, severalSentences: b
  * is a candidate, and so is every paragraph.
  */
 export function planDocument(text: string): DocumentPlan {
-  const document = readDocument(text);
-  const found = headings(text);
-  // The parser lists headings in document order, so the next one is at the next index.
+  const { candidates, findings } = planSections(readDocument(text), headings(text));
+
+  // The fewest sentences the text can hold, so an ambiguous full stop cannot
+  // turn a one-sentence paragraph into a question about one idea.
+  for (const block of readerProseBlocks(text)) {
+    const paragraph = block.lines.join(" ").replace(/\s+/g, " ").trim();
+    candidates.push(paragraphCandidate(block.line, paragraph, mergedSentences(paragraph).length >= 2));
+  }
+  return { candidates, findings };
+}
+
+/**
+ * The opening and heading candidates. The parser lists headings in document
+ * order, so each heading's section ends at the next index, and every heading
+ * is read a fixed number of times.
+ */
+export function planSections(document: Document, found: readonly Heading[]): DocumentPlan {
   const titleIndex = found.findIndex((heading) => heading.level === 1);
   const title = titleIndex === -1 ? undefined : found[titleIndex];
   const candidates: Candidate[] = [];
@@ -379,13 +395,6 @@ export function planDocument(text: string): DocumentPlan {
     if (heading.level < 2 || heading.text === "" || isOverviewLabel(heading.text)) return;
     candidates.push(headingCandidate(heading, documentTitle, sectionText(document, heading, found[index + 1])));
   });
-
-  // The fewest sentences the text can hold, so an ambiguous full stop cannot
-  // turn a one-sentence paragraph into a question about one idea.
-  for (const block of readerProseBlocks(text)) {
-    const paragraph = block.lines.join(" ").replace(/\s+/g, " ").trim();
-    candidates.push(paragraphCandidate(block.line, paragraph, mergedSentences(paragraph).length >= 2));
-  }
   return { candidates, findings };
 }
 
