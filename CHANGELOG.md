@@ -2,6 +2,19 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [Unreleased]
+
+### Added
+
+- **A document design audit that uses Jev.** The text audit's seventeen rules are mechanical, so a document with no purpose line or named reader still reported zero findings. The new `iso-24495-design-audit` skill asks Jev, the TypeSafe judgement model, narrow yes-or-no questions about the opening block, each heading and each paragraph. It also reports meaning carried only by colour or only by position. It runs only when the user invokes it, and it needs a TypeSafe API key.
+- **Nothing is sent without `--send`.** Without it, the audit prints which files it would send and how many questions it would ask. Before sending, the skill tells the user that the text goes to the TypeSafe service. It also says that the published TypeSafe API documentation states no data retention policy.
+- **Three bands, not one line between pass and fail.** Each answer passes, needs improvement, or fails, and the audit reports the last two with the band named. A borderline answer is not a pass. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents. Each sits where blind labels agreed with Jev at least 95% of the time.
+
+### Known limits
+
+- **Findings come from a model and can be wrong.** Every cut-off is provisional, and the fail cut-offs for one idea, colour and position are the least certain. Real documents held too few failures to calibrate them. Link text and alternative text are not checked, because Jev flagged good link text and alternative text is unmeasured.
+- **A reference section or a fixed section name is still reported.** Part 5 allows a topic name for both, but Jev cannot tell them from one heading. Its answer fell between 0.3 and 0.7 for 61% of 1,219 real headings, so the user decides.
+
 ## [0.7.0] - 2026-09-20
 
 ### Added

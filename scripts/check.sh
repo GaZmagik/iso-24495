@@ -7,7 +7,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> Test suite with coverage thresholds"
-bun test
+# Tests that start a shell script, or read the whole repository, overran the
+# 5-second default whenever the machine was busy. They check behaviour, not
+# speed, and the timing guards set their own budgets. bunfig.toml cannot set
+# this: a "timeout" key under [test] is ignored, which a probe confirmed.
+bun test --timeout 60000
 
 # The suite imports the library modules directly, so a broken entry shim passes
 # it. This runs a shipped command through the same entry file users receive.

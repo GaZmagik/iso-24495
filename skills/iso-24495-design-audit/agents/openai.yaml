@@ -1,0 +1,7 @@
+interface:
+  display_name: "ISO 24495 Design Audit"
+  short_description: "Audit selected Markdown for document design findings with Jev"
+  default_prompt: "Use $iso-24495-design-audit to audit a selected Markdown file for document design findings."
+
+policy:
+  allow_implicit_invocation: false

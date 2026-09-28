@@ -1,6 +1,6 @@
 # ISO 24495 Plain Language Skills
 
-Seven [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
+Eight [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
 
 The skills are plain `SKILL.md` files with agent-neutral wording. Any tool that reads the Agent Skills format can use them.
 
@@ -17,6 +17,7 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
+| `iso-24495-design-audit` | **User-invoked design audit.** Checks a selected `.md` or `.markdown` file or directory for the document structure that Part 5 asks for. Uses the Jev judgement model from TypeSafe, so it needs a TypeSafe API key. |
 
 The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
@@ -76,6 +77,12 @@ Invoke `iso-24495-text-audit` directly and supply one file or directory. The ski
 
 ```text
 /iso-24495-plain-language:iso-24495-text-audit docs/policy.md
+```
+
+Invoke `iso-24495-design-audit` the same way. It needs a TypeSafe API key, and it asks before it sends the document to the TypeSafe service:
+
+```text
+/iso-24495-plain-language:iso-24495-design-audit docs/guide.md
 ```
 
 To enforce the core skill on every response, add a line to your agent's instruction file (`CLAUDE.md`, `AGENTS.md`, or equivalent):
@@ -164,6 +171,31 @@ An unreadable or malformed file leaves the shipped list alone, because an adviso
 The skill never runs automatically. It requires Bun and does not alter the selected text.
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
+
+## User-invoked design audit
+
+The `iso-24495-design-audit` skill checks a selected `.md` or `.markdown` file or directory for the document structure that Part 5 asks for. The text audit cannot see that structure, because its rules are mechanical. This audit asks Jev, the judgement model from TypeSafe, narrow yes-or-no questions about each candidate that code finds.
+
+It checks four things:
+
+- whether the opening block has a level-1 title, states its purpose, and states in words who the document is for
+- whether each section heading states a message or a task, rather than only naming a topic, with a "Summary" or "Overview" label exempt
+- whether each paragraph of two or more sentences holds one idea
+- whether a paragraph identifies something only by its colour or only by its position
+
+Part 5 allows a topic name for a reference section, and for a fixed name a document type requires, such as Context in a decision record. Jev cannot tell those sections from one heading, so the audit still reports them, and you decide.
+
+Each answer falls in one of three bands: passes, needs improvement, or fails. A borderline answer is not a pass, so the audit reports both needs improvement and fails, and names the band. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents, and they are provisional.
+
+Link text and alternative text are left out. On real documents Jev flagged good link text, and the `link-text` rule already covers links. Alternative text has not been measured on real documents.
+
+The audit requires Jev and a TypeSafe API key, set in the `TYPESAFE_API_KEY` environment variable. Get a key from https://docs.typesafe.ai. Without a key, the audit stops and says so.
+
+Nothing leaves your machine unless the command has `--send`. Without it, the audit prints which files it would send and how many questions it would ask. With it, the text of each document goes to the TypeSafe service. The published TypeSafe API documentation states no data retention policy, so the skill tells you that before it sends anything.
+
+Every finding comes from a model and can be wrong. Like a text audit finding, it is a proxy and not an ISO judgement. The audit supports English only.
+
+The skill never runs automatically. It requires Bun and does not alter the selected text.
 
 ## Testing policy
 
