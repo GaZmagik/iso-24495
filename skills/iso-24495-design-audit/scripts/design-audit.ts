@@ -37,14 +37,14 @@ const MARKDOWN = /\.(?:md|markdown)$/i;
 const BLANK_QUOTE_LINE = /^\s*>[\s>]*$/;
 // A rule between blocks, inside any quote, carries no words for a reader.
 const THEMATIC_BREAK = /^[\s>]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
-const LEADING_NUMBER = "(?:\\d+(?:\\.\\d+)*\\.?\\s+)?";
-// One emphasis pair or code span around the whole label, matched by the
+const LEADING_NUMBER = /^\d+(?:\.\d+)*\.?\s+/;
+// An emphasis run of up to three marks around the whole label, matched by the
 // backreference, so a mark that belongs to the words is never removed.
-const WRAPPING_MARKS = "(\\*\\*|__|\\*|_|`|)";
-const OVERVIEW_LABEL = new RegExp(
-  `^${LEADING_NUMBER}${WRAPPING_MARKS}${LEADING_NUMBER}(?:summary|overview)\\1$`,
-  "i",
-);
+const WRAPPING_EMPHASIS = /^(\*{1,3}|_{1,3})(.+)\1$/;
+// A code span of any number of backticks around the whole label. Its content is
+// literal, so nothing inside it is unwrapped further.
+const WRAPPING_CODE = /^(`+)(.+)\1$/;
+const OVERVIEW_LABEL = /^(?:summary|overview)$/i;
 
 const PRIVACY_POLICY = "https://typesafe.ai/legal/privacy-policy";
 const DATA_PROCESSING_AGREEMENT = "https://typesafe.ai/legal/data-processing";
@@ -250,12 +250,25 @@ function bandOf(question: string, probability: number): Band | null {
 /**
  * Part 5 rule 8 lets one overview heading name its section, so "Summary" and
  * "Overview" are exempt before Jev is asked. A leading number such as "1."
- * is ignored, and so is one emphasis pair or code span wrapping the whole
- * label. A mark inside the words is not formatting, so "Sum_mary" is asked
- * about. The measurement spike flagged "Summary" three times without this.
+ * is ignored, and so is formatting wrapping the whole label, one layer at a
+ * time: emphasis runs, nested in any order, and a code span, whose literal
+ * content ends the unwrapping. A mark inside the words is not formatting, so
+ * "Sum_mary" is asked about. The measurement spike flagged "Summary" three
+ * times without this.
  */
 export function isOverviewLabel(text: string): boolean {
-  return OVERVIEW_LABEL.test(text.trim());
+  let label = text.trim().replace(LEADING_NUMBER, "");
+  for (;;) {
+    const code = WRAPPING_CODE.exec(label);
+    if (code !== null) {
+      label = (code[2] as string).trim();
+      break;
+    }
+    const emphasis = WRAPPING_EMPHASIS.exec(label);
+    if (emphasis === null) break;
+    label = (emphasis[2] as string).trim().replace(LEADING_NUMBER, "");
+  }
+  return OVERVIEW_LABEL.test(label);
 }
 
 function judgeEach(line: number, checks: Check[], answers: Probabilities): DesignFinding[] {
@@ -273,12 +286,12 @@ function judgeEach(line: number, checks: Check[], answers: Probabilities): Desig
 /**
  * The visible text below a heading and above the next one, with code left out.
  * The parser records a setext heading, whose underline is the line after its
- * text, so the underline is skipped whatever quote or list holds it.
+ * text, so the underline is skipped whatever quote or list holds it. The next
+ * heading is passed in, so planning stays linear in the number of headings.
  */
-function sectionText(document: Document, all: Heading[], heading: Heading): string {
+function sectionText(document: Document, heading: Heading, next: Heading | undefined): string {
   const afterText = heading.line - 1 + heading.lines;
   const from = heading.setext ? afterText + 1 : afterText;
-  const next = all.find((other) => other.line > heading.line);
   const to = next === undefined ? document.lines.length : next.line - 1;
   return document.lines
     .slice(from, to)
@@ -343,7 +356,9 @@ function paragraphCandidate(line: number, paragraph: string, severalSentences: b
 export function planDocument(text: string): DocumentPlan {
   const document = readDocument(text);
   const found = headings(text);
-  const title = found.find((heading) => heading.level === 1);
+  // The parser lists headings in document order, so the next one is at the next index.
+  const titleIndex = found.findIndex((heading) => heading.level === 1);
+  const title = titleIndex === -1 ? undefined : found[titleIndex];
   const candidates: Candidate[] = [];
   const findings: DesignFinding[] = [];
 
@@ -356,14 +371,14 @@ export function planDocument(text: string): DocumentPlan {
       probability: "none, found by code",
     });
   } else {
-    candidates.push(openingCandidate(title, sectionText(document, found, title)));
+    candidates.push(openingCandidate(title, sectionText(document, title, found[titleIndex + 1])));
   }
 
   const documentTitle = title === undefined ? "" : title.text;
-  for (const heading of found) {
-    if (heading.level < 2 || heading.text === "" || isOverviewLabel(heading.text)) continue;
-    candidates.push(headingCandidate(heading, documentTitle, sectionText(document, found, heading)));
-  }
+  found.forEach((heading, index) => {
+    if (heading.level < 2 || heading.text === "" || isOverviewLabel(heading.text)) return;
+    candidates.push(headingCandidate(heading, documentTitle, sectionText(document, heading, found[index + 1])));
+  });
 
   // The fewest sentences the text can hold, so an ambiguous full stop cannot
   // turn a one-sentence paragraph into a question about one idea.

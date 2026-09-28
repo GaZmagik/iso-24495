@@ -158,6 +158,21 @@ describe("isOverviewLabel", () => {
       expect(isOverviewLabel(text), text).toBe(false);
     }
   });
+
+  // Review found valid formatting that the single-pair match missed: a triple
+  // emphasis run, a double-backtick code span and emphasis nested in emphasis.
+  // A code span holds literal text, so marks inside one are never unwrapped.
+  test("unwraps nested emphasis and code spans of any length, but not marks inside code", () => {
+    for (const text of [
+      "***Summary***", "``Overview``", "**_Summary_**", "_**Overview**_", "``` Summary ```",
+      "1. ***Summary***", "**1. _Summary_**",
+    ]) {
+      expect(isOverviewLabel(text), text).toBe(true);
+    }
+    for (const text of ["`**Summary**`", "``_Overview_``", "***Summary**", "**_Summary**_", "``Summary`"]) {
+      expect(isOverviewLabel(text), text).toBe(false);
+    }
+  });
 });
 
 describe("planDocument", () => {
