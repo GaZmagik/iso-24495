@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   auditDocument,
+  CALIBRATED_MODEL,
   CUTOFFS,
+  excerptOf,
   formatFindings,
   formatPlan,
   isOverviewLabel,
   planDocument,
   planSections,
   questionCount,
+  questionsByRule,
   runCli,
   selectDocuments,
   type CliDependencies,
@@ -235,13 +238,13 @@ describe("planDocument", () => {
     const findings = await auditDocument(plan, standIn({ one_idea: 0.1, colour_only: 0.73, position_only: 0.61 }));
     expect(findings.map((finding) => `${finding.line} ${finding.rule} ${finding.band} ${finding.probability}`))
       .toEqual([
-        "3 colour-only fails 0.73",
-        "3 position-only fails 0.61",
-        "5 colour-only fails 0.73",
-        "5 position-only fails 0.61",
+        "3 colour-only needs improvement 0.73",
+        "3 position-only needs improvement 0.61",
+        "5 colour-only needs improvement 0.73",
+        "5 position-only needs improvement 0.61",
         "7 one-idea fails 0.10",
-        "7 colour-only fails 0.73",
-        "7 position-only fails 0.61",
+        "7 colour-only needs improvement 0.73",
+        "7 position-only needs improvement 0.61",
       ]);
   });
 
@@ -260,6 +263,20 @@ describe("planDocument", () => {
       const heading = candidate.request.state.heading;
       return heading === undefined ? [] : [heading];
     })).toEqual(["`Summary_`", "Summary *", "Steps"]);
+    expect(plan.exemptOverviews).toBe(4);
+    expect(planDocument(GUIDE).exemptOverviews).toBe(2);
+  });
+
+  test("counts the questions it would ask by rule", () => {
+    expect(questionsByRule(planDocument(GUIDE))).toEqual({
+      "opening-purpose": 1,
+      "opening-reader": 1,
+      "heading-message": 2,
+      "one-idea": 3,
+      "colour-only": 5,
+      "position-only": 5,
+    });
+    expect(questionsByRule(planDocument("No title.\n"))).toEqual({ "colour-only": 1, "position-only": 1 });
   });
 
   // Finding each setext underline by reading the document again once per
@@ -378,7 +395,7 @@ describe("planDocument", () => {
     expect(plan.findings).toEqual([{
       line: 1,
       rule: "opening-title",
-      detail: "The document has no level-1 title, so it has no opening block to state its purpose and reader.",
+      detail: "The document has no level-1 title, so it has no opening block to state its purpose and reader. Add a level-1 title, then a sentence on the document's purpose and one naming its readers.",
       band: "fails",
       probability: "none, found by code",
     }]);
@@ -398,14 +415,18 @@ describe("auditDocument", () => {
     return findings.map((finding) => `${finding.line} ${finding.rule} ${finding.band} ${finding.probability}`);
   }
 
+  test("names the model the cut-offs were calibrated on", () => {
+    expect(CALIBRATED_MODEL).toBe("jev-1.13.0");
+  });
+
   test("keeps every cut-off in one table", () => {
     expect(CUTOFFS).toEqual({
       message: { passAt: 0.6, failAt: 0.28, yesIsAProblem: false },
       purpose: { passAt: 0.53, failAt: 0.35, yesIsAProblem: false },
       reader: { passAt: 0.75, failAt: 0.3, yesIsAProblem: false },
       one_idea: { passAt: 0.9, failAt: 0.5, yesIsAProblem: false },
-      colour_only: { passAt: 0.3, failAt: 0.5, yesIsAProblem: true },
-      position_only: { passAt: 0.3, failAt: 0.5, yesIsAProblem: true },
+      colour_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
+      position_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
     });
   });
 
@@ -430,11 +451,13 @@ describe("auditDocument", () => {
       [{ colour_only: 0.3 }, []],
       [{ colour_only: 0.31 }, ["3 colour-only needs improvement 0.31", "7 colour-only needs improvement 0.31"]],
       [{ colour_only: 0.49 }, ["3 colour-only needs improvement 0.49", "7 colour-only needs improvement 0.49"]],
-      [{ colour_only: 0.5 }, ["3 colour-only fails 0.50", "7 colour-only fails 0.50"]],
+      [{ colour_only: 0.5 }, ["3 colour-only needs improvement 0.50", "7 colour-only needs improvement 0.50"]],
+      [{ colour_only: 1 }, ["3 colour-only needs improvement 1.00", "7 colour-only needs improvement 1.00"]],
       [{ position_only: 0.3 }, []],
       [{ position_only: 0.31 }, ["3 position-only needs improvement 0.31", "7 position-only needs improvement 0.31"]],
       [{ position_only: 0.49 }, ["3 position-only needs improvement 0.49", "7 position-only needs improvement 0.49"]],
-      [{ position_only: 0.5 }, ["3 position-only fails 0.50", "7 position-only fails 0.50"]],
+      [{ position_only: 0.5 }, ["3 position-only needs improvement 0.50", "7 position-only needs improvement 0.50"]],
+      [{ position_only: 1 }, ["3 position-only needs improvement 1.00", "7 position-only needs improvement 1.00"]],
     ];
     for (const [chosen, expected] of cases) {
       expect(await rulesFor(chosen), JSON.stringify(chosen)).toEqual(expected);
@@ -454,7 +477,7 @@ describe("auditDocument", () => {
     expect(findings.map((finding) => `${finding.line} ${finding.rule}`))
       .toEqual(["1 opening-title", "1 one-idea", "3 heading-message"]);
     expect(findings[2]?.detail).toBe(
-      "The heading \"Topic\" names a topic. State the section's message or the reader's task instead.",
+      "The heading \"Topic\" names a topic. Part 5 allows that for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, state the section's message or the reader's task instead.",
     );
   });
 
@@ -465,17 +488,54 @@ describe("auditDocument", () => {
     const plan = planDocument("# Guide\n\n## Topic\n\nOne idea here. Another sentence.\n");
     const unsure = await auditDocument(plan, standIn({ message: 0.45, reader: 0.5, one_idea: 0.7, colour_only: 0.4, position_only: 0.4, purpose: 0.45 }));
     expect(unsure.map((finding) => `${finding.rule} ${finding.band}: ${finding.detail}`)).toEqual([
-      "opening-purpose needs improvement: The opening may not state the document's purpose clearly: the reader's task and the document's scope.",
-      "opening-reader needs improvement: The opening may not state clearly in words who the document is for.",
-      "heading-message needs improvement: The heading \"Topic\" may only name a topic. State the section's message or the reader's task instead.",
+      "opening-purpose needs improvement: The opening may not state the document's purpose clearly: the reader's task and the document's scope. Check that a sentence near the title says what the reader can do with the document and what it covers.",
+      "opening-reader needs improvement: The opening may not state clearly in words who the document is for. Check that a sentence near the title names its readers.",
+      "heading-message needs improvement: The heading \"Topic\" may only name a topic. Part 5 allows that for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, state the section's message or the reader's task instead.",
       "one-idea needs improvement: The paragraph may run two unrelated topics together. Check that it holds one idea.",
       "colour-only needs improvement: Something may be identified only by its colour. Check that a word, label or name also identifies it.",
       "position-only needs improvement: Something may be identified only by its position. Check that a name or label also identifies it.",
     ]);
-    const failing = await auditDocument(plan, standIn({ message: 0.1 }));
-    expect(failing.find((finding) => finding.rule === "heading-message")?.detail).toBe(
-      "The heading \"Topic\" names a topic. State the section's message or the reader's task instead.",
-    );
+    const failing = await auditDocument(plan, standIn({ message: 0.1, purpose: 0.1, reader: 0.1 }));
+    expect(failing.map((finding) => `${finding.rule}: ${finding.detail}`)).toEqual([
+      "opening-purpose: The opening does not state the document's purpose: the reader's task and the document's scope. Add a sentence near the title that says what the reader can do with the document and what it covers.",
+      "opening-reader: The opening does not state in words who the document is for. Add a sentence near the title that names its readers.",
+      "heading-message: " + "The heading \"Topic\" names a topic. Part 5 allows that for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, state the section's message or the reader's task instead.",
+    ]);
+  });
+
+  // Jev returns a probability and nothing more, so a paragraph finding points
+  // at the text it judged rather than offering a rewrite of it.
+  test("gives a paragraph finding an excerpt of the text judged, and no other finding one", async () => {
+    const plan = planDocument("# Guide\n\n## Topic\n\nPress the blue button. Then wait.\n");
+    const findings = await auditDocument(plan, standIn({ message: 0.1, one_idea: 0.1, colour_only: 0.4 }));
+    expect(findings.map((finding) => [finding.rule, finding.excerpt])).toEqual([
+      ["heading-message", undefined],
+      ["one-idea", "Press the blue button. Then wait."],
+      ["colour-only", "Press the blue button. Then wait."],
+    ]);
+  });
+});
+
+describe("excerptOf", () => {
+  const character = (code: number): string => String.fromCodePoint(code);
+
+  test("keeps a short paragraph whole", () => {
+    expect(excerptOf("Press the blue button.")).toBe("Press the blue button.");
+  });
+
+  test("cuts a long paragraph to 60 characters, never inside a character", () => {
+    const smile = character(0x1f600);
+    const cut = excerptOf(`${"x".repeat(59)}${smile}tail`);
+    expect(cut).toBe(`${"x".repeat(59)}${smile}...`);
+    expect(excerptOf("y".repeat(60))).toBe("y".repeat(60));
+    expect(excerptOf(`${"word ".repeat(12)}end`)).toBe(`${"word ".repeat(12).trimEnd()}...`);
+  });
+
+  test("replaces control and direction characters, so the excerpt is safe to print", () => {
+    const unsafe = [0x00, 0x07, 0x09, 0x0a, 0x1b, 0x1f, 0x7f, 0x85, 0x9b, 0x200e, 0x200f, 0x202a, 0x202e, 0x2066, 0x2069];
+    const text = `Press${unsafe.map(character).join("")} the red button`;
+    expect(excerptOf(text)).toBe("Press the red button");
+    expect(excerptOf(`${character(0x1b)}[31mRed${character(0x202e)}`)).toBe("[31mRed");
   });
 });
 
@@ -528,30 +588,81 @@ describe("selectDocuments", () => {
 });
 
 describe("formatFindings and formatPlan", () => {
-  test("prints a table, the counts and the disclaimer", () => {
+  test("prints the findings, the counts by rule, what was not checked, the models and the disclaimer", () => {
+    const titled = planDocument("# Guide\n\n## Summary\n\nText.\n\n## Topic\n\nPress the blue button. Then wait.\n");
+    const untitled = planDocument("Just text here.\n");
     const text = formatFindings({
-      files: [{
-        file: "docs/a|b.md",
-        findings: [
-          { line: 4, rule: "one-idea", band: "fails", detail: "Two\ntopics.", probability: "0.12" },
-          { line: 9, rule: "colour-only", band: "needs improvement", detail: "Red.", probability: "0.40" },
-        ],
-      }],
-      questions: 5,
+      files: [
+        {
+          file: "docs/a|b.md",
+          plan: titled,
+          findings: [
+            { line: 9, rule: "one-idea", band: "fails", detail: "Two\ntopics.", probability: "0.12", excerpt: "Press the | blue button." },
+            { line: 9, rule: "colour-only", band: "needs improvement", detail: "Red.", probability: "0.40", excerpt: "Press" },
+          ],
+        },
+        { file: "notes.md", plan: untitled, findings: untitled.findings },
+      ],
       skipped: ["x"],
+      models: ["jev-1.13.0"],
     });
     expect(text).toBe([
       "| File | Line | Rule | Band | Finding | Jev probability |",
       "|------|------|------|------|---------|-----------------|",
-      "| docs/a\\|b.md | 4 | one-idea | fails | Two topics. | 0.12 |",
-      "| docs/a\\|b.md | 9 | colour-only | needs improvement | Red. | 0.40 |",
+      "| docs/a\\|b.md | 9 | one-idea | fails | Two topics. Excerpt: \"Press the \\| blue button.\" | 0.12 |",
+      "| docs/a\\|b.md | 9 | colour-only | needs improvement | Red. Excerpt: \"Press\" | 0.40 |",
+      "| notes.md | 1 | opening-title | fails | The document has no level-1 title, so it has no opening block to state its purpose and reader. Add a level-1 title, then a sentence on the document's purpose and one naming its readers. | none, found by code |",
       "",
-      "Finding count: 2. Fails: 1. Needs improvement: 1. Files read: 1. Questions asked: 5. Skipped entries: 1.",
+      "Finding count: 3. Fails: 2. Needs improvement: 1. Files read: 2. Questions asked: 10. Skipped entries: 1.",
+      "",
+      "| Rule | Checked | Fails | Needs improvement |",
+      "|------|---------|-------|-------------------|",
+      "| opening-title | 2 | 1 | 0 |",
+      "| opening-purpose | 1 | 0 | 0 |",
+      "| opening-reader | 1 | 0 | 0 |",
+      "| heading-message | 1 | 0 | 0 |",
+      "| one-idea | 1 | 1 | 0 |",
+      "| colour-only | 3 | 0 | 1 |",
+      "| position-only | 3 | 0 | 0 |",
+      "",
+      "Not checked: 1 overview heading, exempt because Part 5 lets that heading name its section.",
+      "Not checked: the opening of 1 document with no level-1 title: notes.md.",
+      "",
+      "Jev models that answered: jev-1.13.0. The cut-offs were calibrated on jev-1.13.0.",
+      "",
+      "The audit never reports a pass, and zero findings is not proof of good design.",
       "Mechanical and model findings are proxies, not an ISO judgement.",
       "These findings come from a model, Jev, and can be wrong.",
       "The cut-offs between the bands were calibrated on 2026-09-28 and are provisional.",
       "The user decides whether the text suits its readers and purpose.",
     ].join("\n"));
+  });
+
+  test("says plainly when another model answered, or when none did", () => {
+    const plan = planDocument("# Guide\n");
+    const report = (models: string[]): string =>
+      formatFindings({ files: [{ file: "a.md", plan, findings: [] }], skipped: [], models });
+
+    expect(report(["jev-1.13.0", "jev-2.0.0", "unnamed"])).toContain([
+      "Jev models that answered: jev-1.13.0, jev-2.0.0, unnamed. The cut-offs were calibrated on jev-1.13.0.",
+      "The cut-offs were measured on jev-1.13.0 and may not fit answers from jev-2.0.0, unnamed.",
+    ].join("\n"));
+    expect(report([])).toContain(
+      "Jev models that answered: none, because nothing was asked. The cut-offs were calibrated on jev-1.13.0.",
+    );
+    expect(report([])).toContain("Not checked: 0 overview headings, exempt because Part 5 lets that heading name its section.");
+    expect(report([])).toContain("Every document has a level-1 title, so every opening was judged.");
+    // The model name comes from the service, so it is cleaned like an excerpt.
+    expect(report([`jev-9${String.fromCharCode(0x1b)}[2J`])).toContain("may not fit answers from jev-9 [2J.");
+  });
+
+  test("names at most five documents with no level-1 title", () => {
+    const untitled = planDocument("Just text here.\n");
+    const files = ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md", "g.md"]
+      .map((file) => ({ file, plan: untitled, findings: untitled.findings }));
+    expect(formatFindings({ files, skipped: [], models: [] })).toContain(
+      "Not checked: the opening of 7 documents with no level-1 title: a.md, b.md, c.md, d.md, e.md and 2 more.",
+    );
   });
 
   test("says what would be sent, and that nothing was", () => {
@@ -560,6 +671,14 @@ describe("formatFindings and formatPlan", () => {
       "Nothing was sent. With --send, this audit sends the text of these files to TypeSafe's Jev service:",
       "- guide.md: 17 questions in 8 requests",
       "Total: 17 questions from 1 file.",
+      "Questions by rule:",
+      "- opening-purpose: 1",
+      "- opening-reader: 1",
+      "- heading-message: 2",
+      "- one-idea: 3",
+      "- colour-only: 5",
+      "- position-only: 5",
+      "No cost is estimated, because how TypeSafe bills for questions has not been checked.",
       "How TypeSafe handles that text is set out in its privacy policy and its Data Processing Agreement:",
       "- https://typesafe.ai/legal/privacy-policy",
       "- https://typesafe.ai/legal/data-processing",
@@ -568,16 +687,43 @@ describe("formatFindings and formatPlan", () => {
   });
 });
 
+describe("formatPlan with several files", () => {
+  test("lists the five largest files by question count, with their requests", () => {
+    const sizes = [["one.md", 1], ["six.md", 6], ["two.md", 2], ["five.md", 5], ["four.md", 4], ["three.md", 3], ["also-six.md", 6]] as const;
+    const documents = sizes.map(([file, paragraphs]) => ({
+      file,
+      plan: planDocument(Array.from({ length: paragraphs }, (_, index) => `Paragraph ${index}.`).join("\n\n")),
+    }));
+    const text = formatPlan({ documents, skipped: [] });
+    expect(text).toContain([
+      "Largest files by question count:",
+      "- also-six.md: 12 questions in 6 requests",
+      "- six.md: 12 questions in 6 requests",
+      "- five.md: 10 questions in 5 requests",
+      "- four.md: 8 questions in 4 requests",
+      "- three.md: 6 questions in 3 requests",
+      "No cost is estimated",
+    ].join("\n"));
+  });
+});
+
 describe("runCli", () => {
   const DOCUMENT = "# Title\n\nFirst sentence here. Second sentence here.\n";
 
-  function dependencies(ask: Ask, env: Record<string, string> = { TYPESAFE_API_KEY: "key" }) {
+  function dependencies(
+    ask: Ask,
+    env: Record<string, string> = { TYPESAFE_API_KEY: "key" },
+    model = "jev-1.13.0",
+  ) {
     const keys: string[] = [];
     const deps: CliDependencies = {
       env,
-      connect: (apiKey) => {
+      connect: (apiKey, recordModel) => {
         keys.push(apiKey);
-        return ask;
+        return async (request) => {
+          recordModel(model);
+          return ask(request);
+        };
       },
     };
     return { deps, keys };
@@ -703,10 +849,27 @@ describe("runCli", () => {
       expect(output.stderr).toEqual([`warning: skipped entry: ${join(project, "docs", "link")}`]);
       expect(output.stdout).toHaveLength(1);
       expect(output.stdout[0]).toContain(
-        "| docs/clean.md | 1 | opening-reader | fails | The opening does not state in words who the document is for. | 0.10 |",
+        "| docs/clean.md | 1 | opening-reader | fails | The opening does not state in words who the document is for. Add a sentence near the title that names its readers. | 0.10 |",
       );
       expect(output.stdout[0]).toContain(
         "Finding count: 2. Fails: 2. Needs improvement: 0. Files read: 2. Questions asked: 7. Skipped entries: 1.",
+      );
+      expect(output.stdout[0]).toContain(
+        "Jev models that answered: jev-1.13.0. The cut-offs were calibrated on jev-1.13.0.",
+      );
+      expect(output.stdout[0]).not.toContain("may not fit");
+    }));
+
+  test("with --send it says when a model other than the calibrated one answered", () =>
+    withProject(async (project) => {
+      const file = join(project, "doc.md");
+      writeFileSync(file, DOCUMENT);
+      const { deps } = dependencies(standIn({}), { TYPESAFE_API_KEY: "key" }, "jev-2.0.0");
+      const output = capture();
+
+      expect(await runCli(["bun", "cli", file, "--send"], output.writeOut, output.writeErr, deps)).toBe(0);
+      expect(output.stdout[0]).toContain(
+        "The cut-offs were measured on jev-1.13.0 and may not fit answers from jev-2.0.0.",
       );
     }));
 

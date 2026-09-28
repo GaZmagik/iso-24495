@@ -24,7 +24,14 @@ import {
   type Document,
   type Heading,
 } from "../../iso-24495-4/scripts/lib/parse.ts";
-import { createAsk, type Ask, type JevRequest, type NoulQuestion, type Probabilities } from "./jev.ts";
+import {
+  connectToJev,
+  type Ask,
+  type JevRequest,
+  type NoulQuestion,
+  type Probabilities,
+  type RecordModel,
+} from "./jev.ts";
 
 const EXIT_RAN = 0;
 const EXIT_BAD_INPUT = 2;
@@ -32,6 +39,10 @@ const EXIT_SERVICE_FAILED = 3;
 const EXIT_MISSING_KEY = 4;
 
 const SECTION_START_LENGTH = 300;
+/** How many files the preview names as the largest, and how many untitled files the report names. */
+const FILES_NAMED = 5;
+/** How many characters of a judged paragraph a finding quotes. */
+const EXCERPT_LENGTH = 60;
 const MARKDOWN = /\.(?:md|markdown)$/i;
 // A line holding nothing but quote markers is a blank line inside a quote.
 const BLANK_QUOTE_LINE = /^\s*>[\s>]*$/;
@@ -65,8 +76,12 @@ const USAGE =
 export interface Cutoffs {
   /** An answer at or beyond this passes. */
   passAt: number;
-  /** An answer at or beyond this, in the other direction, fails. */
-  failAt: number;
+  /**
+   * An answer at or beyond this, in the other direction, fails. Null where
+   * no labelled real failure has been measured, so the rule has no fail band
+   * and reports needs improvement at most.
+   */
+  failAt: number | null;
   /** True where a yes means a problem, so the cut-offs run the other way. */
   yesIsAProblem: boolean;
 }
@@ -77,16 +92,24 @@ export interface Cutoffs {
  * popular open-source documents agreed with Jev at least 95% of the time.
  * A borderline answer is not a pass, so the band between them is reported.
  *
- * The fail cut-offs for one_idea, colour_only and position_only are
- * provisional: real documents held too few failures to calibrate them.
+ * The fail cut-off for one_idea is provisional: real documents held too few
+ * failures to calibrate it. No labelled real failure has been measured for
+ * colour_only or position_only, so they have no fail band at all.
  */
+/**
+ * The Jev model the cut-offs were calibrated on. The audit asks for
+ * jev-latest, so the report names the models that answered and says when
+ * one of them is not this one.
+ */
+export const CALIBRATED_MODEL = "jev-1.13.0";
+
 export const CUTOFFS: Readonly<Record<string, Cutoffs>> = Object.freeze({
   message: { passAt: 0.6, failAt: 0.28, yesIsAProblem: false },
   purpose: { passAt: 0.53, failAt: 0.35, yesIsAProblem: false },
   reader: { passAt: 0.75, failAt: 0.3, yesIsAProblem: false },
   one_idea: { passAt: 0.9, failAt: 0.5, yesIsAProblem: false },
-  colour_only: { passAt: 0.3, failAt: 0.5, yesIsAProblem: true },
-  position_only: { passAt: 0.3, failAt: 0.5, yesIsAProblem: true },
+  colour_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
+  position_only: { passAt: 0.3, failAt: null, yesIsAProblem: true },
 });
 
 // The wordings below are the ones measured, and changing one changes what
@@ -156,6 +179,8 @@ export interface DesignFinding {
   detail: string;
   /** What Jev answered, or a note that code found it. */
   probability: string;
+  /** For a paragraph finding, the start of the text judged, safe to print. */
+  excerpt?: string;
 }
 
 /** One request to Jev, and how to turn its answers into findings. */
@@ -169,6 +194,8 @@ export interface DocumentPlan {
   candidates: Candidate[];
   /** Findings that code makes without asking Jev. */
   findings: DesignFinding[];
+  /** Overview headings left unasked, because Part 5 lets them name their section. */
+  exemptOverviews: number;
 }
 
 export interface Selection {
@@ -177,15 +204,19 @@ export interface Selection {
 }
 
 export interface AuditResult {
-  files: Array<{ file: string; findings: DesignFinding[] }>;
-  questions: number;
+  files: Array<{ file: string; plan: DocumentPlan; findings: DesignFinding[] }>;
   skipped: string[];
+  /** Every model that answered during the run, sorted. */
+  models: string[];
 }
 
 export interface CliDependencies {
   env: Record<string, string | undefined>;
-  /** Builds the function that asks Jev. Tests pass a stand-in, so the suite never sends anything. */
-  connect: (apiKey: string) => Ask;
+  /**
+   * Builds the function that asks Jev, telling `recordModel` which model
+   * answered. Tests pass a stand-in, so the suite never sends anything.
+   */
+  connect: (apiKey: string, recordModel: RecordModel) => Ask;
 }
 
 type ReadTextFile = (path: string, encoding: "utf8") => string;
@@ -193,12 +224,14 @@ type ReadTextFile = (path: string, encoding: "utf8") => string;
 /**
  * One rule a candidate is judged by. A failing answer states the problem; an
  * answer in the needs-improvement band is borderline, so its wording says the
- * problem may be there rather than asserting it.
+ * problem may be there rather than asserting it. A rule with no fail band has
+ * no failing wording. Each wording ends with a fixed action, never a rewrite
+ * of the text, because Jev returns only a probability.
  */
 interface Check {
   question: string;
   rule: string;
-  detail: string;
+  detail?: string;
   unsure: string;
 }
 
@@ -206,14 +239,14 @@ const OPENING_CHECKS: Check[] = [
   {
     question: "purpose",
     rule: "opening-purpose",
-    detail: "The opening does not state the document's purpose: the reader's task and the document's scope.",
-    unsure: "The opening may not state the document's purpose clearly: the reader's task and the document's scope.",
+    detail: "The opening does not state the document's purpose: the reader's task and the document's scope. Add a sentence near the title that says what the reader can do with the document and what it covers.",
+    unsure: "The opening may not state the document's purpose clearly: the reader's task and the document's scope. Check that a sentence near the title says what the reader can do with the document and what it covers.",
   },
   {
     question: "reader",
     rule: "opening-reader",
-    detail: "The opening does not state in words who the document is for.",
-    unsure: "The opening may not state clearly in words who the document is for.",
+    detail: "The opening does not state in words who the document is for. Add a sentence near the title that names its readers.",
+    unsure: "The opening may not state clearly in words who the document is for. Check that a sentence near the title names its readers.",
   },
 ];
 
@@ -227,16 +260,27 @@ const PARAGRAPH_CHECKS: Check[] = [
   {
     question: "colour_only",
     rule: "colour-only",
-    detail: "Something is identified only by its colour. Add a word, label or name that also identifies it.",
     unsure: "Something may be identified only by its colour. Check that a word, label or name also identifies it.",
   },
   {
     question: "position_only",
     rule: "position-only",
-    detail: "Something is identified only by its position. Add the name or label a reader can find it by.",
     unsure: "Something may be identified only by its position. Check that a name or label also identifies it.",
   },
 ];
+
+const TITLE_RULE = "opening-title";
+const HEADING_RULE = "heading-message";
+
+/** The rule each question is reported under. */
+const RULE_FOR_QUESTION: Readonly<Record<string, string>> = Object.fromEntries([
+  ...OPENING_CHECKS.map((check) => [check.question, check.rule]),
+  ["message", HEADING_RULE],
+  ...PARAGRAPH_CHECKS.map((check) => [check.question, check.rule]),
+]);
+
+/** Every rule, in the order the report and the preview list them. */
+const RULE_ORDER: readonly string[] = [TITLE_RULE, ...Object.values(RULE_FOR_QUESTION)];
 
 /** The band an answer falls in, or null when it passes. */
 function bandOf(question: string, probability: number): Band | null {
@@ -245,7 +289,7 @@ function bandOf(question: string, probability: number): Band | null {
   const direction = cutoffs.yesIsAProblem ? -1 : 1;
   const answer = direction * probability;
   if (answer >= direction * cutoffs.passAt) return null;
-  if (answer <= direction * cutoffs.failAt) return "fails";
+  if (cutoffs.failAt !== null && answer <= direction * cutoffs.failAt) return "fails";
   return "needs improvement";
 }
 
@@ -273,14 +317,48 @@ export function isOverviewLabel(text: string): boolean {
   return OVERVIEW_LABEL.test(label);
 }
 
-function judgeEach(line: number, checks: Check[], answers: Probabilities): DesignFinding[] {
+/**
+ * Whether a character could change what a terminal or a table shows: the C0
+ * and C1 control characters, delete, and the marks that reorder text.
+ */
+function isUnsafeToPrint(codePoint: number): boolean {
+  return codePoint <= 0x1f
+    || (codePoint >= 0x7f && codePoint <= 0x9f)
+    || codePoint === 0x200e || codePoint === 0x200f
+    || (codePoint >= 0x202a && codePoint <= 0x202e)
+    || (codePoint >= 0x2066 && codePoint <= 0x2069);
+}
+
+/** Text with every unsafe character turned into a space, and runs of space closed up. */
+function safeToPrint(text: string): string {
+  return Array.from(text, (character) =>
+    isUnsafeToPrint(character.codePointAt(0) as number) ? " " : character)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The start of a judged paragraph, safe to print: unsafe characters become
+ * spaces, and the cut falls between characters, never inside one.
+ */
+export function excerptOf(text: string): string {
+  const cleaned = safeToPrint(text);
+  const characters = Array.from(cleaned);
+  if (characters.length <= EXCERPT_LENGTH) return cleaned;
+  return `${characters.slice(0, EXCERPT_LENGTH).join("").trimEnd()}...`;
+}
+
+function judgeEach(line: number, checks: Check[], answers: Probabilities, excerpt?: string): DesignFinding[] {
   const findings: DesignFinding[] = [];
   for (const check of checks) {
     const probability = answers[check.question] as number;
     const band = bandOf(check.question, probability);
     if (band === null) continue;
-    const detail = band === "fails" ? check.detail : check.unsure;
-    findings.push({ line, rule: check.rule, band, detail, probability: probability.toFixed(2) });
+    const detail = band === "fails" && check.detail !== undefined ? check.detail : check.unsure;
+    const finding: DesignFinding = { line, rule: check.rule, band, detail, probability: probability.toFixed(2) };
+    if (excerpt !== undefined) finding.excerpt = excerpt;
+    findings.push(finding);
   }
   return findings;
 }
@@ -311,6 +389,11 @@ function openingCandidate(title: Heading, body: string): Candidate {
   };
 }
 
+// Part 5 allows a topic name in two places, and Jev cannot tell them from one
+// heading, so every heading finding asks the user to check them first.
+const PART_5_HEADING_EXCEPTIONS =
+  "Part 5 allows that for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, state the section's message or the reader's task instead.";
+
 function headingCandidate(heading: Heading, documentTitle: string, body: string): Candidate {
   return {
     line: heading.line,
@@ -325,9 +408,9 @@ function headingCandidate(heading: Heading, documentTitle: string, body: string)
     },
     judge: (answers) => judgeEach(heading.line, [{
       question: "message",
-      rule: "heading-message",
-      detail: `The heading "${heading.text}" names a topic. State the section's message or the reader's task instead.`,
-      unsure: `The heading "${heading.text}" may only name a topic. State the section's message or the reader's task instead.`,
+      rule: HEADING_RULE,
+      detail: `The heading "${heading.text}" names a topic. ${PART_5_HEADING_EXCEPTIONS}`,
+      unsure: `The heading "${heading.text}" may only name a topic. ${PART_5_HEADING_EXCEPTIONS}`,
     }], answers),
   };
 }
@@ -346,7 +429,7 @@ function paragraphCandidate(line: number, paragraph: string, severalSentences: b
   return {
     line,
     request: { state: { paragraph }, questions },
-    judge: (answers) => judgeEach(line, checks, answers),
+    judge: (answers) => judgeEach(line, checks, answers, excerptOf(paragraph)),
   };
 }
 
@@ -356,7 +439,7 @@ function paragraphCandidate(line: number, paragraph: string, severalSentences: b
  * is a candidate, and so is every paragraph.
  */
 export function planDocument(text: string): DocumentPlan {
-  const { candidates, findings } = planSections(readDocument(text), headings(text));
+  const { candidates, findings, exemptOverviews } = planSections(readDocument(text), headings(text));
 
   // The fewest sentences the text can hold, so an ambiguous full stop cannot
   // turn a one-sentence paragraph into a question about one idea.
@@ -364,7 +447,7 @@ export function planDocument(text: string): DocumentPlan {
     const paragraph = block.lines.join(" ").replace(/\s+/g, " ").trim();
     candidates.push(paragraphCandidate(block.line, paragraph, mergedSentences(paragraph).length >= 2));
   }
-  return { candidates, findings };
+  return { candidates, findings, exemptOverviews };
 }
 
 /**
@@ -381,9 +464,9 @@ export function planSections(document: Document, found: readonly Heading[]): Doc
   if (title === undefined) {
     findings.push({
       line: 1,
-      rule: "opening-title",
+      rule: TITLE_RULE,
       band: "fails",
-      detail: "The document has no level-1 title, so it has no opening block to state its purpose and reader.",
+      detail: "The document has no level-1 title, so it has no opening block to state its purpose and reader. Add a level-1 title, then a sentence on the document's purpose and one naming its readers.",
       probability: "none, found by code",
     });
   } else {
@@ -391,11 +474,38 @@ export function planSections(document: Document, found: readonly Heading[]): Doc
   }
 
   const documentTitle = title === undefined ? "" : title.text;
+  let exemptOverviews = 0;
   found.forEach((heading, index) => {
-    if (heading.level < 2 || heading.text === "" || isOverviewLabel(heading.text)) return;
+    if (heading.level < 2 || heading.text === "") return;
+    if (isOverviewLabel(heading.text)) {
+      exemptOverviews += 1;
+      return;
+    }
     candidates.push(headingCandidate(heading, documentTitle, sectionText(document, heading, found[index + 1])));
   });
-  return { candidates, findings };
+  return { candidates, findings, exemptOverviews };
+}
+
+/** How many questions the plan asks under each rule. A rule with none is left out. */
+export function questionsByRule(plan: DocumentPlan): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const candidate of plan.candidates) {
+    for (const question of Object.keys(candidate.request.questions)) {
+      const rule = RULE_FOR_QUESTION[question] as string;
+      counts[rule] = (counts[rule] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function questionsByRuleAcross(plans: readonly DocumentPlan[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const plan of plans) {
+    for (const [rule, count] of Object.entries(questionsByRule(plan))) {
+      totals[rule] = (totals[rule] ?? 0) + count;
+    }
+  }
+  return totals;
 }
 
 export function questionCount(plan: DocumentPlan): number {
@@ -466,27 +576,97 @@ function countOf(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** What a run with --send would send. Printed when it was not given. */
+function fileLine(document: { file: string; plan: DocumentPlan }): string {
+  const questions = countOf(questionCount(document.plan), "question");
+  return `- ${document.file}: ${questions} in ${countOf(document.plan.candidates.length, "request")}`;
+}
+
+/** Up to five names, then how many more there are. */
+function namedList(names: readonly string[]): string {
+  const named = names.slice(0, FILES_NAMED).join(", ");
+  const more = names.length - FILES_NAMED;
+  return more > 0 ? `${named} and ${more} more` : named;
+}
+
+/**
+ * What a run with --send would send. Printed when it was not given. It states
+ * no money figure, because how TypeSafe bills for questions is unchecked.
+ */
 export function formatPlan(selection: Selection): string {
   const lines = [
     "Nothing was sent. With --send, this audit sends the text of these files to TypeSafe's Jev service:",
+    ...selection.documents.map(fileLine),
   ];
-  let total = 0;
-  for (const document of selection.documents) {
-    const questions = questionCount(document.plan);
-    total += questions;
-    lines.push(
-      `- ${document.file}: ${countOf(questions, "question")} in ${countOf(document.plan.candidates.length, "request")}`,
-    );
-  }
+  const total = selection.documents.reduce((sum, document) => sum + questionCount(document.plan), 0);
+  const byRule = questionsByRuleAcross(selection.documents.map((document) => document.plan));
   lines.push(
     `Total: ${countOf(total, "question")} from ${countOf(selection.documents.length, "file")}.`,
+    "Questions by rule:",
+    ...RULE_ORDER.filter((rule) => rule !== TITLE_RULE).map((rule) => `- ${rule}: ${byRule[rule] ?? 0}`),
+  );
+  if (selection.documents.length > 1) {
+    const largest = [...selection.documents]
+      .sort((first, second) => questionCount(second.plan) - questionCount(first.plan)
+        || (first.file < second.file ? -1 : 1))
+      .slice(0, FILES_NAMED);
+    lines.push("Largest files by question count:", ...largest.map(fileLine));
+  }
+  lines.push(
+    "No cost is estimated, because how TypeSafe bills for questions has not been checked.",
     "How TypeSafe handles that text is set out in its privacy policy and its Data Processing Agreement:",
     `- ${PRIVACY_POLICY}`,
     `- ${DATA_PROCESSING_AGREEMENT}`,
     "TypeSafe offers zero data retention to enterprise customers.",
   );
   return lines.join("\n");
+}
+
+function findingText(finding: DesignFinding): string {
+  return finding.excerpt === undefined ? finding.detail : `${finding.detail} Excerpt: "${finding.excerpt}"`;
+}
+
+/**
+ * For each rule, how many candidates were checked and how many reported each
+ * band. The title check runs on every file, by code rather than by Jev.
+ */
+function ruleTable(result: AuditResult, found: readonly DesignFinding[]): string[] {
+  const checked = questionsByRuleAcross(result.files.map((file) => file.plan));
+  checked[TITLE_RULE] = result.files.length;
+  const inBand = (rule: string, band: Band): number =>
+    found.filter((finding) => finding.rule === rule && finding.band === band).length;
+  return [
+    "| Rule | Checked | Fails | Needs improvement |",
+    "|------|---------|-------|-------------------|",
+    ...RULE_ORDER.map((rule) =>
+      `| ${rule} | ${checked[rule] ?? 0} | ${inBand(rule, "fails")} | ${inBand(rule, "needs improvement")} |`),
+  ];
+}
+
+/** What the audit left unasked, so a reader does not take silence for a pass. */
+function notChecked(result: AuditResult): string[] {
+  const exempt = result.files.reduce((sum, file) => sum + file.plan.exemptOverviews, 0);
+  const untitled = result.files
+    .filter((file) => file.plan.findings.some((finding) => finding.rule === TITLE_RULE))
+    .map((file) => file.file);
+  return [
+    `Not checked: ${countOf(exempt, "overview heading")}, exempt because Part 5 lets that heading name its section.`,
+    untitled.length === 0
+      ? "Every document has a level-1 title, so every opening was judged."
+      : `Not checked: the opening of ${countOf(untitled.length, "document")} with no level-1 title: ${namedList(untitled)}.`,
+  ];
+}
+
+/** Which models answered, and a plain warning when one was not the calibrated model. */
+function modelLines(models: readonly string[]): string[] {
+  const calibrated = `The cut-offs were calibrated on ${CALIBRATED_MODEL}.`;
+  if (models.length === 0) return [`Jev models that answered: none, because nothing was asked. ${calibrated}`];
+  const named = models.map(safeToPrint);
+  const lines = [`Jev models that answered: ${named.join(", ")}. ${calibrated}`];
+  const others = named.filter((model) => model !== CALIBRATED_MODEL);
+  if (others.length > 0) {
+    lines.push(`The cut-offs were measured on ${CALIBRATED_MODEL} and may not fit answers from ${others.join(", ")}.`);
+  }
+  return lines;
 }
 
 export function formatFindings(result: AuditResult): string {
@@ -498,13 +678,22 @@ export function formatFindings(result: AuditResult): string {
     findings.map((finding) => ({ file, finding })));
   for (const { file, finding } of found) {
     lines.push(
-      `| ${tableCell(file)} | ${finding.line} | ${finding.rule} | ${finding.band} | ${tableCell(finding.detail)} | ${finding.probability} |`,
+      `| ${tableCell(file)} | ${finding.line} | ${finding.rule} | ${finding.band} | ${tableCell(findingText(finding))} | ${finding.probability} |`,
     );
   }
   const failing = found.filter(({ finding }) => finding.band === "fails").length;
+  const questions = result.files.reduce((sum, file) => sum + questionCount(file.plan), 0);
   lines.push(
     "",
-    `Finding count: ${found.length}. Fails: ${failing}. Needs improvement: ${found.length - failing}. Files read: ${result.files.length}. Questions asked: ${result.questions}. Skipped entries: ${result.skipped.length}.`,
+    `Finding count: ${found.length}. Fails: ${failing}. Needs improvement: ${found.length - failing}. Files read: ${result.files.length}. Questions asked: ${questions}. Skipped entries: ${result.skipped.length}.`,
+    "",
+    ...ruleTable(result, found.map(({ finding }) => finding)),
+    "",
+    ...notChecked(result),
+    "",
+    ...modelLines(result.models),
+    "",
+    "The audit never reports a pass, and zero findings is not proof of good design.",
     "Mechanical and model findings are proxies, not an ISO judgement.",
     "These findings come from a model, Jev, and can be wrong.",
     "The cut-offs between the bands were calibrated on 2026-09-28 and are provisional.",
@@ -565,7 +754,7 @@ export async function runCli(
   argv: string[],
   stdout: (text: string) => void,
   stderr: (text: string) => void,
-  dependencies: CliDependencies = { env: process.env, connect: createAsk },
+  dependencies: CliDependencies = { env: process.env, connect: connectToJev },
 ): Promise<number> {
   const parsed = readArguments(argv);
   if ("problem" in parsed) {
@@ -598,15 +787,17 @@ export async function runCli(
     return EXIT_MISSING_KEY;
   }
 
-  const ask = dependencies.connect(apiKey);
+  const models = new Set<string>();
+  const ask = dependencies.connect(apiKey, (model) => {
+    models.add(model);
+  });
   try {
     const files = await Promise.all(selection.documents.map(async (document) => ({
       file: document.file,
+      plan: document.plan,
       findings: await auditDocument(document.plan, ask),
     })));
-    const questions = selection.documents
-      .reduce((total, document) => total + questionCount(document.plan), 0);
-    stdout(formatFindings({ files, questions, skipped: selection.skipped }));
+    stdout(formatFindings({ files, skipped: selection.skipped, models: [...models].sort() }));
     return EXIT_RAN;
   } catch (error) {
     stderr(`design-audit: the audit is incomplete, so no findings are reported. ${(error as Error).message}`);

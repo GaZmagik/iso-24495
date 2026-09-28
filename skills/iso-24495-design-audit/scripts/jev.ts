@@ -9,6 +9,8 @@ export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export const JEV_MODEL = "jev-latest";
 export const MOST_IN_FLIGHT = 4;
 export const MOST_ATTEMPTS = 6;
+/** Recorded when a response does not name the model that answered it. */
+export const UNNAMED_MODEL = "unnamed";
 const FIRST_WAIT_MS = 500;
 
 /** A yes-or-no question, answered with the probability that the answer is yes. */
@@ -40,6 +42,9 @@ export type Fetch = (
 
 export type Sleep = (ms: number) => Promise<void>;
 
+/** Told the model named in each response, so a run can report which models answered. */
+export type RecordModel = (model: string) => void;
+
 /** The service could not answer, so the audit is incomplete. */
 export class JevServiceError extends Error {
   constructor(message: string) {
@@ -51,6 +56,7 @@ export class JevServiceError extends Error {
 export interface AskOptions {
   fetch?: Fetch;
   sleep?: Sleep;
+  onModel?: RecordModel;
 }
 
 export function sleep(ms: number): Promise<void> {
@@ -73,7 +79,16 @@ export function createAsk(apiKey: string, options: AskOptions = {}): Ask {
   const send = options.fetch ?? globalThis.fetch;
   const wait = options.sleep ?? sleep;
   const inTurn = limitInFlight(MOST_IN_FLIGHT);
-  return (request) => inTurn(() => askWithRetries(request, apiKey, send, wait));
+  return (request) => inTurn(() => askWithRetries(request, apiKey, send, wait, options.onModel));
+}
+
+/**
+ * Build the function that asks Jev, telling `recordModel` which model answered
+ * each request. The audit keeps asking for jev-latest, so the model behind it
+ * can change between runs, and the report says which one answered.
+ */
+export function connectToJev(apiKey: string, recordModel: RecordModel): Ask {
+  return createAsk(apiKey, { onModel: recordModel });
 }
 
 async function askWithRetries(
@@ -81,6 +96,7 @@ async function askWithRetries(
   apiKey: string,
   send: Fetch,
   wait: Sleep,
+  onModel: RecordModel | undefined,
 ): Promise<Probabilities> {
   let lastProblem = "";
   for (let attempt = 1; attempt <= MOST_ATTEMPTS; attempt += 1) {
@@ -98,7 +114,11 @@ async function askWithRetries(
       lastProblem = "The last attempt could not connect.";
       continue;
     }
-    if (response.ok) return readProbabilities(response, Object.keys(request.questions));
+    if (response.ok) {
+      const { model, probabilities } = await readAnswers(response, Object.keys(request.questions));
+      onModel?.(model);
+      return probabilities;
+    }
     lastProblem = `The last attempt got HTTP status ${response.status}.`;
     if (response.status !== 429 && response.status < 500) {
       throw new JevServiceError(
@@ -109,9 +129,12 @@ async function askWithRetries(
   throw new JevServiceError(`Jev did not answer after ${MOST_ATTEMPTS} attempts. ${lastProblem}`);
 }
 
-async function readProbabilities(response: Response, ids: string[]): Promise<Probabilities> {
+async function readAnswers(
+  response: Response,
+  ids: string[],
+): Promise<{ model: string; probabilities: Probabilities }> {
   const payload = (await response.json().catch(() => null)) as
-    | { answers?: Record<string, { type?: unknown; noul?: unknown }> }
+    | { model?: unknown; answers?: Record<string, { type?: unknown; noul?: unknown }> }
     | null;
   const probabilities: Probabilities = {};
   for (const id of ids) {
@@ -124,7 +147,8 @@ async function readProbabilities(response: Response, ids: string[]): Promise<Pro
     }
     probabilities[id] = noul;
   }
-  return probabilities;
+  const model = typeof payload?.model === "string" ? payload.model : UNNAMED_MODEL;
+  return { model, probabilities };
 }
 
 /**

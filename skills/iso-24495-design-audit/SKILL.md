@@ -23,13 +23,15 @@ The text audit measures words and sentences, so it cannot see document structure
 - `colour-only`: a paragraph identifies something only by its colour.
 - `position-only`: a paragraph identifies something on a page or screen only by where it sits.
 
-Part 5 also allows a topic name for a reference section that a reader jumps to by subject. It allows one for a fixed section name that a document type requires, such as Context, Decision and Consequences in a decision record. Jev cannot tell those sections from one heading, so the audit still reports them. The user decides whether each one is a reference section or a fixed name.
+Part 5 also allows a topic name for a reference section that a reader jumps to by subject. It allows one for a fixed section name that a document type requires, such as Context, Decision and Consequences in a decision record. Jev cannot tell those sections from one heading, so the audit still reports them, and each heading finding names these exceptions. The user decides whether each one is a reference section or a fixed name.
 
 It does not check link text, because the text audit's `link-text` rule covers links. It does not check alternative text, which has not been measured on real documents.
 
 ## Bands
 
 Each answer falls in one of three bands: passes, needs improvement, or fails. A borderline answer is not a pass, so the audit reports both needs improvement and fails, and names the band in each finding. It never reports a pass.
+
+`colour-only` and `position-only` have no fail band, so they report needs improvement at most. No labelled real failure has been measured for either rule.
 
 The cut-offs between the bands were calibrated on 2026-09-28 against labelled samples from popular open-source documents. Each sits where blind labels agreed with Jev at least 95% of the time. The cut-offs are provisional. The fail cut-offs for `one-idea`, `colour-only` and `position-only` are the least certain, because real documents held too few failures to calibrate them.
 
@@ -50,7 +52,7 @@ It reads `.md` and `.markdown` files only, as one file or a directory. It sets c
 3. State the selected file or directory before running the script.
 4. Treat an explicitly supplied directory as approval to read that directory.
 5. Ask before expanding the audit beyond the supplied path.
-6. Run the script without `--send`. It prints the files and the number of questions it would send, and sends nothing:
+6. Run the script without `--send`. It prints the questions it would send, by file and by rule, and the largest files. It sends nothing and gives no cost, because how TypeSafe bills has not been checked:
 
 ```text
 bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-dir <project-directory>
@@ -58,10 +60,12 @@ bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-
 
 7. Before sending anything, tell the user that the text of each document goes to the TypeSafe service. Point them to the TypeSafe privacy policy at https://typesafe.ai/legal/privacy-policy and its Data Processing Agreement at https://typesafe.ai/legal/data-processing. Tell them that TypeSafe offers zero data retention to enterprise customers. Wait for their agreement.
 8. With that agreement, run the same command with `--send` added.
-9. Report every finding with its file, line, rule, band, explanation, and the probability Jev gave.
-10. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
-11. Explain that the findings come from a model and can be wrong. Mechanical and model findings are proxies, not an ISO judgement.
-12. Leave the final decision and any rewriting request to the user.
+9. Report every finding with its file, line, rule, band, explanation, and the probability Jev gave. A paragraph finding also quotes the start of the text judged.
+10. Report the counts by rule, and what was not checked: exempt overview headings, and the opening of any document with no level-1 title.
+11. Report the Jev models that answered. If one is not `jev-1.13.0`, tell the user that the cut-offs were measured on `jev-1.13.0` and may not fit.
+12. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
+13. Explain that the findings come from a model and can be wrong. Mechanical and model findings are proxies, not an ISO judgement.
+14. Leave the final decision and any rewriting request to the user.
 
 ## Exit codes
 

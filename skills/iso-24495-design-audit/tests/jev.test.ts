@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  connectToJev,
   createAsk,
   JEV_ENDPOINT,
   JevServiceError,
@@ -99,6 +100,22 @@ describe("createAsk", () => {
     expect(network.sent[0]?.headers.Authorization).toBe("Bearer secret");
     expect(network.sent[0]?.headers["Content-Type"]).toBe("application/json");
     expect(network.sent[0]?.body).toEqual(requestBody(REQUEST));
+  });
+
+  test("reports the model that answered each request, or that none was named", async () => {
+    const models: string[] = [];
+    const named = scriptedFetch([answered(0.95)]);
+    await createAsk("k", { fetch: named.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) })(REQUEST);
+    const unnamed = scriptedFetch([Response.json({ answers: { message: { type: "noul", noul: 0.5 } } })]);
+    await createAsk("k", { fetch: unnamed.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) })(REQUEST);
+    const numbered = scriptedFetch([Response.json({ model: 7, answers: { message: { type: "noul", noul: 0.5 } } })]);
+    await createAsk("k", { fetch: numbered.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) })(REQUEST);
+
+    expect(models).toEqual(["jev-1.13.0", "unnamed", "unnamed"]);
+  });
+
+  test("builds a client that records models, without sending anything", () => {
+    expect(typeof connectToJev("k", () => {})).toBe("function");
   });
 
   test("returns the probability of every question in the request, not only the first", async () => {

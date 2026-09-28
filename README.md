@@ -187,11 +187,19 @@ Part 5 allows a topic name for a reference section, and for a fixed name a docum
 
 Each answer falls in one of three bands: passes, needs improvement, or fails. A borderline answer is not a pass, so the audit reports both needs improvement and fails, and names the band. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents, and they are provisional.
 
+`colour-only` and `position-only` report needs improvement at most. No labelled real failure has been measured for either, so neither has a fail band.
+
+Each finding says what to do, and a paragraph finding quotes the start of the text judged. A heading finding names the Part 5 exceptions, so you can check them before rewording.
+
+The report counts, for each rule, the candidates checked and the findings in each band. It also says what was not checked: exempt overview headings, and the opening of a document with no level-1 title. It names the Jev models that answered, and warns when one is not `jev-1.13.0`, the model the cut-offs were calibrated on.
+
 Link text and alternative text are left out. On real documents Jev flagged good link text, and the `link-text` rule already covers links. Alternative text has not been measured on real documents.
 
 The audit requires Jev and a TypeSafe API key, set in the `TYPESAFE_API_KEY` environment variable. Get a key from https://docs.typesafe.ai. Without a key, the audit stops and says so.
 
-Nothing leaves your machine unless the command has `--send`. Without it, the audit prints which files it would send and how many questions it would ask. With it, the text of each document goes to the TypeSafe service, and the skill tells you so before it sends anything. The TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing) say how TypeSafe handles that text. TypeSafe offers zero data retention to enterprise customers.
+Nothing leaves your machine unless the command has `--send`. Without it, the audit prints the questions it would send, by file and by rule, and the largest files. It gives no cost estimate, because how TypeSafe bills has not been checked.
+
+With `--send`, the text of each document goes to the TypeSafe service, and the skill tells you so before it sends anything. The TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing) say how TypeSafe handles that text. TypeSafe offers zero data retention to enterprise customers.
 
 Every finding except a missing title comes from a model and can be wrong. Like a text audit finding, it is a proxy and not an ISO judgement. The audit supports English only.
 
