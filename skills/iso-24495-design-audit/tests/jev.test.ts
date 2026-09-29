@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CHOICE_SUM_TOLERANCE,
   connectToJev,
   createAsk,
+  createTypedAsk,
   JEV_ENDPOINT,
+  JEV_MODEL,
+  JevModelError,
   JevServiceError,
   requestBody,
   sleep,
+  type ChoiceQuestion,
   type Fetch,
   type JevRequest,
 } from "../scripts/jev.ts";
@@ -76,7 +81,7 @@ describe("requestBody", () => {
 
   test("names the model, carries the state, and marks every question as noul", () => {
     expect(requestBody(REQUEST)).toEqual({
-      model: "jev-latest",
+      model: "jev-1.13.0",
       state: { heading: "Background" },
       questions: {
         message: {
@@ -86,6 +91,106 @@ describe("requestBody", () => {
         },
       },
     });
+  });
+});
+
+const ROUTE: ChoiceQuestion = {
+  type: "choice",
+  instructions: "Which team should handle `ticket`?",
+  criteria: {
+    billing: "Payments, invoicing, refunds",
+    technical: "Bugs, outages, integrations",
+    sales: "Pricing, upgrades, new accounts",
+  },
+};
+
+const URGENT = {
+  instructions: "Does `ticket` convey urgency?",
+  criteria: { true: "It is time-sensitive.", false: "It is not." },
+};
+
+function choiceResponse(answer: unknown): Response {
+  return Response.json({
+    model: "jev-1.13.0",
+    answers: { route: answer, urgent: { type: "noul", noul: 0.8 } },
+  });
+}
+
+describe("Choice questions", () => {
+  test("send their options as criteria, typed as choice", () => {
+    const body = requestBody({ state: { ticket: "Refund please" }, questions: { route: ROUTE, urgent: URGENT } });
+    expect(body).toEqual({
+      model: "jev-1.13.0",
+      state: { ticket: "Refund please" },
+      questions: {
+        route: { type: "choice", instructions: ROUTE.instructions, criteria: ROUTE.criteria },
+        urgent: { type: "noul", instructions: URGENT.instructions, criteria: URGENT.criteria },
+      },
+    });
+  });
+
+  test("come back typed beside noul answers in the same request", async () => {
+    const network = scriptedFetch([choiceResponse({
+      type: "choice",
+      choice: "billing",
+      confidence: 0.9,
+      probabilities: { billing: 0.9, technical: 0.05, sales: 0.05 },
+    })]);
+    const models: string[] = [];
+    const ask = createTypedAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) });
+
+    const answers = await ask({ state: { ticket: "Refund please" }, questions: { route: ROUTE, urgent: URGENT } });
+
+    expect(answers.route.choice).toBe("billing");
+    expect(answers.route.confidence).toBe(0.9);
+    expect(answers.route.probabilities).toEqual({ billing: 0.9, technical: 0.05, sales: 0.05 });
+    expect(answers.urgent).toBe(0.8);
+    expect(models).toEqual(["jev-1.13.0"]);
+  });
+
+  test("accept probabilities that sum to 1 within the tolerance", async () => {
+    expect(CHOICE_SUM_TOLERANCE).toBe(0.01);
+    for (const probabilities of [
+      { billing: 0.333, technical: 0.333, sales: 0.333 },
+      { billing: 0.338, technical: 0.333, sales: 0.338 },
+    ]) {
+      const network = scriptedFetch([choiceResponse({ type: "choice", choice: "billing", confidence: 0, probabilities })]);
+      const ask = createTypedAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep });
+      const answers = await ask({ state: {}, questions: { route: ROUTE, urgent: URGENT } });
+      expect(answers.route.probabilities).toEqual(probabilities);
+    }
+  });
+
+  test("are refused unless every part of the answer is valid", async () => {
+    const valid = { billing: 0.6, technical: 0.3, sales: 0.1 };
+    const answers: Array<[string, unknown]> = [
+      ["noul type", { type: "noul", noul: 0.6 }],
+      ["no type", { choice: "billing", confidence: 0.6, probabilities: valid }],
+      ["choice not an option", { type: "choice", choice: "legal", confidence: 0.6, probabilities: valid }],
+      ["choice not a string", { type: "choice", choice: 1, confidence: 0.6, probabilities: valid }],
+      ["confidence missing", { type: "choice", choice: "billing", probabilities: valid }],
+      ["confidence above 1", { type: "choice", choice: "billing", confidence: 1.2, probabilities: valid }],
+      ["confidence below 0", { type: "choice", choice: "billing", confidence: -0.1, probabilities: valid }],
+      ["probabilities missing", { type: "choice", choice: "billing", confidence: 0.6 }],
+      ["probabilities a list", { type: "choice", choice: "billing", confidence: 0.6, probabilities: [0.6, 0.3, 0.1] }],
+      ["an option missing", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { billing: 0.7, technical: 0.3 } }],
+      ["an extra option", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { ...valid, sales: 0.05, legal: 0.05 } }],
+      ["a probability not a number", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { ...valid, sales: "0.1" } }],
+      ["a probability below 0", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { billing: 0.8, technical: 0.3, sales: -0.1 } }],
+      ["a probability above 1", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { billing: 1.1, technical: 0, sales: -0.1 } }],
+      ["a sum too low", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { billing: 0.5, technical: 0.3, sales: 0.1 } }],
+      ["a sum too high", { type: "choice", choice: "billing", confidence: 0.6, probabilities: { billing: 0.6, technical: 0.3, sales: 0.12 } }],
+      ["no answer", undefined],
+    ];
+    for (const [name, answer] of answers) {
+      const network = scriptedFetch([choiceResponse(answer)]);
+      const ask = createTypedAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep });
+      const failure = await ask({ state: {}, questions: { route: ROUTE, urgent: URGENT } }).catch((error: unknown) => error);
+      expect(failure, name).toBeInstanceOf(JevServiceError);
+      expect((failure as Error).message, name).toBe(
+        "Jev answered, but not with a valid choice for every choice question asked.",
+      );
+    }
   });
 });
 
@@ -102,16 +207,40 @@ describe("createAsk", () => {
     expect(network.sent[0]?.body).toEqual(requestBody(REQUEST));
   });
 
-  test("reports the model that answered each request, or that none was named", async () => {
+  test("pins the model it asks for, rather than an alias that moves", () => {
+    expect(JEV_MODEL).toBe("jev-1.13.0");
+    expect((requestBody(REQUEST) as { model: string }).model).toBe("jev-1.13.0");
+  });
+
+  test("records the model that answered", async () => {
     const models: string[] = [];
     const named = scriptedFetch([answered(0.95)]);
     await createAsk("k", { fetch: named.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) })(REQUEST);
-    const unnamed = scriptedFetch([Response.json({ answers: { message: { type: "noul", noul: 0.5 } } })]);
-    await createAsk("k", { fetch: unnamed.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) })(REQUEST);
-    const numbered = scriptedFetch([Response.json({ model: 7, answers: { message: { type: "noul", noul: 0.5 } } })]);
-    await createAsk("k", { fetch: numbered.fetch, sleep: recordingSleep().sleep, onModel: (model) => models.push(model) })(REQUEST);
+    expect(models).toEqual(["jev-1.13.0"]);
+  });
 
-    expect(models).toEqual(["jev-1.13.0", "unnamed", "unnamed"]);
+  // The request pins a version, so an answer from any other model is the
+  // service not doing what was asked, like an answer of the wrong type.
+  test("refuses an answer from another model, or from a model it does not name", async () => {
+    const answer = { message: { type: "noul", noul: 0.5 } };
+    const cases: Array<[unknown, string]> = [
+      ["jev-1.14.0", "Jev answered with model jev-1.14.0, but jev-1.13.0 was asked for."],
+      [undefined, "Jev did not say which model answered, so the answers cannot be confirmed as jev-1.13.0."],
+      [7, "Jev did not say which model answered, so the answers cannot be confirmed as jev-1.13.0."],
+      [`jev${String.fromCharCode(0x1b)}[2J`, "Jev answered with a model whose name cannot be printed safely, but jev-1.13.0 was asked for."],
+      ["x".repeat(65), "Jev answered with a model whose name cannot be printed safely, but jev-1.13.0 was asked for."],
+    ];
+    for (const [model, message] of cases) {
+      const models: string[] = [];
+      const network = scriptedFetch([Response.json({ model, answers: answer })]);
+      const ask = createAsk("k", { fetch: network.fetch, sleep: recordingSleep().sleep, onModel: (name) => models.push(name) });
+      const failure = await ask(REQUEST).catch((error: unknown) => error);
+      expect(failure, String(model)).toBeInstanceOf(JevModelError);
+      expect(failure).toBeInstanceOf(JevServiceError);
+      expect((failure as Error).message).toBe(message);
+      expect(models).toEqual([]);
+      expect(network.sent).toHaveLength(1);
+    }
   });
 
   test("builds a client that records models, without sending anything", () => {
@@ -120,6 +249,7 @@ describe("createAsk", () => {
 
   test("returns the probability of every question in the request, not only the first", async () => {
     const network = scriptedFetch([Response.json({
+      model: "jev-1.13.0",
       answers: {
         colour_only: { type: "noul", noul: 0.73 },
         position_only: { type: "noul", noul: 0.04 },

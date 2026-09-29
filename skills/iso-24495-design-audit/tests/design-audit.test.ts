@@ -18,7 +18,14 @@ import {
   selectDocuments,
   type CliDependencies,
 } from "../scripts/design-audit.ts";
-import { JevServiceError, type Ask, type JevRequest, type Probabilities } from "../scripts/jev.ts";
+import {
+  JEV_MODEL,
+  JevModelError,
+  JevServiceError,
+  type Ask,
+  type JevRequest,
+  type Probabilities,
+} from "../scripts/jev.ts";
 import { headings, readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
 
 const GUIDE = [
@@ -245,13 +252,13 @@ describe("planDocument", () => {
     const findings = await auditDocument(plan, standIn({ one_idea: 0.1, colour_only: 0.73, position_only: 0.61 }));
     expect(findings.map((finding) => `${finding.line} ${finding.rule} ${finding.band} ${finding.probability}`))
       .toEqual([
-        "3 colour-only needs improvement 0.73",
-        "3 position-only needs improvement 0.61",
-        "5 colour-only needs improvement 0.73",
-        "5 position-only needs improvement 0.61",
+        "3 colour-only unsure 0.73",
+        "3 position-only unsure 0.61",
+        "5 colour-only unsure 0.73",
+        "5 position-only unsure 0.61",
         "7 one-idea fails 0.10",
-        "7 colour-only needs improvement 0.73",
-        "7 position-only needs improvement 0.61",
+        "7 colour-only unsure 0.73",
+        "7 position-only unsure 0.61",
       ]);
   });
 
@@ -424,6 +431,8 @@ describe("auditDocument", () => {
 
   test("names the model the cut-offs were calibrated on", () => {
     expect(CALIBRATED_MODEL).toBe("jev-1.13.0");
+    // One constant, so the model the audit asks for is always the calibrated one.
+    expect(CALIBRATED_MODEL).toBe(JEV_MODEL);
   });
 
   test("keeps every cut-off in one table", () => {
@@ -440,31 +449,31 @@ describe("auditDocument", () => {
   test("reports each answer in its band, and says nothing of a pass", async () => {
     const cases: Array<[Probabilities, string[]]> = [
       [{ message: 0.6 }, []],
-      [{ message: 0.59 }, ["5 heading-message needs improvement 0.59"]],
-      [{ message: 0.29 }, ["5 heading-message needs improvement 0.29"]],
+      [{ message: 0.59 }, ["5 heading-message unsure 0.59"]],
+      [{ message: 0.29 }, ["5 heading-message unsure 0.29"]],
       [{ message: 0.28 }, ["5 heading-message fails 0.28"]],
       [{ purpose: 0.95 }, []],
-      [{ purpose: 0.94 }, ["1 opening-purpose needs improvement 0.94"]],
-      [{ purpose: 0.41 }, ["1 opening-purpose needs improvement 0.41"]],
+      [{ purpose: 0.94 }, ["1 opening-purpose unsure 0.94"]],
+      [{ purpose: 0.41 }, ["1 opening-purpose unsure 0.41"]],
       [{ purpose: 0.4 }, ["1 opening-purpose fails 0.40"]],
       [{ reader: 0.75 }, []],
-      [{ reader: 0.74 }, ["1 opening-reader needs improvement 0.74"]],
-      [{ reader: 0.26 }, ["1 opening-reader needs improvement 0.26"]],
+      [{ reader: 0.74 }, ["1 opening-reader unsure 0.74"]],
+      [{ reader: 0.26 }, ["1 opening-reader unsure 0.26"]],
       [{ reader: 0.25 }, ["1 opening-reader fails 0.25"]],
       [{ one_idea: 0.9 }, []],
-      [{ one_idea: 0.89 }, ["3 one-idea needs improvement 0.89"]],
-      [{ one_idea: 0.51 }, ["3 one-idea needs improvement 0.51"]],
+      [{ one_idea: 0.89 }, ["3 one-idea unsure 0.89"]],
+      [{ one_idea: 0.51 }, ["3 one-idea unsure 0.51"]],
       [{ one_idea: 0.5 }, ["3 one-idea fails 0.50"]],
       [{ colour_only: 0.3 }, []],
-      [{ colour_only: 0.31 }, ["3 colour-only needs improvement 0.31", "7 colour-only needs improvement 0.31"]],
-      [{ colour_only: 0.49 }, ["3 colour-only needs improvement 0.49", "7 colour-only needs improvement 0.49"]],
-      [{ colour_only: 0.5 }, ["3 colour-only needs improvement 0.50", "7 colour-only needs improvement 0.50"]],
-      [{ colour_only: 1 }, ["3 colour-only needs improvement 1.00", "7 colour-only needs improvement 1.00"]],
+      [{ colour_only: 0.31 }, ["3 colour-only unsure 0.31", "7 colour-only unsure 0.31"]],
+      [{ colour_only: 0.49 }, ["3 colour-only unsure 0.49", "7 colour-only unsure 0.49"]],
+      [{ colour_only: 0.5 }, ["3 colour-only unsure 0.50", "7 colour-only unsure 0.50"]],
+      [{ colour_only: 1 }, ["3 colour-only unsure 1.00", "7 colour-only unsure 1.00"]],
       [{ position_only: 0.3 }, []],
-      [{ position_only: 0.31 }, ["3 position-only needs improvement 0.31", "7 position-only needs improvement 0.31"]],
-      [{ position_only: 0.49 }, ["3 position-only needs improvement 0.49", "7 position-only needs improvement 0.49"]],
-      [{ position_only: 0.5 }, ["3 position-only needs improvement 0.50", "7 position-only needs improvement 0.50"]],
-      [{ position_only: 1 }, ["3 position-only needs improvement 1.00", "7 position-only needs improvement 1.00"]],
+      [{ position_only: 0.31 }, ["3 position-only unsure 0.31", "7 position-only unsure 0.31"]],
+      [{ position_only: 0.49 }, ["3 position-only unsure 0.49", "7 position-only unsure 0.49"]],
+      [{ position_only: 0.5 }, ["3 position-only unsure 0.50", "7 position-only unsure 0.50"]],
+      [{ position_only: 1 }, ["3 position-only unsure 1.00", "7 position-only unsure 1.00"]],
     ];
     for (const [chosen, expected] of cases) {
       expect(await rulesFor(chosen), JSON.stringify(chosen)).toEqual(expected);
@@ -474,7 +483,7 @@ describe("auditDocument", () => {
   test("names what the opening block lacks, one finding for each", async () => {
     expect(await rulesFor({ purpose: 0.1, reader: 0.5 })).toEqual([
       "1 opening-purpose fails 0.10",
-      "1 opening-reader needs improvement 0.50",
+      "1 opening-reader unsure 0.50",
     ]);
   });
 
@@ -488,19 +497,19 @@ describe("auditDocument", () => {
     );
   });
 
-  // A borderline answer still needs improvement, but the model is unsure, so the
+  // A borderline answer still unsure, but the model is unsure, so the
   // finding must not state the problem as certain. A live run reported the FAQ
   // question "What platforms does uv support?" as naming a topic at 0.48.
-  test("hedges a finding in the needs-improvement band, and states a failure plainly", async () => {
+  test("says what to check for an unsure answer, and states a failure plainly", async () => {
     const plan = planDocument("# Guide\n\n## Topic\n\nOne idea here. Another sentence.\n");
     const unsure = await auditDocument(plan, standIn({ message: 0.45, reader: 0.5, one_idea: 0.7, colour_only: 0.4, position_only: 0.4, purpose: 0.45 }));
     expect(unsure.map((finding) => `${finding.rule} ${finding.band}: ${finding.detail}`)).toEqual([
-      "opening-purpose needs improvement: The opening may not state the document's purpose clearly: the reader's task and the document's scope. Check that a sentence near the title says what the reader can do with the document and what it covers.",
-      "opening-reader needs improvement: The opening may not state clearly in words who the document is for. Check that a sentence near the title names its readers.",
-      "heading-message needs improvement: The heading \"Topic\" may only name a topic. Part 5 allows that for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, state the section's message or the reader's task instead.",
-      "one-idea needs improvement: The paragraph may run two unrelated topics together. Check that it holds one idea.",
-      "colour-only needs improvement: Something may be identified only by its colour. Check that a word, label or name also identifies it.",
-      "position-only needs improvement: Something may be identified only by its position. Check that a name or label also identifies it.",
+      "opening-purpose unsure: Jev could not decide whether the opening states the document's purpose: the reader's task and the document's scope. Check that a sentence near the title says what the reader can do with the document and what it covers.",
+      "opening-reader unsure: Jev could not decide whether the opening states in words who the document is for. Check that a sentence near the title names its readers.",
+      "heading-message unsure: Jev could not decide whether the heading \"Topic\" states a message or only names a topic. Part 5 allows a topic name for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, check that it states the section's message or the reader's task.",
+      "one-idea unsure: Jev could not decide whether the paragraph holds one idea. Check that it does not run two unrelated topics together.",
+      "colour-only unsure: Check whether something is identified only by its colour. If it is, add a word, label or name that also identifies it.",
+      "position-only unsure: Check whether something is identified only by its position. If it is, add a name or label that also identifies it.",
     ]);
     const failing = await auditDocument(plan, standIn({ message: 0.1, purpose: 0.1, reader: 0.1 }));
     expect(failing.map((finding) => `${finding.rule}: ${finding.detail}`)).toEqual([
@@ -605,7 +614,7 @@ describe("formatFindings and formatPlan", () => {
           plan: titled,
           findings: [
             { line: 9, rule: "one-idea", band: "fails", detail: "Two\ntopics.", probability: "0.12", excerpt: "Press the | blue button." },
-            { line: 9, rule: "colour-only", band: "needs improvement", detail: "Red.", probability: "0.40", excerpt: "Press" },
+            { line: 9, rule: "colour-only", band: "unsure", detail: "Red.", probability: "0.40", excerpt: "Press" },
           ],
         },
         { file: "notes.md", plan: untitled, findings: untitled.findings },
@@ -617,13 +626,13 @@ describe("formatFindings and formatPlan", () => {
       "| File | Line | Rule | Band | Finding | Jev probability |",
       "|------|------|------|------|---------|-----------------|",
       "| docs/a\\|b.md | 9 | one-idea | fails | Two topics. Excerpt: \"Press the \\| blue button.\" | 0.12 |",
-      "| docs/a\\|b.md | 9 | colour-only | needs improvement | Red. Excerpt: \"Press\" | 0.40 |",
+      "| docs/a\\|b.md | 9 | colour-only | unsure | Red. Excerpt: \"Press\" | 0.40 |",
       "| notes.md | 1 | opening-title | fails | The document has no level-1 title, so it has no opening block to state its purpose and reader. Add a level-1 title, then a sentence on the document's purpose and one naming its readers. | none, found by code |",
       "",
-      "Finding count: 3. Fails: 2. Needs improvement: 1. Files read: 2. Questions asked: 10. Skipped entries: 1.",
+      "Finding count: 3. Fails: 2. Unsure: 1. Files read: 2. Questions asked: 10. Skipped entries: 1.",
       "",
-      "| Rule | Checked | Fails | Needs improvement |",
-      "|------|---------|-------|-------------------|",
+      "| Rule | Checked | Fails | Unsure |",
+      "|------|---------|-------|--------|",
       "| opening-title | 2 | 1 | 0 |",
       "| opening-purpose | 1 | 0 | 0 |",
       "| opening-reader | 1 | 0 | 0 |",
@@ -645,22 +654,22 @@ describe("formatFindings and formatPlan", () => {
     ].join("\n"));
   });
 
-  test("says plainly when another model answered, or when none did", () => {
+  test("names the model that answered, or says none did", () => {
     const plan = planDocument("# Guide\n");
     const report = (models: string[]): string =>
       formatFindings({ files: [{ file: "a.md", plan, findings: [] }], skipped: [], models });
 
-    expect(report(["jev-1.13.0", "jev-2.0.0", "unnamed"])).toContain([
-      "Jev models that answered: jev-1.13.0, jev-2.0.0, unnamed. The cut-offs were calibrated on jev-1.13.0.",
-      "The cut-offs were measured on jev-1.13.0 and may not fit answers from jev-2.0.0, unnamed.",
-    ].join("\n"));
+    expect(report(["jev-1.13.0"])).toContain(
+      "Jev models that answered: jev-1.13.0. The cut-offs were calibrated on jev-1.13.0.",
+    );
+    expect(report(["jev-1.13.0"])).not.toContain("may not fit");
     expect(report([])).toContain(
       "Jev models that answered: none, because nothing was asked. The cut-offs were calibrated on jev-1.13.0.",
     );
     expect(report([])).toContain("Not checked: 0 overview headings, exempt because Part 5 lets that heading name its section.");
     expect(report([])).toContain("Every document has a level-1 title, so every opening was judged.");
     // The model name comes from the service, so it is cleaned like an excerpt.
-    expect(report([`jev-9${String.fromCharCode(0x1b)}[2J`])).toContain("may not fit answers from jev-9 [2J.");
+    expect(report([`jev-9${String.fromCharCode(0x1b)}[2J`])).toContain("Jev models that answered: jev-9 [2J.");
   });
 
   test("names at most five documents with no level-1 title", () => {
@@ -859,25 +868,30 @@ describe("runCli", () => {
         "| docs/clean.md | 1 | opening-reader | fails | The opening does not state in words who the document is for. Add a sentence near the title that names its readers. | 0.10 |",
       );
       expect(output.stdout[0]).toContain(
-        "Finding count: 2. Fails: 2. Needs improvement: 0. Files read: 2. Questions asked: 7. Skipped entries: 1.",
+        "Finding count: 2. Fails: 2. Unsure: 0. Files read: 2. Questions asked: 7. Skipped entries: 1.",
       );
       expect(output.stdout[0]).toContain(
         "Jev models that answered: jev-1.13.0. The cut-offs were calibrated on jev-1.13.0.",
       );
-      expect(output.stdout[0]).not.toContain("may not fit");
     }));
 
-  test("with --send it says when a model other than the calibrated one answered", () =>
+  // The cut-offs hold only for the model they were calibrated on, so an answer
+  // from another model stops the audit rather than producing findings.
+  test("with --send an answer from another model exits 3, says why, and prints no findings", () =>
     withProject(async (project) => {
       const file = join(project, "doc.md");
       writeFileSync(file, DOCUMENT);
-      const { deps } = dependencies(standIn({}), { TYPESAFE_API_KEY: "key" }, "jev-2.0.0");
+      const otherModel: Ask = async () => {
+        throw new JevModelError("Jev answered with model jev-1.14.0, but jev-1.13.0 was asked for.");
+      };
+      const { deps } = dependencies(otherModel);
       const output = capture();
 
-      expect(await runCli(["bun", "cli", file, "--send"], output.writeOut, output.writeErr, deps)).toBe(0);
-      expect(output.stdout[0]).toContain(
-        "The cut-offs were measured on jev-1.13.0 and may not fit answers from jev-2.0.0.",
-      );
+      expect(await runCli(["bun", "cli", file, "--send"], output.writeOut, output.writeErr, deps)).toBe(3);
+      expect(output.stdout).toEqual([]);
+      expect(output.stderr).toEqual([
+        "design-audit: the audit is incomplete, so no findings are reported. Jev answered with model jev-1.14.0, but jev-1.13.0 was asked for. The cut-offs were calibrated on jev-1.13.0 and do not apply to another model.",
+      ]);
     }));
 
   test("a service that fails after its retries exits 3 and prints no findings", () =>

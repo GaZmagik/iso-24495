@@ -185,13 +185,15 @@ It checks four things:
 
 Part 5 allows a topic name for a reference section, and for a fixed name a document type requires, such as Context in a decision record. Jev cannot tell those sections from one heading, so the audit still reports them, and you decide.
 
-Each answer falls in one of three bands: passes, needs improvement, or fails. A borderline answer is not a pass, so the audit reports both needs improvement and fails, and names the band. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents, and they are provisional.
+Each answer falls in one of three bands: passes, unsure, or fails. A borderline answer is not a pass, so the audit reports both unsure and fails, and names the band. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents, and they are provisional.
 
-`colour-only` and `position-only` report needs improvement at most. No labelled real failure has been measured for either, so neither has a fail band.
+An unsure answer means Jev could not decide, so its finding says what to check rather than claiming a fault. `colour-only` and `position-only` report unsure at most. No labelled real failure has been measured for either, so neither has a fail band.
 
 Each finding says what to do, and a paragraph finding quotes the start of the text judged. A heading finding names the Part 5 exceptions, so you can check them before rewording.
 
-The report counts, for each rule, the candidates checked and the findings in each band. It also says what was not checked: exempt overview headings, and the opening of a document with no level-1 title. It names the Jev models that answered, and warns when one is not `jev-1.13.0`, the model the cut-offs were calibrated on.
+The report counts, for each rule, the candidates checked and the findings in each band. It also says what was not checked: exempt overview headings, and the opening of a document with no level-1 title. It names the Jev model that answered.
+
+The audit asks for `jev-1.13.0` by name, not the `jev-latest` alias, because an alias moves when TypeSafe ships a new release. The cut-offs were calibrated on `jev-1.13.0`, so an answer from any other model stops the audit with no findings.
 
 Link text and alternative text are left out. On real documents Jev flagged good link text, and the `link-text` rule already covers links. Alternative text has not been measured on real documents.
 

@@ -26,6 +26,8 @@ import {
 } from "../../iso-24495-4/scripts/lib/parse.ts";
 import {
   connectToJev,
+  JEV_MODEL,
+  JevModelError,
   type Ask,
   type JevRequest,
   type NoulQuestion,
@@ -72,14 +74,17 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 const USAGE =
   "Usage: bun design-audit-cli.ts <file-or-directory> [--send] [--project-dir <directory>]";
 
-/** Where an answer passes, and where it fails. Between the two it needs improvement. */
+/**
+ * Where an answer passes, and where it fails. Between the two Jev cannot
+ * decide, so the answer is unsure: reported, and never taken for a pass.
+ */
 export interface Cutoffs {
   /** An answer at or beyond this passes. */
   passAt: number;
   /**
    * An answer at or beyond this, in the other direction, fails. Null where
    * no labelled real failure has been measured, so the rule has no fail band
-   * and reports needs improvement at most.
+   * and reports unsure at most.
    */
   failAt: number | null;
   /** True where a yes means a problem, so the cut-offs run the other way. */
@@ -104,11 +109,11 @@ export interface Cutoffs {
  *   real position failure cannot set one.
  */
 /**
- * The Jev model the cut-offs were calibrated on. The audit asks for
- * jev-latest, so the report names the models that answered and says when
- * one of them is not this one.
+ * The Jev model the cut-offs were calibrated on. It is the model every request
+ * pins, so the two cannot drift apart, and an answer from any other model
+ * stops the audit, because the cut-offs do not apply to it.
  */
-export const CALIBRATED_MODEL = "jev-1.13.0";
+export const CALIBRATED_MODEL = JEV_MODEL;
 
 export const CUTOFFS: Readonly<Record<string, Cutoffs>> = Object.freeze({
   message: { passAt: 0.6, failAt: 0.28, yesIsAProblem: false },
@@ -185,7 +190,7 @@ const PARAGRAPH_QUESTIONS: Record<string, NoulQuestion> = {
 };
 
 /** A pass is never reported, so a finding is in one of these two bands. */
-export type Band = "fails" | "needs improvement";
+export type Band = "fails" | "unsure";
 
 export interface DesignFinding {
   line: number;
@@ -237,11 +242,12 @@ export interface CliDependencies {
 type ReadTextFile = (path: string, encoding: "utf8") => string;
 
 /**
- * One rule a candidate is judged by. A failing answer states the problem; an
- * answer in the needs-improvement band is borderline, so its wording says the
- * problem may be there rather than asserting it. A rule with no fail band has
- * no failing wording. Each wording ends with a fixed action, never a rewrite
- * of the text, because Jev returns only a probability.
+ * One rule a candidate is judged by. A failing answer states the problem. An
+ * unsure answer means Jev could not decide, so its wording says what to check
+ * and claims no fault. A rule with no fail band has no failing wording, and
+ * its unsure wording covers every answer that does not pass, so it says only
+ * what to check. Each wording ends with a fixed action, never a rewrite of the
+ * text, because Jev returns only a probability.
  */
 interface Check {
   question: string;
@@ -255,13 +261,13 @@ const OPENING_CHECKS: Check[] = [
     question: "purpose",
     rule: "opening-purpose",
     detail: "The opening does not state the document's purpose: the reader's task and the document's scope. Add a sentence near the title that says what the reader can do with the document and what it covers.",
-    unsure: "The opening may not state the document's purpose clearly: the reader's task and the document's scope. Check that a sentence near the title says what the reader can do with the document and what it covers.",
+    unsure: "Jev could not decide whether the opening states the document's purpose: the reader's task and the document's scope. Check that a sentence near the title says what the reader can do with the document and what it covers.",
   },
   {
     question: "reader",
     rule: "opening-reader",
     detail: "The opening does not state in words who the document is for. Add a sentence near the title that names its readers.",
-    unsure: "The opening may not state clearly in words who the document is for. Check that a sentence near the title names its readers.",
+    unsure: "Jev could not decide whether the opening states in words who the document is for. Check that a sentence near the title names its readers.",
   },
 ];
 
@@ -270,17 +276,17 @@ const PARAGRAPH_CHECKS: Check[] = [
     question: "one_idea",
     rule: "one-idea",
     detail: "The paragraph runs two or more unrelated topics together. Give each idea its own paragraph.",
-    unsure: "The paragraph may run two unrelated topics together. Check that it holds one idea.",
+    unsure: "Jev could not decide whether the paragraph holds one idea. Check that it does not run two unrelated topics together.",
   },
   {
     question: "colour_only",
     rule: "colour-only",
-    unsure: "Something may be identified only by its colour. Check that a word, label or name also identifies it.",
+    unsure: "Check whether something is identified only by its colour. If it is, add a word, label or name that also identifies it.",
   },
   {
     question: "position_only",
     rule: "position-only",
-    unsure: "Something may be identified only by its position. Check that a name or label also identifies it.",
+    unsure: "Check whether something is identified only by its position. If it is, add a name or label that also identifies it.",
   },
 ];
 
@@ -305,7 +311,7 @@ function bandOf(question: string, probability: number): Band | null {
   const answer = direction * probability;
   if (answer >= direction * cutoffs.passAt) return null;
   if (cutoffs.failAt !== null && answer <= direction * cutoffs.failAt) return "fails";
-  return "needs improvement";
+  return "unsure";
 }
 
 /**
@@ -408,6 +414,8 @@ function openingCandidate(title: Heading, body: string): Candidate {
 // heading, so every heading finding asks the user to check them first.
 const PART_5_HEADING_EXCEPTIONS =
   "Part 5 allows that for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, state the section's message or the reader's task instead.";
+const PART_5_HEADING_EXCEPTIONS_TO_CHECK =
+  "Part 5 allows a topic name for a reference section, or a name its document type requires, such as Context in a decision record. Otherwise, check that it states the section's message or the reader's task.";
 
 function headingCandidate(heading: Heading, documentTitle: string, body: string): Candidate {
   return {
@@ -425,7 +433,7 @@ function headingCandidate(heading: Heading, documentTitle: string, body: string)
       question: "message",
       rule: HEADING_RULE,
       detail: `The heading "${heading.text}" names a topic. ${PART_5_HEADING_EXCEPTIONS}`,
-      unsure: `The heading "${heading.text}" may only name a topic. ${PART_5_HEADING_EXCEPTIONS}`,
+      unsure: `Jev could not decide whether the heading "${heading.text}" states a message or only names a topic. ${PART_5_HEADING_EXCEPTIONS_TO_CHECK}`,
     }], answers),
   };
 }
@@ -650,10 +658,10 @@ function ruleTable(result: AuditResult, found: readonly DesignFinding[]): string
   const inBand = (rule: string, band: Band): number =>
     found.filter((finding) => finding.rule === rule && finding.band === band).length;
   return [
-    "| Rule | Checked | Fails | Needs improvement |",
-    "|------|---------|-------|-------------------|",
+    "| Rule | Checked | Fails | Unsure |",
+    "|------|---------|-------|--------|",
     ...RULE_ORDER.map((rule) =>
-      `| ${rule} | ${checked[rule] ?? 0} | ${inBand(rule, "fails")} | ${inBand(rule, "needs improvement")} |`),
+      `| ${rule} | ${checked[rule] ?? 0} | ${inBand(rule, "fails")} | ${inBand(rule, "unsure")} |`),
   ];
 }
 
@@ -671,17 +679,14 @@ function notChecked(result: AuditResult): string[] {
   ];
 }
 
-/** Which models answered, and a plain warning when one was not the calibrated model. */
+/**
+ * Which models answered. The client refuses an answer from any model but the
+ * pinned one, so a report that is printed names only that model.
+ */
 function modelLines(models: readonly string[]): string[] {
   const calibrated = `The cut-offs were calibrated on ${CALIBRATED_MODEL}.`;
   if (models.length === 0) return [`Jev models that answered: none, because nothing was asked. ${calibrated}`];
-  const named = models.map(safeToPrint);
-  const lines = [`Jev models that answered: ${named.join(", ")}. ${calibrated}`];
-  const others = named.filter((model) => model !== CALIBRATED_MODEL);
-  if (others.length > 0) {
-    lines.push(`The cut-offs were measured on ${CALIBRATED_MODEL} and may not fit answers from ${others.join(", ")}.`);
-  }
-  return lines;
+  return [`Jev models that answered: ${models.map(safeToPrint).join(", ")}. ${calibrated}`];
 }
 
 export function formatFindings(result: AuditResult): string {
@@ -700,7 +705,7 @@ export function formatFindings(result: AuditResult): string {
   const questions = result.files.reduce((sum, file) => sum + questionCount(file.plan), 0);
   lines.push(
     "",
-    `Finding count: ${found.length}. Fails: ${failing}. Needs improvement: ${found.length - failing}. Files read: ${result.files.length}. Questions asked: ${questions}. Skipped entries: ${result.skipped.length}.`,
+    `Finding count: ${found.length}. Fails: ${failing}. Unsure: ${found.length - failing}. Files read: ${result.files.length}. Questions asked: ${questions}. Skipped entries: ${result.skipped.length}.`,
     "",
     ...ruleTable(result, found.map(({ finding }) => finding)),
     "",
@@ -760,8 +765,9 @@ function readArguments(argv: string[]): Arguments | { problem: string } {
  *   0  the audit ran, or printed what it would send. Findings are advice and
  *      never change the exit code.
  *   2  bad arguments, or a selected file that cannot be read or is not Markdown.
- *   3  Jev failed after its retries. No findings are printed, because an
- *      incomplete audit must never read as a clean one.
+ *   3  Jev failed after its retries, answered in a form the audit cannot use,
+ *      or answered with a model other than the pinned one. No findings are
+ *      printed, because an incomplete audit must never read as a clean one.
  *   4  --send was given without a usable key in TYPESAFE_API_KEY: none, or one
  *      holding a control character, which is refused unsent and unprinted.
  */
@@ -815,7 +821,10 @@ export async function runCli(
     stdout(formatFindings({ files, skipped: selection.skipped, models: [...models].sort() }));
     return EXIT_RAN;
   } catch (error) {
-    stderr(`design-audit: the audit is incomplete, so no findings are reported. ${(error as Error).message}`);
+    const cutOffs = error instanceof JevModelError
+      ? ` The cut-offs were calibrated on ${CALIBRATED_MODEL} and do not apply to another model.`
+      : "";
+    stderr(`design-audit: the audit is incomplete, so no findings are reported. ${(error as Error).message}${cutOffs}`);
     return EXIT_SERVICE_FAILED;
   }
 }

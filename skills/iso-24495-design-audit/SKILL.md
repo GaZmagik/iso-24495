@@ -29,9 +29,9 @@ It does not check link text, because the text audit's `link-text` rule covers li
 
 ## Bands
 
-Each answer falls in one of three bands: passes, needs improvement, or fails. A borderline answer is not a pass, so the audit reports both needs improvement and fails, and names the band in each finding. It never reports a pass.
+Each answer falls in one of three bands: passes, unsure, or fails. An unsure answer lies between the cut-offs, where Jev cannot decide; it does not mean the text partly complies. It is not a pass either, so the audit reports both unsure and fails, and names the band in each finding. An unsure finding says what to check and claims no fault. The audit never reports a pass.
 
-`colour-only` and `position-only` have no fail band, so they report needs improvement at most. No labelled real failure has been measured for either rule.
+`colour-only` and `position-only` have no fail band, so they report unsure at most. No labelled real failure has been measured for either rule.
 
 The cut-offs were set on 2026-09-28 against popular open-source documents, labelled by two model families blind to Jev. Only labels both agreed on were used. Each cut-off was chosen on the same items it was measured on, so the counts below are small and the cut-offs are provisional:
 
@@ -46,6 +46,8 @@ The opening, colour and position figures come from the requests this audit sends
 ## Requirements
 
 This audit requires Jev and a TypeSafe API key, and cannot run without them. Get a key from https://docs.typesafe.ai and set it in the `TYPESAFE_API_KEY` environment variable. The audit also requires Bun.
+
+The audit asks for `jev-1.13.0` by name, not the `jev-latest` alias, because an alias moves when TypeSafe ships a new release. The cut-offs were calibrated on `jev-1.13.0`, so an answer from any other model stops the audit.
 
 ## Language and input scope
 
@@ -70,7 +72,7 @@ bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-
 8. With that agreement, run the same command with `--send` added.
 9. Report every finding with its file, line, rule, band, explanation, and the probability Jev gave. A paragraph finding also quotes the start of the text judged.
 10. Report the counts by rule, and what was not checked: exempt overview headings, and the opening of any document with no level-1 title.
-11. Report the Jev models that answered. If one is not `jev-1.13.0`, tell the user that the cut-offs were measured on `jev-1.13.0` and may not fit.
+11. Report the Jev model that answered. If the audit stopped because another model answered, tell the user that the cut-offs apply only to `jev-1.13.0`.
 12. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
 13. Explain that the findings come from a model and can be wrong. Mechanical and model findings are proxies, not an ISO judgement.
 14. Leave the final decision and any rewriting request to the user.
@@ -81,7 +83,7 @@ bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-
 |------|---------|
 | 0 | The audit ran, or printed what it would send. Findings never change the code. |
 | 2 | The arguments were wrong, or a selected file cannot be read or is not Markdown. |
-| 3 | Jev failed after its retries. No findings are printed, because the audit is incomplete. |
+| 3 | Jev failed after its retries, answered in a form the audit cannot use, or answered with a model other than `jev-1.13.0`. No findings are printed, because the audit is incomplete. |
 | 4 | The command had `--send` but no usable key in `TYPESAFE_API_KEY`: none at all, or one holding a line break or other control character. Tell the user that this audit requires Jev and a TypeSafe API key, and where to get one. A key with a control character is never sent or printed. |
 
 ## Boundaries
