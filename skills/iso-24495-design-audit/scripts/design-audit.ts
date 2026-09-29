@@ -95,7 +95,7 @@ export interface Cutoffs {
  * requests this audit sends; message and one_idea come from an earlier sample.
  *
  * - message: pass band right on 14 of 14 headings, fail band on 10 of 10.
- * - purpose: pass band 12 of 12 openings, fail band 49 of 50.
+ * - purpose: pass band 11 of 11 openings, fail band 49 of 50.
  * - reader: pass band 11 of 11 openings, fail band 62 of 65.
  * - one_idea: pass band 13 of 13; the fail cut-off is provisional, because
  *   real documents held too few failures to calibrate it.

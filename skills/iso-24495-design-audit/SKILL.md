@@ -36,7 +36,7 @@ Each answer falls in one of three bands: passes, needs improvement, or fails. A 
 The cut-offs were set on 2026-09-28 against popular open-source documents, labelled by two model families blind to Jev. Only labels both agreed on were used. Each cut-off was chosen on the same items it was measured on, so the counts below are small and the cut-offs are provisional:
 
 - `heading-message`: the pass band was right on 14 of 14 headings, and the fail band on 10 of 10.
-- `opening-purpose`: pass band 12 of 12 openings, fail band 49 of 50.
+- `opening-purpose`: pass band 11 of 11 openings, fail band 49 of 50.
 - `opening-reader`: pass band 11 of 11 openings, fail band 62 of 65.
 - `one-idea`: pass band 13 of 13 paragraphs. Its fail cut-off is the least certain, because real documents held too few failures to calibrate it.
 - `colour-only` and `position-only`: pass band 200 of 201 and 199 of 199 blocks.
