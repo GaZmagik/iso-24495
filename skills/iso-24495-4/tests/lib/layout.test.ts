@@ -5,6 +5,41 @@ import { structure } from "../../scripts/lib/parse.ts";
 const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## Section ${index + 1}\n\nText.\n`).join("\n");
 const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
 describe("layout rules", () => {
+  test("review 1: contents entries follow Markdown blocks rather than blank lines", () => {
+    const opening = "# Title\n\nVersion 1.0\n\n";
+    expect(rules(opening + "- [Section 1](#section-1)\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual([]);
+    for (const contents of ["## Contents\n\n", "## Contents\n\n| Section |\n|---|\n\n", "## Contents\n\n### Links\n\n", "## Contents\n\nChoose the section that helps you.\n\n", "## Contents\n\nSee [Section 1](#section-1) for details.\n\n", "## Contents\n\n| [Section 1](#section-1) |\n|---|\n\n"]) {
+      expect(rules(opening + contents + "### Overview\n\n" + sections()), contents).toEqual(["contents-list"]);
+    }
+    expect(rules(opening + "[Section 1](#section-1)\n\n[Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+    expect(rules(opening + "Read [Section 1](#section-1) and [Section 2](#section-2) for details.\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+    expect(rules(opening + "- [Section 1](#section-1)\n\nExplanation.\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+  });
+  test("review 2: literal punctuation and code survive wording recognition", () => {
+    expect(normaliseWording("Over_view_ foo_bar_baz \\*literal\\* `*literal* &amp;`" )).toBe("Over_view_ foo_bar_baz *literal* *literal* &amp;");
+    expect(headingIds(["foo_bar_baz"])).toEqual(["foo_bar_baz"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n## Over_view_\n\n" + sections(4))).toEqual(["overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[Incorrect](#foo_bar_baz)\n\n### Overview\n\n## foo_bar_baz\n\n" + sections(4))).toEqual(["contents-list"]);
+  });
+  test("review 3: metadata requires a parsed table and correct cell boundaries", () => {
+    expect(rules("# Title\n\nVersion | 2.1\n")).toEqual(["opening-version-date"]);
+    expect(rules("# Title\n\nVersion | 2.1\n--- | ---\nDate | 2026-10-03\n")).toEqual([]);
+    expect(rules("# Title\n\n| Field | Value |\n|---|---|\n| Version\\|other | 2.1 |\n")).toEqual(["opening-version-date"]);
+  });
+  test("review 4: raw HTML code blocks do not supply structural headings or bullets", () => {
+    for (const tag of ["pre", "script", "style", "textarea"]) {
+      expect(rules("# Title\n\nVersion 1.0\n\n<" + tag + ">\n\n" + sections() + "\n- One\n  - Two\n    - Three\n</" + tag + ">\n"), tag).toEqual([]);
+    }
+    expect(rules("# Title\n\nVersion 1.0\n\n<pre>\n" + sections() + "</pre>\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n<PRE class=example>code</PRE>\n")).toEqual([]);
+    expect(rules("# Title\n\nVersion 1.0\n\n> <pre>\n> ## Quoted\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n<pre>\n" + sections())).toEqual([]);
+  });
+  test("review 6: layout rules exclude quoted overviews and count only unordered ancestry", () => {
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n> ## Overview\n\n" + sections(5))).toEqual(["overview-label"]);
+    expect(layoutViolations("# Title\n\nVersion 1.0\n\n> - One\n>   - Two\n>     - Three\n")).toEqual([{ rule: "bullet-depth", line: 7, detail: "Unordered bullet depth 3 (limit 2). Flatten this item." }]);
+    expect(layoutViolations("# Title\n\nVersion 1.0\n\n1. Parent\n   - One\n     1. Ordered\n        - Two\n          - Three\n")).toEqual([{ rule: "bullet-depth", line: 9, detail: "Unordered bullet depth 3 (limit 2). Flatten this item." }]);
+  });
   test("counts root H2 sections only and applies contents wording only at six", () => {
     expect(rules("# Title\n\nVersion 1.0\n\n" + sections(5))).toEqual([]);
     expect(rules("# Title\n\nVersion 1.0\n\n" + sections())).toEqual(["contents-list", "overview-label"]);

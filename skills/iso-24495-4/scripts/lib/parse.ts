@@ -202,7 +202,7 @@ function indentOf(line: string): number {
 }
 
 /** The columns a table row declares, respecting escaped pipes. */
-function cellCount(row: string): number {
+export function tableCells(row: string): string[] {
   const cells: string[] = [];
   let cell = "";
   for (let i = 0; i < row.length; i++) {
@@ -221,8 +221,10 @@ function cellCount(row: string): number {
   cells.push(cell);
   if (cells[0].trim() === "") cells.shift();
   if (cells.length > 0 && cells[cells.length - 1].trim() === "") cells.pop();
-  return cells.length;
+  return cells;
 }
+
+function cellCount(row: string): number { return tableCells(row).length; }
 
 /** True when every divider cell is hyphens, with optional colons. */
 function isDividerRow(row: string): boolean {
@@ -245,6 +247,8 @@ function startsBlock(line: string): boolean {
 interface Container {
   kind: "quote" | "item";
   unordered?: boolean;
+  listId?: number;
+  marker?: string;
   /** For an item, the column its content starts at. */
   column: number;
 }
@@ -267,6 +271,8 @@ interface Parsed {
   navigationLines: Set<number>;
   rootHeadingLines: Set<number>;
   items: Array<{ line: number; depth: number }>;
+  blocks: Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
+  tableRows: Map<number, string[]>;
 }
 
 export function normaliseReference(label: string): string {
@@ -344,7 +350,7 @@ function startsAnyBlock(text: string): boolean {
     || LIST_MARKER.test(text);
 }
 
-function parse(lines: string[], reading: Reading = {}): Parsed {
+function parse(lines: string[], reading: Reading = {}, structural = false): Parsed {
   const paragraphs: ProseBlock[] = [];
   const found: Heading[] = [];
   const hidden = new Set<number>();
@@ -357,6 +363,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const navigationLines = new Set<number>();
   const rootHeadingLines = new Set<number>();
   const items: Array<{ line: number; depth: number }> = [];
+  const blocks = new Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>();
+  const tableRows = new Map<number, string[]>();
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -365,6 +373,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
+  let rawCode: { closing: RegExp; depth: number } | null = null;
 
   const closeParagraph = (): void => {
     paragraph = null;
@@ -384,6 +393,17 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
     let text = rest;
+
+    if (rawCode !== null) {
+      if (matched < rawCode.depth) rawCode = null;
+      else {
+        if (rawCode.closing.test(text)) rawCode = null;
+        readable[i] = "";
+        markup[i] = "";
+        closeParagraph();
+        continue;
+      }
+    }
 
     if (invisible !== null) {
       if (matched < invisible.depth) {
@@ -440,6 +460,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // about the paragraph a reader sees never arrived.
     const lazy = !allMatched && paragraph !== null && !startsAnyBlock(rest);
     let openedQuote = false;
+    const previousItem = stack[matched];
     if (!lazy) {
       if (!allMatched) {
         closeParagraph();
@@ -467,7 +488,9 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
           const unordered = /^ {0,3}[-*+]/.test(consumed);
-          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered });
+          const family = consumed.trim().replace(/\d+/g, "");
+          const listId = stack.length === matched && previousItem?.kind === "item" && previousItem.marker === family ? previousItem.listId : i;
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered, listId, marker: family });
           if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.unordered).length });
           continue;
         }
@@ -497,6 +520,16 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       // Invisible markup interrupts a paragraph, so the halves stay separate.
       closeParagraph();
       if (text.trim() === "") continue;
+    }
+    // Structural rules exclude raw HTML code specimens. The calibrated reading stays unchanged.
+    const rawOpen = structural ? /^ {0,3}<(pre|script|style|textarea)(?=[\s>])/i.exec(text) : null;
+    if (rawOpen !== null) {
+      const closing = new RegExp(`</${rawOpen[1]}\\s*>`, "i");
+      if (!closing.test(text)) rawCode = { closing, depth: stack.length };
+      readable[i] = "";
+      markup[i] = "";
+      closeParagraph();
+      continue;
     }
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
@@ -551,6 +584,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         setext: true,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
+      for (let row = paragraph.line - 1; row < i; row++) blocks.delete(row);
       closeParagraph();
       continue;
     }
@@ -585,6 +619,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       markup[i + 1] = divider;
       tables.add(i);
       tables.add(i + 1);
+      blocks.set(i, { id: i, kind: "table", data: false });
+      blocks.set(i + 1, { id: i, kind: "table", data: false });
       let row = i + 2;
       for (; row < lines.length; row++) {
         const content = nextContent(lines, row - 1, stack);
@@ -592,6 +628,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         readable[row] = content;
         markup[row] = content;
         tables.add(row);
+        blocks.set(row, { id: i, kind: "table", data: true });
+        tableRows.set(row, tableCells(content.trim()));
         if (stack.length === 0) rootLines.add(row);
         if (!stack.some(container => container.kind === "quote")) navigationLines.add(row);
       }
@@ -608,6 +646,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     }
     if (stack.length === 0) rootLines.add(i);
     if (!stack.some(container => container.kind === "quote")) navigationLines.add(i);
+    const list = stack.find(container => container.kind === "item");
+    blocks.set(i, { id: list?.listId ?? paragraph.line - 1, kind: list === undefined ? "paragraph" : "list", data: true });
     paragraph.lines.push(text.trimStart());
   }
 
@@ -625,7 +665,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
 }
 
 /** Structural metadata is separate so existing calibrated text remains unchanged. */
@@ -634,10 +674,12 @@ export function structure(text: string, reading: Reading = {}): {
   rootLines: ReadonlySet<number>; destinations: ReadonlyMap<string, string>;
   navigationLines: ReadonlySet<number>;
   items: Array<{ line: number; depth: number }>;
+  blocks: ReadonlyMap<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
+  tableRows: ReadonlyMap<number, string[]>;
 } {
-  const parsed = parse(toLines(text), reading);
+  const parsed = parse(toLines(text), reading, true);
   return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
-    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items };
+    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows };
 }
 
 /** Inline text for structural wording comparison, without altering calibrated extraction. */
@@ -1223,7 +1265,7 @@ let spanCacheEnds: Map<number, number> | null = null;
  * Once a span is open the search for its closer ignores backslashes, which is why an
  * escaped run is collected here rather than discarded: it can still close.
  */
-function codeSpanEnds(text: string): Map<number, number> {
+export function codeSpanEnds(text: string): Map<number, number> {
   if (spanCacheText === text && spanCacheEnds !== null) return spanCacheEnds;
   const runs: Array<{ start: number; length: number; escaped: boolean }> = [];
   // Counted forward rather than looked up behind each run, because a long backslash

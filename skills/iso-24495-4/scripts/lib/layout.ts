@@ -1,6 +1,6 @@
-import { inlineText, markdownLinks, normaliseReference, structure, type Heading, type Reading } from "./parse.ts";
+import { markdownLinks, normaliseReference, structure, type Heading, type Reading } from "./parse.ts";
 import type { Violation } from "./types.ts";
-import entities from "./html-entities.json";
+import { renderInline } from "./inline-wording.ts";
 
 const SECTION_LIMIT = 6;
 const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
@@ -18,9 +18,9 @@ export function layoutViolations(text: string, reading: Reading = {}): Violation
   const start = title?.line ?? 1;
   const opening = parsed.lines.slice(start - 1, end - 1);
   const titleSuffix = title === undefined ? undefined : /\(([^()]*)\)\s*$/.exec(normaliseWording(title.text))?.[1];
-  const fields = opening.flatMap(line => {
+  const fields = opening.flatMap((line, offset) => {
     const normal = normaliseWording(line);
-    const cells = normal.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(cell => cell.trim());
+    const cells = parsed.tableRows.get(start - 1 + offset)?.map(normaliseWording) ?? [];
     return [normal, ...(cells.length >= 2 ? [`${cells[0].replace(/:$/, "")} ${cells[1]}`] : []), ...markdownLinks(line).filter(link => link.image).map(link => normaliseWording(link.label))];
   });
   if (!fields.some(isDocumentField) && !isDocumentField(titleSuffix ?? "")) findings.push({ rule: "opening-version-date", line: start, detail: "Add a document-labelled version or valid date in the opening." });
@@ -36,13 +36,7 @@ export function layoutViolations(text: string, reading: Reading = {}): Violation
 
 /** Render inline wording for comparison while retaining case, punctuation and numbering. */
 export function normaliseWording(text: string): string {
-  const rendered = inlineText(text).replace(/(`+)(.*?)\1/g, "$2").replace(/(\*{1,3}|_{1,3})(\S(?:.*?\S)?)\1/g, "$2")
-    .replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~])/g, "$1");
-  return rendered.replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z][a-z0-9]+);/gi, (whole, name: string) => {
-    if (!name.startsWith("#")) return (entities as Record<string, string>)[`${name};`] ?? whole;
-    const point = name[1].toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
-    return point === 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) ? "\ufffd" : String.fromCodePoint(point);
-  }).replace(/\s+/g, " ").trim();
+  return renderInline(text).replace(/\s+/g, " ").trim();
 }
 
 export function headingIds(wordings: readonly string[]): string[] {
@@ -97,10 +91,24 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
   }
   const findings: Violation[] = [];
   let labelledEntries = false;
-  const openingLinks: Array<{ line: number; label: string; heading?: Heading }> = [];
+  const openingLinks: Array<{ line: number; label: string; heading?: Heading; block: number }> = [];
+  const navigationParagraphs = new Map<number, boolean>();
+  for (const [index, block] of parsed.blocks) if (block.kind === "paragraph") {
+    const source = parsed.markupLines[index];
+    const links = markdownLinks(source).filter(link => !link.image && link.rendered);
+    let residual = source;
+    for (const link of [...links].reverse()) {
+      residual = residual.slice(0, link.start) + residual.slice(link.end);
+    }
+    const navigation = /^[\s,;|/]*$/.test(residual);
+    navigationParagraphs.set(block.id, (navigationParagraphs.get(block.id) ?? true) && navigation);
+  }
   for (let index = 0; index < parsed.markupLines.length; index++) {
     const line = parsed.markupLines[index];
-    if (labelled.has(index) && !parsed.allHeadings.some(heading => heading.line === index + 1) && normaliseWording(line).replace(/[|\s:-]/g, "") !== "") labelledEntries = true;
+    const block = parsed.blocks.get(index);
+    if (block === undefined || !block.data || !parsed.navigationLines.has(index)) continue;
+    if (block.kind === "paragraph" && !navigationParagraphs.get(block.id)) continue;
+    if (labelled.has(index) && block.kind !== "paragraph" && normaliseWording(line).replace(/[|\s:-]/g, "") !== "") labelledEntries = true;
     for (const link of markdownLinks(line).filter(link => !link.image && link.rendered)) {
       const destination = link.kind === "inline" ? link.target.trim().replace(/^<|>$/g, "") : parsed.destinations.get(normaliseReference(link.target || link.label));
       if (destination === undefined || !destination.startsWith("#")) continue;
@@ -108,16 +116,15 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
       try { fragment = decodeURIComponent(destination.slice(1)); } catch { continue; }
       const heading = targets.get(fragment);
       if (labelled.has(index)) {
+        labelledEntries = true;
         if (heading?.level === 2 && sections.includes(heading) && normaliseWording(link.label) !== normaliseWording(heading.text)) findings.push({ rule: "contents-list", line: index + 1, detail: "Use the target section's exact wording in this contents link." });
-      } else if (index < openingEnd - 1 && parsed.navigationLines.has(index)) openingLinks.push({ line: index + 1, label: link.label, heading });
+      } else if (index < openingEnd - 1) openingLinks.push({ line: index + 1, label: link.label, heading, block: block.id });
     }
   }
-  // Unlabelled navigation needs two links in one opening block, not scattered links.
+  // Loose list items share a parser block even where blank lines separate them.
   const groups = new Map<number, typeof openingLinks>();
   for (const link of openingLinks) {
-    let start = link.line - 1;
-    while (start > 0 && parsed.markupLines[start - 1].trim() !== "") start--;
-    groups.set(start, [...(groups.get(start) ?? []), link]);
+    groups.set(link.block, [...(groups.get(link.block) ?? []), link]);
   }
   const navigation = [...groups.values()].filter(group => group.length >= 2).flat();
   for (const link of navigation) if (link.heading?.level === 2 && sections.includes(link.heading) && normaliseWording(link.label) !== normaliseWording(link.heading.text)) findings.push({ rule: "contents-list", line: link.line, detail: "Use the target section's exact wording in this navigation link." });
