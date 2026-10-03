@@ -274,7 +274,7 @@ describe("runCli", () => {
       )).toBe(0);
       expect(output.stdout.join("\n")).toContain("| policy.md | 1 | legalese |");
       expect(output.stderr).toEqual([]);
-      expect(JSON.parse(readFileSync(json, "utf8")).totals).toEqual({ legalese: 1, "opening-version-date": 1 });
+      expect(JSON.parse(readFileSync(json, "utf8")).totals).toEqual({ legalese: 1 });
     } finally {
       rmSync(project, { recursive: true, force: true });
     }

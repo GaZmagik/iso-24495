@@ -1537,11 +1537,11 @@ describe("repository writing conventions", () => {
         // A bare exit code leaves the author nothing to act on, so the findings
         // themselves have to reach the log.
         expect(result.output, "the log must name the rule").toContain("sentence-length");
-        expect(result.output).toContain("The audit reported 2 findings. They are advice");
+        expect(result.output).toContain("The audit reported 1 finding. It is advice");
         expect(result.output).toContain(PASS_MEANING);
         const two = audit(`${"word ".repeat(40)}stop.\n\nWe shall pay.\n`);
         expect(two.status, two.output).toBe(0);
-        expect(two.output).toContain("The audit reported 3 findings. They are advice");
+        expect(two.output).toContain("The audit reported 2 findings. They are advice");
       });
 
       // A byte count called a description of spaces and newlines text, while a

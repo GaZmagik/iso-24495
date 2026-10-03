@@ -30,7 +30,7 @@ export interface Heading {
 /** How a document is read, where the place it is shown decides. */
 export interface Reading {
   /**
-   * Whether a leading "---" block is front matter, which is metadata no rule reads.
+   * Whether a leading "---" block is front matter, excluded from prose checks.
    * A file in a repository may carry it, so that is the default. A pull request
    * description cannot, and GitHub shows the block as a rule and a heading, so the
    * check that reads a description passes false and the block is read as text.
@@ -44,7 +44,7 @@ export interface Document {
   markupLines: string[];
   /** Normalised reference labels that have valid definitions. */
   references: ReadonlySet<string>;
-  /** True when the line is metadata or fenced code, which no rule reads. */
+  /** True when the line is metadata or fenced code, excluded from prose checks. */
   hidden: (index: number) => boolean;
 }
 

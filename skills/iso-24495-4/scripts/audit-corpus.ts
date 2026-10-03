@@ -41,7 +41,7 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymMaximumLetters: 6,
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
-  layoutRecognitionVersion: 2,
+  layoutRecognitionVersion: 3,
   contentsMinimumSections: 6,
   maximumUnorderedDepth: 2,
 });
@@ -951,6 +951,8 @@ export function projectAcronyms(directory: string): ReadonlySet<string> {
 }
 
 export interface AuditOptions extends Reading {
+  /** The selected file name supplies document-specific scope exemptions. */
+  fileName?: string;
   /** Extra acronyms this project treats as known. */
   knownAcronyms?: ReadonlySet<string>;
   /** File-aware callers enable structural rules for Markdown rather than plain text. */
@@ -1082,7 +1084,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
-  if (options.markdown) violations.push(...layoutViolations(text, reading));
+  if (options.markdown) violations.push(...layoutViolations(text, { ...reading, fileName: options.fileName }));
   return violations;
 }
 
@@ -1163,7 +1165,7 @@ export function auditCorpus(
       onSkip?.(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms, markdown: /\.(?:md|markdown)$/i.test(path) });
+    const violations = auditText(text, { knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
     findings.files[key] = { violations };
     for (const v of violations) {
       findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;

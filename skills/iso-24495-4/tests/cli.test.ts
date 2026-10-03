@@ -135,8 +135,8 @@ describe("audit-corpus runCli", () => {
       const output = capture();
       expect(runCorpusCli(["bun", "audit-corpus-cli.ts", temp], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(temp, "dangling")}`]);
-      expect(output.stdout.at(-1)).toBe("\nTotal: 1 across 1 files.");
-      expect(output.stdout.join("\n")).toContain("| opening-version-date | 1 |");
+      expect(output.stdout.at(-1)).toBe("\nTotal: 0 across 1 files.");
+      expect(output.stdout.join("\n")).not.toContain("opening-version-date");
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }

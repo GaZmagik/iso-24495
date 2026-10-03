@@ -1,10 +1,65 @@
 import { describe, expect, test } from "bun:test";
 import { layoutViolations, normaliseWording, headingIds } from "../../scripts/lib/layout.ts";
 import { structure } from "../../scripts/lib/parse.ts";
+import { auditCorpus, auditText } from "../../scripts/audit-corpus.ts";
+import { selectDocuments } from "../../scripts/lib/jev/audit.ts";
+import { auditTarget } from "../../../iso-24495-text-audit/scripts/audit-text.ts";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## Section ${index + 1}\n\nText.\n`).join("\n");
 const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
 describe("layout rules", () => {
+  const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
+  test("A6 skips untitled documents", () => {
+    for (const text of ["Text only.", "## Section\n\nText.", "> # Quoted title\n\nText.", "- # List title\n\nText."]) expect(layoutViolations(text)).toEqual([]);
+  });
+  for (const base of ["README", "CONTRIBUTING", "SECURITY"]) {
+    for (const name of [base, base.toLowerCase(), `${base}.markdown`, `${base.toLowerCase()}.MARKDOWN`]) {
+      test(`A6 exempts file name ${name}`, () => {
+        expect(layoutViolations("# Title\n\nText.", { fileName: `D:\\docs\\${name}` })).toEqual([]);
+      });
+    }
+  }
+  test("A6 exempts titled pull request text without front matter", () => {
+    expect(layoutViolations("# Title\n\nText.", { frontMatter: false })).toEqual([]);
+    expect(auditText("# Title\n\nText.", { markdown: true, frontMatter: false })).toEqual([]);
+  });
+  for (const [key, value] of [["version", '"0.8.0"'], ["date", "2026-10-03"], ["updated", "Q4 2026"], ["last_updated", "3 October 2026"]]) {
+    test(`A6 recognises top-level front matter ${key}`, () => {
+      expect(layoutViolations(`---\n${key}: ${value}\n---\n# Title\n\nText.`)).toEqual([]);
+    });
+  }
+  test("A6 preserves recognised unquoted numeric version spelling", () => {
+    for (const metadata of ["version: 2.0", '"version": 2.0 # Current edition', "date: 2.0", "version: 2.00"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([]);
+  });
+  test("A6 rejects numeric YAML spellings outside recognised forms", () => {
+    for (const metadata of ["version: 1e-2", "version: 0x10", "version: 2"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: 4 }]);
+  });
+  test("A6 keeps unrecognised and nested front matter advisory", () => {
+    for (const metadata of ["version: next release", "version: 1", "date: 2026-02-30", "updated: null", "last_updated: [2026-10-03]", "edition:\n  version: 0.8.0", "title: Example", "version: [broken", "# Metadata comment", "- 2026-10-03"]) {
+      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.includes("\n") ? 5 : 4 }]);
+    }
+  });
+  test("A6 retains a neutral finding for titled ordinary documents", () => {
+    expect(layoutViolations("# Title\n\nText.", { fileName: "policy.md" })).toEqual([editionFinding]);
+    expect(layoutViolations("# Title\n\nText.", { fileName: "README-copy.md" })).toEqual([editionFinding]);
+    expect(auditText(editionFinding.detail)).toEqual([]);
+  });
+  for (const route of ["corpus", "text", "jev-preview"]) {
+    test(`A6 file-name scope reaches the ${route} route`, () => {
+      const directory = mkdtempSync(join(tmpdir(), "iso-a6-scope-"));
+      try {
+        for (const name of ["readme.md", "CONTRIBUTING.markdown", "SECURITY.md", "policy.md"]) {
+          writeFileSync(join(directory, name), "# Title\n\nText.");
+        }
+        const findings = route === "corpus" ? auditCorpus(directory) : route === "text" ? auditTarget(directory, directory) : selectDocuments(directory, directory, "text").mechanical;
+        expect(findings.totals["opening-version-date"]).toBe(1);
+        expect(Object.keys(findings.files).filter(name => findings.files[name].violations.some(finding => finding.rule === "opening-version-date"))).toEqual(["policy.md"]);
+      } finally { rmSync(directory, { recursive: true, force: true }); }
+    });
+  }
   test("review 1: contents entries follow Markdown blocks rather than blank lines", () => {
     const opening = "# Title\n\nVersion 1.0\n\n";
     expect(rules(opening + "- [Section 1](#section-1)\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual([]);
@@ -66,7 +121,7 @@ describe("layout rules", () => {
     expect(rules("# Title (Version: 2.1)\n")).toEqual([]);
     for (const field of ["v2.1", "Requires v2.1", "Updated targets for Q3 2026", "Reviewed the policy in March 2026", "Version 2.1 is required", "Date 2023-02-29", "Date 2026-13-01", "Date 13/2026", "Date 13/13/2026", "Date Q5 2026", "Date 2026-04-31", "Date 00/2026", "Version 2", "Date 3 Smarch 2026", "![Updated targets for Q3 2026](badge.svg)"])
       expect(rules("# Title\n\n" + field + "\n"), field).toEqual(["opening-version-date"]);
-    expect(rules("---\nversion: 2.1\n---\n# Title\n\n## Footer\n\nDate 2026-10-03\n")).toEqual(["opening-version-date"]);
+    expect(rules("---\nversion: 2.1\n---\n# Title\n\n## Footer\n\nDate 2026-10-03\n")).toEqual([]);
   });
   test("counts unordered ancestry alone, including task items and mixed containers", () => {
     const text = "# Title\n\nVersion 1.0\n\n- One\n  1. Ordered\n     - Two\n       > - [x] Three\n\n- Next\n\n```\n- one\n  - two\n    - three\n```\n";

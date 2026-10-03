@@ -1,4 +1,4 @@
-import { markdownLinks, normaliseReference, structure, type Heading, type Reading } from "./parse.ts";
+import { frontMatterRange, markdownLinks, normaliseReference, structure, toLines, type Heading, type Reading } from "./parse.ts";
 import type { Violation } from "./types.ts";
 import { renderInline } from "./inline-wording.ts";
 
@@ -8,8 +8,9 @@ const OVERVIEW_LABEL = /^(?:overview|summary)$/i;
 const VERSION = /^(?:Version|Revision)\s*:?\s*v?\d+(?:\.\d+)+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
 const DATE_FIELD = /^(?:Date|Updated|Last updated|Reviewed)\s*:?\s*(.+)$/i;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+export interface LayoutOptions extends Reading { fileName?: string }
 
-export function layoutViolations(text: string, reading: Reading = {}): Violation[] {
+export function layoutViolations(text: string, reading: LayoutOptions = {}): Violation[] {
   const parsed = structure(text, reading);
   const findings: Violation[] = [];
   const title = parsed.headings.find(heading => heading.level === 1);
@@ -23,7 +24,12 @@ export function layoutViolations(text: string, reading: Reading = {}): Violation
     const cells = parsed.tableRows.get(start - 1 + offset)?.map(normaliseWording) ?? [];
     return [normal, ...(cells.length >= 2 ? [`${cells[0].replace(/:$/, "")} ${cells[1]}`] : []), ...markdownLinks(line).filter(link => link.image).map(link => normaliseWording(link.label))];
   });
-  if (!fields.some(isDocumentField) && !isDocumentField(titleSuffix ?? "")) findings.push({ rule: "opening-version-date", line: start, detail: "Add a document-labelled version or valid date in the opening." });
+  const fileName = reading.fileName?.split(/[\\/]/).at(-1) ?? "";
+  const exempt = /^(?:README|CONTRIBUTING|SECURITY)(?:\..*)?$/i.test(fileName);
+  if (title !== undefined && !exempt && reading.frontMatter !== false && !recognisedFrontMatter(text)
+    && !fields.some(isDocumentField) && !isDocumentField(titleSuffix ?? "")) {
+    findings.push({ rule: "opening-version-date", line: start, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" });
+  }
   for (const item of parsed.items) if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
   const sections = parsed.headings.filter(heading => heading.level === 2);
   if (sections.length < SECTION_LIMIT) return findings;
@@ -52,6 +58,25 @@ export function headingIds(wordings: readonly string[]): string[] {
 }
 
 function label(text: string): string { return normaliseWording(text).replace(/^\d+(?:\.\d+)*\.?\s+/, ""); }
+function recognisedFrontMatter(text: string): boolean {
+  const lines = toLines(text);
+  const range = frontMatterRange(lines);
+  if (range === null) return false;
+  let metadata: unknown;
+  try { metadata = Bun.YAML.parse(lines.slice(1, range.end).join("\n")); } catch { return false; }
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
+  // YAML numbers lose trailing zeroes; edition recognition needs their source spelling.
+  const scalars = new Map<string, string>();
+  for (const line of lines.slice(1, range.end)) {
+    const field = /^(?:["']?(version|date|updated|last_updated)["']?)\s*:\s*(\S+)(?:[ \t]+#.*)?[ \t]*$/i.exec(line);
+    if (field !== null) scalars.set(field[1].toLowerCase(), field[2]);
+  }
+  return Object.entries(metadata).some(([key, value]) => {
+    if (!/^(?:version|date|updated|last_updated)$/i.test(key) || (typeof value !== "string" && typeof value !== "number")) return false;
+    const spelling = typeof value === "number" ? scalars.get(key.toLowerCase()) ?? "" : value;
+    return VERSION.test(`Version ${spelling}`) || validDate(spelling);
+  });
+}
 function isDocumentField(text: string): boolean {
   if (VERSION.test(text)) return true;
   const date = DATE_FIELD.exec(text);

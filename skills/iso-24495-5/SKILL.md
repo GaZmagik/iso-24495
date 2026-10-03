@@ -119,10 +119,14 @@ Its six-section trigger counts root H2 headings, including Contents, and ignores
 Contents may cover part of the document in a different order, using lists, paragraphs, tables or resolved reference links.
 Wording mismatches are checked only at six sections, against resolved H2 targets.
 
-Version or date must appear as a document field in the visible opening.
+The version or date proxy asks whether a titled document needs edition metadata when none is recognised.
 Standalone lines, metadata table rows, final parenthesised title suffixes and accessible badge text qualify.
+Recognised values in top-level front-matter keys `version`, `date`, `updated` and `last_updated` also qualify.
 Badge images are never fetched, so hard-coded alternative text can be out of date.
-External versioning remains an advisory false-positive risk.
+
+Untitled documents and text audited with `--no-front-matter` are exempt from this proxy.
+Files named `readme`, `contributing` or `security` are exempt, regardless of case or extension.
+The advisory asks readers' needs rather than requiring authors to add metadata.
 
 Bullet depth counts unordered ancestry alone, including task items; ordered and quote containers add no depth.
 An Overview or Summary heading may use any level outside lists or quotations, but must precede the first content H2.

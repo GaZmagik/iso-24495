@@ -29,11 +29,12 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 Four additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
 These recognition choices are project proxies and remain unmeasured on a corpus.
-Raw HTML structure, code, comments and front matter are excluded.
+Raw HTML structure, code and comments are excluded.
+Front matter is excluded from prose checks, but recognised edition metadata can satisfy the version or date rule.
 
 - **Contents list:** At six root H2 sections, require labelled contents or opening navigation containing two same-document fragment links in one block.
 - **Wording comparison:** At six sections, resolved contents links must use the target H2 wording, preserving case, punctuation and numbering.
-- **Version or date:** Require a document field in the visible opening, rather than a date or version mentioned inside a sentence.
+- **Version or date:** Ask whether a titled document needs edition metadata when none is recognised in its opening or front matter.
 - **Bullet depth:** Report unordered items beyond two unordered ancestors, counting the item itself and ignoring ordered or quote containers.
 - **Overview label:** At six root H2 sections, require an Overview or Summary heading before the first content H2, at any heading level outside lists and quotations.
 
@@ -67,9 +68,17 @@ Labels are case-insensitive.
 
 A document field is a standalone line, a metadata table row with the label first, a final parenthesised title suffix, or badge alternative text.
 Metadata rows require a parsed table; pipe-separated prose does not qualify.
-Bare v2.1, product requirements, front-matter-only metadata and footer-only dates do not qualify.
+
+Top-level front-matter keys `version`, `date`, `updated` and `last_updated` also qualify when their values match the recognised version or date forms.
+Nested keys and unrecognised values do not qualify.
+Bare v2.1, product requirements and footer-only dates do not qualify.
 Badge images are never fetched, and hard-coded alternative text can be out of date.
-Externally versioned documents can receive an advisory false positive.
+
+The rule applies only to documents with a root H1 title.
+Files named `readme`, `contributing` or `security` are exempt, regardless of case or extension.
+Text audited with `--no-front-matter`, including pull request descriptions, is exempt.
+The advisory asks whether readers need a version or date to identify the edition or judge how current it is.
+It does not require authors to add one.
 
 The overview label ignores case, inline formatting and a leading decimal section number.
 Bold prose and contents entries do not qualify.
@@ -88,7 +97,7 @@ The separate need for a conclusion before detail is not detected mechanically, a
 bun <skill-directory>/scripts/audit-text-cli.ts <file-or-directory> --project-dir <project-directory>
 ```
 
-   Add `--no-front-matter` for text that cannot carry metadata, such as a pull request description. A leading `---` block is then read as text, not set aside as front matter.
+   Add `--no-front-matter` for text that cannot carry metadata, such as a pull request description. A leading `---` block is then read as text, not set aside as front matter. The version or date rule is also disabled.
 
 7. Report every finding with its file, line, rule, and explanation.
 8. Report skipped or unreadable entries. Never treat an incomplete audit as clean.

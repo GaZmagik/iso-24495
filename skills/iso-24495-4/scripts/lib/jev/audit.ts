@@ -103,7 +103,7 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
     selection.paths.push(path);
     const markdown = /\.(?:md|markdown)$/i.test(path);
     if (mode === "text") {
-      const violations = auditText(text, { knownAcronyms, frontMatter, markdown });
+      const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter, markdown });
       selection.mechanical.files[file] = { violations };
       for (const finding of violations) selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
     }

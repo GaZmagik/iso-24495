@@ -152,10 +152,15 @@ The `prose-enumeration` rule flags three or more distinct ranks in a prose block
 
 The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
 
-A leading `---` block is front matter, which the audit sets aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
+A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-Four Markdown layout rules add contents navigation, an opening version/date field, unordered bullet depth and an overview before detail.
+Four Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail.
 Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus.
+
+The edition advisory applies only to titled documents and asks whether readers need a version or date.
+Files named `readme`, `contributing` or `security` are exempt, regardless of case or extension, as is text audited with `--no-front-matter`.
+Recognised values in top-level front-matter keys `version`, `date`, `updated` and `last_updated` satisfy it, alongside recognised opening document fields.
+
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
 The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
