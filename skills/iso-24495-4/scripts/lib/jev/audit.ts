@@ -28,11 +28,11 @@ export interface JevReport { complete: boolean; limitation: string; results: Jud
 export async function runAuditCli(mode: "text" | "design", argv: string[], stdout: (text: string) => void, stderr: (text: string) => void, dependencies: AuditDependencies = {}): Promise<number> {
   let args: Arguments;
   try { args = readArguments(mode, argv); } catch { stderr("Invalid audit arguments. Use --jev-preview or --jev --send for text; use --send for design. Non-interactive sending also requires --yes. Full judged text requires --include-judged-text and --json <file>."); return 2; }
+  try { (dependencies.client?.validate ?? validateCalibration)(); } catch { stderr("Calibration integrity failed. Nothing was sent."); return 3; }
   let selection: Selection;
   try { selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter); } catch { stderr("The selected path could not be read or is not a supported document."); return 1; }
   for (const path of selection.skipped) stderr(`warning: skipped unreadable entry: ${safeText(path)}`);
   if (mode === "text") stdout(formatMechanical(selection.mechanical));
-  try { (dependencies.client?.validate ?? validateCalibration)(); } catch { stderr("Calibration integrity failed. Nothing was sent."); return 3; }
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
     try { if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true }, null, 2)); } catch { stderr("The preview report could not be written."); return 1; }
@@ -74,7 +74,8 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   await Promise.all(Array.from({ length: 4 }, worker));
   report.results.sort((first, second) => selection.documents.findIndex(document => document.file === first.file) - selection.documents.findIndex(document => document.file === second.file) || first.line - second.line || first.id.localeCompare(second.id));
   if (failed) { report.complete = false; report.results = []; }
-  fillCoverage(report, selection);
+  fillCoverage(report);
+  report.results = report.results.filter(result => result.band !== "pass");
   try {
     const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: !failed };
     (dependencies.writeLog ?? writeAuditLog)(record, join(args.projectDir, ".iso-24495-4", "jev-audit.jsonl"));
@@ -106,7 +107,7 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
       selection.mechanical.files[file] = { violations };
       for (const finding of violations) selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
     }
-    if (markdown) selection.documents.push({ file, path, plan: planDocument(text) });
+    selection.documents.push({ file, path, plan: markdown ? planDocument(text) : { candidates: [], findings: [] } });
   }
   return selection;
 }
@@ -152,7 +153,7 @@ function emptyReport(selection: Selection, complete: boolean): JevReport {
   return { complete, limitation: LIMITATION, results: [], localFindings: selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding }))),
     coverage: selection.documents.map(document => ({ file: document.file, eligibleOpenings: document.plan.candidates.filter(candidate => candidate.kind === "opening").length, eligibleBlocks: document.plan.candidates.filter(candidate => candidate.kind === "block").length, checks: { purpose: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: 1 }, colour: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: document.plan.candidates.filter(candidate => candidate.kind === "block").length } } })) };
 }
-function fillCoverage(report: JevReport, selection: Selection): void {
+function fillCoverage(report: JevReport): void {
   for (const coverage of report.coverage) {
     for (const [check, rule] of [["purpose", "opening-purpose"], ["colour", "colour-only"]] as const) {
       const results = report.results.filter(result => result.file === coverage.file && result.rule === rule);

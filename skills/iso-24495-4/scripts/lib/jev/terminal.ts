@@ -14,7 +14,15 @@ export function controllingTerminal(
     const input = openInput(process.platform === "win32" ? "CONIN$" : "/dev/tty");
     const output = openOutput(process.platform === "win32" ? "CONOUT$" : "/dev/tty");
     const terminal = createInterface({ input, output });
-    try { return await terminal.question("Type yes to send this disclosed snapshot: "); }
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        input.once("error", reject);
+        output.once("error", reject);
+        terminal.once("error", reject);
+        terminal.once("close", () => reject(new Error("The controlling terminal closed without agreement.")));
+        terminal.question("Type yes to send this disclosed snapshot: ").then(resolve, reject);
+      });
+    }
     finally { terminal.close(); input.destroy(); output.destroy(); }
   } };
 }

@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, type AuditDependencies } from "../../../scripts/lib/jev/audit.ts";
 import { MODEL } from "../../../scripts/lib/jev/catalogue.ts";
+import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
+import { runCli as runDesignCli } from "../../../../iso-24495-design-audit/scripts/design-audit.ts";
 
 test("preview is offline; send alone is not consent; explicit terminal agreement sends a frozen plan", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-audit-"));
@@ -29,6 +31,7 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     expect(await run("design", ["--send", "--yes", "--json", join(directory, "report.json")])).toBe(0);
     const report = JSON.parse(readFileSync(join(directory, "report.json"), "utf8"));
     expect(report.jev.coverage[0].checks.colour.pass).toBe(2);
+    expect(report.jev.results.some(result => result.band === "pass")).toBe(false);
     expect(report.jev.results[0].state).toBeUndefined();
     expect(report.jev.results[0].stateHash).toBeDefined();
     const before = sent;
@@ -40,6 +43,31 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     dependencies.terminal.prompt = async () => { writeFileSync(file, "# Changed\n\nText."); return "yes"; };
     expect(await run("design", ["--send"])).toBe(2);
     expect(sent).toBe(before);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("both wrappers share offline preview and selection warnings", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-selection-"));
+  try {
+    const docs = join(directory, "docs");
+    mkdirSync(docs);
+    writeFileSync(join(docs, "one.md"), "# One\n\nVersion 1.0\n\nWords.");
+    writeFileSync(join(docs, "two.md"), "# Two\n\nWords.");
+    writeFileSync(join(docs, "plain.txt"), "Words.");
+    const link = join(docs, "link");
+    symlinkSync(directory, link, "junction");
+    const selected = selectDocuments(docs, directory);
+    expect(selected.documents).toHaveLength(2);
+    expect(selected.skipped).toEqual([link]);
+    expect(selectDocuments(link, directory).paths).toEqual([]);
+    const blocked = join(docs, "two.md");
+    expect(selectDocuments(docs, directory, "text", (path, encoding) => { if (path === blocked) throw new Error(); return readFileSync(path, encoding); }).skipped).toEqual([link, blocked]);
+    const output: string[] = [];
+    const deps: AuditDependencies = { read: (path, encoding) => { if (path === blocked) throw new Error(); return readFileSync(path, encoding); } };
+    expect(await runTextCli(["bun", "cli", docs, "--jev-preview", "--project-dir", directory], text => output.push(text), text => output.push(text), deps)).toBe(0);
+    expect(output.join("\n")).toContain("skipped unreadable entry");
+    expect(await runDesignCli(["bun", "cli", docs, "--project-dir", directory], text => output.push(text), text => output.push(text), deps)).toBe(0);
+    expect(formatPlan(selected)).toContain("two.md");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -80,7 +108,7 @@ test("argument conflicts and local failures are classified without transmission"
     expect(await runAuditCli("design", ["bun", "cli", join(directory, "missing.md")], () => {}, () => {}, dependencies)).toBe(1);
     const textFile = join(directory, "note.txt");
     writeFileSync(textFile, "The supplier shall act.");
-    expect(selectDocuments(textFile, directory, "text").documents).toHaveLength(0);
+    expect(selectDocuments(textFile, directory, "text").documents[0].plan.candidates).toHaveLength(0);
     expect(() => selectDocuments(textFile, directory)).toThrow("Unsupported");
     expect(safeText("ab\u001b\u202ecd\n")).toBe("ab cd");
     expect(formatPlan(selectDocuments(directory, directory, "text"))).toContain("Selected");
@@ -99,6 +127,7 @@ test("complete exports, local title findings, unsure decisions and log failures 
     const reportFile = join(directory, "report.json");
     expect(await run(["--jev", "--send", "--yes", "--json", reportFile, "--include-judged-text"])).toBe(0);
     const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    expect(report.jev.results[0].state).toBeDefined();
     expect(report.jev.results[0].state.opening).toContain("Title");
     expect(report.jev.results[0].band).toBe("unsure");
     expect(report.mechanical.files["doc.md"]).toBeDefined();

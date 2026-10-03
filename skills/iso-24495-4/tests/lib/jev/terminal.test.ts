@@ -14,4 +14,11 @@ test("the prompt reads the controlling terminal and preserves exact agreement", 
   expect(input.destroyed).toBe(true);
   expect(output.destroyed).toBe(true);
   expect(controllingTerminal(false, false).inputIsTTY).toBe(false);
+  const brokenInput = new PassThrough();
+  const brokenOutput = new PassThrough();
+  const unavailable = controllingTerminal(true, true, () => brokenInput, () => brokenOutput).prompt();
+  brokenInput.emit("error", new Error("Unavailable terminal"));
+  await expect(unavailable).rejects.toThrow("Unavailable terminal");
+  expect(brokenInput.destroyed).toBe(true);
+  expect(brokenOutput.destroyed).toBe(true);
 });

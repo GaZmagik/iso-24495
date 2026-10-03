@@ -13,11 +13,12 @@ describe("layout rules", () => {
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- [Wrong](#section-1)\n\n### Overview\n\n" + sections(5))).toEqual(["contents-list"]);
   });
   test("recognises partial, paragraph, table, opening and reference navigation", () => {
-    for (const navigation of ["## Contents\n\n- Section 1\n", "## Table of contents\n\n[Section 1](#section-1)\n", "## TOC\n\n| Links |\n|---|\n| [Section 1](#section-1) |\n", "## Key sections\n\n[Section 1][one]\n\n[one]: #section-1\n", "[Section 1](#section-1) [Section 2](#section-2)\n"]) {
+    for (const navigation of ["## Contents\n\n- Section 1\n", "## Table of contents\n\n[Section 1](#section-1)\n", "## TOC\n\n| Links |\n|---|\n| [Section 1](#section-1) |\n", "## Key sections\n\n[Section 1][one]\n\n[one]: #section-1\n", "[Section 1](#section-1) [Section 2](#section-2)\n", "- [Section 1](#section-1)\n- [Section 2](#section-2)\n"]) {
       expect(rules("# Title\n\nVersion 1.0\n\n" + navigation + "\n### Summary\n\n" + sections())).toEqual([]);
     }
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[Custom](#custom)\n\n### Overview\n\n" + sections())).toEqual([]);
     expect(rules("# Title\n\nVersion 1.0\n\n[Outside](https://example.org)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n> [Section 1](#section-1) [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
   });
   test("resolves deterministic Unicode and duplicate heading IDs", () => {
     expect(headingIds(["A!", "A!", "A-1", "A!", "École _name_"])).toEqual(["a", "a-1", "a-1-1", "a-2", "école-name"]);
@@ -25,10 +26,10 @@ describe("layout rules", () => {
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[A!](#a-1)\n\n### Overview\n\n## A!\n\n## A!\n\n" + sections(3))).toEqual([]);
   });
   test("requires version or calendar-valid date in a document field in the opening", () => {
-    for (const field of ["Version: v2.1", "Revision 2.1.0-rc.1+build.2", "Date 2024-02-29", "Updated: 29 Feb 2024", "Last updated October 3, 2026", "Reviewed: 03/10/2026", "Date 10/2026", "Date Q4 2026", "![Version: 2.1](badge.svg)", "| Field | Value |\n|---|---|\n| Version | 2.1 |", "| Field | Value |\n|---|---|\n| Date | March 2026 |"])
+    for (const field of ["Version: v2.1", "Revision 2.1.0-rc.1+build.2", "Date 2024-02-29", "Updated: 29 Feb 2024", "Last updated October 3, 2026", "Reviewed: 03/10/2026", "Date: 12/31/2026", "Date 10/2026", "Date Q4 2026", "![Version: 2.1](badge.svg)", "| Field | Value |\n|---|---|\n| Version | 2.1 |", "| Field | Value |\n|---|---|\n| Date | March 2026 |"])
       expect(rules("# Title\n\n" + field + "\n"), field).toEqual([]);
     expect(rules("# Title (Version: 2.1)\n")).toEqual([]);
-    for (const field of ["v2.1", "Requires v2.1", "Updated targets for Q3 2026", "Reviewed the policy in March 2026", "Version 2.1 is required", "Date 2023-02-29", "Date 2026-13-01", "Date 13/2026", "Date Q5 2026", "Date 2026-04-31", "Date 00/2026", "Version 2", "Date 3 Smarch 2026", "![Updated targets for Q3 2026](badge.svg)"])
+    for (const field of ["v2.1", "Requires v2.1", "Updated targets for Q3 2026", "Reviewed the policy in March 2026", "Version 2.1 is required", "Date 2023-02-29", "Date 2026-13-01", "Date 13/2026", "Date 13/13/2026", "Date Q5 2026", "Date 2026-04-31", "Date 00/2026", "Version 2", "Date 3 Smarch 2026", "![Updated targets for Q3 2026](badge.svg)"])
       expect(rules("# Title\n\n" + field + "\n"), field).toEqual(["opening-version-date"]);
     expect(rules("---\nversion: 2.1\n---\n# Title\n\n## Footer\n\nDate 2026-10-03\n")).toEqual(["opening-version-date"]);
   });

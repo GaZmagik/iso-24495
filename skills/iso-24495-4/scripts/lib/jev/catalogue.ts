@@ -6,7 +6,7 @@ export type RequestKind = "opening" | "block";
 export interface Question { type: "choice" | "noul"; instructions: string | string[]; criteria: Record<string, string> }
 export interface RequestBody { model: string; state: Record<string, string | number>; questions: Record<string, Question> }
 export const MODEL = "jev-1.13.0";
-export const CATALOGUE_DIGEST = "93128b7df08e66a131d932a8d36369aa00fa4489a98fd1dffa067b54ffa58241";
+export const CATALOGUE_DIGEST = "264f2270f881d99751ef13085f70da7f8a8917caa63abb859b38a7582674d538";
 const TEMPLATE_DIGESTS = { opening: "ecf372a1dafdb7a00c97ddb823e4f5e4a6ed06ddd8ba7cea51542f7c984b0399", block: "c25950fd65014487a54c35050da0e60d6fc0b3307d3f6664b44207e74b3872bf" };
 
 export function buildRequest(kind: RequestKind, state: Record<string, string | number>): RequestBody {

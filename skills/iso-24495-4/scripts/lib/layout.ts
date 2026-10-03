@@ -71,7 +71,8 @@ function validDate(text: string): boolean {
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (iso !== null) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   const numeric = /^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/.exec(text);
-  if (numeric !== null) return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]));
+  if (numeric !== null) return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
+    || calendarDate(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
   const parts = text.toLowerCase().replace(/[,\-]/g, " ").split(/\s+/);
   const month = MONTHS.findIndex(name => parts.includes(name) || parts.includes(name.slice(0, 3)));
   if (month < 0) return false;
@@ -108,7 +109,7 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
       const heading = targets.get(fragment);
       if (labelled.has(index)) {
         if (heading?.level === 2 && sections.includes(heading) && normaliseWording(link.label) !== normaliseWording(heading.text)) findings.push({ rule: "contents-list", line: index + 1, detail: "Use the target section's exact wording in this contents link." });
-      } else if (index < openingEnd - 1 && parsed.rootLines.has(index)) openingLinks.push({ line: index + 1, label: link.label, heading });
+      } else if (index < openingEnd - 1 && parsed.navigationLines.has(index)) openingLinks.push({ line: index + 1, label: link.label, heading });
     }
   }
   // Unlabelled navigation needs two links in one opening block, not scattered links.

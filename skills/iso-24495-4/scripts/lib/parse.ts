@@ -264,6 +264,7 @@ interface Parsed {
   references: Set<string>;
   destinations: Map<string, string>;
   rootLines: Set<number>;
+  navigationLines: Set<number>;
   rootHeadingLines: Set<number>;
   items: Array<{ line: number; depth: number }>;
 }
@@ -353,6 +354,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const references = new Set<string>();
   const destinations = new Map<string, string>();
   const rootLines = new Set<number>();
+  const navigationLines = new Set<number>();
   const rootHeadingLines = new Set<number>();
   const items: Array<{ line: number; depth: number }> = [];
   const stack: Container[] = [];
@@ -591,8 +593,10 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         markup[row] = content;
         tables.add(row);
         if (stack.length === 0) rootLines.add(row);
+        if (!stack.some(container => container.kind === "quote")) navigationLines.add(row);
       }
       if (stack.length === 0) { rootLines.add(i); rootLines.add(i + 1); }
+      if (!stack.some(container => container.kind === "quote")) { navigationLines.add(i); navigationLines.add(i + 1); }
       tableUntil = row - 1;
       continue;
     }
@@ -603,6 +607,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       paragraphs.push(paragraph);
     }
     if (stack.length === 0) rootLines.add(i);
+    if (!stack.some(container => container.kind === "quote")) navigationLines.add(i);
     paragraph.lines.push(text.trimStart());
   }
 
@@ -620,18 +625,19 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, rootHeadingLines, items };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items };
 }
 
 /** Structural metadata is separate so existing calibrated text remains unchanged. */
 export function structure(text: string, reading: Reading = {}): {
   headings: Heading[]; allHeadings: Heading[]; lines: string[]; markupLines: string[];
   rootLines: ReadonlySet<number>; destinations: ReadonlyMap<string, string>;
+  navigationLines: ReadonlySet<number>;
   items: Array<{ line: number; depth: number }>;
 } {
   const parsed = parse(toLines(text), reading);
   return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
-    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, destinations: parsed.destinations, items: parsed.items };
+    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items };
 }
 
 /** Inline text for structural wording comparison, without altering calibrated extraction. */

@@ -34,9 +34,9 @@ describe("exact response validation", () => {
 describe("transport controls", () => {
   test("the native clock adapter can cancel and the sleep adapter completes", async () => {
     let fired = false;
-    const cancel = systemClock.schedule(() => { fired = true; }, 100);
+    const cancel = systemClock.schedule(() => { fired = true; }, 1);
     cancel();
-    await wait(0);
+    await wait(10);
     expect(fired).toBe(false);
     await new Promise<void>(resolve => { systemClock.schedule(resolve, 0); });
   });
