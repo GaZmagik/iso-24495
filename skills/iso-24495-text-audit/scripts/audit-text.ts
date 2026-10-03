@@ -55,7 +55,7 @@ export function auditTarget(
       skipped.push(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms, frontMatter: reading.frontMatter });
+    const violations = auditText(text, { knownAcronyms, frontMatter: reading.frontMatter, markdown: /\.(?:md|markdown)$/i.test(path) });
     findings.files[displayPath(path, absoluteProject)] = { violations };
     for (const violation of violations) {
       findings.totals[violation.rule] = (findings.totals[violation.rule] ?? 0) + 1;

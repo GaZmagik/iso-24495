@@ -244,6 +244,7 @@ function startsBlock(line: string): boolean {
 
 interface Container {
   kind: "quote" | "item";
+  unordered?: boolean;
   /** For an item, the column its content starts at. */
   column: number;
 }
@@ -261,6 +262,10 @@ interface Parsed {
   markup: string[];
   /** Valid link reference labels in this document. */
   references: Set<string>;
+  destinations: Map<string, string>;
+  rootLines: Set<number>;
+  rootHeadingLines: Set<number>;
+  items: Array<{ line: number; depth: number }>;
 }
 
 export function normaliseReference(label: string): string {
@@ -346,6 +351,10 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const readable = [...lines];
   const markup = [...lines];
   const references = new Set<string>();
+  const destinations = new Map<string, string>();
+  const rootLines = new Set<number>();
+  const rootHeadingLines = new Set<number>();
+  const items: Array<{ line: number; depth: number }> = [];
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -455,7 +464,9 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
           closeParagraph();
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
-          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
+          const unordered = /^ {0,3}[-*+]/.test(consumed);
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered });
+          if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.unordered).length });
           continue;
         }
         break;
@@ -490,7 +501,12 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // visible prose rather than silently accepting a lookalike.
     if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
       const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
-      if (label !== undefined) references.add(normaliseReference(label));
+      if (label !== undefined) {
+        const name = normaliseReference(label);
+        references.add(name);
+        const destination = text.slice(text.indexOf("]:") + 2).trim().match(/^(?:<([^>]*)>|([^\s]+))/);
+        if (!destinations.has(name)) destinations.set(name, destination[1] ?? destination[2]);
+      }
       readable[i] = "";
       markup[i] = "";
       continue;
@@ -510,6 +526,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const atx = ATX_HEADING.exec(text);
     if (atx !== null) {
       closeParagraph();
+      if (stack.length === 0) rootHeadingLines.add(i + 1);
       found.push({
         level: atx[1].length,
         line: i + 1,
@@ -522,6 +539,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
 
     const underline = SETEXT_UNDERLINE.exec(text);
     if (underline !== null && !lazy && paragraph !== null && paragraphDepth === stack.length) {
+      if (stack.length === 0) rootHeadingLines.add(paragraph.line);
       // The paragraph above becomes the heading's text, all of its lines.
       found.push({
         level: underline[1][0] === "=" ? 1 : 2,
@@ -572,7 +590,9 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         readable[row] = content;
         markup[row] = content;
         tables.add(row);
+        if (stack.length === 0) rootLines.add(row);
       }
+      if (stack.length === 0) { rootLines.add(i); rootLines.add(i + 1); }
       tableUntil = row - 1;
       continue;
     }
@@ -582,6 +602,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
+    if (stack.length === 0) rootLines.add(i);
     paragraph.lines.push(text.trimStart());
   }
 
@@ -599,7 +620,23 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, rootHeadingLines, items };
+}
+
+/** Structural metadata is separate so existing calibrated text remains unchanged. */
+export function structure(text: string, reading: Reading = {}): {
+  headings: Heading[]; allHeadings: Heading[]; lines: string[]; markupLines: string[];
+  rootLines: ReadonlySet<number>; destinations: ReadonlyMap<string, string>;
+  items: Array<{ line: number; depth: number }>;
+} {
+  const parsed = parse(toLines(text), reading);
+  return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
+    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, destinations: parsed.destinations, items: parsed.items };
+}
+
+/** Inline text for structural wording comparison, without altering calibrated extraction. */
+export function inlineText(text: string, references?: ReadonlySet<string>): string {
+  return visibleText(text, references);
 }
 
 /** The next line's text, with the same containers stripped, or none. */
