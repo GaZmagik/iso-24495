@@ -35,12 +35,12 @@ describe("design-audit-cli", () => {
       const [usage, plan, noKey] = await Promise.all([
         run([]),
         run([file, "--project-dir", project]),
-        run([file, "--send"]),
+        run([file, "--send", "--yes"]),
       ]);
 
       expect(usage.exitCode).toBe(2);
       expect(plan.exitCode).toBe(0);
-      expect(plan.stdout).toContain("- doc.md: 5 questions in 2 requests");
+      expect(plan.stdout).toContain("1 eligible openings, 1 eligible blocks, 2 requests.");
       expect(noKey.exitCode).toBe(4);
       expect(noKey.stderr).toContain("https://docs.typesafe.ai");
     } finally {

@@ -40,7 +40,7 @@ export function normaliseWording(text: string): string {
     .replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~])/g, "$1");
   return rendered.replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z][a-z0-9]+);/gi, (whole, name: string) => {
     if (!name.startsWith("#")) return (entities as Record<string, string>)[`${name};`] ?? whole;
-    const point = /^#x/i.test(name) ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+    const point = name[1].toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
     return point === 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) ? "\ufffd" : String.fromCodePoint(point);
   }).replace(/\s+/g, " ").trim();
 }

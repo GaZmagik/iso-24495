@@ -9,6 +9,7 @@ import {
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
+import { runAuditCli, type AuditDependencies } from "../../iso-24495-4/scripts/lib/jev/audit.ts";
 
 export interface TextAuditResult extends Findings {
   skipped: string[];
@@ -94,7 +95,11 @@ export function runCli(
   argv: string[],
   stdout: (text: string) => void,
   stderr: (text: string) => void,
-): number {
+  dependencies: AuditDependencies = {},
+): number | Promise<number> {
+  if (argv.slice(3).some(option => ["--jev", "--jev-preview", "--send", "--yes", "--include-judged-text"].includes(option))) {
+    return runAuditCli("text", argv, stdout, stderr, dependencies);
+  }
   const target = argv[2];
   if (!target) {
     stderr(

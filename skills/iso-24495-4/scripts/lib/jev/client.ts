@@ -19,7 +19,9 @@ export interface ClientOptions {
 export class JevError extends Error {
   constructor(message: string, readonly exitCode = 3) { super(message); this.name = "JevError"; }
 }
-class TransportError extends Error {}
+class TransportError extends Error {
+  constructor() { super("The transport attempt timed out."); }
+}
 export type Ask = (body: RequestBody) => Promise<ExactAnswers>;
 
 /** The shared boundary checks the original key before trimming spaces. */
