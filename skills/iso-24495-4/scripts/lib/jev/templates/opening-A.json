@@ -1,0 +1,32 @@
+{
+  "model": "jev-1.13.0",
+  "state": {
+    "opening": "<title and text before the next heading>"
+  },
+  "questions": {
+    "purpose": {
+      "type": "choice",
+      "instructions": [
+        "Which of the reader's task and the document's scope does `opening` state in words? The task is what the reader can do with the document. The scope is what the document covers: its subject, the activities or procedure covered, or its boundary. One sentence can state both."
+      ],
+      "criteria": {
+        "both": "States the task and the scope ('This guide explains how to install and configure the server on Linux and macOS').",
+        "task_only": "States the task and not the scope ('This guide will help you get started').",
+        "scope_only": "States the scope and not the task ('This document covers the release process').",
+        "neither": "States neither. A product description, greeting, badge, link, status notice or title alone states neither ('X is a fast library for Y')."
+      }
+    },
+    "reader": {
+      "type": "noul",
+      "instructions": [
+        "Does `opening` state in words who the document is for?",
+        "These count: a sentence naming the reader ('This guide is for contributors', 'designed to help developers build with the API'); a condition addressing the reader ('If you need to report a security issue, use the contacts below', 'If you use an AI agent to contribute, read this section'); a list of the reader's situations ('Whether you are reporting bugs, improving docs or submitting code').",
+        "These do not count: a greeting ('Thank you for your interest in contributing', 'We welcome contributions'), a description of the product, or the title alone ('Contributing to X', 'X contributor guide')."
+      ],
+      "criteria": {
+        "true": "It states in words who the document is for.",
+        "false": "It does not state in words who the document is for."
+      }
+    }
+  }
+}
