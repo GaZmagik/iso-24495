@@ -5,6 +5,7 @@ import { join } from "node:path";
 export type RequestKind = "opening" | "block";
 export interface Question { type: "choice" | "noul"; instructions: string | string[]; criteria: Record<string, string> }
 export interface RequestBody { model: string; state: Record<string, string | number>; questions: Record<string, Question> }
+export interface GateEvidence { id: string; cutOff: string; dependencies: string[]; clusters: number; wrong: number; bound: string }
 export const MODEL = "jev-1.13.0";
 export const CATALOGUE_DIGEST = "264f2270f881d99751ef13085f70da7f8a8917caa63abb859b38a7582674d538";
 const TEMPLATE_DIGESTS = { opening: "ecf372a1dafdb7a00c97ddb823e4f5e4a6ed06ddd8ba7cea51542f7c984b0399", block: "c25950fd65014487a54c35050da0e60d6fc0b3307d3f6664b44207e74b3872bf" };
@@ -12,6 +13,12 @@ const TEMPLATE_DIGESTS = { opening: "ecf372a1dafdb7a00c97ddb823e4f5e4a6ed06ddd8b
 export function buildRequest(kind: RequestKind, state: Record<string, string | number>): RequestBody {
   const template = JSON.parse(readFileSync(join(import.meta.dir, "templates", `${kind}-A.json`), "utf8")) as RequestBody;
   return { model: MODEL, state: { ...state }, questions: template.questions };
+}
+
+/** Return the recorded gate evidence from the integrity-checked catalogue. */
+export function calibrationEvidence(): GateEvidence[] {
+  validateCalibration();
+  return JSON.parse(readFileSync(join(import.meta.dir, "results-r11.json"), "utf8")).gates;
 }
 
 /** The catalogue and templates are closed, reviewed inputs rather than user configuration. */

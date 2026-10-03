@@ -34,6 +34,14 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     expect(report.jev.results.some(result => result.band === "pass")).toBe(false);
     expect(report.jev.results[0].state).toBeUndefined();
     expect(report.jev.results[0].stateHash).toBeDefined();
+    expect(report.jev.evidence).toEqual([
+      { id: "colour_only:pass", cutOff: "0.83", dependencies: [], clusters: 300, wrong: 0, bound: "0.9900639180555423" },
+      { id: "purpose:fail", cutOff: "0.87", dependencies: [], clusters: 187, wrong: 2, bound: "0.9667172820800516" },
+      { id: "purpose:diagnosis:neither", cutOff: "0.83", dependencies: ["purpose:fail"], clusters: 60, wrong: 0, bound: "0.9512970866899024" },
+    ]);
+    expect(report.jev.results[0].diagnosisGate).toEqual({ id: "purpose:diagnosis:neither", score: "0.86", cutOff: "0.83", prerequisite: "purpose:fail" });
+    expect(output.join("\n")).toContain("| purpose:diagnosis:neither | 0.83 | purpose:fail | 60 | 0 | 0.9512970866899024 |");
+    expect(output.join("\n")).toContain("neither score 0.86, cut-off 0.83, prerequisite purpose:fail");
     const before = sent;
     dependencies.terminal.inputIsTTY = false;
     expect(await run("design", ["--send"])).toBe(2);
@@ -112,7 +120,7 @@ test("argument conflicts and local failures are classified without transmission"
     expect(() => selectDocuments(textFile, directory)).toThrow("Unsupported");
     expect(safeText("ab\u001b\u202ecd\n")).toBe("ab cd");
     expect(formatPlan(selectDocuments(directory, directory, "text"))).toContain("Selected");
-    expect(formatFindings({ complete: true, limitation: "test", results: [], localFindings: [], coverage: [] })).toContain("Only purpose and colour");
+    expect(formatFindings({ complete: true, limitation: "test", evidence: [], results: [], localFindings: [], coverage: [] })).toContain("Only purpose and colour");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

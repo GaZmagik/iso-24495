@@ -19,6 +19,7 @@ export interface Decision {
   score: string;
   cutOff: string;
   diagnosis?: "neither";
+  diagnosisGate?: { id: "purpose:diagnosis:neither"; score: string; cutOff: "0.83"; prerequisite: "purpose:fail" };
 }
 export type ExactAnswers = Record<string, Decimal | Record<string, Decimal>>;
 
@@ -60,6 +61,9 @@ export function classify(kind: RequestKind, answers: ExactAnswers): Decision {
   for (const option of ["task_only", "scope_only", "neither"]) {
     if (compare(probabilities[option], probabilities[best]) > 0) best = option;
   }
-  if (decision.band === "fail" && best === "neither" && compare(probabilities.neither, parseDecimal("0.83")) >= 0) decision.diagnosis = "neither";
+  if (decision.band === "fail" && best === "neither" && compare(probabilities.neither, parseDecimal("0.83")) >= 0) {
+    decision.diagnosis = "neither";
+    decision.diagnosisGate = { id: "purpose:diagnosis:neither", score: decimalText(probabilities.neither), cutOff: "0.83", prerequisite: "purpose:fail" };
+  }
   return decision;
 }

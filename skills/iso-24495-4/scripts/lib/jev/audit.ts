@@ -2,7 +2,7 @@ import { appendFileSync, lstatSync, mkdirSync, readFileSync, writeFileSync } fro
 import { dirname, join, relative, resolve } from "node:path";
 import { auditText, configHash, isAuditedDocument, listTextFiles, projectAcronyms } from "../../audit-corpus.ts";
 import type { Findings } from "../types.ts";
-import { MODEL, sha256, validateCalibration } from "./catalogue.ts";
+import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvidence } from "./catalogue.ts";
 import { createAsk, JevError, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
@@ -23,7 +23,7 @@ export interface Selection { documents: SelectedDocument[]; mechanical: Findings
 interface Arguments { target: string; projectDir: string; send: boolean; yes: boolean; preview: boolean; json?: string; includeText: boolean; frontMatter: boolean }
 interface Counts { assessed: number; pass: number; fail: number; unsure: number; skipped: number }
 export interface Judgement extends Decision { file: string; line: number; id: string; excerpt: string; stateHash: string; state?: Record<string, string | number>; detail: string }
-export interface JevReport { complete: boolean; limitation: string; results: Judgement[]; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
+export interface JevReport { complete: boolean; limitation: string; evidence: GateEvidence[]; results: Judgement[]; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
 
 export async function runAuditCli(mode: "text" | "design", argv: string[], stdout: (text: string) => void, stderr: (text: string) => void, dependencies: AuditDependencies = {}): Promise<number> {
   let args: Arguments;
@@ -128,15 +128,21 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
     ...(includeText ? [`This export saves full judged document text locally to ${safeText(json as string)}.`] : ["JSON exports contain excerpts and state hashes by default."]),
     "A local send log records the payload digest, selected paths and timestamp. It records transmission; it does not prove agreement.",
     LIMITATION,
+    ...formatEvidence(calibrationEvidence()),
   ].join("\n");
 }
 
 export function formatFindings(report: JevReport): string {
   const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`, LIMITATION,
+    ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
     "|------|------|------|-------|------|-------|---------|---------|"];
   for (const finding of report.localFindings) lines.push(`| ${cell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${cell(finding.detail)} |`);
-  for (const result of report.results.filter(result => result.band !== "pass")) lines.push(`| ${cell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${cell(result.detail)} Excerpt: ${cell(result.excerpt)} |`);
+  for (const result of report.results.filter(result => result.band !== "pass")) {
+    const diagnosis = result.diagnosisGate;
+    const refinement = diagnosis === undefined ? "" : ` neither score ${diagnosis.score}, cut-off ${diagnosis.cutOff}, prerequisite ${diagnosis.prerequisite}.`;
+    lines.push(`| ${cell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${cell(result.detail)}${refinement} Excerpt: ${cell(result.excerpt)} |`);
+  }
   lines.push("| File | Check | Assessed | Pass | Fail | Unsure | Skipped |", "|------|-------|----------|------|------|--------|---------|");
   for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${cell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
   lines.push("Colour passes appear only in counts and never approve a document. Unsure asserts no fault. Findings are proxies, not an ISO judgement.");
@@ -144,13 +150,17 @@ export function formatFindings(report: JevReport): string {
 }
 
 export function safeText(text: string): string { return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim(); }
+function formatEvidence(gates: readonly GateEvidence[]): string[] {
+  return ["| Gate | Cut-off | Prerequisite | Clusters | Wrong | Lower bound |", "|------|---------|--------------|----------|-------|-------------|",
+    ...gates.map(gate => `| ${gate.id} | ${gate.cutOff} | ${gate.dependencies.join(", ") || "none"} | ${gate.clusters} | ${gate.wrong} | ${gate.bound} |`)];
+}
 function cell(text: string): string { return safeText(text).replaceAll("|", "\\|"); }
 function payloadBytes(plan: DocumentPlan): number { return plan.candidates.reduce((sum, candidate) => sum + Buffer.byteLength(JSON.stringify(candidate.body)), 0); }
 function scopeDigest(selection: Selection, args: Arguments): string { return sha256(JSON.stringify({ paths: selection.paths, bodies: selection.documents.flatMap(document => document.plan.candidates.map(candidate => candidate.body)), report: args.json === undefined ? null : resolve(args.json), includeText: args.includeText })); }
 function writeAuditLog(record: AuditLog, path: string): void { mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(record) + "\n"); }
 
 function emptyReport(selection: Selection, complete: boolean): JevReport {
-  return { complete, limitation: LIMITATION, results: [], localFindings: selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding }))),
+  return { complete, limitation: LIMITATION, evidence: calibrationEvidence(), results: [], localFindings: selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding }))),
     coverage: selection.documents.map(document => ({ file: document.file, eligibleOpenings: document.plan.candidates.filter(candidate => candidate.kind === "opening").length, eligibleBlocks: document.plan.candidates.filter(candidate => candidate.kind === "block").length, checks: { purpose: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: 1 }, colour: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: document.plan.candidates.filter(candidate => candidate.kind === "block").length } } })) };
 }
 function fillCoverage(report: JevReport): void {

@@ -48,12 +48,17 @@ Key sections
 ```
 
 Lists, paragraphs, tables and locally resolved reference links qualify; partial coverage and different ordering are accepted.
+Loose list items remain one navigation block despite blank lines.
+Entries are list items, fragment-link paragraphs or table data rows.
+Headings, table headers and explanatory prose never count as entries.
+
 Below six sections, the contents rule reports nothing, including wording mismatches.
 Unresolved custom anchors and coverage gaps are informational limitations, rather than wording findings.
 
 Heading IDs lowercase normalised wording, retain Unicode letters, numbers, marks, underscores and hyphens, and replace spaces with hyphens.
 Other punctuation is removed, and duplicate IDs receive numeric suffixes.
 Wording renders inline formatting, entities and links, then collapses whitespace.
+Intraword underscores, escaped punctuation and code-span contents remain literal.
 
 Version labels are Version or Revision, with optional colon and v before dot-separated integers and optional Semantic Versioning suffixes.
 Date labels are Date, Updated, Last updated or Reviewed.
@@ -61,6 +66,7 @@ Dates accept calendar-valid ISO, day-month-year or month-day-year forms, full or
 Labels are case-insensitive.
 
 A document field is a standalone line, a metadata table row with the label first, a final parenthesised title suffix, or badge alternative text.
+Metadata rows require a parsed table; pipe-separated prose does not qualify.
 Bare v2.1, product requirements, front-matter-only metadata and footer-only dates do not qualify.
 Badge images are never fetched, and hard-coded alternative text can be out of date.
 Externally versioned documents can receive an advisory false positive.

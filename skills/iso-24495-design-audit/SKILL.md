@@ -82,6 +82,9 @@ Read only `.md` and `.markdown` files, and report every skipped link or unreadab
 
 Report file, line, item identifier, excerpt, exact score and cut-off.
 Report per-document and per-check assessed, pass, fail, unsure and skipped counts.
+Human and JSON reports include every gate's cluster count, wrong count and recorded lower bound.
+The neither diagnosis separately records its score, 0.83 cut-off and purpose-fail prerequisite.
+
 Purpose failures request an explicit reader's task and document scope.
 The neither diagnosis says both are missing.
 
