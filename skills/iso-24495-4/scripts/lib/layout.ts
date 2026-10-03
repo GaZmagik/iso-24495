@@ -1,4 +1,4 @@
-import { frontMatterRange, markdownLinks, normaliseReference, structure, toLines, type Heading, type Reading } from "./parse.ts";
+import { markdownLinks, normaliseReference, structure, toLines, type Heading, type Reading } from "./parse.ts";
 import type { Violation } from "./types.ts";
 import { renderInline } from "./inline-wording.ts";
 
@@ -60,33 +60,42 @@ export function headingIds(wordings: readonly string[]): string[] {
 function label(text: string): string { return normaliseWording(text).replace(/^\d+(?:\.\d+)*\.?\s+/, ""); }
 function recognisedFrontMatter(text: string): boolean {
   const lines = toLines(text);
-  const range = frontMatterRange(lines);
-  if (range === null) return false;
-  const source = lines.slice(1, range.end).join("\n");
+  // This rule validates YAML itself. Keep the calibrated extraction guard
+  // separate: its conservative line shapes exclude valid tabs and flow maps.
+  if (!/^---[ \t]*$/.test(lines[0] ?? "")) return false;
+  const end = lines.findIndex((line, index) => index > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(line));
+  if (end === -1) return false;
+  const source = lines.slice(1, end).join("\n");
   let metadata: unknown;
-  let spellings: unknown;
   try {
     metadata = Bun.YAML.parse(source);
-    spellings = Bun.YAML.parse(preserveNumericYaml(source));
   } catch { return false; }
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
-  return recognisedEditionFields(metadata, spellings) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, (spellings as Record<string, unknown>).metadata);
+  return recognisedEditionFields(metadata, source, false) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, source, true);
 }
-function recognisedEditionFields(metadata: unknown, spellings: unknown): boolean {
+function recognisedEditionFields(metadata: unknown, source: string, nested: boolean): boolean {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
   return Object.entries(metadata).some(([key, value]) => {
     if (!/^(?:version|date|updated|last_updated)$/i.test(key) || (typeof value !== "string" && typeof value !== "number")) return false;
-    const raw = (spellings as Record<string, unknown>)[key];
-    const spelling = typeof value === "number" ? typeof raw === "string" ? raw : "" : value;
-    return VERSION.test(`Version ${spelling}`) || validDate(spelling);
+    if (typeof value === "number") return recognisedNumericYaml(source, key, nested);
+    return VERSION.test(`Version ${value}`) || validDate(value);
   });
 }
-function preserveNumericYaml(source: string): string {
-  // Quote numeric source tokens before YAML loses trailing zeroes. Protected
-  // strings, comments and block scalars keep their literal contents. The YAML
-  // parser still supplies mapping boundaries and the permitted metadata depth.
-  const tokens = /^([ \t]*)(?:[^\n:{}\[\],"'#]+|"(?:\\[\s\S]|[^"\\])*"|'(?:''|[^'])*')[ \t]*:[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#[^\n]*)?(?:\n(?:\1[ \t]+[^\n]*|[ \t]*(?=\n|$)))*|(?<![^\s\[\]{},:])"(?:\\[\s\S]|[^"\\])*"|(?<![^\s\[\]{},:])'(?:''|[^'])*'|#[^\n]*|(:[ \t]*)([+-]?(?:\d[0-9a-z_.+-]*|\.(?:inf|nan)))(?=[ \t]*(?:[,}\]\n]|$)|[ \t]+#)/gmi;
-  return source.replace(tokens, (token, _indent: string | undefined, label: string | undefined, value: string | undefined) => label === undefined ? token : `${label}${JSON.stringify(value)}`);
+function recognisedNumericYaml(source: string, key: string, nested: boolean): boolean {
+  // Bun exposes values, not source tokens. Probe each complete candidate with
+  // a quoted marker, then let YAML prove its identity at the permitted path.
+  // Separation, comments, quoting and block scalars remain the parser's job.
+  // A candidate inside prose or a comment cannot become the field's marker.
+  const marker = "iso-edition-source-token";
+  for (const token of source.matchAll(/[^\s,{}\[\]:]+/g)) {
+    if (!VERSION.test(`Version ${token[0]}`)) continue;
+    const probe = source.slice(0, token.index) + JSON.stringify(marker) + source.slice(token.index + token[0].length);
+    try {
+      const parsed = Bun.YAML.parse(probe) as Record<string, unknown> & { metadata: Record<string, unknown> };
+      if ((nested ? parsed.metadata[key] : parsed[key]) === marker) return true;
+    } catch { /* Replacing literal contents may make the probe invalid YAML. */ }
+  }
+  return false;
 }
 function isDocumentField(text: string): boolean {
   if (VERSION.test(text)) return true;

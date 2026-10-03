@@ -14,6 +14,35 @@ describe("layout rules", () => {
   const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
   for (const form of ["block", "flow"]) {
     for (const depth of ["root", "metadata"]) {
+      for (const value of ["1.0", '"1.0"']) {
+        test(`round 5 recognises next-line ${value} in ${form} at ${depth}`, () => {
+          const field = form === "block" ? `version:\n    ${value}` : `{version:\n    ${value}}`;
+          const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field}` : `metadata: ${field}`;
+          expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+        });
+      }
+      test(`round 5 recognises commented separation in ${form} at ${depth}`, () => {
+        const field = form === "block" ? "version: # Edition\n\n    # Current\n    1.0" : "{version: # Edition\n\n    # Current\n    1.0}";
+        const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field.replaceAll("\n", "\n  ")}` : `metadata: ${field}`;
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+      });
+      test(`round 5 recognises tab separation in ${form} at ${depth}`, () => {
+        const field = form === "block" ? "version:\t1.0" : "{version:\t1.0\n}";
+        const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field}` : `metadata:\t${field}`;
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+      });
+    }
+  }
+  test("round 5 keeps unrelated, deeper and invalid numeric forms advisory", () => {
+    for (const source of ["count: 3", "metadata: {edition: {version:\n    1.0}}", "metadata:\n  edition:\n    version:\n      1.0", "version:\n  1e-2", "metadata: {version:\n    1e2}", "version: {number: 1.0}"]) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: source.split("\n").length + 3 }]);
+    }
+  });
+  test("round 5 requires closed front matter", () => {
+    expect(layoutViolations("---\nversion: 1.0\n# Guide\n\nInstructions.")).toEqual([{ ...editionFinding, line: 3 }]);
+  });
+  for (const form of ["block", "flow"]) {
+    for (const depth of ["root", "metadata"]) {
       for (const value of ["1.0", '"1.0"', "2.1.3", '"2.1.3"']) {
         test(`round 4 recognises ${value} in ${form} at ${depth}`, () => {
           const field = form === "block" ? `version: ${value}` : `{version: ${value}}`;
