@@ -75,6 +75,9 @@ Other nesting and unrecognised values do not qualify.
 Bare v2.1, product requirements and footer-only dates do not qualify.
 Badge images are never fetched, and hard-coded alternative text can be out of date.
 
+Numeric source recovery uses at most 16 YAML reparses per document.
+Recovery stops at that limit; an unresolved value remains unrecognised and can leave the normal edition advisory.
+
 The rule applies only to documents with a root H1 title.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
 Text audited with `--no-front-matter`, including pull request descriptions, is exempt.

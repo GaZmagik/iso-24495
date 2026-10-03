@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { layoutViolations, normaliseWording, headingIds } from "../../scripts/lib/layout.ts";
 import { structure } from "../../scripts/lib/parse.ts";
 import { auditCorpus, auditText } from "../../scripts/audit-corpus.ts";
@@ -12,6 +12,78 @@ const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## 
 const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
 describe("layout rules", () => {
   const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
+  test("round 6 unrelated numeric fields do not trigger recovery parses", () => {
+    const fields = Array.from({ length: 5000 }, (_, index) => `k${index}: 1.0`).join("\n");
+    const parser = spyOn(Bun.YAML, "parse");
+    try {
+      const findings = layoutViolations(`---\nversion: 1\n${fields}\n---\n# Guide\n\nInstructions.`);
+      console.log(`Round 6 5000-field parser invocations: ${parser.mock.calls.length}`);
+      expect(parser.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(findings).toEqual([{ ...editionFinding, line: 5004 }]);
+    } finally { parser.mockRestore(); }
+  }, 60000);
+  test("round 6 caps recovery at 16 reparses per document", () => {
+    const fields = Array.from({ length: 16 }, (_, index) => `edition${index}: {version: 1.0}`).join("\n");
+    const parser = spyOn(Bun.YAML, "parse");
+    try {
+      const findings = layoutViolations(`---\n${fields}\nversion: 1.0\n---\n# Guide\n\nInstructions.`);
+      expect(parser.mock.calls.length).toBe(17);
+      expect(findings).toEqual([{ ...editionFinding, line: 20 }]);
+    } finally { parser.mockRestore(); }
+  });
+  test("round 6 recognises a value on the final permitted reparse", () => {
+    const fields = Array.from({ length: 15 }, (_, index) => `edition${index}: {version: 1.0}`).join("\n");
+    const parser = spyOn(Bun.YAML, "parse");
+    try {
+      expect(layoutViolations(`---\n${fields}\nversion: 1.0\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+      expect(parser.mock.calls.length).toBe(17);
+    } finally { parser.mockRestore(); }
+  });
+  test("round 6 shares the reparse budget across permitted depths", () => {
+    const fields = Array.from({ length: 15 }, (_, index) => `edition${index}: {version: 1.0}`).join("\n");
+    const parser = spyOn(Bun.YAML, "parse");
+    try {
+      const findings = layoutViolations(`---\n${fields}\nversion: 1\nmetadata: {version: 1.0}\n---\n# Guide\n\nInstructions.`);
+      expect(parser.mock.calls.length).toBe(17);
+      expect(findings).toEqual([{ ...editionFinding, line: 20 }]);
+    } finally { parser.mockRestore(); }
+  });
+  for (const key of ["version", "date", "updated", "last_updated"]) {
+    test(`round 6 ignores unrelated and literal tokens after ${key}`, () => {
+      for (const source of [`{${key}: 1, unrelated: 1.0}`, `metadata: {${key}: 1, unrelated: 1.0}`, `${key}: 1\n# ${key}: 1.0`, `${key}: 1\ndescription: "{${key}: 1.0}"`, `${key}: 1\ndescription: |\n  ${key}: 1.0`]) {
+        const parser = spyOn(Bun.YAML, "parse");
+        try {
+          expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: source.split("\n").length + 3 }]);
+          expect(parser.mock.calls.length).toBe(1);
+        } finally { parser.mockRestore(); }
+      }
+    });
+  }
+  for (const depth of ["root", "metadata"]) {
+    test(`round 6 retains escaped mapping key recognition at ${depth}`, () => {
+      for (const spelling of ["\\x76ersion", "\\u0076ersion", "\\U00000076ersion"]) {
+        const source = depth === "root" ? `"${spelling}":\n  1.0` : `metadata: {"${spelling}":\n  1.0}`;
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+      }
+    });
+  }
+  test("round 6 does not decode literal backslashes into permitted key names", () => {
+    for (const source of ['version: 1\n"\\\\u0076ersion": 1.0', "version: 1\n'\\u0076ersion': 1.0"]) {
+      const parser = spyOn(Bun.YAML, "parse");
+      try {
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 5 }]);
+        expect(parser.mock.calls.length).toBe(1);
+      } finally { parser.mockRestore(); }
+    }
+  });
+  test("round 6 preserves the budget for the field being recovered", () => {
+    const fields = Array.from({ length: 16 }, (_, index) => `edition${index}: {date: 1.0}`).join("\n");
+    const parser = spyOn(Bun.YAML, "parse");
+    try {
+      expect(layoutViolations(`---\n${fields}\nversion: 1.0\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+      expect(parser.mock.calls.length).toBe(2);
+    } finally { parser.mockRestore(); }
+  });
   for (const form of ["block", "flow"]) {
     for (const depth of ["root", "metadata"]) {
       for (const value of ["1.0", '"1.0"']) {

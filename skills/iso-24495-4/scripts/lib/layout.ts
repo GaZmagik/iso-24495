@@ -3,6 +3,7 @@ import type { Violation } from "./types.ts";
 import { renderInline } from "./inline-wording.ts";
 
 const SECTION_LIMIT = 6;
+const YAML_REPARSE_LIMIT = 16;
 const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
 const OVERVIEW_LABEL = /^(?:overview|summary)$/i;
 const VERSION = /^(?:Version|Revision)\s*:?\s*v?\d+(?:\.\d+)+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
@@ -71,31 +72,70 @@ function recognisedFrontMatter(text: string): boolean {
     metadata = Bun.YAML.parse(source);
   } catch { return false; }
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
-  return recognisedEditionFields(metadata, source, false) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, source, true);
+  const candidates = numericYamlCandidates(source);
+  const budget = { remaining: YAML_REPARSE_LIMIT };
+  return recognisedEditionFields(metadata, source, candidates, budget, false) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, source, candidates, budget, true);
 }
-function recognisedEditionFields(metadata: unknown, source: string, nested: boolean): boolean {
+interface NumericYamlCandidate { key: string; spelling: string; index: number }
+function recognisedEditionFields(metadata: unknown, source: string, candidates: NumericYamlCandidate[], budget: { remaining: number }, nested: boolean): boolean {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
   return Object.entries(metadata).some(([key, value]) => {
     if (!/^(?:version|date|updated|last_updated)$/i.test(key) || (typeof value !== "string" && typeof value !== "number")) return false;
-    if (typeof value === "number") return recognisedNumericYaml(source, key, nested);
+    if (typeof value === "number") return recognisedNumericYaml(source, key, candidates, budget, nested);
     return VERSION.test(`Version ${value}`) || validDate(value);
   });
 }
-function recognisedNumericYaml(source: string, key: string, nested: boolean): boolean {
+function recognisedNumericYaml(source: string, key: string, candidates: NumericYamlCandidate[], budget: { remaining: number }, nested: boolean): boolean {
   // Bun exposes values, not source tokens. Probe each complete candidate with
   // a quoted marker, then let YAML prove its identity at the permitted path.
   // Separation, comments, quoting and block scalars remain the parser's job.
   // A candidate inside prose or a comment cannot become the field's marker.
   const marker = "iso-edition-source-token";
-  for (const token of source.matchAll(/[^\s,{}\[\]:]+/g)) {
-    if (!VERSION.test(`Version ${token[0]}`)) continue;
-    const probe = source.slice(0, token.index) + JSON.stringify(marker) + source.slice(token.index + token[0].length);
+  for (const token of candidates) {
+    if (token.key !== key.toLowerCase()) continue;
+    if (budget.remaining === 0) return false;
+    budget.remaining--;
+    const probe = source.slice(0, token.index) + JSON.stringify(marker) + source.slice(token.index + token.spelling.length);
     try {
       const parsed = Bun.YAML.parse(probe) as Record<string, unknown> & { metadata: Record<string, unknown> };
       if ((nested ? parsed.metadata[key] : parsed[key]) === marker) return true;
     } catch { /* Replacing literal contents may make the probe invalid YAML. */ }
   }
   return false;
+}
+function numericYamlCandidates(source: string): NumericYamlCandidate[] {
+  // Scan once for mapping keys and plain tokens. Strings, comments and block
+  // scalars are opaque. The native parser still verifies each candidate's path.
+  const lexemes = /^(?<blockIndent>[ \t]*)(?:[^\n:{}\[\],"'#]+|"(?:\\[\s\S]|[^"\\])*"|'(?:''|[^'])*')[ \t]*:[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#[^\n]*)?(?:\n(?:\k<blockIndent>[ \t]+[^\n]*|[ \t]*(?=\n|$)))*|(?<quotedKey>"(?:\\[\s\S]|[^"\\])*"|'(?:''|[^'])*')[ \t]*:|(?<![^\s\[\]{},:])"(?:\\[\s\S]|[^"\\])*"|(?<![^\s\[\]{},:])'(?:''|[^'])*'|(?<!\S)#[^\n]*|(?<=^|[,{])(?<plainKey>[^\n:{}\[\],"'#]+?)[ \t]*:(?=[\s{}\[\],]|$)|[{}\[\],:]|[^\s,{}\[\]:]+/gm;
+  const candidates: NumericYamlCandidate[] = [];
+  let field = "";
+  let flowDepth = 0;
+  let previous = "";
+  let lineStart = true;
+  let offset = 0;
+  for (const token of source.matchAll(lexemes)) {
+    const raw = token[0];
+    const gap = source.slice(offset, token.index);
+    const newline = gap.lastIndexOf("\n");
+    if (newline !== -1) lineStart = /^[ \t\r]*$/.test(gap.slice(newline + 1));
+    const key = token.groups!.quotedKey ?? token.groups!.plainKey;
+    if (token.groups!.blockIndent !== undefined) field = "";
+    else if (raw.startsWith("#")) { /* Comments preserve the preceding key. */ }
+    else if (key !== undefined) {
+      const spelling = key.trim();
+      const decoded = spelling.startsWith('"') ? spelling.replace(/\\(\\|x[0-9a-f]{2}|u[0-9a-f]{4}|U[0-9a-f]{8})/g, (_token, escape: string) => escape === "\\" ? "\\" : String.fromCodePoint(parseInt(escape.slice(1), 16))) : spelling;
+      const name = decoded.replace(/^(["'])(.*)\1$/s, "$2").toLowerCase();
+      field = (lineStart || flowDepth > 0 && (previous === "{" || previous === ",")) && /^(?:version|date|updated|last_updated)$/.test(name) ? name : "";
+    } else if (raw === "{" || raw === "[") flowDepth++;
+    else if (raw === "}" || raw === "]") { flowDepth--; field = ""; }
+    else if (raw === ",") field = "";
+    else if (field !== "" && VERSION.test(`Version ${raw}`)) candidates.push({ key: field, spelling: raw, index: token.index });
+    if (!raw.startsWith("#")) previous = raw;
+    const lastNewline = raw.lastIndexOf("\n");
+    lineStart = lastNewline !== -1 && /^[ \t\r]*$/.test(raw.slice(lastNewline + 1));
+    offset = token.index + raw.length;
+  }
+  return candidates;
 }
 function isDocumentField(text: string): boolean {
   if (VERSION.test(text)) return true;
