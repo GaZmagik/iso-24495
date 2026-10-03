@@ -23,12 +23,14 @@ export interface Heading {
   text: string;
   /** How many source lines the text spans: a setext heading's text can wrap. */
   lines: number;
+  /** True when an underline on the line after the text makes this a heading. */
+  setext: boolean;
 }
 
 /** How a document is read, where the place it is shown decides. */
 export interface Reading {
   /**
-   * Whether a leading "---" block is front matter, which is metadata no rule reads.
+   * Whether a leading "---" block is front matter, excluded from prose checks.
    * A file in a repository may carry it, so that is the default. A pull request
    * description cannot, and GitHub shows the block as a rule and a heading, so the
    * check that reads a description passes false and the block is read as text.
@@ -42,7 +44,7 @@ export interface Document {
   markupLines: string[];
   /** Normalised reference labels that have valid definitions. */
   references: ReadonlySet<string>;
-  /** True when the line is metadata or fenced code, which no rule reads. */
+  /** True when the line is metadata or fenced code, excluded from prose checks. */
   hidden: (index: number) => boolean;
 }
 
@@ -200,7 +202,7 @@ function indentOf(line: string): number {
 }
 
 /** The columns a table row declares, respecting escaped pipes. */
-function cellCount(row: string): number {
+export function tableCells(row: string): string[] {
   const cells: string[] = [];
   let cell = "";
   for (let i = 0; i < row.length; i++) {
@@ -219,8 +221,10 @@ function cellCount(row: string): number {
   cells.push(cell);
   if (cells[0].trim() === "") cells.shift();
   if (cells.length > 0 && cells[cells.length - 1].trim() === "") cells.pop();
-  return cells.length;
+  return cells;
 }
+
+function cellCount(row: string): number { return tableCells(row).length; }
 
 /** True when every divider cell is hyphens, with optional colons. */
 function isDividerRow(row: string): boolean {
@@ -242,6 +246,9 @@ function startsBlock(line: string): boolean {
 
 interface Container {
   kind: "quote" | "item";
+  unordered?: boolean;
+  listId?: number;
+  marker?: string;
   /** For an item, the column its content starts at. */
   column: number;
 }
@@ -259,6 +266,13 @@ interface Parsed {
   markup: string[];
   /** Valid link reference labels in this document. */
   references: Set<string>;
+  destinations: Map<string, string>;
+  rootLines: Set<number>;
+  navigationLines: Set<number>;
+  rootHeadingLines: Set<number>;
+  items: Array<{ line: number; depth: number }>;
+  blocks: Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
+  tableRows: Map<number, string[]>;
 }
 
 export function normaliseReference(label: string): string {
@@ -336,7 +350,7 @@ function startsAnyBlock(text: string): boolean {
     || LIST_MARKER.test(text);
 }
 
-function parse(lines: string[], reading: Reading = {}): Parsed {
+function parse(lines: string[], reading: Reading = {}, structural = false): Parsed {
   const paragraphs: ProseBlock[] = [];
   const found: Heading[] = [];
   const hidden = new Set<number>();
@@ -344,6 +358,13 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const readable = [...lines];
   const markup = [...lines];
   const references = new Set<string>();
+  const destinations = new Map<string, string>();
+  const rootLines = new Set<number>();
+  const navigationLines = new Set<number>();
+  const rootHeadingLines = new Set<number>();
+  const items: Array<{ line: number; depth: number }> = [];
+  const blocks = new Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>();
+  const tableRows = new Map<number, string[]>();
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -352,6 +373,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
+  let rawCode: { closing: RegExp; depth: number } | null = null;
 
   const closeParagraph = (): void => {
     paragraph = null;
@@ -371,6 +393,17 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
     let text = rest;
+
+    if (rawCode !== null) {
+      if (matched < rawCode.depth) rawCode = null;
+      else {
+        if (rawCode.closing.test(text)) rawCode = null;
+        readable[i] = "";
+        markup[i] = "";
+        closeParagraph();
+        continue;
+      }
+    }
 
     if (invisible !== null) {
       if (matched < invisible.depth) {
@@ -427,6 +460,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // about the paragraph a reader sees never arrived.
     const lazy = !allMatched && paragraph !== null && !startsAnyBlock(rest);
     let openedQuote = false;
+    const previousItem = stack[matched];
     if (!lazy) {
       if (!allMatched) {
         closeParagraph();
@@ -453,7 +487,11 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
           closeParagraph();
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
-          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
+          const unordered = /^ {0,3}[-*+]/.test(consumed);
+          const family = consumed.trim().replace(/\d+/g, "");
+          const listId = stack.length === matched && previousItem?.kind === "item" && previousItem.marker === family ? previousItem.listId : i;
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered, listId, marker: family });
+          if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.unordered).length });
           continue;
         }
         break;
@@ -483,12 +521,27 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       closeParagraph();
       if (text.trim() === "") continue;
     }
+    // Structural rules exclude raw HTML code specimens. The calibrated reading stays unchanged.
+    const rawOpen = structural ? /^ {0,3}<(pre|script|style|textarea)(?=[\s>])/i.exec(text) : null;
+    if (rawOpen !== null) {
+      const closing = new RegExp(`</${rawOpen[1]}\\s*>`, "i");
+      if (!closing.test(text)) rawCode = { closing, depth: stack.length };
+      readable[i] = "";
+      markup[i] = "";
+      closeParagraph();
+      continue;
+    }
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
     if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
       const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
-      if (label !== undefined) references.add(normaliseReference(label));
+      if (label !== undefined) {
+        const name = normaliseReference(label);
+        references.add(name);
+        const destination = text.slice(text.indexOf("]:") + 2).trim().match(/^(?:<([^>]*)>|([^\s]+))/);
+        if (!destinations.has(name)) destinations.set(name, destination[1] ?? destination[2]);
+      }
       readable[i] = "";
       markup[i] = "";
       continue;
@@ -508,25 +561,30 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const atx = ATX_HEADING.exec(text);
     if (atx !== null) {
       closeParagraph();
+      if (stack.length === 0) rootHeadingLines.add(i + 1);
       found.push({
         level: atx[1].length,
         line: i + 1,
         text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
         lines: 1,
+        setext: false,
       });
       continue;
     }
 
     const underline = SETEXT_UNDERLINE.exec(text);
     if (underline !== null && !lazy && paragraph !== null && paragraphDepth === stack.length) {
+      if (stack.length === 0) rootHeadingLines.add(paragraph.line);
       // The paragraph above becomes the heading's text, all of its lines.
       found.push({
         level: underline[1][0] === "=" ? 1 : 2,
         line: paragraph.line,
         text: paragraph.lines.join(" ").trim(),
         lines: paragraph.lines.length,
+        setext: true,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
+      for (let row = paragraph.line - 1; row < i; row++) blocks.delete(row);
       closeParagraph();
       continue;
     }
@@ -561,6 +619,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       markup[i + 1] = divider;
       tables.add(i);
       tables.add(i + 1);
+      blocks.set(i, { id: i, kind: "table", data: false });
+      blocks.set(i + 1, { id: i, kind: "table", data: false });
       let row = i + 2;
       for (; row < lines.length; row++) {
         const content = nextContent(lines, row - 1, stack);
@@ -568,7 +628,13 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         readable[row] = content;
         markup[row] = content;
         tables.add(row);
+        blocks.set(row, { id: i, kind: "table", data: true });
+        tableRows.set(row, tableCells(content.trim()));
+        if (stack.length === 0) rootLines.add(row);
+        if (!stack.some(container => container.kind === "quote")) navigationLines.add(row);
       }
+      if (stack.length === 0) { rootLines.add(i); rootLines.add(i + 1); }
+      if (!stack.some(container => container.kind === "quote")) { navigationLines.add(i); navigationLines.add(i + 1); }
       tableUntil = row - 1;
       continue;
     }
@@ -578,6 +644,10 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
+    if (stack.length === 0) rootLines.add(i);
+    if (!stack.some(container => container.kind === "quote")) navigationLines.add(i);
+    const list = stack.find(container => container.kind === "item");
+    blocks.set(i, { id: list?.listId ?? paragraph.line - 1, kind: list === undefined ? "paragraph" : "list", data: true });
     paragraph.lines.push(text.trimStart());
   }
 
@@ -595,7 +665,26 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+}
+
+/** Structural metadata is separate so existing calibrated text remains unchanged. */
+export function structure(text: string, reading: Reading = {}): {
+  headings: Heading[]; allHeadings: Heading[]; lines: string[]; markupLines: string[];
+  rootLines: ReadonlySet<number>; destinations: ReadonlyMap<string, string>;
+  navigationLines: ReadonlySet<number>;
+  items: Array<{ line: number; depth: number }>;
+  blocks: ReadonlyMap<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
+  tableRows: ReadonlyMap<number, string[]>;
+} {
+  const parsed = parse(toLines(text), reading, true);
+  return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
+    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows };
+}
+
+/** Inline text for structural wording comparison, without altering calibrated extraction. */
+export function inlineText(text: string, references?: ReadonlySet<string>): string {
+  return visibleText(text, references);
 }
 
 /** The next line's text, with the same containers stripped, or none. */
@@ -1176,7 +1265,7 @@ let spanCacheEnds: Map<number, number> | null = null;
  * Once a span is open the search for its closer ignores backslashes, which is why an
  * escaped run is collected here rather than discarded: it can still close.
  */
-function codeSpanEnds(text: string): Map<number, number> {
+export function codeSpanEnds(text: string): Map<number, number> {
   if (spanCacheText === text && spanCacheEnds !== null) return spanCacheEnds;
   const runs: Array<{ start: number; length: number; escaped: boolean }> = [];
   // Counted forward rather than looked up behind each run, because a long backslash

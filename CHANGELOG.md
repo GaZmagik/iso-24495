@@ -2,6 +2,26 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
+## [0.8.0] - 2026-10-03
+
+### Added
+
+- **Four Markdown layout rules.** Contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail join the offline mechanical audit.
+- **Scoped edition metadata advisory.** Only titled documents are checked; recognised front-matter edition fields qualify at the top level or directly under `metadata`. Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension. Text audited with `--no-front-matter` is also exempt. The finding asks whether readers need edition metadata rather than requiring it.
+- **Opt-in calibrated Jev checks.** The text audit optionally uses the same purpose and colour engine as the focused design audit. Its default stays offline and free.
+- **Pinned calibration contract.** Arm A templates, manifest requests, corpus extraction states and exact decimal validation reproduce `results-r11` at commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`.
+- **Three approved gates.** Purpose failure, colour pass and neither diagnosis carry the recorded cluster-level evidence. Reader and position remain companion questions whose judgements are discarded.
+- **Disclosure before agreement.** Preview names files, payloads, companions, model, privacy terms and possible charges. Interactive sending requires exact yes from the controlling terminal.
+- **Explicit non-interactive agreement.** A user-supplied `--yes` is required alongside `--send`. Agents must never add `--yes` or infer agreement from a delegated instruction.
+- **Separate report sections.** Mechanical findings and Jev results have separate JSON properties. Full judged state needs an explicitly requested export path and an extra option.
+- **Transport controls.** Four concurrent requests use at most six transport attempts, with a 30-second timeout each. Retries preserve bytes and never replace an accepted answer.
+
+### Known limits
+
+- **Historical cluster evidence.** Bounds describe agreement for protocol cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability.
+- **Recognition remains unmeasured.** Raw HTML structure and custom anchors are unsupported. Badge alternative text can be stale, and external versioning can cause advisory false positives.
+- **Service details remain unverified.** Pricing, retention and live transport behaviour were not checked. Findings remain proxies rather than ISO judgements.
+
 ## [0.7.0] - 2026-09-20
 
 ### Added

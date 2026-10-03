@@ -1,6 +1,6 @@
 # ISO 24495 Plain Language Skills
 
-Seven [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
+Eight [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
 
 The skills are plain `SKILL.md` files with agent-neutral wording. Any tool that reads the Agent Skills format can use them.
 
@@ -17,6 +17,7 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
+| `iso-24495-design-audit` | **User-invoked design audit.** Previews calibrated purpose and colour checks for selected Markdown, with a local title check. Sending requires agreement and a TypeSafe API key. |
 
 The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
@@ -76,6 +77,12 @@ Invoke `iso-24495-text-audit` directly and supply one file or directory. The ski
 
 ```text
 /iso-24495-plain-language:iso-24495-text-audit docs/policy.md
+```
+
+Invoke `iso-24495-design-audit` the same way. It needs a TypeSafe API key, and it asks before it sends the document to the TypeSafe service:
+
+```text
+/iso-24495-plain-language:iso-24495-design-audit docs/guide.md
 ```
 
 To enforce the core skill on every response, add a line to your agent's instruction file (`CLAUDE.md`, `AGENTS.md`, or equivalent):
@@ -145,9 +152,18 @@ The `prose-enumeration` rule flags three or more distinct ranks in a prose block
 
 The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
 
-A leading `---` block is front matter, which the audit sets aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
+A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
+Four Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus.
+
+The edition advisory applies only to titled documents and asks whether readers need a version or date.
+Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
+Text audited with `--no-front-matter` is also exempt.
+Recognised front-matter keys `version`, `date`, `updated` and `last_updated` satisfy it at the top level or directly under `metadata`.
+Recognised opening document fields also qualify; other nesting does not.
+
+The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
 The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
@@ -164,6 +180,54 @@ An unreadable or malformed file leaves the shipped list alone, because an adviso
 The skill never runs automatically. It requires Bun and does not alter the selected text.
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
+
+## User-invoked design audit
+
+The design audit previews calibrated purpose and colour checks for selected Markdown.
+The text audit optionally adds these same checks with `--jev-preview` or `--jev --send`.
+Its default remains offline and free, and `.txt` files remain mechanical-only.
+
+Only purpose and colour receive calibrated decisions.
+Purpose can fail or remain unsure; colour can pass or remain unsure.
+The neither diagnosis refines one purpose failure.
+Reader and position travel as companion questions, but their judgements are discarded.
+Missing titles produce local findings and skip purpose assessment, while colour checks continue.
+
+Requests reproduce calibration tag `results-r11`, commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`, using arm A and model `jev-1.13.0`.
+The three-gate catalogue pins purpose failure at 0.87, colour pass at 0.83, and neither diagnosis at 0.83.
+All scores use exact decimal tokens and distributions are never renormalised.
+Read the [calibration gates and evidence](skills/iso-24495-design-audit/SKILL.md#checks-and-calibration) for the decision arithmetic and counts.
+
+Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters.
+They are neither per-block reliability nor a document-level success probability.
+Correlated document blocks do not extend that guarantee.
+Unsure asserts no fault, and colour passes appear only in counts.
+
+Preview names TypeSafe, the model, selected files, requests, companion questions and the five largest payload totals.
+Document text leaves the machine when sent, and charges may apply.
+Pricing, retention and live transport behaviour have not been checked.
+Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing).
+
+`--send` alone is never agreement.
+An interactive command requires exact yes from the controlling terminal.
+Piped or redirected input or output requires a user-supplied `--yes` as well.
+Agents show the full disclosure and wait for the user's own live agreement; they must never add `--yes`.
+Changed payloads require renewed agreement, and retries preserve the captured bytes.
+
+Mechanical findings and Jev results occupy separate report sections and JSON properties.
+JSON defaults to excerpts and state hashes.
+Full judged state requires `--include-judged-text --json <requested-report-path>` and is disclosed as a local text export.
+Credentials and raw responses are never saved.
+A local send log records transmission rather than proof of agreement.
+
+Sending requires Bun and a key in `TYPESAFE_API_KEY`.
+The client permits four concurrent requests and six transport attempts, with a 30-second timeout per attempt.
+It retries connection failures, timeouts, 429 and 5xx only, and never replaces an accepted answer.
+On terminal failure, Jev verdicts are discarded and the report states incomplete execution.
+
+Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
+Code 3 covers service, response, model and calibration failures; code 4 covers a missing or invalid key.
+Findings and unsure results never change a completed audit's exit code.
 
 ## Testing policy
 

@@ -1,3 +1,3 @@
 import { runCli } from "./audit-text.ts";
 
-process.exit(runCli(process.argv, console.log, console.error));
+process.exit(await runCli(process.argv, console.log, console.error));

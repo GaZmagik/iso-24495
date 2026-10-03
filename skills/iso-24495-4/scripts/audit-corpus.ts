@@ -23,6 +23,7 @@ import {
   FILLER_OPENINGS,
 } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
+import { layoutViolations } from "./lib/layout.ts";
 
 // Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
 // English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
@@ -40,6 +41,9 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymMaximumLetters: 6,
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
+  layoutRecognitionVersion: 7,
+  contentsMinimumSections: 6,
+  maximumUnorderedDepth: 2,
 });
 
 const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
@@ -947,8 +951,12 @@ export function projectAcronyms(directory: string): ReadonlySet<string> {
 }
 
 export interface AuditOptions extends Reading {
+  /** The selected file name supplies document-specific scope exemptions. */
+  fileName?: string;
   /** Extra acronyms this project treats as known. */
   knownAcronyms?: ReadonlySet<string>;
+  /** File-aware callers enable structural rules for Markdown rather than plain text. */
+  markdown?: boolean;
 }
 
 export function auditText(text: string, options: AuditOptions = {}): Violation[] {
@@ -1076,6 +1084,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
+  if (options.markdown) violations.push(...layoutViolations(text, { ...reading, fileName: options.fileName }));
   return violations;
 }
 
@@ -1156,7 +1165,7 @@ export function auditCorpus(
       onSkip?.(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms });
+    const violations = auditText(text, { knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
     findings.files[key] = { violations };
     for (const v of violations) {
       findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;

@@ -77,6 +77,7 @@ const PINNED_DOCUMENTS = [...SHIPPED_DOCUMENTS];
 const REBUILD =
   "rebuild with: bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts";
 const ENTRY_FILES = [
+  "skills/iso-24495-design-audit/scripts/design-audit-cli.ts",
   "skills/iso-24495-text-audit/scripts/audit-text-cli.ts",
   "skills/iso-24495-4/scripts/audit-corpus-cli.ts",
   "skills/iso-24495-4/scripts/audit-evidence-cli.ts",
@@ -297,7 +298,10 @@ describe("repository writing conventions", () => {
       return /[\u2013\u2014]/.test(readFileSync(path, "utf8")) ? [relativePath] : [];
     });
     expect(violations).toEqual([]);
-  });
+    // It reads every text file in the repository, which took 16 seconds on a
+    // loaded machine against the 5-second default, so it gets the same limit as
+    // the other whole-repository tests.
+  }, 60_000);
 
   test("the dogfood guard follows the engine's audited extensions", () => {
     const temp = mkdtempSync(join(tmpdir(), "iso-extension-"));
@@ -1174,10 +1178,12 @@ describe("repository writing conventions", () => {
     // The code skill is deliberately absent from both lists, because code
     // sits outside the standard. The core skill hosts the routing list, so
     // it does not route itself, though the output style still names it.
-    // Two skills are deliberately unrouted. Code sits outside the standard,
+    // Three skills are deliberately unrouted. Code sits outside the standard,
     // and the style skill holds the output style itself rather than being a
-    // destination anyone routes to.
-    const UNROUTED = new Set(["iso-24495-code", "iso-24495-style"]);
+    // destination anyone routes to. The design audit sends a document to an
+    // outside service, so it runs only when the user invokes it by name, and
+    // no routing list names it.
+    const UNROUTED = new Set(["iso-24495-code", "iso-24495-design-audit", "iso-24495-style"]);
     const HOSTS_THE_LIST = "iso-24495-1";
 
     // A skill is any directory holding a SKILL.md under either root, which is
@@ -2001,7 +2007,7 @@ describe("repository writing conventions", () => {
   describe("release versions", () => {
     test("every manifest and every skill names the same version, and the changelog records it", () => {
       const report = checkVersionSites(REPOSITORY_ROOT);
-      expect(report.skills.length, "seven skills and the Codex style skill").toBe(8);
+      expect(report.skills.length, "eight skills and the Codex style skill").toBe(9);
       expect(report.version, "the Claude manifest states a dotted version").toMatch(/^\d+\.\d+\.\d+$/);
       expect(report.problems).toEqual([]);
     });

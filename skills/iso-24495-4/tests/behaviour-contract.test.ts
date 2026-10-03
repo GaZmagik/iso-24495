@@ -1680,7 +1680,7 @@ ${sentence}`)
       { rule: "heading-style", line: 2, detail: "heading ends with a full stop" },
     ]);
     expect(headings(description, asText))
-      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay.", lines: 1 }]);
+      .toEqual([{ level: 2, line: 2, text: "note: The tenant shall pay.", lines: 1, setext: true }]);
     expect(readDocument(description, asText).hidden(1)).toBe(false);
     // The paragraph became the heading's text, so no prose block remains either way.
     expect(proseBlocks(description, asText)).toEqual([]);
@@ -1970,7 +1970,7 @@ ${sentence}`)
     expect(proseBlocks(longSetext)).toEqual([]);
 
     const linked = "[Install the service](https://example.com/install)\n==================================================";
-    expect(headings(linked)).toEqual([{ level: 1, line: 1, text: "Install the service", lines: 1 }]);
+    expect(headings(linked)).toEqual([{ level: 1, line: 1, text: "Install the service", lines: 1, setext: true }]);
     const skipped = rulesFor("First heading\n=============\n### Third heading");
     expect(skipped).toContain("heading-skip");
 

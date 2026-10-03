@@ -1,4 +1,4 @@
-# Plain Language Policy
+# Plain Language Policy (Version: 1.0)
 
 ## Purpose
 
