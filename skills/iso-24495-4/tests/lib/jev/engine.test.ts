@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildRequest, planDocument, classify } from "../scripts/lib/jev/engine.ts";
-import { parseDecimal } from "../scripts/lib/jev/decimal.ts";
+import { buildRequest, planDocument, classify } from "../../../scripts/lib/jev/engine.ts";
+import { parseDecimal } from "../../../scripts/lib/jev/decimal.ts";
 
-const FIXTURES = join(import.meta.dir, "fixtures/jev");
+const FIXTURES = join(import.meta.dir, "../../fixtures/jev");
 describe("calibrated engine", () => {
   test("reproduces every manifest request byte for byte", () => {
     const fixtures = JSON.parse(readFileSync(join(FIXTURES, "requests.json"), "utf8"));
