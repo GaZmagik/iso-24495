@@ -12,6 +12,41 @@ const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## 
 const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
 describe("layout rules", () => {
   const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
+  for (const form of ["block", "flow"]) {
+    for (const depth of ["root", "metadata"]) {
+      for (const value of ["1.0", '"1.0"', "2.1.3", '"2.1.3"']) {
+        test(`round 4 recognises ${value} in ${form} at ${depth}`, () => {
+          const field = form === "block" ? `version: ${value}` : `{version: ${value}}`;
+          const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field}` : `metadata: ${field}`;
+          expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+        });
+      }
+    }
+  }
+  test("round 4 excludes deeper flow nesting", () => {
+    for (const source of ["metadata: {edition: {version: 1.0}}", "{metadata: {edition: {version: 1.0}}}", 'edition: {metadata: {version: "2.1.3"}}']) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+    }
+  });
+  test("round 4 retains unquoted date recognition", () => {
+    for (const source of ["date: 2026-10-03", "{date: 2026-10-03}", "metadata:\n  date: 2026-10-03", "metadata: {date: 2026-10-03}"]) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+    }
+  });
+  test("round 4 protects comments and quoted YAML contents", () => {
+    for (const source of ['metadata: {version: 2, description: "version: 2.0"}', "metadata: {version: 2, description: 'reader''s version: 2.0'}", "metadata: {version: 2} # version: 2.0"]) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+    }
+    expect(layoutViolations('---\nmetadata: {version: 1.0, description: "Reader \\"version: 2.0\\" notes"}\n---\n# Guide\n\nInstructions.')).toEqual([]);
+    expect(layoutViolations("---\ndescription: Reader's guide\nmetadata: {version: 1.0}\naudience: Engineer's tasks\n---\n# Guide\n\nInstructions.")).toEqual([]);
+  });
+  test("round 4 protects literal and folded YAML block scalars", () => {
+    for (const marker of ["|", ">-", "|2+"]) {
+      expect(layoutViolations(`---\nversion: 1.0\ndescription: ${marker}\n  version: 2.0\n\n  Notes.\nmetadata: {version: 2}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+    }
+    expect(layoutViolations("---\nmetadata:\n  version: 2\n  description: |\n    version: 2.0\n---\n# Guide\n\nInstructions.")).toEqual([{ ...editionFinding, line: 7 }]);
+    expect(layoutViolations('---\ndescription: |\n  "version: 2.0\nmetadata: {version: 1.0}\nfootnote: "Reader"\n---\n# Guide\n\nInstructions.')).toEqual([]);
+  });
   for (const [key, value] of [["version", '"0.8.0"'], ["date", "2026-10-03"], ["updated", "Q4 2026"], ["last_updated", "3 October 2026"]]) {
     test(`A6 correction recognises metadata.${key}`, () => {
       expect(layoutViolations(`---\nmetadata:\n  ${key}: ${value}\n---\n# Title\n\nText.`)).toEqual([]);
@@ -69,7 +104,7 @@ describe("layout rules", () => {
     for (const metadata of ["version: 2.0", '"version": 2.0 # Current edition', "date: 2.0", "version: 2.00"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([]);
   });
   test("A6 rejects numeric YAML spellings outside recognised forms", () => {
-    for (const metadata of ["version: 1e-2", "version: 0x10", "version: 2"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: 4 }]);
+    for (const metadata of ["version: 1e-2", "version: 0x10", "version: 2", "version:\n  1"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
   });
   test("A6 keeps unrecognised and nested front matter advisory", () => {
     for (const metadata of ["version: next release", "version: 1", "date: 2026-02-30", "updated: null", "last_updated: [2026-10-03]", "edition:\n  version: 0.8.0", "title: Example", "version: [broken", "# Metadata comment", "- 2026-10-03"]) {

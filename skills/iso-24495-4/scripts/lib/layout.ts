@@ -62,34 +62,31 @@ function recognisedFrontMatter(text: string): boolean {
   const lines = toLines(text);
   const range = frontMatterRange(lines);
   if (range === null) return false;
-  const source = lines.slice(1, range.end);
+  const source = lines.slice(1, range.end).join("\n");
   let metadata: unknown;
-  try { metadata = Bun.YAML.parse(source.join("\n")); } catch { return false; }
+  let spellings: unknown;
+  try {
+    metadata = Bun.YAML.parse(source);
+    spellings = Bun.YAML.parse(preserveNumericYaml(source));
+  } catch { return false; }
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
-  return recognisedEditionFields(metadata, source) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, metadataLines(source));
+  return recognisedEditionFields(metadata, spellings) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, (spellings as Record<string, unknown>).metadata);
 }
-function recognisedEditionFields(metadata: unknown, lines: readonly string[]): boolean {
+function recognisedEditionFields(metadata: unknown, spellings: unknown): boolean {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
-  // YAML numbers lose trailing zeroes; edition recognition needs their source spelling.
-  const scalars = new Map<string, string>();
-  for (const line of lines) {
-    const field = /^(?:["']?(version|date|updated|last_updated)["']?)\s*:\s*(\S+)(?:[ \t]+#.*)?[ \t]*$/i.exec(line);
-    if (field !== null) scalars.set(field[1].toLowerCase(), field[2]);
-  }
   return Object.entries(metadata).some(([key, value]) => {
     if (!/^(?:version|date|updated|last_updated)$/i.test(key) || (typeof value !== "string" && typeof value !== "number")) return false;
-    const spelling = typeof value === "number" ? scalars.get(key.toLowerCase()) ?? "" : value;
+    const raw = (spellings as Record<string, unknown>)[key];
+    const spelling = typeof value === "number" ? typeof raw === "string" ? raw : "" : value;
     return VERSION.test(`Version ${spelling}`) || validDate(spelling);
   });
 }
-function metadataLines(lines: readonly string[]): string[] {
-  const start = lines.findIndex(line => /^(?:metadata|"metadata"|'metadata')[ \t]*:[ \t]*(?:#.*)?$/.test(line));
-  if (start === -1) return [];
-  const next = lines.findIndex((line, index) => index > start && /^[^\s#]/.test(line));
-  const children = lines.slice(start + 1, next === -1 ? lines.length : next);
-  const indents = children.filter(line => line.trim() !== "" && !line.trimStart().startsWith("#")).map(line => line.length - line.trimStart().length);
-  const indent = Math.min(...indents);
-  return children.map(line => line.slice(indent));
+function preserveNumericYaml(source: string): string {
+  // Quote numeric source tokens before YAML loses trailing zeroes. Protected
+  // strings, comments and block scalars keep their literal contents. The YAML
+  // parser still supplies mapping boundaries and the permitted metadata depth.
+  const tokens = /^([ \t]*)(?:[^\n:{}\[\],"'#]+|"(?:\\[\s\S]|[^"\\])*"|'(?:''|[^'])*')[ \t]*:[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#[^\n]*)?(?:\n(?:\1[ \t]+[^\n]*|[ \t]*(?=\n|$)))*|(?<![^\s\[\]{},:])"(?:\\[\s\S]|[^"\\])*"|(?<![^\s\[\]{},:])'(?:''|[^'])*'|#[^\n]*|(:[ \t]*)([+-]?(?:\d[0-9a-z_.+-]*|\.(?:inf|nan)))(?=[ \t]*(?:[,}\]\n]|$)|[ \t]+#)/gmi;
+  return source.replace(tokens, (token, _indent: string | undefined, label: string | undefined, value: string | undefined) => label === undefined ? token : `${label}${JSON.stringify(value)}`);
 }
 function isDocumentField(text: string): boolean {
   if (VERSION.test(text)) return true;
