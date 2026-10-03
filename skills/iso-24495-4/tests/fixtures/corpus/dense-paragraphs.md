@@ -1,4 +1,4 @@
-# Sample With Dense Paragraphs
+# Sample With Dense Paragraphs (Version: 1.0)
 
 This paragraph has too many sentences. Here is the second. Here is the third. Here is the fourth. Here is the fifth. Here is the sixth.
 

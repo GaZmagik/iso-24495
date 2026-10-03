@@ -1,4 +1,4 @@
-# Sample With Legalese
+# Sample With Legalese (Version: 1.0)
 
 The Licensee shall comply with this clause. The Licensor shall respond promptly. Both parties shall keep records.
 

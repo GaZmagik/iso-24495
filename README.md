@@ -17,7 +17,7 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
-| `iso-24495-design-audit` | **User-invoked design audit.** Checks a selected `.md` or `.markdown` file or directory for the document structure that Part 5 asks for. Uses the Jev judgement model from TypeSafe, so it needs a TypeSafe API key. |
+| `iso-24495-design-audit` | **User-invoked design audit.** Previews calibrated purpose and colour checks for selected Markdown, with a local title check. Sending requires agreement and a TypeSafe API key. |
 
 The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
@@ -154,7 +154,9 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 A leading `---` block is front matter, which the audit sets aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
+Four Markdown layout rules add contents navigation, an opening version/date field, unordered bullet depth and an overview before detail.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus.
+The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
 The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
@@ -174,38 +176,51 @@ Directory audits skip selected or nested symbolic links and directory junctions.
 
 ## User-invoked design audit
 
-The `iso-24495-design-audit` skill checks a selected `.md` or `.markdown` file or directory for the document structure that Part 5 asks for. The text audit cannot see that structure, because its rules are mechanical. This audit asks Jev, the judgement model from TypeSafe, narrow yes-or-no questions about each candidate that code finds.
+The design audit previews calibrated purpose and colour checks for selected Markdown.
+The text audit optionally adds these same checks with `--jev-preview` or `--jev --send`.
+Its default remains offline and free, and `.txt` files remain mechanical-only.
 
-It checks four things:
+Only purpose and colour receive calibrated decisions.
+Purpose can fail or remain unsure; colour can pass or remain unsure.
+The neither diagnosis refines one purpose failure.
+Reader and position travel as companion questions, but their judgements are discarded.
+Missing titles produce local findings and skip purpose assessment, while colour checks continue.
 
-- whether the opening block has a level-1 title, states its purpose, and states in words who the document is for
-- whether each section heading states a message or a task, rather than only naming a topic, with a "Summary" or "Overview" label exempt
-- whether each paragraph of two or more sentences holds one idea
-- whether a paragraph identifies something only by its colour or only by its position
+Requests reproduce calibration tag `results-r11`, commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`, using arm A and model `jev-1.13.0`.
+The three-gate catalogue pins purpose failure at 0.87, colour pass at 0.83, and neither diagnosis at 0.83.
+All scores use exact decimal tokens and distributions are never renormalised.
+Read the [calibration gates and evidence](skills/iso-24495-design-audit/SKILL.md#checks-and-calibration) for the decision arithmetic and counts.
 
-Part 5 allows a topic name for a reference section, and for a fixed name a document type requires, such as Context in a decision record. Jev cannot tell those sections from one heading, so the audit still reports them, and you decide.
+Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters.
+They are neither per-block reliability nor a document-level success probability.
+Correlated document blocks do not extend that guarantee.
+Unsure asserts no fault, and colour passes appear only in counts.
 
-Each answer falls in one of three bands: passes, unsure, or fails. A borderline answer is not a pass, so the audit reports both unsure and fails, and names the band. The cut-offs were calibrated on 2026-09-28 against labelled samples from popular open-source documents, and they are provisional.
+Preview names TypeSafe, the model, selected files, requests, companion questions and the five largest payload totals.
+Document text leaves the machine when sent, and charges may apply.
+Pricing, retention and live transport behaviour have not been checked.
+Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing).
 
-An unsure answer means Jev could not decide, so its finding says what to check rather than claiming a fault. `colour-only` and `position-only` report unsure at most. No labelled real failure has been measured for either, so neither has a fail band.
+`--send` alone is never agreement.
+An interactive command requires exact yes from the controlling terminal.
+Piped or redirected input or output requires a user-supplied `--yes` as well.
+Agents show the full disclosure and wait for the user's own live agreement; they must never add `--yes`.
+Changed payloads require renewed agreement, and retries preserve the captured bytes.
 
-Each finding says what to do, and a paragraph finding quotes the start of the text judged. A heading finding names the Part 5 exceptions, so you can check them before rewording.
+Mechanical findings and Jev results occupy separate report sections and JSON properties.
+JSON defaults to excerpts and state hashes.
+Full judged state requires `--include-judged-text --json <requested-report-path>` and is disclosed as a local text export.
+Credentials and raw responses are never saved.
+A local send log records transmission rather than proof of agreement.
 
-The report counts, for each rule, the candidates checked and the findings in each band. It also says what was not checked: exempt overview headings, and the opening of a document with no level-1 title. It names the Jev model that answered.
+Sending requires Bun and a key in `TYPESAFE_API_KEY`.
+The client permits four concurrent requests and six transport attempts, with a 30-second timeout per attempt.
+It retries connection failures, timeouts, 429 and 5xx only, and never replaces an accepted answer.
+On terminal failure, Jev verdicts are discarded and the report states incomplete execution.
 
-The audit asks for `jev-1.13.0` by name, not the `jev-latest` alias, because an alias moves when TypeSafe ships a new release. The cut-offs were calibrated on `jev-1.13.0`, so an answer from any other model stops the audit with no findings.
-
-Link text and alternative text are left out. On real documents Jev flagged good link text, and the `link-text` rule already covers links. Alternative text has not been measured on real documents.
-
-The audit requires Jev and a TypeSafe API key, set in the `TYPESAFE_API_KEY` environment variable. Get a key from https://docs.typesafe.ai. Without a key, the audit stops and says so.
-
-Nothing leaves your machine unless the command has `--send`. Without it, the audit prints the questions it would send, by file and by rule, and the largest files. It gives no cost estimate, because how TypeSafe bills has not been checked.
-
-With `--send`, the text of each document goes to the TypeSafe service, and the skill tells you so before it sends anything. The TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing) say how TypeSafe handles that text. TypeSafe offers zero data retention to enterprise customers.
-
-Every finding except a missing title comes from a model and can be wrong. Like a text audit finding, it is a proxy and not an ISO judgement. The audit supports English only.
-
-The skill never runs automatically. It requires Bun and does not alter the selected text.
+Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
+Code 3 covers service, response, model and calibration failures; code 4 covers a missing or invalid key.
+Findings and unsure results never change a completed audit's exit code.
 
 ## Testing policy
 

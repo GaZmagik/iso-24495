@@ -2,24 +2,24 @@
 
 All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Semantic Versioning](https://semver.org). Installs are pinned to tagged releases via the marketplace manifest.
 
-## [Unreleased]
+## [0.8.0] - 2026-10-03
 
 ### Added
 
-- **A document design audit that uses Jev.** The text audit's seventeen rules are mechanical, so a document with no purpose line or named reader still reported zero findings. The new `iso-24495-design-audit` skill asks Jev, the TypeSafe judgement model, narrow yes-or-no questions about the opening block, each heading and each paragraph. It also reports meaning carried only by colour or only by position. It runs only when the user invokes it, and it needs a TypeSafe API key.
-- **Nothing is sent without `--send`.** Without it, the audit prints which files it would send and how many questions it would ask. Before sending, the skill tells the user that the text goes to the TypeSafe service. It points to the TypeSafe [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing), and says that TypeSafe offers zero data retention to enterprise customers.
-- **Three bands, not one line between pass and fail.** Each answer passes, is unsure, or fails, and the audit reports the last two with the band named. A borderline answer is not a pass. The cut-offs were set on 2026-09-28 against labels two model families agreed on, blind to Jev. The skill states each band's count, because the samples are small.
-- **The audit pins `jev-1.13.0`.** It no longer asks for `jev-latest`, an alias that moves when TypeSafe ships a new release. The cut-offs were calibrated on `jev-1.13.0`, so an answer from any other model stops the audit with exit code 3 and no findings. The report names the model that answered.
-- **The middle band is called unsure.** An answer between the cut-offs means Jev cannot decide, not that the text partly complies. An unsure finding says what to check and claims no fault. It is still reported, and never counts as a pass.
-- **Counts by rule, and what was not checked.** For each rule, the report shows the candidates checked and the findings in each band. It also names what it left unasked: exempt overview headings, and the opening of a document with no level-1 title.
-- **A fuller preview before sending.** Without `--send`, the audit now also counts questions by rule and lists the largest files. It states no cost, because how TypeSafe bills has not been checked.
-- **Findings say what to do.** Each opening finding ends with a fixed action rather than a rewrite, because Jev returns only a probability. A heading finding names the Part 5 exceptions. A paragraph finding quotes up to 60 characters of the text judged, with control characters removed.
-- **Colour and position report unsure at most.** No labelled real failure has been measured for either rule, so neither has a fail band.
+- **Four Markdown layout rules.** Contents navigation, an opening version/date field, unordered bullet depth and an overview before detail join the offline mechanical audit.
+- **Opt-in calibrated Jev checks.** The text audit optionally uses the same purpose and colour engine as the focused design audit. Its default stays offline and free.
+- **Pinned calibration contract.** Arm A templates, manifest requests, corpus extraction states and exact decimal validation reproduce `results-r11` at commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`.
+- **Three approved gates.** Purpose failure, colour pass and neither diagnosis carry the recorded cluster-level evidence. Reader and position remain companion questions whose judgements are discarded.
+- **Disclosure before agreement.** Preview names files, payloads, companions, model, privacy terms and possible charges. Interactive sending requires exact yes from the controlling terminal.
+- **Explicit non-interactive agreement.** A user-supplied `--yes` is required alongside `--send`. Agents must never add `--yes` or infer agreement from a delegated instruction.
+- **Separate report sections.** Mechanical findings and Jev results have separate JSON properties. Full judged state needs an explicitly requested export path and an extra option.
+- **Transport controls.** Four concurrent requests use at most six transport attempts, with a 30-second timeout each. Retries preserve bytes and never replace an accepted answer.
 
 ### Known limits
 
-- **Findings come from a model and can be wrong.** Every cut-off is provisional, and the fail cut-off for one idea is the least certain. Real documents held too few failures to calibrate it. Link text and alternative text are not checked, because Jev flagged good link text and alternative text is unmeasured.
-- **A reference section or a fixed section name is still reported.** Part 5 allows a topic name for both, but Jev cannot tell them from one heading. Its answer fell between 0.3 and 0.7 for 61% of 1,219 real headings, so the user decides.
+- **Historical cluster evidence.** Bounds describe agreement for protocol cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability.
+- **Recognition remains unmeasured.** Raw HTML structure and custom anchors are unsupported. Badge alternative text can be stale, and external versioning can cause advisory false positives.
+- **Service details remain unverified.** Pricing, retention and live transport behaviour were not checked. Findings remain proxies rather than ISO judgements.
 
 ## [0.7.0] - 2026-09-20
 

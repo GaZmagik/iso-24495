@@ -1,10 +1,10 @@
 ---
 name: iso-24495-text-audit
-description: Audit user-selected Markdown or text files for deterministic plain-language findings. Use only when the user explicitly invokes this skill.
+description: Audit selected Markdown or text for offline mechanical findings. Optionally request calibrated Jev checks. Invoke explicitly.
 disable-model-invocation: true
 argument-hint: "[file-or-directory]"
 metadata:
-  version: "0.7.0"
+  version: "0.8.0"
 ---
 
 # ISO 24495 Text Audit
@@ -25,6 +25,50 @@ The `prose-enumeration` rule flags three or more distinct ranks in a prose block
 
 The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
 
+## Markdown layout recognition
+
+Four additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
+These recognition choices are project proxies and remain unmeasured on a corpus.
+Raw HTML structure, code, comments and front matter are excluded.
+
+- **Contents list:** At six root H2 sections, require labelled contents or opening navigation containing two same-document fragment links in one block.
+- **Wording comparison:** At six sections, resolved contents links must use the target H2 wording, preserving case, punctuation and numbering.
+- **Version or date:** Require a document field in the visible opening, rather than a date or version mentioned inside a sentence.
+- **Bullet depth:** Report unordered items beyond two unordered ancestors, counting the item itself and ignoring ordered or quote containers.
+- **Overview label:** At six root H2 sections, require an Overview or Summary heading before the first content H2, at any heading level outside lists and quotations.
+
+The section count includes Contents, excludes H3 subsections and ignores headings inside lists or quotations.
+Recognised contents labels:
+
+```text
+Contents
+Table of contents
+TOC
+Key sections
+```
+
+Lists, paragraphs, tables and locally resolved reference links qualify; partial coverage and different ordering are accepted.
+Below six sections, the contents rule reports nothing, including wording mismatches.
+Unresolved custom anchors and coverage gaps are informational limitations, rather than wording findings.
+
+Heading IDs lowercase normalised wording, retain Unicode letters, numbers, marks, underscores and hyphens, and replace spaces with hyphens.
+Other punctuation is removed, and duplicate IDs receive numeric suffixes.
+Wording renders inline formatting, entities and links, then collapses whitespace.
+
+Version labels are Version or Revision, with optional colon and v before dot-separated integers and optional Semantic Versioning suffixes.
+Date labels are Date, Updated, Last updated or Reviewed.
+Dates accept calendar-valid ISO, day-month-year or month-day-year forms, full or abbreviated English months, month/year, and Q1 through Q4 with a year.
+Labels are case-insensitive.
+
+A document field is a standalone line, a metadata table row with the label first, a final parenthesised title suffix, or badge alternative text.
+Bare v2.1, product requirements, front-matter-only metadata and footer-only dates do not qualify.
+Badge images are never fetched, and hard-coded alternative text can be out of date.
+Externally versioned documents can receive an advisory false positive.
+
+The overview label ignores case, inline formatting and a leading decimal section number.
+Bold prose and contents entries do not qualify.
+The separate need for a conclusion before detail is not detected mechanically, and no approved Jev gate supplies that judgement.
+
 ## Workflow
 
 1. Read the path from `$ARGUMENTS`. Ask for a path when none was supplied.
@@ -44,6 +88,42 @@ bun <skill-directory>/scripts/audit-text-cli.ts <file-or-directory> --project-di
 8. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
 9. Explain that findings are mechanical proxies, not an ISO judgement.
 10. Leave the final decision and any rewriting request to the user.
+
+## Optional calibrated Jev checks
+
+The default command stays deterministic, offline, free and independent of credentials.
+Jev options require an explicit user request and apply only to Markdown.
+Both audits use the same calibrated engine, templates, exact validation and three approved gates.
+Only purpose and colour receive calibrated decisions; reader and position companion judgements are discarded.
+Read the [design audit calibration and evidence](../iso-24495-design-audit/SKILL.md#checks-and-calibration) before interpreting them.
+
+Preview locally with `--jev-preview`.
+Show the full disclosure to the user, including selected files, payloads, companion questions, model, privacy links and possible charges.
+Wait for the user's own agreement in the live conversation before adding `--jev --send`.
+Never infer agreement from delegation, your own judgement, or earlier agreement about different files.
+Agents must never add `--yes`.
+
+An interactive send reads exact yes from the controlling terminal, never standard input.
+Piped or redirected input or output requires the user to supply `--yes` in their own command.
+`--send` alone is neither agreement nor a valid text-audit option.
+The CLI refuses Jev options with `--no-front-matter` and conflicting preview/send options.
+Changed payloads require renewed agreement, and retries preserve the captured bytes.
+
+Mechanical findings and Jev results appear in separate report sections and JSON properties.
+Report each document's assessed, pass, fail, unsure and skipped counts for purpose and colour.
+Unsure asserts no fault, and colour passes appear only in counts.
+On terminal Jev failure, retain mechanical findings, discard Jev verdicts and report incomplete execution.
+Report every skipped entry.
+
+JSON defaults to excerpts and state hashes.
+Full judged state needs `--include-judged-text --json <requested-report-path>`, disclosed in the preview as a local document-text export.
+Never save keys or raw responses.
+A local send log records transmission, not proof of agreement.
+Pricing, retention and live transport behaviour remain unverified.
+
+Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
+Code 3 covers service, response, model and calibration failures; code 4 covers a missing or invalid key.
+Neither findings nor unsure results change a completed audit's exit code.
 
 ## Boundaries
 
