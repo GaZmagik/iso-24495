@@ -12,6 +12,40 @@ const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## 
 const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
 describe("layout rules", () => {
   const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
+  for (const [key, value] of [["version", '"0.8.0"'], ["date", "2026-10-03"], ["updated", "Q4 2026"], ["last_updated", "3 October 2026"]]) {
+    test(`A6 correction recognises metadata.${key}`, () => {
+      expect(layoutViolations(`---\nmetadata:\n  ${key}: ${value}\n---\n# Title\n\nText.`)).toEqual([]);
+    });
+  }
+  test("A6 correction excludes deeper and unrelated metadata nesting", () => {
+    for (const metadata of ['metadata:\n  edition:\n    version: "0.8.0"', 'edition:\n  metadata:\n    version: "0.8.0"', 'edition:\n  version: "0.8.0"']) {
+      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
+    }
+    expect(layoutViolations('---\nmetadata:\n  version: "0.8.0"\n---\n# Title\n\nText.')).toEqual([]);
+  });
+  test("A6 correction keeps unrecognised metadata values advisory", () => {
+    for (const metadata of ["metadata: next release", "metadata: null", "metadata: [0.8.0]", "metadata:\n  version: next release", "metadata:\n  date: 2026-02-30"]) {
+      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
+    }
+    expect(layoutViolations("---\nmetadata:\n  date: 2026-10-03\n---\n# Title\n\nText.")).toEqual([]);
+  });
+  test("A6 correction preserves numeric metadata versions without widening scope", () => {
+    for (const metadata of ["metadata:\n  edition:\n    version: 2.0", "metadata:\n  version: 1e-2", "version: 2\nmetadata:\n  edition:\n    version: 2.0"]) {
+      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
+    }
+    for (const metadata of ["metadata:\n  version: 2.0 # Current edition", '"metadata":\n  # Edition\n\n  version: 2.0\nname: Example']) {
+      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([]);
+    }
+  });
+  test("A6 correction keeps YAML string contents literal", () => {
+    expect(layoutViolations('---\nmetadata:\n  version: "0.8.0"\ndescription: "Reader notes\n  version: 2.0\n  remain prose."\n---\n# Title\n\nText.')).toEqual([]);
+  });
+  for (const fileName of ["PULL_REQUEST_TEMPLATE", "pull_request_template.markdown", "D:/docs/nested/.github/PULL_REQUEST_TEMPLATE.md"]) {
+    test(`A6 correction exempts template ${fileName}`, () => {
+      expect(layoutViolations("# Title\n\nText.", { fileName })).toEqual([]);
+      expect(layoutViolations("# Title\n\nText.", { fileName: "PULL_REQUEST_TEMPLATE-copy.md" })).toEqual([editionFinding]);
+    });
+  }
   test("A6 skips untitled documents", () => {
     for (const text of ["Text only.", "## Section\n\nText.", "> # Quoted title\n\nText.", "- # List title\n\nText."]) expect(layoutViolations(text)).toEqual([]);
   });

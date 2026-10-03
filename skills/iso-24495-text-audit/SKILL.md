@@ -69,13 +69,14 @@ Labels are case-insensitive.
 A document field is a standalone line, a metadata table row with the label first, a final parenthesised title suffix, or badge alternative text.
 Metadata rows require a parsed table; pipe-separated prose does not qualify.
 
-Top-level front-matter keys `version`, `date`, `updated` and `last_updated` also qualify when their values match the recognised version or date forms.
-Nested keys and unrecognised values do not qualify.
+Front-matter keys `version`, `date`, `updated` and `last_updated` qualify when their values match the recognised version or date forms.
+The keys may be top-level or nested directly under a top-level `metadata` key.
+Other nesting and unrecognised values do not qualify.
 Bare v2.1, product requirements and footer-only dates do not qualify.
 Badge images are never fetched, and hard-coded alternative text can be out of date.
 
 The rule applies only to documents with a root H1 title.
-Files named `readme`, `contributing` or `security` are exempt, regardless of case or extension.
+Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
 Text audited with `--no-front-matter`, including pull request descriptions, is exempt.
 The advisory asks whether readers need a version or date to identify the edition or judge how current it is.
 It does not require authors to add one.

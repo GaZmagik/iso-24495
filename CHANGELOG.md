@@ -7,7 +7,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 ### Added
 
 - **Four Markdown layout rules.** Contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail join the offline mechanical audit.
-- **Scoped edition metadata advisory.** Only titled documents are checked, and recognised top-level front-matter metadata qualifies. Files named `readme`, `contributing` or `security` are exempt regardless of case or extension. Text audited with `--no-front-matter` is also exempt. The finding asks whether readers need edition metadata rather than requiring it.
+- **Scoped edition metadata advisory.** Only titled documents are checked; recognised front-matter edition fields qualify at the top level or directly under `metadata`. Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension. Text audited with `--no-front-matter` is also exempt. The finding asks whether readers need edition metadata rather than requiring it.
 - **Opt-in calibrated Jev checks.** The text audit optionally uses the same purpose and colour engine as the focused design audit. Its default stays offline and free.
 - **Pinned calibration contract.** Arm A templates, manifest requests, corpus extraction states and exact decimal validation reproduce `results-r11` at commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`.
 - **Three approved gates.** Purpose failure, colour pass and neither diagnosis carry the recorded cluster-level evidence. Reader and position remain companion questions whose judgements are discarded.

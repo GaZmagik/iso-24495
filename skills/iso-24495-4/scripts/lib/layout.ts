@@ -25,7 +25,7 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     return [normal, ...(cells.length >= 2 ? [`${cells[0].replace(/:$/, "")} ${cells[1]}`] : []), ...markdownLinks(line).filter(link => link.image).map(link => normaliseWording(link.label))];
   });
   const fileName = reading.fileName?.split(/[\\/]/).at(-1) ?? "";
-  const exempt = /^(?:README|CONTRIBUTING|SECURITY)(?:\..*)?$/i.test(fileName);
+  const exempt = /^(?:README|CONTRIBUTING|SECURITY|PULL_REQUEST_TEMPLATE)(?:\..*)?$/i.test(fileName);
   if (title !== undefined && !exempt && reading.frontMatter !== false && !recognisedFrontMatter(text)
     && !fields.some(isDocumentField) && !isDocumentField(titleSuffix ?? "")) {
     findings.push({ rule: "opening-version-date", line: start, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" });
@@ -62,12 +62,17 @@ function recognisedFrontMatter(text: string): boolean {
   const lines = toLines(text);
   const range = frontMatterRange(lines);
   if (range === null) return false;
+  const source = lines.slice(1, range.end);
   let metadata: unknown;
-  try { metadata = Bun.YAML.parse(lines.slice(1, range.end).join("\n")); } catch { return false; }
+  try { metadata = Bun.YAML.parse(source.join("\n")); } catch { return false; }
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
+  return recognisedEditionFields(metadata, source) || recognisedEditionFields((metadata as Record<string, unknown>).metadata, metadataLines(source));
+}
+function recognisedEditionFields(metadata: unknown, lines: readonly string[]): boolean {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
   // YAML numbers lose trailing zeroes; edition recognition needs their source spelling.
   const scalars = new Map<string, string>();
-  for (const line of lines.slice(1, range.end)) {
+  for (const line of lines) {
     const field = /^(?:["']?(version|date|updated|last_updated)["']?)\s*:\s*(\S+)(?:[ \t]+#.*)?[ \t]*$/i.exec(line);
     if (field !== null) scalars.set(field[1].toLowerCase(), field[2]);
   }
@@ -76,6 +81,15 @@ function recognisedFrontMatter(text: string): boolean {
     const spelling = typeof value === "number" ? scalars.get(key.toLowerCase()) ?? "" : value;
     return VERSION.test(`Version ${spelling}`) || validDate(spelling);
   });
+}
+function metadataLines(lines: readonly string[]): string[] {
+  const start = lines.findIndex(line => /^(?:metadata|"metadata"|'metadata')[ \t]*:[ \t]*(?:#.*)?$/.test(line));
+  if (start === -1) return [];
+  const next = lines.findIndex((line, index) => index > start && /^[^\s#]/.test(line));
+  const children = lines.slice(start + 1, next === -1 ? lines.length : next);
+  const indents = children.filter(line => line.trim() !== "" && !line.trimStart().startsWith("#")).map(line => line.length - line.trimStart().length);
+  const indent = Math.min(...indents);
+  return children.map(line => line.slice(indent));
 }
 function isDocumentField(text: string): boolean {
   if (VERSION.test(text)) return true;
