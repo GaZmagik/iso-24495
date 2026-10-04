@@ -160,8 +160,13 @@ Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-
 The edition advisory applies only to titled documents and asks whether readers need a version or date.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
 Text audited with `--no-front-matter` is also exempt.
-Recognised front-matter keys `version`, `date`, `updated` and `last_updated` satisfy it at the top level or directly under `metadata`.
-Recognised opening document fields also qualify; other nesting does not.
+Front-matter keys `version`, `date`, `updated` and `last_updated` satisfy it at the top level or directly under `metadata`.
+Visible opening fields still require a recognised version or date.
+
+Front matter is parsed once; aliases resolve before checking for a declared field.
+A non-empty trimmed string, finite number or date counts, including `version: banana`.
+The field's format is not validated, because YAML can change number spelling and resolve aliases.
+Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 

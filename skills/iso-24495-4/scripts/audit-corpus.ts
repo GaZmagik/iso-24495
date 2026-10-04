@@ -41,7 +41,7 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymMaximumLetters: 6,
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
-  layoutRecognitionVersion: 7,
+  layoutRecognitionVersion: 8,
   contentsMinimumSections: 6,
   maximumUnorderedDepth: 2,
 });

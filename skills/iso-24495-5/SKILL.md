@@ -121,9 +121,15 @@ Wording mismatches are checked only at six sections, against resolved H2 targets
 
 The version or date proxy asks whether a titled document needs edition metadata when none is recognised.
 Standalone lines, metadata table rows, final parenthesised title suffixes and accessible badge text qualify.
-Recognised front-matter keys `version`, `date`, `updated` and `last_updated` qualify at the top level or directly under `metadata`.
-Other nesting does not qualify.
+These visible fields still require a recognised version or date.
 Badge images are never fetched, so hard-coded alternative text can be out of date.
+
+Front-matter keys `version`, `date`, `updated` and `last_updated` qualify at the top level or directly under `metadata`.
+A non-empty trimmed string, finite number or date declares edition metadata, including `version: banana`.
+Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not qualify.
+
+Front matter is parsed once, with aliases resolved, and checks a declared field rather than a valid format.
+YAML can change number spelling and resolve aliases, so the proxy avoids guessing the original format.
 
 Untitled documents and text audited with `--no-front-matter` are exempt from this proxy.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.

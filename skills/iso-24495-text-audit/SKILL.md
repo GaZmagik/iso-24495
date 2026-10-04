@@ -69,14 +69,17 @@ Labels are case-insensitive.
 A document field is a standalone line, a metadata table row with the label first, a final parenthesised title suffix, or badge alternative text.
 Metadata rows require a parsed table; pipe-separated prose does not qualify.
 
-Front-matter keys `version`, `date`, `updated` and `last_updated` qualify when their values match the recognised version or date forms.
-The keys may be top-level or nested directly under a top-level `metadata` key.
-Other nesting and unrecognised values do not qualify.
+Front-matter keys `version`, `date`, `updated` and `last_updated` declare edition metadata at the top level or directly under a top-level `metadata` key.
+Values must resolve to a non-empty trimmed string, a finite number or a date.
+Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
+
+Front matter is parsed once, with aliases resolved.
+This checks for a declared field, not a valid format: `version: banana` counts.
+YAML can change number spelling and resolve aliases, so declaration checks avoid guesses about the original format.
+
+Visible opening fields retain the version and date formats above.
 Bare v2.1, product requirements and footer-only dates do not qualify.
 Badge images are never fetched, and hard-coded alternative text can be out of date.
-
-Numeric source recovery uses at most 16 YAML reparses per document.
-Recovery stops at that limit; an unresolved value remains unrecognised and can leave the normal edition advisory.
 
 The rule applies only to documents with a root H1 title.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.

@@ -12,169 +12,72 @@ const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## 
 const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
 describe("layout rules", () => {
   const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
-  test("round 6 unrelated numeric fields do not trigger recovery parses", () => {
-    const fields = Array.from({ length: 5000 }, (_, index) => `k${index}: 1.0`).join("\n");
-    const parser = spyOn(Bun.YAML, "parse");
-    try {
-      const findings = layoutViolations(`---\nversion: 1\n${fields}\n---\n# Guide\n\nInstructions.`);
-      console.log(`Round 6 5000-field parser invocations: ${parser.mock.calls.length}`);
-      expect(parser.mock.calls.length).toBeLessThanOrEqual(2);
-      expect(findings).toEqual([{ ...editionFinding, line: 5004 }]);
-    } finally { parser.mockRestore(); }
-  }, 60000);
-  test("round 6 caps recovery at 16 reparses per document", () => {
-    const fields = Array.from({ length: 16 }, (_, index) => `edition${index}: {version: 1.0}`).join("\n");
-    const parser = spyOn(Bun.YAML, "parse");
-    try {
-      const findings = layoutViolations(`---\n${fields}\nversion: 1.0\n---\n# Guide\n\nInstructions.`);
-      expect(parser.mock.calls.length).toBe(17);
-      expect(findings).toEqual([{ ...editionFinding, line: 20 }]);
-    } finally { parser.mockRestore(); }
-  });
-  test("round 6 recognises a value on the final permitted reparse", () => {
-    const fields = Array.from({ length: 15 }, (_, index) => `edition${index}: {version: 1.0}`).join("\n");
-    const parser = spyOn(Bun.YAML, "parse");
-    try {
-      expect(layoutViolations(`---\n${fields}\nversion: 1.0\n---\n# Guide\n\nInstructions.`)).toEqual([]);
-      expect(parser.mock.calls.length).toBe(17);
-    } finally { parser.mockRestore(); }
-  });
-  test("round 6 shares the reparse budget across permitted depths", () => {
-    const fields = Array.from({ length: 15 }, (_, index) => `edition${index}: {version: 1.0}`).join("\n");
-    const parser = spyOn(Bun.YAML, "parse");
-    try {
-      const findings = layoutViolations(`---\n${fields}\nversion: 1\nmetadata: {version: 1.0}\n---\n# Guide\n\nInstructions.`);
-      expect(parser.mock.calls.length).toBe(17);
-      expect(findings).toEqual([{ ...editionFinding, line: 20 }]);
-    } finally { parser.mockRestore(); }
-  });
-  for (const key of ["version", "date", "updated", "last_updated"]) {
-    test(`round 6 ignores unrelated and literal tokens after ${key}`, () => {
-      for (const source of [`{${key}: 1, unrelated: 1.0}`, `metadata: {${key}: 1, unrelated: 1.0}`, `${key}: 1\n# ${key}: 1.0`, `${key}: 1\ndescription: "{${key}: 1.0}"`, `${key}: 1\ndescription: |\n  ${key}: 1.0`]) {
-        const parser = spyOn(Bun.YAML, "parse");
-        try {
-          expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: source.split("\n").length + 3 }]);
-          expect(parser.mock.calls.length).toBe(1);
-        } finally { parser.mockRestore(); }
-      }
-    });
-  }
   for (const depth of ["root", "metadata"]) {
-    test(`round 6 retains escaped mapping key recognition at ${depth}`, () => {
-      for (const spelling of ["\\x76ersion", "\\u0076ersion", "\\U00000076ersion"]) {
-        const source = depth === "root" ? `"${spelling}":\n  1.0` : `metadata: {"${spelling}":\n  1.0}`;
-        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
-      }
-    });
-  }
-  test("round 6 does not decode literal backslashes into permitted key names", () => {
-    for (const source of ['version: 1\n"\\\\u0076ersion": 1.0', "version: 1\n'\\u0076ersion': 1.0"]) {
-      const parser = spyOn(Bun.YAML, "parse");
-      try {
-        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 5 }]);
-        expect(parser.mock.calls.length).toBe(1);
-      } finally { parser.mockRestore(); }
-    }
-  });
-  test("round 6 preserves the budget for the field being recovered", () => {
-    const fields = Array.from({ length: 16 }, (_, index) => `edition${index}: {date: 1.0}`).join("\n");
-    const parser = spyOn(Bun.YAML, "parse");
-    try {
-      expect(layoutViolations(`---\n${fields}\nversion: 1.0\n---\n# Guide\n\nInstructions.`)).toEqual([]);
-      expect(parser.mock.calls.length).toBe(2);
-    } finally { parser.mockRestore(); }
-  });
-  for (const form of ["block", "flow"]) {
-    for (const depth of ["root", "metadata"]) {
-      for (const value of ["1.0", '"1.0"']) {
-        test(`round 5 recognises next-line ${value} in ${form} at ${depth}`, () => {
-          const field = form === "block" ? `version:\n    ${value}` : `{version:\n    ${value}}`;
-          const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field}` : `metadata: ${field}`;
+    for (const key of ["version", "date", "updated", "last_updated"]) {
+      test(`A7 accepts declared ${key} at ${depth} without format validation`, () => {
+        for (const value of ["banana", '"  next release  "', "0", "-2", "1e2", "0x10", "2026-02-30"]) {
+          const field = `${key}: ${value}`;
+          const source = depth === "root" ? field : `metadata: {${field}}`;
           expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
-        });
-      }
-      test(`round 5 recognises commented separation in ${form} at ${depth}`, () => {
-        const field = form === "block" ? "version: # Edition\n\n    # Current\n    1.0" : "{version: # Edition\n\n    # Current\n    1.0}";
-        const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field.replaceAll("\n", "\n  ")}` : `metadata: ${field}`;
-        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+        }
       });
-      test(`round 5 recognises tab separation in ${form} at ${depth}`, () => {
-        const field = form === "block" ? "version:\t1.0" : "{version:\t1.0\n}";
-        const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field}` : `metadata:\t${field}`;
+    }
+    test(`A7 resolves numeric aliases at ${depth}`, () => {
+      const field = "version: *release";
+      const source = `release: &release 1.0\n${depth === "root" ? field : `metadata: {${field}}`}`;
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+    });
+    for (const value of ["true", "false", "~", '""', '"   "', "[1]", "{a: 1}", ".inf", "-.inf", ".nan"]) {
+      test(`A7 rejects ${value} at ${depth}`, () => {
+        const source = depth === "root" ? `version: ${value}` : `metadata: {version: ${value}}`;
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+      });
+    }
+    test(`A7 accepts parser-resolved dates at ${depth}`, () => {
+      const fields = { date: new Date("2026-10-04T00:00:00Z") };
+      const parser = spyOn(Bun.YAML, "parse").mockImplementation(() => depth === "root" ? fields : { metadata: fields });
+      try {
+        expect(layoutViolations("---\ndate: 2026-10-04\n---\n# Guide\n\nInstructions.")).toEqual([]);
+      } finally { parser.mockRestore(); }
+    });
+    for (const form of ["next-line", "comment", "flow", "tab"]) {
+      test(`A7 retains ${form} declarations at ${depth}`, () => {
+        const field = form === "next-line" ? "version:\n  1.0" : form === "comment" ? "version: # Edition\n  # Current\n  1.0" : form === "tab" ? "version:\t1.0" : "{version: 1.0}";
+        const source = depth === "root" ? field : form === "flow" ? `metadata: ${field}` : `metadata:\n  ${field.replaceAll("\n", "\n  ")}`;
         expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
       });
     }
   }
-  test("round 5 keeps unrelated, deeper and invalid numeric forms advisory", () => {
-    for (const source of ["count: 3", "metadata: {edition: {version:\n    1.0}}", "metadata:\n  edition:\n    version:\n      1.0", "version:\n  1e-2", "metadata: {version:\n    1e2}", "version: {number: 1.0}"]) {
+  test("A7 ignores nested release history before a declared metadata version", () => {
+    const history = Array.from({ length: 16 }, (_, index) => `  edition${index}: {version: 1.0}`).join("\n");
+    expect(layoutViolations(`---\nhistory:\n${history}\nmetadata: {version: 2.0}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+  });
+  test("A7 rejects unrelated and deeper declarations", () => {
+    for (const source of ["count: 3", "metadata: {edition: {version: banana}}", "edition: {metadata: {version: banana}}", "Metadata: {version: banana}", "metadata: banana", "metadata: [banana]", "metadata: null", 'description: "version: banana"', "description: |\n  version: banana"]) {
       expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: source.split("\n").length + 3 }]);
     }
   });
-  test("round 5 requires closed front matter", () => {
+  test("A7 rejects malformed, absent and non-mapping front matter", () => {
+    for (const source of ["version: [broken", "null", "- banana", '"banana"', "# Comment", ""]) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+    }
     expect(layoutViolations("---\nversion: 1.0\n# Guide\n\nInstructions.")).toEqual([{ ...editionFinding, line: 3 }]);
   });
-  for (const form of ["block", "flow"]) {
-    for (const depth of ["root", "metadata"]) {
-      for (const value of ["1.0", '"1.0"', "2.1.3", '"2.1.3"']) {
-        test(`round 4 recognises ${value} in ${form} at ${depth}`, () => {
-          const field = form === "block" ? `version: ${value}` : `{version: ${value}}`;
-          const source = depth === "root" ? field : form === "block" ? `metadata:\n  ${field}` : `metadata: ${field}`;
-          expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
-        });
-      }
-    }
-  }
-  test("round 4 excludes deeper flow nesting", () => {
-    for (const source of ["metadata: {edition: {version: 1.0}}", "{metadata: {edition: {version: 1.0}}}", 'edition: {metadata: {version: "2.1.3"}}']) {
-      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+  test("A7 parses front matter exactly once, including large documents", () => {
+    const unrelated = Array.from({ length: 5000 }, (_, index) => `k${index}: 1.0`).join("\n");
+    for (const source of ["version: 1.0", "release: &release 1.0\nmetadata: {version: *release}", `version: 1\n${unrelated}`]) {
+      const parser = spyOn(Bun.YAML, "parse");
+      try {
+        const findings = layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`);
+        expect(parser.mock.calls.length).toBe(1);
+        expect(findings).toEqual([]);
+      } finally { parser.mockRestore(); }
     }
   });
-  test("round 4 retains unquoted date recognition", () => {
-    for (const source of ["date: 2026-10-03", "{date: 2026-10-03}", "metadata:\n  date: 2026-10-03", "metadata: {date: 2026-10-03}"]) {
-      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+  test("A7 leaves visible-opening format recognition strict", () => {
+    for (const opening of ["# Guide\n\nVersion: banana", "# Guide (Version: banana)", "# Guide\n\n| Field | Value |\n|---|---|\n| Version | banana |", "# Guide\n\n![Version: banana](badge.svg)"]) {
+      expect(layoutViolations(opening)).toEqual([editionFinding]);
     }
-  });
-  test("round 4 protects comments and quoted YAML contents", () => {
-    for (const source of ['metadata: {version: 2, description: "version: 2.0"}', "metadata: {version: 2, description: 'reader''s version: 2.0'}", "metadata: {version: 2} # version: 2.0"]) {
-      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
-    }
-    expect(layoutViolations('---\nmetadata: {version: 1.0, description: "Reader \\"version: 2.0\\" notes"}\n---\n# Guide\n\nInstructions.')).toEqual([]);
-    expect(layoutViolations("---\ndescription: Reader's guide\nmetadata: {version: 1.0}\naudience: Engineer's tasks\n---\n# Guide\n\nInstructions.")).toEqual([]);
-  });
-  test("round 4 protects literal and folded YAML block scalars", () => {
-    for (const marker of ["|", ">-", "|2+"]) {
-      expect(layoutViolations(`---\nversion: 1.0\ndescription: ${marker}\n  version: 2.0\n\n  Notes.\nmetadata: {version: 2}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
-    }
-    expect(layoutViolations("---\nmetadata:\n  version: 2\n  description: |\n    version: 2.0\n---\n# Guide\n\nInstructions.")).toEqual([{ ...editionFinding, line: 7 }]);
-    expect(layoutViolations('---\ndescription: |\n  "version: 2.0\nmetadata: {version: 1.0}\nfootnote: "Reader"\n---\n# Guide\n\nInstructions.')).toEqual([]);
-  });
-  for (const [key, value] of [["version", '"0.8.0"'], ["date", "2026-10-03"], ["updated", "Q4 2026"], ["last_updated", "3 October 2026"]]) {
-    test(`A6 correction recognises metadata.${key}`, () => {
-      expect(layoutViolations(`---\nmetadata:\n  ${key}: ${value}\n---\n# Title\n\nText.`)).toEqual([]);
-    });
-  }
-  test("A6 correction excludes deeper and unrelated metadata nesting", () => {
-    for (const metadata of ['metadata:\n  edition:\n    version: "0.8.0"', 'edition:\n  metadata:\n    version: "0.8.0"', 'edition:\n  version: "0.8.0"']) {
-      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
-    }
-    expect(layoutViolations('---\nmetadata:\n  version: "0.8.0"\n---\n# Title\n\nText.')).toEqual([]);
-  });
-  test("A6 correction keeps unrecognised metadata values advisory", () => {
-    for (const metadata of ["metadata: next release", "metadata: null", "metadata: [0.8.0]", "metadata:\n  version: next release", "metadata:\n  date: 2026-02-30"]) {
-      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
-    }
-    expect(layoutViolations("---\nmetadata:\n  date: 2026-10-03\n---\n# Title\n\nText.")).toEqual([]);
-  });
-  test("A6 correction preserves numeric metadata versions without widening scope", () => {
-    for (const metadata of ["metadata:\n  edition:\n    version: 2.0", "metadata:\n  version: 1e-2", "version: 2\nmetadata:\n  edition:\n    version: 2.0"]) {
-      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
-    }
-    for (const metadata of ["metadata:\n  version: 2.0 # Current edition", '"metadata":\n  # Edition\n\n  version: 2.0\nname: Example']) {
-      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([]);
-    }
-  });
-  test("A6 correction keeps YAML string contents literal", () => {
-    expect(layoutViolations('---\nmetadata:\n  version: "0.8.0"\ndescription: "Reader notes\n  version: 2.0\n  remain prose."\n---\n# Title\n\nText.')).toEqual([]);
   });
   for (const fileName of ["PULL_REQUEST_TEMPLATE", "pull_request_template.markdown", "D:/docs/nested/.github/PULL_REQUEST_TEMPLATE.md"]) {
     test(`A6 correction exempts template ${fileName}`, () => {
@@ -195,22 +98,6 @@ describe("layout rules", () => {
   test("A6 exempts titled pull request text without front matter", () => {
     expect(layoutViolations("# Title\n\nText.", { frontMatter: false })).toEqual([]);
     expect(auditText("# Title\n\nText.", { markdown: true, frontMatter: false })).toEqual([]);
-  });
-  for (const [key, value] of [["version", '"0.8.0"'], ["date", "2026-10-03"], ["updated", "Q4 2026"], ["last_updated", "3 October 2026"]]) {
-    test(`A6 recognises top-level front matter ${key}`, () => {
-      expect(layoutViolations(`---\n${key}: ${value}\n---\n# Title\n\nText.`)).toEqual([]);
-    });
-  }
-  test("A6 preserves recognised unquoted numeric version spelling", () => {
-    for (const metadata of ["version: 2.0", '"version": 2.0 # Current edition', "date: 2.0", "version: 2.00"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([]);
-  });
-  test("A6 rejects numeric YAML spellings outside recognised forms", () => {
-    for (const metadata of ["version: 1e-2", "version: 0x10", "version: 2", "version:\n  1"]) expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.split("\n").length + 3 }]);
-  });
-  test("A6 keeps unrecognised and nested front matter advisory", () => {
-    for (const metadata of ["version: next release", "version: 1", "date: 2026-02-30", "updated: null", "last_updated: [2026-10-03]", "edition:\n  version: 0.8.0", "title: Example", "version: [broken", "# Metadata comment", "- 2026-10-03"]) {
-      expect(layoutViolations(`---\n${metadata}\n---\n# Title\n\nText.`)).toEqual([{ ...editionFinding, line: metadata.includes("\n") ? 5 : 4 }]);
-    }
   });
   test("A6 retains a neutral finding for titled ordinary documents", () => {
     expect(layoutViolations("# Title\n\nText.", { fileName: "policy.md" })).toEqual([editionFinding]);
