@@ -26,6 +26,7 @@ import type { Findings, Violation } from "./lib/types.ts";
 import { layoutViolations } from "./lib/layout.ts";
 import { emphasisMarkOffsets, withoutEmphasis } from "./lib/inline-wording.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
+import { skippedEntryWarning } from "./lib/safe-text.ts";
 
 /**
  * Audits a corpus directory and prints the count of findings for each rule.
@@ -79,7 +80,7 @@ export function runCli(
     const skipped: string[] = [];
     const findings = auditCorpus(dir, (path) => skipped.push(path));
     for (const path of skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
+      stderr(skippedEntryWarning(path));
     }
     if (jsonPath !== undefined) {
       const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
@@ -1208,11 +1209,12 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
   // templated document escaped the rule entirely.
   const blocks = readerProseBlocks(text, reading);
   if (blocks.length === 0) return [];
-  // Emphasis markers are stripped, not the words inside them: "**Certainly!**"
-  // is still a filler opening, and removing the emphasised text hid it. Smart
-  // apostrophes are normalised so "I'd" matches however it was typed.
-  const opening = (blocks[0].lines[0] ?? "")
-    .replace(/[*_`]/g, "")
+  // The marks of paired emphasis are removed, not the words inside them:
+  // "**Certainly!**" is still a filler opening, and removing the emphasised
+  // text hid it. A code span keeps its backticks, because it names a term and
+  // is not the writer speaking. Smart apostrophes are normalised so "I'd"
+  // matches however it was typed.
+  const opening = (withoutEmphasisMarks(blocks[0]).lines[0] ?? "")
     .replace(/[‘’]/g, "'")
     .trimStart()
     .toLowerCase();

@@ -2477,3 +2477,33 @@ describe("emphasis marks inside or beside a word", () => {
     ]);
   });
 });
+
+describe("a filler opening and the marks around it", () => {
+  const TICK = String.fromCharCode(96);
+
+  // A code span names a term. The rule removed every backtick before it looked,
+  // so a sentence about the word "Certainly" was reported as opening with it.
+  test("a term in code marks at the opening is not a filler opening", () => {
+    for (const named of [
+      `${TICK}Certainly${TICK} is a word we avoid.`,
+      `${TICK}sure${TICK} thing, the config is fine.`,
+      `${TICK}${TICK}Certainly${TICK}${TICK}, the answer is 42.`,
+      `**${TICK}Certainly${TICK}** is a word we avoid.`,
+    ]) {
+      expect(rulesFor(named), named).not.toContain("filler-opening");
+    }
+  });
+
+  test("a filler in paired emphasis is still a filler opening", () => {
+    for (const filler of [
+      "**Certainly!** The answer is 42.",
+      "*Sure*, the answer is 42.",
+      "_Certainly_, the answer is 42.",
+      "***Certainly***, the answer is 42.",
+      "**Certainly,\nthe answer** is 42.",
+      `Certainly, ${TICK}config.json${TICK} is fine.`,
+    ]) {
+      expect(rulesFor(filler), filler).toContain("filler-opening");
+    }
+  });
+});

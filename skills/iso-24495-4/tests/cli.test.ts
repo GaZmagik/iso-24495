@@ -771,3 +771,45 @@ describe("a command never passes on what the runtime said about a failure", () =
     });
   });
 });
+
+// Windows refuses a file name holding a line break or an escape character, so
+// `lib/safe-text.test.ts` covers those. A mark that reverses text direction is
+// cleaned by the same function and is a legal name on every platform, so it
+// shows here that each command cleans the path it prints.
+describe("a skipped entry is printed with its path cleaned", () => {
+  const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
+
+  /** A directory holding one link that an audit skips, whose name reverses text direction. */
+  function withReversingLink(run: (directory: string) => void): void {
+    const directory = mkdtempSync(join(tmpdir(), "iso-skip-clean-"));
+    try {
+      const target = join(directory, "target");
+      mkdirSync(target);
+      symlinkSync(target, join(directory, `report${RIGHT_TO_LEFT_OVERRIDE}dm.exe`), "junction");
+      rmSync(target, { recursive: true, force: true });
+      run(directory);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  test("audit-corpus", () => {
+    withReversingLink((directory) => {
+      const output = capture();
+      expect(runCorpusCli(["bun", "audit-corpus-cli.ts", directory], output.writeOut, output.writeErr)).toBe(0);
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(directory, "report dm.exe")}`]);
+    });
+  });
+
+  test("audit-text", () => {
+    withReversingLink((directory) => {
+      const output = capture();
+      expect(runTextAuditCli(
+        ["bun", "audit-text-cli.ts", directory, "--project-dir", directory],
+        output.writeOut,
+        output.writeErr,
+      )).toBe(0);
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(directory, "report dm.exe")}`]);
+    });
+  });
+});

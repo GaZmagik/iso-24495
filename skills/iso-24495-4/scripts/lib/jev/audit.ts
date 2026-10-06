@@ -6,6 +6,7 @@ import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvide
 import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
+import { safeText, skippedEntryWarning } from "../safe-text.ts";
 
 export const DISCLOSURE_VERSION = "0.8.0-r1";
 export const LIMITATION = "Only purpose and colour receive calibrated decisions. Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability. Correlated blocks do not extend that guarantee.";
@@ -81,7 +82,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   try { (dependencies.client?.validate ?? validateCalibration)(); } catch { stderr("Calibration integrity failed. Nothing was sent."); return 3; }
   let selection: Selection;
   try { selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter); } catch { stderr("The selected path could not be read or is not a supported document."); return 1; }
-  for (const path of selection.skipped) stderr(`warning: skipped unreadable entry: ${safeText(path)}`);
+  for (const path of selection.skipped) stderr(skippedEntryWarning(path));
   if (mode === "text") stdout(formatMechanical(selection.mechanical));
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
@@ -253,15 +254,9 @@ export function formatFindings(report: JevReport): string {
   return lines.join("\n");
 }
 
-/**
- * Text made safe to print on one line, for a path or an excerpt nobody has
- * read. Control characters and the marks that reverse text direction become
- * spaces, each run of white space becomes one space, and the ends are trimmed.
- *
- * @returns The cleaned text, which is empty when nothing else was in it. A
- *     pipe is left alone, so a table cell needs it escaped as well.
- */
-export function safeText(text: string): string { return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim(); }
+// `safeText` lives in `../safe-text.ts`, so the plain audits can use it without
+// this module. It is still exported here for callers that import it from here.
+export { safeText };
 function formatEvidence(gates: readonly GateEvidence[]): string[] {
   return ["| Gate | Cut-off | Prerequisite | Clusters | Wrong | Lower bound |", "|------|---------|--------------|----------|-------|-------------|",
     ...gates.map(gate => `| ${gate.id} | ${gate.cutOff} | ${gate.dependencies.join(", ") || "none"} | ${gate.clusters} | ${gate.wrong} | ${gate.bound} |`)];
