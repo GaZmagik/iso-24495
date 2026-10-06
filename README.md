@@ -231,7 +231,7 @@ It retries connection failures, timeouts, 429 and 5xx only, and never replaces a
 On terminal failure, Jev verdicts are discarded and the report states incomplete execution.
 
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
-Code 3 covers service, response, model and calibration failures; code 4 covers a missing or invalid key.
+Code 3 covers service, response, model and calibration failures; code 4 covers a missing or locally invalid key.
 Findings and unsure results never change a completed audit's exit code.
 
 ## Testing policy

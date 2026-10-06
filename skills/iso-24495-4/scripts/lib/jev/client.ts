@@ -82,7 +82,8 @@ export function createAsk(key: string, options: ClientOptions = {}): Ask {
  *     of a "choice" question. With no questions the result is empty, and the
  *     model is still checked.
  * @throws A `JevError` in fixed words, with exit code 3, when the text is not
- *     JSON, the model is not `MODEL`, a probability is missing or lies
+ *     JSON or holds a number `parseDecimal` refuses as too long or for its
+ *     exponent, the model is not `MODEL`, a probability is missing or lies
  *     outside 0 to 1, a choice does not carry exactly the options asked, or
  *     its probabilities do not sum to 1 within 0.01. Bad input is never
  *     returned as a value.
