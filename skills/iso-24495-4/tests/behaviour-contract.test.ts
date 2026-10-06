@@ -13,7 +13,9 @@ import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
 import { REFERENCE_SHAPES } from "./fixtures/reference-blocks.ts";
 import {
   classifyBoundary,
+  flattenedOffsets,
   headings,
+  type LabelledBlock,
   labelledProseBlocks,
   mergedSentences,
   proseBlocks,
@@ -2580,6 +2582,46 @@ describe("emphasis marks either side of a link boundary", () => {
     expect(findingsIn("a***b in or***der to go.")).toEqual(wordy);
   });
 
+  test("a mark beside a link is judged by the bracket beside it", () => {
+    // Whether a mark may open or close emphasis depends on the characters either side
+    // of it. Those were read once the link was replaced by its label, so the mark in
+    // "or*[der](u)*" appeared to stand between two letters, where it stands between a
+    // letter and a bracket. A browser shows both asterisks there: the first cannot
+    // open before a bracket, and the second cannot close what never opened.
+    for (const text of [
+      "in or*[der](u)* to go.",
+      "We did this in or*[der](u)* to finish the work.",
+      "We did this in or**[der](u)** to finish the work.",
+      "We did this in or~~[der](u)~~ to finish the work.",
+      "We did this in or*![der](chart.png)* to finish the work.",
+      // The second mark follows a bracket and stands before a letter, so it cannot close.
+      "We did this in *[or](u)*der to finish the work.",
+      "# We did this in or*[der](u)* to finish",
+      "- We did this in or*[der](u)* to finish the work.",
+      ["We did this in or*[der][r]* to finish the work.", "", "[r]: https://example.com"].join(BREAK),
+      ["We did this in or*[der]* to finish the work.", "", "[der]: https://example.com"].join(BREAK),
+      // The same from inside: the first mark follows the bracket, so it can only open,
+      // and the mark after it stands before a bracket, so it can only close. Their
+      // lengths then never forbid the pair, and one mark of the second stays.
+      "The tenant sh**a*[*ll**](u) vacate.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // A mark with white space on its other side opens or closes as it always did.
+    for (const text of [
+      "We did this in *[order](u)* to finish the work.",
+      "We did this in **[order](u)** to finish the work.",
+      "We did this *in [order](u)* to finish the work.",
+      "We did this in [*or*der](u) to finish the work.",
+      "We did this in [or*der*](u) to finish the work.",
+      // A mark in a destination is part of the link. It is never emphasis, and it
+      // is not in the text a reader sees, so nothing is removed on its account.
+      "We did this [the guide](a*b*c) in order to finish the work.",
+    ]) {
+      expect(findingsIn(text), text).toEqual(wordy);
+    }
+  });
+
   test("marks that pair on one side of the boundary are removed as before", () => {
     expect(findingsIn("We did this in order to finish the work.")).toEqual(wordy);
     for (const text of [
@@ -2674,13 +2716,36 @@ describe("labels nested to great depth", () => {
     }
   }, 2 * HOSTILE_TIMEOUT_MS);
 
-  test("each label is still found once, where it sits", () => {
-    expect(labelledProseBlocks("a [b ![c [d](u) e](v) f](w) g [h](x)")[0]?.labels
-      .map((label) => `${label.start}-${label.end}`).sort())
-      .toEqual(["14-15", "2-11", "4-9", "6-7"]);
+  test("each link is still found once, where it sits", () => {
+    /** Each link of the first block as the text it spans and the label inside that. */
+    const linksIn = (text: string): Array<[whole: string, label: string]> => {
+      const block = labelledProseBlocks(text)[0] as LabelledBlock;
+      return block.links.map((link) =>
+        [block.source.slice(link.start, link.end), block.source.slice(link.labelStart, link.labelEnd)]);
+    };
+    expect(linksIn("a [b ![c [d](u) e](v) f](w) g [h](x)")).toEqual([
+      ["[b ![c [d](u) e](v) f](w)", "b ![c [d](u) e](v) f"],
+      ["![c [d](u) e](v)", "c [d](u) e"],
+      ["[d](u)", "d"],
+      ["[h](x)", "h"],
+    ]);
     // A reference with no definition stays as written, and so do the links inside it.
-    expect(labelledProseBlocks("a [b [c](u) d] e [f](v)")[0]?.labels).toEqual([{ start: 17, end: 18 }]);
-    expect(labelledProseBlocks("a [b [c](u) d][nowhere] e")[0]?.labels).toEqual([]);
+    expect(linksIn("a [b [c](u) d] e [f](v)")).toEqual([["[f](v)", "f"]]);
+    expect(linksIn("a [b [c](u) d][nowhere] e")).toEqual([]);
+    expect(linksIn("no link here")).toEqual([]);
+  });
+
+  test("a mark keeps its place when the links before it are replaced by their labels", () => {
+    const text = ["*a* [b", "c](https://example.com", "'title') *d* ![*e*](f.png)[](g)*h*"].join(BREAK);
+    const block = labelledProseBlocks(text)[0] as LabelledBlock;
+    const reader = block.lines.join(BREAK);
+    expect(reader).toBe(["*a* b", "c", " *d* *e**h*"].join(BREAK));
+    const marks = [...block.source.matchAll(/[*]/g)].map((match) => match.index);
+    const placed = flattenedOffsets(marks, block.source, block.links);
+    expect(placed.map((offset) => reader[offset])).toEqual(marks.map(() => "*"));
+    expect(placed).toEqual([...reader.matchAll(/[*]/g)].map((match) => match.index));
+    expect(flattenedOffsets([], block.source, block.links)).toEqual([]);
+    expect(flattenedOffsets([0, 2], "*a*", [])).toEqual([0, 2]);
   });
 });
 
