@@ -13,72 +13,88 @@ const SPACE = /[ \t\n\r]*/y;
 
 /** The JSON value in the text, with every number a Decimal. */
 export function parseExactJson(text: string): unknown {
-  let at = 0;
-  const fail = (): never => {
-    throw new Error(`The text is not JSON, at character ${at}.`);
-  };
-  const skip = (): void => {
-    SPACE.lastIndex = at;
-    SPACE.exec(text);
-    at = SPACE.lastIndex;
-  };
-  const take = (pattern: RegExp): string => {
-    pattern.lastIndex = at;
-    const match = pattern.exec(text);
-    if (match === null) return fail();
-    at = pattern.lastIndex;
+  return new ExactJsonReader(text).document();
+}
+
+/** One reading of a JSON text, holding the place it has reached. */
+class ExactJsonReader {
+  private at = 0;
+
+  constructor(private readonly text: string) {}
+
+  /** The value the whole text states, refusing anything after it but white space. */
+  document(): unknown {
+    const parsed = this.value();
+    this.skip();
+    if (this.at !== this.text.length) this.fail();
+    return parsed;
+  }
+
+  private fail(): never {
+    throw new Error(`The text is not JSON, at character ${this.at}.`);
+  }
+
+  private skip(): void {
+    SPACE.lastIndex = this.at;
+    SPACE.exec(this.text);
+    this.at = SPACE.lastIndex;
+  }
+
+  private take(pattern: RegExp): string {
+    pattern.lastIndex = this.at;
+    const match = pattern.exec(this.text);
+    if (match === null) return this.fail();
+    this.at = pattern.lastIndex;
     return match[0];
-  };
-  const expect = (character: string): void => {
-    skip();
-    if (text[at] !== character) fail();
-    at += 1;
-  };
-  const value = (): unknown => {
-    skip();
-    const next = text[at];
+  }
+
+  private expect(character: string): void {
+    this.skip();
+    if (this.text[this.at] !== character) this.fail();
+    this.at += 1;
+  }
+
+  private value(): unknown {
+    this.skip();
+    const next = this.text[this.at];
     if (next === "{") {
-      at += 1;
+      this.at += 1;
       const object: Record<string, unknown> = {};
-      skip();
-      let more = text[at] !== "}";
+      this.skip();
+      let more = this.text[this.at] !== "}";
       while (more) {
-        skip();
-        const key = JSON.parse(take(STRING)) as string;
-        expect(":");
-        object[key] = value();
-        skip();
-        more = text[at] === ",";
-        if (more) at += 1;
+        this.skip();
+        const key = JSON.parse(this.take(STRING)) as string;
+        this.expect(":");
+        object[key] = this.value();
+        this.skip();
+        more = this.text[this.at] === ",";
+        if (more) this.at += 1;
       }
-      expect("}");
+      this.expect("}");
       return object;
     }
     if (next === "[") {
-      at += 1;
+      this.at += 1;
       const array: unknown[] = [];
-      skip();
-      let more = text[at] !== "]";
+      this.skip();
+      let more = this.text[this.at] !== "]";
       while (more) {
-        array.push(value());
-        skip();
-        more = text[at] === ",";
-        if (more) at += 1;
+        array.push(this.value());
+        this.skip();
+        more = this.text[this.at] === ",";
+        if (more) this.at += 1;
       }
-      expect("]");
+      this.expect("]");
       return array;
     }
-    if (next === "\"") return JSON.parse(take(STRING)) as string;
+    if (next === "\"") return JSON.parse(this.take(STRING)) as string;
     for (const [word, literal] of [["true", true], ["false", false], ["null", null]] as const) {
-      if (text.startsWith(word, at)) {
-        at += word.length;
+      if (this.text.startsWith(word, this.at)) {
+        this.at += word.length;
         return literal;
       }
     }
-    return parseDecimal(take(NUMBER));
-  };
-  const parsed = value();
-  skip();
-  if (at !== text.length) fail();
-  return parsed;
+    return parseDecimal(this.take(NUMBER));
+  }
 }
