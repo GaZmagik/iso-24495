@@ -1319,6 +1319,27 @@ export function labelledHeadings(text: string, reading: Reading = {}): LabelledB
     labelledBlock(heading.line, parsed.headingSources[index] as string, parsed.references));
 }
 
+/**
+ * Every link in a piece of inline Markdown that a reader sees as its label.
+ *
+ * This is for a rule that reads source lines, where the links are still
+ * written out, and must treat them as the rules that read a `LabelledBlock`
+ * do. Both lists come from the one scan that replaces links by their labels.
+ *
+ * @param text One line, or the lines of one block joined by line breaks.
+ * @param references The labels the document defines, each as
+ *     `normaliseReference` gives it. A reference link is listed only when its
+ *     label is among them.
+ * @returns The links as a `LabelledBlock` lists them, by their offsets in
+ *     `text`. A link inside a reference that has no definition is left out,
+ *     because that reference stays as written. Empty when there is none.
+ */
+export function labelledLinks(text: string, references: ReadonlySet<string>): LabelledLink[] {
+  const links: LabelledLink[] = [];
+  flattenLinks(text, references, links);
+  return links;
+}
+
 /** One block of reader text that starts on `line`, read from inline Markdown with its links as written. */
 function labelledBlock(line: number, written: string, references: ReadonlySet<string>): LabelledBlock {
   const source = visibleInline(written);

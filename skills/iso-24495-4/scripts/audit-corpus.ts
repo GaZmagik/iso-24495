@@ -8,6 +8,7 @@ import {
   flattenedOffsets,
   headings,
   labelledHeadings,
+  labelledLinks,
   labelledProseBlocks,
   type LabelledBlock,
   markdownLinks,
@@ -752,7 +753,7 @@ function acronymViolations(
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
   let recent: string[] = [];
   let previousBlock: number | undefined;
-  const marksByLine = pairedMarksByLine(document.lines, blockOfLine);
+  const marksByLine = pairedMarksByLine(document.lines, blockOfLine, document.references);
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
     const block = blockOfLine.get(i);
@@ -843,17 +844,26 @@ function acronymViolations(
  * gave two initials and the expansion did not spell the acronym. The uses of an acronym
  * were already read a block at a time, and the two readings now agree.
  *
+ * They agree about links as well. The links are still written out in these lines, and
+ * the marks are paired as `readerMarks` pairs them: inside one label, or outside every
+ * label, and never with a mark in a destination. Pairing them with no regard to a link
+ * took the two asterisks of "identi*ty and access" above "management [*(IAM)](u)" for a
+ * pair. That read a definition which the scan for uses, like a browser, did not see.
+ *
  * A line in no block, such as a table row, is paired alone.
  *
  * @param lines The document as `readDocument` gives it, one entry for each source line.
  * @param blockOfLine The block each line sits in, by the index of the line. Lines of one
  *     block share a number and follow one another.
+ * @param references The labels the document defines, which decide whether a reference
+ *     is a link.
  * @returns One list for each line, in the same order: the offsets of its paired marks,
  *     ascending and counted from the start of that line. Empty for a line with none.
  */
 function pairedMarksByLine(
   lines: readonly string[],
   blockOfLine: ReadonlyMap<number, number>,
+  references: ReadonlySet<string>,
 ): number[][] {
   const marksByLine: number[][] = lines.map(() => []);
   for (let first = 0; first < lines.length;) {
@@ -862,7 +872,8 @@ function pairedMarksByLine(
     while (block !== undefined && blockOfLine.get(last + 1) === block) last++;
     let line = first;
     let lineStart = 0;
-    for (const mark of emphasisMarkOffsets(lines.slice(first, last + 1).join("\n"))) {
+    const source = lines.slice(first, last + 1).join("\n");
+    for (const mark of emphasisMarkOffsets(source, labelledLinks(source, references))) {
       // A mark is never the line break, so this stops on the line that holds it.
       while (mark > lineStart + (lines[line] as string).length) {
         lineStart += (lines[line] as string).length + 1;

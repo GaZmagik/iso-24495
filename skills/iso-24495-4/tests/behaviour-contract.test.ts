@@ -2773,6 +2773,44 @@ describe("an acronym definition whose emphasis runs over a line break", () => {
     }
   });
 
+  test("the scan for a definition pairs marks where the scan for a use pairs them", () => {
+    // The scan for definitions reads source lines, where a link is still written out,
+    // and paired its marks with no regard to the link. The scan for uses pairs them
+    // inside one label or outside every label. So a mark outside a link and a mark in
+    // its label were a pair to one scan and not to the other: the first took them out
+    // and read a definition, and the second, like a browser, left both on the page.
+    for (const lines of [
+      // The reviewer's case. Both asterisks stay, so "identi*ty" gives two initials.
+      ["identi*ty and access", "management [*(IAM)](u). Use IAM."],
+      ["identi*ty and access", "[management* (IAM)](u). Use IAM."],
+      ["identi**ty and access", "management ![**(IAM)](chart.png). Use IAM."],
+      ["identi*ty and access", "management [*(IAM)][r]. Use IAM.", "", "[r]: https://example.com"],
+    ]) {
+      expect(findingsIn(lines.join(BREAK)), lines.join(" / ")).toEqual(undefinedAt(2));
+    }
+    // A mark in a destination is part of the link, so it pairs with nothing in the text.
+    expect(findingsIn("identi*ty and access management (IAM) [the guide](a*b). Use IAM.")).toEqual(undefinedAt(1));
+    expect(findingsIn("| identi*ty and access management (IAM) | [the guide](a*b) |" + BREAK + "|---|---|"
+      + BREAK + "| one | two |" + BREAK + BREAK + "Use IAM.")).toEqual(undefinedAt(5));
+  });
+
+  test("marks on one side of a link still pair across a line break", () => {
+    for (const lines of [
+      ["identi*ty and access", "management* [(IAM)](u). Use IAM."],
+      ["*identity and access", "management [(IAM)](u)*. Use IAM."],
+      ["[identi*ty and access", "manage*ment](#) (IAM). Use IAM."],
+      ["identity and access management [*(IAM)*](u). Use IAM."],
+      // The destinations here hold no letter. The scan reads a source line, so a word
+      // in a destination between the expansion and its acronym would count as one of its
+      // words. That is a limit of the scan and older than this test.
+      ["![identi*ty and access", "management*](#) (IAM). Use IAM."],
+      // A reference with no definition is text, so its brackets bound nothing.
+      ["identi*ty and access", "[management* (IAM)]. Use IAM."],
+    ]) {
+      expect(findingsIn(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
+    }
+  });
+
   test("a use is still reported on its own line when the definition comes later", () => {
     expect(findingsIn(["Use IAM first.", "", "identi*ty and access", "management* (IAM)."].join(BREAK)))
       .toEqual(undefinedAt(1));
