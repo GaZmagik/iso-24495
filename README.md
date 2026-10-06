@@ -198,6 +198,8 @@ The neither diagnosis refines one purpose failure.
 Reader and position travel as companion questions, but their judgements are discarded.
 Missing titles produce local findings and skip purpose assessment, while colour checks continue.
 
+A document whose closed leading `---` block is not recognised as front matter is never sent, and the preview names it.
+
 Requests reproduce calibration tag `results-r11`, commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`, using arm A and model `jev-1.13.0`.
 The three-gate catalogue pins purpose failure at 0.87, colour pass at 0.83, and neither diagnosis at 0.83.
 All scores use exact decimal tokens and distributions are never renormalised.
