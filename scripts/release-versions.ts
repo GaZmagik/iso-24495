@@ -23,6 +23,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileFault, unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
 
 const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
 const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/;
@@ -40,6 +41,12 @@ export interface VersionReport {
 
 /** The outcome of listing the release tags on `origin`. */
 export type RemoteTags = { ok: true; output: string } | { ok: false; reason: string };
+
+/** Runs a command to its end in `cwd`, and returns what it printed. */
+export type RunCommand = (
+  command: string[],
+  options: { cwd: string },
+) => { exitCode: number; stdout: Uint8Array; stderr: Uint8Array };
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -222,16 +229,26 @@ export function tagProblems(tag: string, version: string): string[] {
   return [`The pushed tag must name the declared version: expected ${expected}, got ${arrived}.`];
 }
 
-/** Lists the tags on `origin` with git. A failure is returned, never thrown. */
-export function remoteTags(root: string): RemoteTags {
+/**
+ * Lists the tags on `origin` with git. A failure is returned, never thrown.
+ *
+ * When git runs and fails, the reason is what git printed. When git cannot be
+ * started, the reason is in fixed words: the runtime's message quotes the
+ * directory it was given.
+ */
+export function remoteTags(root: string, runCommand: RunCommand = runToEnd): RemoteTags {
   try {
-    const run = Bun.spawnSync(["git", "ls-remote", "--tags", "origin"], { cwd: root });
+    const run = runCommand(["git", "ls-remote", "--tags", "origin"], { cwd: root });
     const decoder = new TextDecoder();
     if (run.exitCode === 0) return { ok: true, output: decoder.decode(run.stdout) };
     return { ok: false, reason: decoder.decode(run.stderr).trim() || `git exited ${run.exitCode}` };
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    return { ok: false, reason: `git could not be started: ${fileFault(error) ?? unexpectedKind(error)}` };
   }
+}
+
+function runToEnd(command: string[], options: { cwd: string }): ReturnType<RunCommand> {
+  return Bun.spawnSync(command, options);
 }
 
 /**

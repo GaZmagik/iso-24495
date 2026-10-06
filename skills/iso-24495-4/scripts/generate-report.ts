@@ -3,7 +3,8 @@
 // never rewritten, so successive audits prove (or disprove) progress.
 
 import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readJsonFile, unexpectedKind, writeTextFile, type JsonFile } from "./lib/failure.ts";
+import { existsSync } from "node:fs";
 
 export interface ReportInput {
   findings: Findings;
@@ -108,27 +109,54 @@ export function runCli(
     stderr("generate-report: --out requires a report file");
     return 2;
   }
+  const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
+  // A state file that does not exist yet is a first audit, not a failure.
+  const inputs: JsonFile[] = [
+    statePath && existsSync(statePath) ? readJsonFile(statePath, "--state") : { ok: true, value: null },
+    readJsonFile(findingsPath, "<findings.json>"),
+    readJsonFile(evidencePath, "<evidence.json>"),
+    readJsonFile(maturityPath, "<maturity.json>"),
+  ];
+  const values: unknown[] = [];
+  for (const input of inputs) {
+    if (!input.ok) {
+      stderr(`generate-report: ${input.problem}`);
+      return 1;
+    }
+    values.push(input.value);
+  }
+  const [priorState, findings, evidence, maturity] = values;
   try {
-    const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
-    const priorState = statePath && existsSync(statePath)
-      ? JSON.parse(readFileSync(statePath, "utf8"))
-      : null;
     const { report, state } = generateReport({
-      findings: JSON.parse(readFileSync(findingsPath, "utf8")),
-      evidence: JSON.parse(readFileSync(evidencePath, "utf8")),
-      maturity: JSON.parse(readFileSync(maturityPath, "utf8")),
-      state: priorState,
+      findings: findings as Findings,
+      evidence: evidence as Evidence,
+      maturity: maturity as Maturity,
+      state: priorState as AuditState | null,
       now: now(),
     });
-    if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 2));
-    if (outFlag !== -1) {
-      writeFileSync(argv[outFlag + 1], report);
-    } else {
+    const stateProblem = statePath ? writeTextFile(statePath, JSON.stringify(state, null, 2), "--state") : null;
+    if (stateProblem !== null) {
+      stderr(`generate-report: ${stateProblem}`);
+      return 1;
+    }
+    if (outFlag === -1) {
       stdout(report);
+      return 0;
+    }
+    const reportProblem = writeTextFile(argv[outFlag + 1], report, "--out");
+    if (reportProblem !== null) {
+      stderr(`generate-report: ${reportProblem}`);
+      return 1;
     }
     return 0;
   } catch (error) {
-    stderr(`generate-report: ${error instanceof Error ? error.message : String(error)}`);
+    // Every file was read and parsed above, and both files are written without
+    // throwing. So what remains is an input of a shape the report cannot be
+    // built from.
+    stderr(
+      `generate-report: stopped by ${unexpectedKind(error)}; `
+        + "check that each input file holds what its command wrote",
+    );
     return 1;
   }
 }

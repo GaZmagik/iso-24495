@@ -7,7 +7,7 @@
 // key, so the traffic endpoints reject it.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { runCli, type Deps } from "./traffic-snapshot.ts";
+import { EndpointFailure, runCli, type Deps } from "./traffic-snapshot.ts";
 
 const repository = process.env.REPOSITORY ?? "GaZmagik/iso-24495";
 const token = process.env.GITHUB_TRAFFIC_TOKEN ?? "";
@@ -22,9 +22,7 @@ async function get(path: string): Promise<unknown> {
     },
   });
   if (!response.ok) {
-    throw new Error(
-      (path === "" ? "/" : path) + " returned HTTP " + response.status + " " + response.statusText,
-    );
+    throw new EndpointFailure(path, response.status);
   }
   return await response.json();
 }

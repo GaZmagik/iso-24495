@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import {
   auditText,
@@ -7,6 +7,7 @@ import {
   listTextFiles,
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { pathFailure, writeTextFile } from "../../iso-24495-4/scripts/lib/failure.ts";
 import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 import { runAuditCli, type AuditDependencies } from "../../iso-24495-4/scripts/lib/jev/audit.ts";
@@ -16,6 +17,18 @@ export interface TextAuditResult extends Findings {
 }
 
 type ReadTextFile = (path: string, encoding: "utf8") => string;
+
+/**
+ * The selected path names a file the audit does not read. This file writes the
+ * message, from a length and a fixed list of endings, so the message is safe
+ * to print as it stands.
+ */
+export class UnsupportedSelection extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedSelection";
+  }
+}
 
 function displayPath(path: string, projectDir: string): string {
   return relative(projectDir, path).replaceAll("\\", "/");
@@ -38,7 +51,7 @@ export function auditTarget(
     ? listTextFiles(absoluteTarget, (path) => skipped.push(path))
     : [absoluteTarget];
   if (!targetStat.isDirectory() && !isAuditedDocument(absoluteTarget)) {
-    throw new Error(
+    throw new UnsupportedSelection(
       `Select a file ending in .md, .markdown or .txt; got a path of ${target.length} characters with another ending`,
     );
   }
@@ -155,12 +168,23 @@ export function runCli(
       stderr(`warning: skipped unreadable entry: ${path}`);
     }
     if (jsonPath !== undefined) {
-      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
+      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-text: ${problem}`);
+        return 1;
+      }
     }
     stdout(formatFindings(findings));
     return 0;
   } catch (error) {
-    stderr(`audit-text: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof UnsupportedSelection) {
+      stderr(`audit-text: ${error.message}`);
+      return 1;
+    }
+    // The report is written without throwing, and an unreadable entry below a
+    // selected directory is skipped. So a file fault here is the selected path
+    // itself refusing to be read.
+    stderr(`audit-text: ${pathFailure(error, target, "<file-or-directory>", "cannot be read")}`);
     return 1;
   }
 }

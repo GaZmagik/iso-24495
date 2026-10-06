@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
+  EndpointFailure,
   mergeDaily,
   mergeReferrers,
   mergeWindows,
@@ -249,13 +250,53 @@ describe("runCli", () => {
   test("fails loudly when the API call fails", async () => {
     const { deps, files, stdout, stderr } = harness({
       fetchSnapshot: async () => {
-        throw new Error("HTTP 403 Forbidden");
+        throw new EndpointFailure("/traffic/clones", 403);
       },
     });
     const code = await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps);
     expect(code).toBe(1);
     expect(files.size).toBe(0);
-    expect(stderr.join(" ")).toContain("403");
+    expect(stderr).toEqual(["Could not read the traffic API: the clones endpoint returned HTTP 403"]);
+  });
+
+  test("names each endpoint from a fixed list, and never repeats one it does not know", async () => {
+    const said = async (endpoint: string, status: number): Promise<string[]> => {
+      const { deps, stdout, stderr } = harness({
+        fetchSnapshot: async () => {
+          throw new EndpointFailure(endpoint, status);
+        },
+      });
+      expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(1);
+      return stderr;
+    };
+    expect(await said("/traffic/views", 500)).toEqual([
+      "Could not read the traffic API: the views endpoint returned HTTP 500",
+    ]);
+    expect(await said("/traffic/popular/referrers", 404)).toEqual([
+      "Could not read the traffic API: the referrers endpoint returned HTTP 404",
+    ]);
+    expect(await said("", 401)).toEqual([
+      "Could not read the traffic API: the repository endpoint returned HTTP 401",
+    ]);
+    expect(await said("/hunter2", 418)).toEqual([
+      "Could not read the traffic API: an endpoint returned HTTP 418",
+    ]);
+  });
+
+  // A failed request throws whatever the runtime chooses, and its message can
+  // quote an address or a response body. Only the kind of failure is printed.
+  test("says what kind of failure stopped a request, and never what it said", async () => {
+    const { deps, files, stdout, stderr } = harness({
+      fetchSnapshot: async () => {
+        throw new TypeError("fetch failed for https://hunter2.invalid: Forbidden hunter2");
+      },
+    });
+    const code = await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps);
+    expect(code).toBe(1);
+    expect(files.size).toBe(0);
+    expect(stderr).toEqual([
+      "Could not read the traffic API: the request was stopped by an unexpected TypeError",
+    ]);
   });
 
   test("fails loudly when the fixture is absent", async () => {
@@ -276,7 +317,7 @@ describe("runCli", () => {
 
   test("fails loudly when the fixture is not JSON", async () => {
     const { deps, files, stdout, stderr } = harness();
-    files.set("broken.json", "{oh dear");
+    files.set("broken.json", '{"clones": hunter2');
     const code = await runCli(
       ["bun", "cli", "--from-file", "broken.json", "data"],
       (t) => stdout.push(t),
@@ -284,7 +325,11 @@ describe("runCli", () => {
       deps,
     );
     expect(code).toBe(1);
-    expect(stderr.join(" ")).toContain("JSON");
+    // The parser's own message quotes the token it stopped on, so the message
+    // gives the option the file came from and its length, never its text.
+    expect(stderr).toEqual([
+      "The fixture is not valid JSON: --from-file names a file of 18 characters that does not parse",
+    ]);
   });
 
   test("fails loudly rather than writing a partial payload", async () => {
@@ -305,7 +350,9 @@ describe("runCli", () => {
     });
     const code = await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps);
     expect(code).toBe(1);
-    expect(stderr.join(" ")).toContain("a bare string");
+    expect(stderr).toEqual([
+      "Could not read the traffic API: the request was stopped by a thrown value of type string",
+    ]);
   });
 
   test("--from-file with no path following it is treated as absent", async () => {
