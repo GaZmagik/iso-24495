@@ -31,6 +31,13 @@ if [ -z "$TEXT" ]; then
   exit 2
 fi
 
+# The argument is text nobody has read, so no message below prints it, cleaned or
+# not. An escape character in it would drive the terminal that shows the message.
+# A message names the argument and gives its length instead, as it was given and
+# before it is resolved. The length is in characters where the locale reads
+# UTF-8, and in bytes where it does not.
+GIVEN_LENGTH="${#TEXT}"
+
 # Resolved before the directory changes below, so a relative path still works.
 #
 # Every name passes a "--" first, because one beginning with a dash otherwise
@@ -39,7 +46,7 @@ fi
 # audited a neighbouring file and passed. A checker that passes for the wrong
 # target is worse than one that fails, so a resolution failure now stops it.
 if ! DIRECTORY="$(cd -- "$(dirname -- "$TEXT")" 2>/dev/null && pwd)"; then
-  echo "There is no directory holding $TEXT, so nothing can be read." >&2
+  echo "There is no directory holding the path given as the first argument, which is $GIVEN_LENGTH characters long, so nothing can be read." >&2
   exit 2
 fi
 TEXT="$DIRECTORY/$(basename -- "$TEXT")"
@@ -59,7 +66,7 @@ report() {
 # The audit must read the file the caller named. Anything else is a mistake in
 # the call rather than a judgement about text, so it exits 2 and says which.
 if [ ! -f "$TEXT" ]; then
-  echo "There is no file to read at $TEXT." >&2
+  echo "The path given as the first argument, $GIVEN_LENGTH characters long, names no file to read." >&2
   exit 2
 fi
 
@@ -69,7 +76,7 @@ fi
 # file is read here, and any failure to read it is the exit 2 this header
 # promises.
 if ! cat -- "$TEXT" > /dev/null 2>&1; then
-  echo "The file at $TEXT exists but cannot be read." >&2
+  echo "The path given as the first argument, $GIVEN_LENGTH characters long, names a file that exists but cannot be read." >&2
   exit 2
 fi
 
@@ -93,7 +100,7 @@ if [ "$EMPTY_STATUS" -eq 1 ]; then
   exit 1
 fi
 if [ "$EMPTY_STATUS" -ne 0 ]; then
-  echo "The file at $TEXT exists but cannot be read." >&2
+  echo "The path given as the first argument, $GIVEN_LENGTH characters long, names a file that exists but cannot be read." >&2
   exit 2
 fi
 
