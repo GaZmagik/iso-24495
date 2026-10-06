@@ -14,6 +14,7 @@ import { REFERENCE_SHAPES } from "./fixtures/reference-blocks.ts";
 import {
   classifyBoundary,
   headings,
+  labelledProseBlocks,
   mergedSentences,
   proseBlocks,
   readDocument,
@@ -2610,6 +2611,38 @@ describe("emphasis marks either side of a link boundary", () => {
       expect(elapsed(() => auditText(text)), name).toBeLessThan(15_000);
     }
   }, HOSTILE_TIMEOUT_MS);
+});
+
+describe("labels nested to great depth", () => {
+  // Each label that closed copied the place of every label inside it up to its parent,
+  // so the work grew with the square of the depth: 8,000 levels took a second to
+  // flatten and nine to audit, and 16,000 took three seconds and thirty. One call at
+  // each size against a fixed budget. A caller that asks for no label is given the
+  // lower budget, because nothing about labels is then worked out at all.
+  const nested = (depth: number): string => "![".repeat(depth) + "Words" + "](u)".repeat(depth);
+
+  test("the text is flattened in proportion to its length", () => {
+    for (const depth of [8_000, 16_000]) {
+      const text = nested(depth);
+      expect(elapsed(() => readerProseBlocks(text)), `${depth} levels`).toBeLessThan(750);
+    }
+  }, HOSTILE_TIMEOUT_MS);
+
+  test("the audit reads it in proportion to its length", () => {
+    for (const depth of [8_000, 16_000]) {
+      const text = nested(depth);
+      expect(elapsed(() => auditText(text)), `${depth} levels`).toBeLessThan(4_000);
+    }
+  }, 2 * HOSTILE_TIMEOUT_MS);
+
+  test("each label is still found once, where it sits", () => {
+    expect(labelledProseBlocks("a [b ![c [d](u) e](v) f](w) g [h](x)")[0]?.labels
+      .map((label) => `${label.start}-${label.end}`).sort())
+      .toEqual(["14-15", "2-11", "4-9", "6-7"]);
+    // A reference with no definition stays as written, and so do the links inside it.
+    expect(labelledProseBlocks("a [b [c](u) d] e [f](v)")[0]?.labels).toEqual([{ start: 17, end: 18 }]);
+    expect(labelledProseBlocks("a [b [c](u) d][nowhere] e")[0]?.labels).toEqual([]);
+  });
 });
 
 describe("an acronym definition whose emphasis runs over a line break", () => {
