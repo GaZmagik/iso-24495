@@ -107,7 +107,22 @@ describe("auditTarget", () => {
     try {
       const file = join(project, "notes.rst");
       writeFileSync(file, "Some prose.\n");
-      expect(() => auditTarget(file, project)).toThrow("supported text file");
+      // The path has just failed the check, so the message gives the endings
+      // the audit reads and the length of what arrived, never the path.
+      let message = "";
+      try {
+        auditTarget(file, project);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toBe(
+        `Select a file ending in .md, .markdown or .txt; got a path of ${file.length} characters with another ending`,
+      );
+      expect(message).not.toContain("notes.rst");
+
+      const refused = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", file], refused.writeOut, refused.writeErr)).toBe(1);
+      expect(refused.stderr).toEqual([`audit-text: ${message}`]);
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
@@ -236,15 +251,23 @@ describe("runCli", () => {
         unknown.writeOut,
         unknown.writeErr,
       )).toBe(2);
-      expect(unknown.stderr[0]).toContain("unknown option");
+      // The argument has just failed the check, so the message gives its place
+      // and its length, and never the text the caller typed.
+      expect(unknown.stderr).toEqual([
+        "audit-text: unknown option of 9 characters at argument 2; "
+          + "expected --json, --project-dir or --no-front-matter",
+      ]);
 
       const extra = capture();
       expect(runCli(
-        ["bun", "audit-text-cli.ts", "policy.md", "extra.md"],
+        ["bun", "audit-text-cli.ts", "policy.md", "--no-front-matter", "extra.md"],
         extra.writeOut,
         extra.writeErr,
       )).toBe(2);
-      expect(extra.stderr[0]).toContain("unexpected argument");
+      expect(extra.stderr).toEqual([
+        "audit-text: unexpected argument of 8 characters at argument 3; "
+          + "expected --json, --project-dir or --no-front-matter",
+      ]);
 
       const duplicate = capture();
       expect(runCli(

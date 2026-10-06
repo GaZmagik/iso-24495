@@ -105,7 +105,38 @@ describe("checkVersionSites, which the normal gate runs", () => {
 
   test("a version that is not three numbers fails", () => {
     withCheckout("0.7", (root) => {
-      expect(checkVersionSites(root).problems[0]).toContain("not a version of the form 1.2.3");
+      expect(checkVersionSites(root).problems).toEqual([
+        ".claude-plugin/plugin.json version must have the form 1.2.3; it states 3 characters that are not a version.",
+      ]);
+    });
+    withCheckout("0.7.0", (root) => {
+      edit(root, ".claude-plugin/plugin.json", "\"version\":\"0.7.0\"", "\"version\":7");
+      expect(checkVersionSites(root).problems[0])
+        .toBe(".claude-plugin/plugin.json version must have the form 1.2.3; it states a value of type number.");
+    });
+    withCheckout("0.7.0", (root) => {
+      edit(root, ".claude-plugin/plugin.json", ",\"version\":\"0.7.0\"", "");
+      expect(checkVersionSites(root).problems[0])
+        .toBe(".claude-plugin/plugin.json version must have the form 1.2.3; it states nothing.");
+    });
+  });
+
+  // A version that failed the check holds whatever the file held, so no problem
+  // quotes it: not at its own site, and not as what another site should state.
+  test("a malformed version is described by its shape and never quoted", () => {
+    withCheckout("0.7.0", (root) => {
+      edit(root, ".claude-plugin/plugin.json", "\"0.7.0\"", "\"seven\"");
+      const declared = "not what .claude-plugin/plugin.json declares.";
+      expect(checkVersionSites(root).problems).toEqual([
+        ".claude-plugin/plugin.json version must have the form 1.2.3; it states 5 characters that are not a version.",
+        `.codex-plugin/plugin.json version states "0.7.0", ${declared}`,
+        `.claude-plugin/marketplace.json marketplace version states "0.7.0", ${declared}`,
+        `.claude-plugin/marketplace.json marketplace source.ref states "v0.7.0", ${declared}`,
+        `codex-skills/iso-24495-style/SKILL.md metadata.version states "0.7.0", ${declared}`,
+        `skills/iso-24495-1/SKILL.md metadata.version states "0.7.0", ${declared}`,
+        `skills/iso-24495-text-audit/SKILL.md metadata.version states "0.7.0", ${declared}`,
+        "CHANGELOG.md has no entry headed with the declared version.",
+      ]);
     });
   });
 
@@ -172,7 +203,12 @@ describe("checkVersionSites, which the normal gate runs", () => {
       .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
     // An unquoted version that YAML reads as a number is not the string declared.
     expect(problemsFor(["name: x", "metadata:", "  version: 7"]))
-      .toEqual([`${SKILL} metadata.version states 7, not "0.7.0".`]);
+      .toEqual([`${SKILL} metadata.version states a value of type number, not "0.7.0".`]);
+    // Text that is not a version is counted, never quoted, and an empty field states nothing.
+    expect(problemsFor(["name: x", "metadata:", "  version: \"latest\""]))
+      .toEqual([`${SKILL} metadata.version states 6 characters that are not a version, not "0.7.0".`]);
+    expect(problemsFor(["name: x", "metadata:", "  version:"]))
+      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
 
     // Front matter that is not YAML, or is not there at all.
     expect(problemsFor(["name: [unclosed", "metadata:", "  version: \"0.7.0\""]))
@@ -239,6 +275,10 @@ describe("the release preflight", () => {
     // Sorted as text, 0.9.5 would be the latest release and 0.9.9 would pass.
     expect(preflightProblems("0.9.9", ["0.10.0", "0.9.5"])).toEqual([
       "0.9.9 is not later than the latest release, 0.10.0.",
+    ]);
+    // A version that is not three numbers is named, never quoted.
+    expect(preflightProblems("0.x.0", ["1.0.0"])).toEqual([
+      "The declared version is not later than the latest release, 1.0.0.",
     ]);
     withCheckout("0.6.2", (root) => {
       expect(checkVersionSites(root).problems).toEqual([]);
@@ -332,9 +372,17 @@ describe("the pushed tag check", () => {
   test("a tag that names the declared version passes, and any other fails", () => {
     expect(tagProblems("v0.7.0", "0.7.0")).toEqual([]);
     expect(tagProblems("v0.7.1", "0.7.0")).toEqual([
-      "The tag v0.7.1 does not name the declared version, which would be tagged v0.7.0.",
+      "The pushed tag must name the declared version: expected v0.7.0, got the tag v0.7.1.",
     ]);
-    expect(tagProblems("0.7.0", "0.7.0")).toHaveLength(1);
+    // Text that is not a release tag, or not a version, is described and never quoted.
+    expect(tagProblems("0.7.0", "0.7.0")).toEqual([
+      "The pushed tag must name the declared version: expected v0.7.0, "
+        + "got 5 characters that are not a release tag of the form v1.2.3.",
+    ]);
+    expect(tagProblems("v0.7.0", "seven")).toEqual([
+      "The pushed tag must name the declared version: expected the tag for the declared version, "
+        + "got the tag v0.7.0.",
+    ]);
     withCheckout("0.7.0", (root) => {
       const matching = capture();
       expect(runTagCheck(["bun", "release-tag-cli.ts", "v0.7.0"], root, matching.stdout, matching.stderr))
@@ -344,7 +392,7 @@ describe("the pushed tag check", () => {
       const other = capture();
       expect(runTagCheck(["bun", "release-tag-cli.ts", "v0.6.2"], root, other.stdout, other.stderr))
         .toBe(1);
-      expect(other.err.join("\n")).toContain("does not name the declared version");
+      expect(other.err.join("\n")).toContain("expected v0.7.0, got the tag v0.6.2");
       expect(other.out).toEqual([]);
     });
   });

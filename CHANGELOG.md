@@ -23,6 +23,10 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Recognition remains unmeasured.** Raw HTML structure and custom anchors are unsupported. Badge alternative text can be stale, and external versioning can cause advisory false positives.
 - **Service details remain unverified.** Pricing, retention and live transport behaviour were not checked. Findings remain proxies rather than ISO judgements.
 
+### Changed
+
+- **Error messages report a shape, never a rejected value.** A value that has just failed a check holds whatever the caller passed, so quoting it puts unknown text in a log. The audit commands, the release checks, the description report and the traffic snapshot now state the format expected and the length or type of what arrived. A version or release tag is still quoted once it matches its pattern. Messages that relay a runtime error, such as a missing file, are unchanged.
+
 ## [0.7.0] - 2026-09-20
 
 ### Added

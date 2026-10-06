@@ -43,7 +43,10 @@ describe("checkReport", () => {
 
   test("a report that names another file, or more than one, is refused", () => {
     expect(checkReport(report({ "tmp/other.md": { violations: [] } }), DESCRIPTION, ROOT))
-      .toEqual({ ok: false, reason: "the report names tmp/other.md, not the description" });
+      .toEqual({
+        ok: false,
+        reason: "the report must name the description alone; it names another path, 12 characters long",
+      });
     const both = report({
       "tmp/description.md": { violations: [] },
       "tmp/other.md": { violations: [] },

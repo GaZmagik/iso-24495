@@ -20,8 +20,18 @@ describe("reading a number token exactly as it is written", () => {
   });
 
   test("refuses anything that is not a JSON number", () => {
+    // The token has just failed the check, so the message gives the form
+    // expected and the length of what arrived, never the token.
     for (const token of ["", "0.", ".5", "1e", "01", "+1", "NaN", "0x10", "1 "]) {
-      expect(() => parseDecimal(token)).toThrow("is not a JSON number");
+      let message = "";
+      try {
+        parseDecimal(token);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, JSON.stringify(token)).toBe(
+        `Expected a JSON number such as 0.25 or -1e3; got ${token.length} characters that are not one.`,
+      );
     }
   });
 });

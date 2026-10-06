@@ -38,7 +38,9 @@ export function auditTarget(
     ? listTextFiles(absoluteTarget, (path) => skipped.push(path))
     : [absoluteTarget];
   if (!targetStat.isDirectory() && !isAuditedDocument(absoluteTarget)) {
-    throw new Error(`Select a supported text file: ${target}`);
+    throw new Error(
+      `Select a file ending in .md, .markdown or .txt; got a path of ${target.length} characters with another ending`,
+    );
   }
 
   const knownAcronyms = projectAcronyms(absoluteProject);
@@ -118,7 +120,10 @@ export function runCli(
     const option = argv[index];
     if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(`audit-text: ${kind}: ${option}`);
+      stderr(
+        `audit-text: ${kind} of ${option.length} characters at argument ${index - 1}; `
+          + "expected --json, --project-dir or --no-front-matter",
+      );
       return 2;
     }
     if (seenOptions.has(option)) {

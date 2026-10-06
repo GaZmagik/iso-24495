@@ -1190,7 +1190,7 @@ export function runCli(
     const option = argv[index];
     if (option !== "--json") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(`audit-corpus: ${kind}: ${option}`);
+      stderr(`audit-corpus: ${kind} of ${option.length} characters at argument ${index - 1}; expected --json`);
       return 2;
     }
     if (seenOptions.has(option)) {
