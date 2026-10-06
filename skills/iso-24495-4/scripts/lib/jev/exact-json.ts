@@ -11,7 +11,17 @@ const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const STRING = /"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/y;
 const SPACE = /[ \t\n\r]*/y;
 
-/** The JSON value in the text, with every number a Decimal. */
+/**
+ * The JSON value in the text, with every number a Decimal.
+ *
+ * @returns Objects, arrays, strings, booleans and null as `JSON.parse` gives
+ *     them. A number at any depth is a `Decimal` and never a `number`. One
+ *     key differs: `__proto__` sets the prototype of its object and is not
+ *     kept as a property, where `JSON.parse` keeps it.
+ * @throws An `Error` giving the character offset when the text is not one
+ *     JSON value. Empty text is refused that way, and so is anything but
+ *     white space after the value. Nothing is returned for bad input.
+ */
 export function parseExactJson(text: string): unknown {
   return new ExactJsonReader(text).document();
 }

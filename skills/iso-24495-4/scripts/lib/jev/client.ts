@@ -24,7 +24,33 @@ class TransportError extends Error {
 }
 export type Ask = (body: RequestBody) => Promise<ExactAnswers>;
 
-/** The shared boundary checks the original key before trimming spaces. */
+/**
+ * Makes the function that sends one request to TypeSafe and returns its
+ * checked answers. Nothing is sent until that function is called.
+ *
+ * Each call posts its request to `ENDPOINT` with the key, so document text
+ * leaves the machine and charges may apply. The body is captured when the
+ * call is made, and later changes to the object are not sent. At most
+ * `MAX_IN_FLIGHT` requests made through one returned function are in flight
+ * at once, and the rest wait. An attempt is abandoned after `TIMEOUT_MS`. A
+ * timeout, a connection failure, HTTP 429 and HTTP 5xx are tried again, up to
+ * `MAX_ATTEMPTS` attempts, after a wait that starts at half a second and
+ * doubles. An answer with a 2xx status is never asked for again, even where
+ * it then fails its checks.
+ *
+ * The shared boundary checks the original key before trimming spaces.
+ *
+ * @param key The TypeSafe API key. Spaces around it are trimmed.
+ * @param options Replacements for the fetch, the wait between attempts, the
+ *     timeout clock and the calibration check. `signal` cancels requests that
+ *     are waiting or in flight.
+ * @returns The sending function. Its promise rejects with a `JevError` whose
+ *     exit code is 3 when the service refuses the request, when no attempt
+ *     succeeds, when the answer fails `readAnswers`, or when `signal` aborts.
+ * @throws A `JevError` with exit code 4 when the key is empty or holds a
+ *     control character, and with exit code 3 when the calibration files fail
+ *     their integrity check.
+ */
 export function createAsk(key: string, options: ClientOptions = {}): Ask {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(key)) throw new JevError("TYPESAFE_API_KEY contains a control character. Set it again with the key alone.", 4);
   const trimmed = key.trim();
@@ -42,7 +68,25 @@ export function createAsk(key: string, options: ClientOptions = {}): Ask {
   };
 }
 
-/** Both the vendored floating-point validation and the calibration's exact checks must pass. */
+/**
+ * Reads a response from Jev into exact probabilities, one entry for each
+ * question that was asked.
+ *
+ * Both the vendored floating-point validation and the exact checks of the
+ * calibration must pass.
+ *
+ * @param text The response body as it arrived.
+ * @param questions The questions sent, which decide the answers read and the
+ *     kind each must be. An answer to a question not listed is ignored.
+ * @returns A `Decimal` for a "noul" question, and a `Decimal` for each option
+ *     of a "choice" question. With no questions the result is empty, and the
+ *     model is still checked.
+ * @throws A `JevError` in fixed words, with exit code 3, when the text is not
+ *     JSON, the model is not `MODEL`, a probability is missing or lies
+ *     outside 0 to 1, a choice does not carry exactly the options asked, or
+ *     its probabilities do not sum to 1 within 0.01. Bad input is never
+ *     returned as a value.
+ */
 export function readAnswers(text: string, questions: RequestBody["questions"]): ExactAnswers {
   let payload: { model?: unknown; answers?: Record<string, unknown> };
   let exact: { answers: Record<string, Record<string, unknown>> };
@@ -105,6 +149,10 @@ function isProbability(value: unknown): value is number { return typeof value ==
 function isExactProbability(value: unknown): value is Decimal {
   return typeof value === "object" && value !== null && typeof (value as Decimal).units === "bigint" && compare(value as Decimal, ZERO) >= 0 && compare(value as Decimal, ONE) <= 0;
 }
+/**
+ * A promise that resolves after `ms` milliseconds and never rejects. It is
+ * the wait `createAsk` uses between attempts unless it is given another.
+ */
 export function wait(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
 export const systemClock: Clock = { schedule: (callback, ms) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); } };
 

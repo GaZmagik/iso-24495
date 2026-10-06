@@ -24,6 +24,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * `projectDir` is that directory. A sound report is a JSON object naming the
  * description and no other file, with a violations list for it, and an empty
  * list of skipped entries.
+ *
+ * @param reportText The report as the audit wrote it, not yet parsed.
+ * @param description Path of the description file, absolute or relative to
+ *     the current directory.
+ * @returns The number of findings for a sound report, which may be zero.
+ *     Anything else, empty text included, gives `ok: false` and a reason in
+ *     fixed words that is safe to print. Bad input is returned, never thrown.
  */
 export function checkReport(reportText: string, description: string, projectDir: string): ReportCheck {
   let report: unknown;
@@ -68,6 +75,13 @@ export function checkReport(reportText: string, description: string, projectDir:
  *
  * Exit 0 prints the number of findings. Exit 1 says why the report cannot be
  * trusted. Exit 2 means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the two paths are at index 2 and 3.
+ * @param projectDir The directory the audit ran in, as `checkReport` needs it.
+ * @param stdout Receives the number of findings and nothing else.
+ * @param stderr Receives the usage line or the reason.
+ * @returns The exit code. A report file that is missing or unreadable is
+ *     exit 1, not exit 2.
  */
 export function runCli(
   argv: string[],

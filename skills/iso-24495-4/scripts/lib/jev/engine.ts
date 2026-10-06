@@ -23,7 +23,24 @@ export interface Decision {
 }
 export type ExactAnswers = Record<string, Decimal | Record<string, Decimal>>;
 
-/** Preserve the calibration's opening and block extraction, including source lines. */
+/**
+ * What a Jev audit would ask about one Markdown document: one request for the
+ * opening under its title, and one for each block of prose.
+ *
+ * The extraction preserves the one the calibration used, for openings and
+ * blocks alike, including source lines. Prose in the opening is planned
+ * twice: once in the opening request and again as blocks.
+ *
+ * @param text The whole document. A leading "---" block is read as front
+ *     matter, and no option changes that.
+ * @returns `candidates` holds the opening first, then the blocks in document
+ *     order, each with a request body ready to send and the line it starts
+ *     on, counted from 1. Without a level-1 heading there is no opening
+ *     candidate, and `findings` holds one `opening-title` finding; the blocks
+ *     are planned all the same. Empty text gives that finding and no
+ *     candidates.
+ * @throws Whatever `buildRequest` throws when a template cannot be read.
+ */
 export function planDocument(text: string): DocumentPlan {
   const document = readDocument(text);
   const found = headings(text);
@@ -48,7 +65,25 @@ export function planDocument(text: string): DocumentPlan {
   return { candidates, findings };
 }
 
-/** Gate comparisons use the exact number tokens, never rounded display values. */
+/**
+ * The calibrated decision for one answered request.
+ *
+ * A block can pass or stay unsure, and never fails: it passes when 1 less the
+ * `colour_only` probability is at least 0.83. An opening can fail or stay
+ * unsure, and never passes: it fails when 1 less the `both` probability of
+ * `purpose` is at least 0.87. A failed opening also carries the diagnosis
+ * "neither" when that option outscores `task_only` and `scope_only` and is
+ * at least 0.83.
+ *
+ * Gate comparisons use the exact number tokens, never rounded display values.
+ *
+ * @param answers The answers `readAnswers` returned for the template of this
+ *     kind: `colour_only` for a block, and `purpose` with its four options
+ *     for an opening.
+ * @returns The rule, the band, and the score and cut-off as exact decimal
+ *     text.
+ * @throws A `TypeError` when the answer this kind needs is absent.
+ */
 export function classify(kind: RequestKind, answers: ExactAnswers): Decision {
   if (kind === "block") {
     const score = subtract(ONE, answers.colour_only as Decimal);

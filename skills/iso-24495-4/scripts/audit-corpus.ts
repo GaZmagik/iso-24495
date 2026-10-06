@@ -26,11 +26,13 @@ import type { Findings, Violation } from "./lib/types.ts";
 import { layoutViolations } from "./lib/layout.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 
-// Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
-// English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
-// 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
-// minimum sample are this project's own proxy choices, informed by local
-// session measurements that are not part of this repository.
+/**
+ * Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
+ * English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
+ * 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
+ * minimum sample are this project's own proxy choices, informed by local
+ * session measurements that are not part of this repository.
+ */
 export const ENGINE_THRESHOLDS = Object.freeze({
   sentenceWordLimit: 30,
   sentenceAverageLimit: 20,
@@ -53,14 +55,20 @@ const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
 const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
 const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
 const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
-// Exported so each audit surface and the repository guard read the same list.
-// Separate copies once disagreed about whether a .txt file was covered.
+/**
+ * Exported so each audit surface and the repository guard read the same list.
+ * Separate copies once disagreed about whether a .txt file was covered.
+ */
 export const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
 
 /**
  * Whether this path is a document the engine audits. Every caller must use
  * this rather than its own test. Comparing extension lists proved nothing,
  * because one caller lower-cased the extension and another did not.
+ *
+ * @returns True when the path ends in .md, .markdown or .txt, in any letter
+ *     case. The path is judged by its name and never opened, so a directory
+ *     with such a name passes too.
  */
 export function isAuditedDocument(path: string): boolean {
   const lower = path.toLowerCase();
@@ -194,6 +202,16 @@ const ORDINAL_RANKS = new Map([
   ["sixth", 6], ["sixthly", 6],
 ]);
 
+/**
+ * A short fingerprint of the thresholds an audit ran with, kept in its
+ * findings so that two sets of findings can be seen to share their limits.
+ *
+ * @param thresholds The limits by name. The default is the limits this engine
+ *     ships with. The order of the names does not change the result.
+ * @returns Eight hexadecimal digits. It is a 32-bit hash, not a cryptographic
+ *     one, so it shows a change and proves nothing more. An empty record
+ *     still has a fingerprint.
+ */
 export function configHash(
   thresholds: Readonly<Record<string, number>> = ENGINE_THRESHOLDS,
 ): string {
@@ -953,6 +971,11 @@ function proseEnumerationViolations(text: string, reading: Reading): Violation[]
  * The file holds an array of strings. Anything unreadable or malformed leaves
  * the core list alone rather than failing the audit, because an advisory tool
  * must never be the reason a document cannot be checked.
+ *
+ * @param directory The project root, which holds the `.iso-24495-4` folder.
+ * @returns The acronyms trimmed and in capitals, ready for
+ *     `AuditOptions.knownAcronyms`. Entries that are not text are dropped.
+ *     Empty when the file is missing, unreadable, not JSON or not an array.
  */
 export function projectAcronyms(directory: string): ReadonlySet<string> {
   const path = join(directory, ".iso-24495-4", "acronyms.json");
@@ -978,6 +1001,25 @@ export interface AuditOptions extends Reading {
   markdown?: boolean;
 }
 
+/**
+ * Every mechanical finding in one text.
+ *
+ * The four layout rules (`contents-list`, `opening-version-date`,
+ * `bullet-depth` and `overview-label`) run only when `options.markdown` is
+ * true. It defaults to false, so a caller that passes no options gets the
+ * other rules alone, and nothing in the result says that layout was skipped.
+ *
+ * @param text The whole document, with any line ending.
+ * @param options `markdown` turns the layout rules on; pass true for a
+ *     Markdown file and leave it unset for plain text. `fileName` only
+ *     exempts files such as README from the edition advisory. `knownAcronyms`
+ *     are passed over by the acronym rule, and must be in capitals without
+ *     dots. `frontMatter` set to false reads a leading "---" block as text
+ *     and switches the edition advisory off; unset, the block is metadata.
+ * @returns The findings grouped by rule, not sorted by line. Each `line` is
+ *     counted from 1. Empty when no rule fires, which is the result for empty
+ *     text and is not evidence that the text suits its readers.
+ */
 export function auditText(text: string, options: AuditOptions = {}): Violation[] {
   // Every rule re-reads the text, so each is told the same thing about front matter.
   const reading: Reading = { frontMatter: options.frontMatter };
@@ -1152,6 +1194,23 @@ function walk(
   }
 }
 
+/**
+ * Every audited document under a directory, at any depth.
+ *
+ * `node_modules` and `.git` are not entered. A symbolic link is never
+ * followed, because it may leave the selected path or form a cycle.
+ *
+ * @param dir The directory to walk.
+ * @param onSkip Called with the path of each entry passed over: a link, an
+ *     entry that cannot be inspected, or a directory below `dir` that cannot
+ *     be listed. Without it those entries vanish silently.
+ * @param readDirectory Replaces the directory reader.
+ * @param inspectEntry Replaces the call that inspects one entry.
+ * @returns The paths sorted, each beginning with `dir` as it was given.
+ *     Empty when the directory holds no such file.
+ * @throws The file system error when `dir` itself cannot be listed, so a
+ *     mistyped path is never read as an empty corpus.
+ */
 export function listTextFiles(
   dir: string,
   onSkip?: (path: string) => void,
@@ -1165,6 +1224,22 @@ export function listTextFiles(
 
 type ReadTextFile = (path: string, encoding: "utf8") => string;
 
+/**
+ * Audits every document under a directory and totals the findings by rule.
+ *
+ * The directory is also the project: its `.iso-24495-4/acronyms.json` applies
+ * to every document. The layout rules run for Markdown files and not for
+ * `.txt` files.
+ *
+ * @param dir The corpus directory.
+ * @param onSkip Called with the path of each entry or file that could not be
+ *     read. Such a file has no entry in the result.
+ * @param readText Replaces the file reader.
+ * @returns `files` is keyed by path from `dir`, with forward slashes, and
+ *     holds an entry for every file read, findings or none. `totals` names
+ *     only the rules that fired. Both are empty for an empty corpus.
+ * @throws The file system error when `dir` itself cannot be listed.
+ */
 export function auditCorpus(
   dir: string,
   onSkip?: (path: string) => void,
@@ -1193,6 +1268,22 @@ export function auditCorpus(
   return findings;
 }
 
+/**
+ * Audits a corpus directory and prints the count of findings for each rule.
+ *
+ *   bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]
+ *
+ * `--json` also writes the full findings to that file, replacing it.
+ *
+ * Exit 0 means the audit ran, whatever it found. Exit 1 means the directory
+ * could not be listed or the findings file could not be written. Exit 2 means
+ * the arguments were wrong.
+ *
+ * @param argv The whole command line, so the directory is at index 2.
+ * @param stdout Receives the table and the total, one line at a time.
+ * @param stderr Receives a warning for each skipped entry, and the reason for
+ *     exit 1 or 2.
+ */
 export function runCli(
   argv: string[],
   stdout: (text: string) => void,

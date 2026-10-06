@@ -154,7 +154,17 @@ function readRepo(raw: unknown): RepoCounts | null {
   return { stars, forks, watchers };
 }
 
-// Turns the four raw API responses into one snapshot, or says why it will not.
+/**
+ * Turns the four raw API responses into one snapshot, or says why it will not.
+ *
+ * @param raw An object holding the parsed JSON of each endpoint under
+ *     `clones`, `views`, `referrers` and `repo`, as `Deps.fetchSnapshot`
+ *     returns it.
+ * @returns The snapshot, with each daily timestamp cut to its date. A response
+ *     that is missing or of the wrong shape gives `ok: false` and a problem
+ *     naming the first such response; bad input is returned, never thrown.
+ *     Empty daily lists and an empty referrer list are sound.
+ */
 export function parseSnapshot(raw: unknown): ParseResult {
   const record = asRecord(raw);
   if (record === null) return { ok: false, problem: "the traffic payload is not an object" };
@@ -229,6 +239,23 @@ function writeRows(header: string[], rows: string[][], keyWidth: number): string
   return [header, ...ordered].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
 }
 
+/**
+ * The new text of daily.csv: the rows already kept, with one row for each day
+ * the snapshot reports.
+ *
+ * A day in the snapshot replaces the row kept for that day, because the
+ * figures for a day are still moving while it is in progress. Every other kept row
+ * stays, which is how the series outlives the fourteen days GitHub holds.
+ *
+ * @param existing The file as it stands. `null` and an empty string both mean
+ *     there is none yet. Its first line is taken to be the header and dropped
+ *     unread, so text with no header loses its first row.
+ * @param snapshot A day that has clones and no views gets zero views, and the
+ *     reverse.
+ * @returns The whole file: the header, then one row for each day in date
+ *     order, ending with a line break. Only the header when there is nothing
+ *     kept and the snapshot has no days. Nothing is written to disk.
+ */
 export function mergeDaily(existing: string | null, snapshot: Snapshot): string {
   const byDate = new Map<string, string[]>();
   for (const point of snapshot.clones.days) {
@@ -243,6 +270,21 @@ export function mergeDaily(existing: string | null, snapshot: Snapshot): string 
   return writeRows(DAILY_HEADER, [...readRows(existing), ...byDate.values()], 1);
 }
 
+/**
+ * The new text of windows.csv: the rows already kept, with one row holding the
+ * rolling window totals read on `date`.
+ *
+ * These totals cannot be rebuilt from daily.csv, so each reading is kept. A
+ * second reading on the same date replaces the first; a new date appends.
+ *
+ * @param existing The file as it stands. `null` and an empty string both mean
+ *     there is none yet. Its first line is dropped unread, as a header.
+ * @param date The day the snapshot was taken, as YYYY-MM-DD. It is the key.
+ * @param snapshot The window length recorded is the number of daily clone
+ *     points, whatever the views list holds.
+ * @returns The whole file: the header, then one row for each date in date
+ *     order, ending with a line break. Nothing is written to disk.
+ */
 export function mergeWindows(existing: string | null, date: string, snapshot: Snapshot): string {
   const row = [
     date,
@@ -258,6 +300,21 @@ export function mergeWindows(existing: string | null, date: string, snapshot: Sn
   return writeRows(WINDOW_HEADER, [...readRows(existing), row], 1);
 }
 
+/**
+ * The new text of referrers.csv: the rows already kept, with one row for each
+ * referrer the snapshot lists on `date`.
+ *
+ * The key is the date and the referrer together. A second reading on the same
+ * date replaces the rows for referrers it still lists, and leaves in place a
+ * referrer that the first reading listed and the second does not.
+ *
+ * @param existing The file as it stands. `null` and an empty string both mean
+ *     there is none yet. Its first line is dropped unread, as a header.
+ * @param date The day the snapshot was taken, as YYYY-MM-DD.
+ * @returns The whole file: the header, then the rows ordered by date and
+ *     referrer, ending with a line break. A snapshot with no referrers returns
+ *     the kept rows alone. Nothing is written to disk.
+ */
 export function mergeReferrers(existing: string | null, date: string, snapshot: Snapshot): string {
   const rows = snapshot.referrers.map((entry) => [
     date,
@@ -278,6 +335,27 @@ function describeApiFailure(thrown: unknown): string {
   return "the request was stopped by " + unexpectedKind(thrown);
 }
 
+/**
+ * Takes one traffic snapshot and merges it into the three CSV files.
+ *
+ *   bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]
+ *
+ * `--dry-run` prints the three files and writes none. `--from-file` reads the
+ * four responses from a JSON file and leaves the network alone. Any other
+ * argument is taken as the data directory, and the last one wins.
+ *
+ * Exit 0 means the files were written, or printed on a dry run. Exit 1 means
+ * the API or the fixture could not be read, or the payload was malformed, and
+ * no file was written. Exit 2 means no data directory was given.
+ *
+ * @param argv The whole command line, so the arguments start at index 2.
+ * @param writeOut Receives the dry-run output and the closing summary line.
+ * @param writeErr Receives the usage text or the reason for exit 1.
+ * @param deps The network call, the file access and the clock. `readText`
+ *     must return `null` for a file that does not exist. A failure in
+ *     `writeText` is not caught, so the promise rejects and files written
+ *     before it stay written.
+ */
 export async function runCli(
   argv: string[],
   writeOut: (text: string) => void,

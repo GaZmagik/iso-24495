@@ -34,6 +34,28 @@ function displayPath(path: string, projectDir: string): string {
   return relative(projectDir, path).replaceAll("\\", "/");
 }
 
+/**
+ * Runs the mechanical audit over one file, or over every audited document
+ * under a directory. Nothing is sent or changed.
+ *
+ * @param target A file ending in .md, .markdown or .txt, or a directory. It
+ *     is resolved against the current directory, not against `projectDir`.
+ * @param projectDir Files are named by their path from it, with forward
+ *     slashes, so a target outside it is named with a leading "../". Its
+ *     `.iso-24495-4/acronyms.json` supplies known acronyms.
+ * @param readText Replaces the file reader.
+ * @param reading Pass `frontMatter: false` for text that cannot carry front
+ *     matter. A leading "---" block is then read as text.
+ * @returns The findings for each file read, the totals for each rule that
+ *     fired, and `skipped`, the full path of every entry that was not read.
+ *     A file that cannot be read is skipped and never thrown, so a single
+ *     unreadable file returns no files and one skipped path. A target that
+ *     is a symbolic link is skipped the same way. The layout rules run for
+ *     Markdown files and not for `.txt` files.
+ * @throws `UnsupportedSelection` when a selected file has another ending.
+ *     The file system error when the target does not exist or a selected
+ *     directory cannot be listed.
+ */
 export function auditTarget(
   target: string,
   projectDir: string,
@@ -84,6 +106,14 @@ function tableCell(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll(/\r?\n/g, " ");
 }
 
+/**
+ * The result of a text audit as a Markdown table, one row for each finding,
+ * followed by the counts and the two closing statements.
+ *
+ * @returns The lines joined by line breaks. With no findings the table has
+ *     its header and no rows, and the counts still appear. A pipe in a cell
+ *     is escaped and a line break becomes a space.
+ */
 export function formatFindings(findings: TextAuditResult): string {
   const lines = [
     "| File | Line | Rule | Finding |",
@@ -106,6 +136,32 @@ export function formatFindings(findings: TextAuditResult): string {
   return lines.join("\n");
 }
 
+/**
+ * The text audit command.
+ *
+ *   bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]
+ *
+ * `--project-dir` sets where paths are reported from and where the acronyms
+ * file is looked for; the default is the current directory. `--json` also
+ * writes the findings to that file, replacing it. `--no-front-matter` reads a
+ * leading "---" block as text.
+ *
+ * Any of `--jev`, `--jev-preview`, `--send`, `--yes` or
+ * `--include-judged-text` hands the whole command to `runAuditCli` in text
+ * mode, which can send document text to TypeSafe. Its arguments and its exit
+ * codes, 0 to 4, then apply, and the result is a promise.
+ *
+ * Otherwise nothing leaves the machine and the result is a number. Exit 0
+ * means the audit ran, whatever it found. Exit 1 means the path could not be
+ * read, the file has an unsupported ending, or the findings file could not
+ * be written. Exit 2 means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the path is at index 2.
+ * @param stdout Receives the table of findings.
+ * @param stderr Receives a warning for each skipped entry, and the reason for
+ *     exit 1 or 2.
+ * @param dependencies Passed to `runAuditCli`, and unused otherwise.
+ */
 export function runCli(
   argv: string[],
   stdout: (text: string) => void,

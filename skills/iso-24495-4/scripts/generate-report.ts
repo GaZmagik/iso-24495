@@ -15,6 +15,20 @@ export interface ReportInput {
   now: string;
 }
 
+/**
+ * Builds the gap report for one audit, and the audit state with this audit
+ * added to its history.
+ *
+ * @param input The three results to merge and the state so far. A `state` of
+ *     `null` means a first audit. The input is not altered: the history is
+ *     copied before the new snapshot joins it.
+ * @returns `report` is Markdown. Its Trend section appears only once the
+ *     history holds two audits or more. `state` holds every earlier snapshot
+ *     and one more, and is what the caller must save for the next audit.
+ *     Nothing is written to disk.
+ * @throws A `TypeError` when an input lacks a part the report reads, such as
+ *     `findings.totals`. The shape is not checked first.
+ */
 export function generateReport(input: ReportInput): { report: string; state: AuditState } {
   const { findings, evidence, maturity, now } = input;
   const snapshots = input.state ? structuredClone(input.state.snapshots) : [];
@@ -86,6 +100,30 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   return { report: lines.join("\n"), state };
 }
 
+/**
+ * Reads the three audit results, writes the gap report and records the audit
+ * in the state file.
+ *
+ *   bun generate-report-cli.ts <findings.json> <evidence.json> <maturity.json> [--state <state.json>] [--out <report.md>]
+ *
+ * `--state` names the audit history. It is read if it exists and then
+ * replaced with the history plus this audit; a file that does not exist yet
+ * is a first audit. Without `--state` no history is kept. `--out` writes the
+ * report to a file, replacing it; without it the report goes to `stdout`.
+ *
+ * Exit 0 means the report was produced. Exit 1 means a file could not be read
+ * or written, or an input did not hold the shape its command writes. Exit 2
+ * means the arguments were wrong.
+ *
+ * The state is written before the report. So exit 1 from a failed `--out`
+ * leaves this audit recorded, and a second run records it twice.
+ *
+ * @param argv The whole command line, so the three inputs start at index 2.
+ * @param stdout Receives the report when `--out` is absent.
+ * @param stderr Receives the usage line or the reason for exit 1 or 2.
+ * @param now Supplies the timestamp of this audit. The default is the current
+ *     time in ISO 8601 form.
+ */
 export function runCli(
   argv: string[],
   stdout: (text: string) => void,
