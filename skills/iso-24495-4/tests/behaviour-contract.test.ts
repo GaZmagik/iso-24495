@@ -2611,3 +2611,55 @@ describe("emphasis marks either side of a link boundary", () => {
     }
   }, HOSTILE_TIMEOUT_MS);
 });
+
+describe("an acronym definition whose emphasis runs over a line break", () => {
+  // The words before "(IAM)" were read one source line at a time, so a mark on one line
+  // had no partner and stayed in its word. "identi*ty" then gave two initials and the
+  // expansion no longer spelt the acronym. The uses of the acronym were read a block at a
+  // time, so the same text on one line was a definition.
+  const undefinedAt = (line: number) => [`acronym-undefined at line ${line}: define acronym "IAM" on first use`];
+
+  test("the expansion defines the acronym on two lines as it does on one", () => {
+    expect(findingsIn("identi*ty and access management* (IAM). Use IAM.")).toEqual([]);
+    for (const lines of [
+      ["identi*ty and access", "management* (IAM). Use IAM."],
+      ["identi**ty and access", "management** (IAM). Use IAM."],
+      ["_identity and access", "management_ (IAM). Use IAM."],
+      ["identi~~ty and access", "management~~ (IAM). Use IAM."],
+      ["identi*ty", "and access", "management* (IAM). Use IAM."],
+      ["i*dentity* and **access", "manage**ment (*IAM*). Use IAM."],
+      ["- identi*ty and access", "  management* (IAM). Use IAM."],
+      ["> identi*ty and access", "> management* (IAM). Use IAM."],
+      ["identi*ty and access", "management* (IAM).", "", "Use IAM."],
+    ]) {
+      expect(findingsIn(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
+    }
+  });
+
+  test("a use is still reported on its own line when the definition comes later", () => {
+    expect(findingsIn(["Use IAM first.", "", "identi*ty and access", "management* (IAM)."].join(BREAK)))
+      .toEqual(undefinedAt(1));
+    expect(findingsIn(["Plain words.", "Use IAM first, then identi*ty and access", "management* (IAM)."].join(BREAK)))
+      .toEqual(undefinedAt(2));
+    // On the line of the definition, a use ahead of it is ahead of it whatever marks
+    // the earlier lines hold.
+    expect(findingsIn(["identi*ty and", "access* IAM management (IAM)."].join(BREAK))).toEqual(undefinedAt(2));
+    expect(findingsIn(["The *quick", "zebra* xylophone (QZX) is here. Use the QZX."].join(BREAK))).toEqual([]);
+  });
+
+  test("marks pair across the lines of one block and never across two blocks", () => {
+    // A blank line ends the paragraph, so the two asterisks are in different blocks and
+    // neither has a partner. The words before the bracket do not carry across either.
+    expect(findingsIn(["identi*ty and access", "", "management* (IAM). Use IAM."].join(BREAK))).toEqual(undefinedAt(3));
+    // Within one line of a table, which is in no block, marks pair as before.
+    const table = ["| Term | Meaning |", "|---|---|", "| identi*ty* and access management (IAM) | a service |", "", "Use IAM."];
+    expect(findingsIn(table.join(BREAK))).toEqual([]);
+    // A mark with no partner anywhere in the block still splits its word.
+    expect(findingsIn(["identi*ty and access", "management (IAM). Use IAM."].join(BREAK))).toEqual(undefinedAt(2));
+  });
+
+  test("a heading that wraps is one block too", () => {
+    const heading = ["identi*ty and access", "management* (IAM)", "=================", "", "Use IAM."];
+    expect(findingsIn(heading.join(BREAK)).filter((finding) => finding.startsWith("acronym"))).toEqual([]);
+  });
+});
