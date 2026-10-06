@@ -300,3 +300,41 @@ test("the Jev audit prints a file name, a finding and an excerpt without control
     expect(bodies.length).toBeGreaterThan(0);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+// Four workers share one queue. A worker that meets a failure sets a flag, and
+// every worker checks the flag before it takes the next request. Without that
+// check the other requests were still sent after the run had already failed,
+// and their verdicts were then thrown away.
+test("once a reply fails, no request that is still queued is sent", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-stop-"));
+  try {
+    const file = join(directory, "doc.md");
+    const paragraphs = Array.from({ length: 20 }, (_, index) => `Paragraph number ${index + 1} of the guide.`);
+    writeFileSync(file, `# Title\n\n${paragraphs.join("\n\n")}\n`);
+    expect(selectDocuments(file, directory).documents[0].plan.candidates).toHaveLength(21);
+    let sent = 0;
+    let logged: { complete: boolean; digest: string } | undefined;
+    const out: string[] = [];
+    const dependencies: AuditDependencies = {
+      env: { TYPESAFE_API_KEY: "key" },
+      terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
+      // HTTP 400 is refused at once and never tried again, so each request is one call.
+      client: { fetch: async () => { sent++; return new Response("refused", { status: 400 }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+      writeLog: record => { logged = record; },
+    };
+    const reportFile = join(directory, "report.json");
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => out.push(text), text => out.push(text), dependencies)).toBe(3);
+    // One request for each of the four workers, which all started before any reply arrived.
+    expect(sent).toBe(4);
+    expect(logged?.complete).toBe(false);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    expect(report.jev.complete).toBe(false);
+    expect(report.jev.results).toEqual([]);
+    expect(out.join("\n")).toContain("Jev execution is incomplete.");
+
+    // The same document sends all 21 when nothing fails, so the 4 above is the stop and not a limit.
+    const bodies: string[] = [];
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], () => {}, () => {}, recordingDependencies(bodies))).toBe(0);
+    expect(bodies).toHaveLength(21);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
