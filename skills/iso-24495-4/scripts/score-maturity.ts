@@ -4,7 +4,8 @@
 
 import { MATURITY_MODEL } from "./lib/types.ts";
 import type { Maturity } from "./lib/types.ts";
-import { readJsonFile, unexpectedKind, writeTextFile } from "./lib/failure.ts";
+import { readJsonFile, writeTextFile } from "./lib/failure.ts";
+import { shapeProblem, type Shape } from "./lib/json-shape.ts";
 
 /**
  * Scores an answers file and prints the level of each dimension.
@@ -14,8 +15,12 @@ import { readJsonFile, unexpectedKind, writeTextFile } from "./lib/failure.ts";
  * `--json` also writes the scores to that file, replacing it.
  *
  * Exit 0 means the answers were scored. Exit 1 means the answers file could
- * not be read, is not JSON or does not hold the documented shape, or the
- * scores file could not be written. Exit 2 means the arguments were wrong.
+ * not be read, is not JSON or does not hold the shape `ANSWERS_SHAPE` states,
+ * or the scores file could not be written. Exit 2 means the arguments were
+ * wrong.
+ *
+ * The shape is checked before anything is scored, so answers of the wrong
+ * shape print no table and write no scores file.
  *
  * @param argv The whole command line, so the answers file is at index 2.
  * @param stdout Receives the table and the overall level, one line at a time.
@@ -41,37 +46,45 @@ export function runCli(
     stderr(`score-maturity: ${answers.problem}`);
     return 1;
   }
-  try {
-    const maturity = scoreMaturity(answers.value as Answers);
-    if (jsonFlag !== -1) {
-      const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(maturity, null, 2), "--json");
-      if (problem !== null) {
-        stderr(`score-maturity: ${problem}`);
-        return 1;
-      }
-    }
-    stdout("| Dimension | Level | Blocking criteria |");
-    stdout("|-----------|-------|-------------------|");
-    for (const [dimension, result] of Object.entries(maturity.dimensions)) {
-      stdout(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
-    }
-    stdout(`\nOverall (weakest dimension): ${maturity.overall}`);
-    return 0;
-  } catch (error) {
-    // The file was read and parsed above, so what remains is answers of a
-    // shape the scoring cannot use.
-    stderr(
-      `score-maturity: stopped by ${unexpectedKind(error)}; `
-        + "check that <answers.json> holds the documented shape",
-    );
+  const shape = shapeProblem(answers.value, ANSWERS_SHAPE, "<answers.json>");
+  if (shape !== null) {
+    stderr(`score-maturity: ${shape}`);
     return 1;
   }
+  // The value was checked against the shape of the type on the line above.
+  const maturity = scoreMaturity(answers.value as Answers);
+  if (jsonFlag !== -1) {
+    const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(maturity, null, 2), "--json");
+    if (problem !== null) {
+      stderr(`score-maturity: ${problem}`);
+      return 1;
+    }
+  }
+  stdout("| Dimension | Level | Blocking criteria |");
+  stdout("|-----------|-------|-------------------|");
+  for (const [dimension, result] of Object.entries(maturity.dimensions)) {
+    stdout(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
+  }
+  stdout(`\nOverall (weakest dimension): ${maturity.overall}`);
+  return 0;
 }
 
 export interface Answers {
   organisation?: string;
   dimensions: Record<string, Record<string, boolean>>;
 }
+
+/**
+ * The shape of an answers file. A dimension may be left out, and one the
+ * catalogue does not list is passed over, as `scoreMaturity` describes. Each
+ * dimension that is there must hold true or false for every criterion it
+ * names.
+ */
+export const ANSWERS_SHAPE: Shape = {
+  kind: "object",
+  required: { dimensions: { kind: "map", member: { kind: "map", member: { kind: "flag" } } } },
+  optional: { organisation: { kind: "text" } },
+};
 
 /**
  * Scores an organisation against the maturity catalogue.
@@ -86,7 +99,9 @@ export interface Answers {
  *     levels it has, and the unmet criteria of the next level, which is empty
  *     at the top. `overall` is the lowest level of any dimension. Answers
  *     with no `dimensions` score 0 throughout.
- * @throws A `TypeError` when `answers` is `null` or `undefined`.
+ * @throws A `TypeError` when `answers` is `null` or `undefined`. No other
+ *     value throws: one that is not an object scores 0 throughout, which is
+ *     why `runCli` checks the shape of a file before it calls this.
  */
 export function scoreMaturity(answers: Answers): Maturity {
   const maturity: Maturity = { dimensions: {}, overall: 0 };
