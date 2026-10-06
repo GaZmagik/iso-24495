@@ -389,3 +389,62 @@ describe("a dry run prints a referrer nobody has read", () => {
     expect(real.files.get(join("data", "referrers.csv"))).toContain(`2026-08-22,${referrer},3,1`);
   });
 });
+
+describe("a table that cannot be written", () => {
+  // The write was not caught, so the command ended with the runtime's own
+  // report, which names the whole path. The module now words the failure.
+  test("a missing data directory is reported in fixed words, by the length of its path", async () => {
+    const { deps, files, stdout, stderr } = harness({
+      writeText: (path) => {
+        throw Object.assign(new Error(`ENOENT: no such file or directory, open '${path}' hunter2`), { code: "ENOENT" });
+      },
+    });
+    const code = await runCli(["bun", "cli", "data/hunter2"], (t) => stdout.push(t), (t) => stderr.push(t), deps);
+    expect(code).toBe(1);
+    expect(files.size).toBe(0);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Could not write daily.csv: <data-directory> names a path of 12 characters that cannot be written to: "
+        + "no such file or directory. No table was written.",
+    ]);
+  });
+
+  test("a later failure says which tables were already written", async () => {
+    const written: string[] = [];
+    const { deps, stdout, stderr } = harness({
+      writeText: (path) => {
+        if (path.endsWith("referrers.csv")) throw new RangeError("hunter2");
+        written.push(path);
+      },
+    });
+    const code = await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps);
+    expect(code).toBe(1);
+    expect(written).toEqual([join("data", "daily.csv"), join("data", "windows.csv")]);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual([
+      "Could not write referrers.csv: stopped by an unexpected RangeError. "
+        + "Already written: daily.csv, windows.csv.",
+    ]);
+  });
+
+  test("the shipped command says the same, and never what the runtime said", () => {
+    const root = join(import.meta.dir, "..", "..");
+    const missing = join(import.meta.dir, "fixtures", "no-such-directory-hunter2", "x");
+    const ran = Bun.spawnSync(
+      ["bun", join(root, "scripts", "traffic-snapshot-cli.ts"), "--from-file",
+        join(import.meta.dir, "fixtures", "traffic-sample.json"), missing],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(ran.exitCode).toBe(1);
+    expect(ran.stdout.toString()).toBe("");
+    // Bun wraps what console.error prints in colour codes, so the line is
+    // looked for, and the words of the runtime's own report are looked for too.
+    const said = ran.stderr.toString();
+    expect(said).toContain(
+      `Could not write daily.csv: <data-directory> names a path of ${missing.length} characters that cannot be `
+        + "written to: no such file or directory. No table was written.",
+    );
+    expect(said.trim().split("\n")).toHaveLength(1);
+    for (const leaked of ["ENOENT", "hunter2", "syscall", "errno"]) expect(said).not.toContain(leaked);
+  });
+});

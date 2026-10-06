@@ -53,16 +53,18 @@ export function checkVersionSites(root: string): VersionReport {
   requireValue(problems, ".codex-plugin/plugin.json version",
     readJson(root, problems, ".codex-plugin/plugin.json").version, version);
 
-  const marketplace = readJson(root, problems, ".claude-plugin/marketplace.json") as {
-    plugins?: Array<{ version?: unknown; source?: { ref?: unknown } }>;
-  };
-  const entry = marketplace.plugins?.[0];
-  requireValue(problems, ".claude-plugin/marketplace.json marketplace version", entry?.version,
+  // Each level is checked before it is read. A manifest is a file anyone can
+  // edit, and one of the wrong shape must state nothing, not stop the check.
+  const marketplace = readJson(root, problems, ".claude-plugin/marketplace.json");
+  const first: unknown = Array.isArray(marketplace.plugins) ? marketplace.plugins[0] : undefined;
+  const entry = isObject(first) ? first : {};
+  const source = isObject(entry.source) ? entry.source : {};
+  requireValue(problems, ".claude-plugin/marketplace.json marketplace version", entry.version,
     version);
   // The ref is the half that gets forgotten, because it reads as a separate
   // fact rather than as the same number wearing a "v".
   requireValue(problems, ".claude-plugin/marketplace.json marketplace source.ref",
-    entry?.source?.ref, `v${version}`);
+    source.ref, `v${version}`);
 
   const skills = SKILL_ROOTS.flatMap((skillRoot) => {
     try {
@@ -167,16 +169,30 @@ function read(root: string, problems: string[], path: string): string | null {
   }
 }
 
-/** A file's JSON, or an empty object with a problem recorded where there is none. */
+/**
+ * The JSON object a file holds. Where the file cannot be read, is not JSON, or
+ * holds JSON that is not an object, a problem is recorded and the result is an
+ * empty object, so every site read from it states nothing.
+ */
 function readJson(root: string, problems: string[], path: string): Record<string, unknown> {
   const text = read(root, problems, path);
   if (text === null) return {};
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as Record<string, unknown>;
+    parsed = JSON.parse(text);
   } catch {
     problems.push(`${path} is not valid JSON.`);
     return {};
   }
+  if (isObject(parsed)) return parsed;
+  problems.push(`${path} must hold a JSON object; it holds ${describeShape(parsed)}.`);
+  return {};
+}
+
+/** What kind of JSON value this is, in fixed words and without its contents. */
+function describeShape(value: unknown): string {
+  if (value === null) return "null";
+  return Array.isArray(value) ? "a list" : `a value of type ${typeof value}`;
 }
 
 /** Records a problem where a site does not state the wanted value. */
