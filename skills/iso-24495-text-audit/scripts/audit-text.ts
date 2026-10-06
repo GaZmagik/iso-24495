@@ -12,6 +12,115 @@ import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 import { runAuditCli, type AuditDependencies } from "../../iso-24495-4/scripts/lib/jev/audit.ts";
 
+/**
+ * The text audit command.
+ *
+ *   bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]
+ *
+ * `--project-dir` sets where paths are reported from and where the acronyms
+ * file is looked for; the default is the current directory. `--json` also
+ * writes the findings to that file, replacing it. `--no-front-matter` reads a
+ * leading "---" block as text.
+ *
+ * Any of `--jev`, `--jev-preview`, `--send`, `--yes` or
+ * `--include-judged-text` hands the whole command to `runAuditCli` in text
+ * mode, which can send document text to TypeSafe. Its arguments and its exit
+ * codes, 0 to 4, then apply, and the result is a promise.
+ *
+ * Otherwise nothing leaves the machine and the result is a number. Exit 0
+ * means the audit ran, whatever it found. Exit 1 means the path could not be
+ * read, the file has an unsupported ending, or the findings file could not
+ * be written. Exit 2 means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the path is at index 2.
+ * @param stdout Receives the table of findings.
+ * @param stderr Receives a warning for each skipped entry, and the reason for
+ *     exit 1 or 2.
+ * @param dependencies Passed to `runAuditCli`, and unused otherwise.
+ */
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+  dependencies: AuditDependencies = {},
+): number | Promise<number> {
+  if (argv.slice(3).some(option => ["--jev", "--jev-preview", "--send", "--yes", "--include-judged-text"].includes(option))) {
+    return runAuditCli("text", argv, stdout, stderr, dependencies);
+  }
+  const target = argv[2];
+  if (!target) {
+    stderr(
+      "Usage: bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]",
+    );
+    return 2;
+  }
+  let jsonPath: string | undefined;
+  let projectDir = process.cwd();
+  // A file in a repository may open with front matter, which is metadata. A pull
+  // request description cannot, and GitHub shows a leading "---" block as a rule
+  // and a heading, so the check that reads one says there is no front matter.
+  let frontMatter = true;
+  const seenOptions = new Set<string>();
+  for (let index = 3; index < argv.length; index++) {
+    const option = argv[index];
+    if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
+      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
+      stderr(
+        `audit-text: ${kind} of ${option.length} characters at argument ${index - 1}; `
+          + "expected --json, --project-dir or --no-front-matter",
+      );
+      return 2;
+    }
+    if (seenOptions.has(option)) {
+      stderr(`audit-text: ${option} appears more than once`);
+      return 2;
+    }
+    seenOptions.add(option);
+    if (option === "--no-front-matter") {
+      frontMatter = false;
+      continue;
+    }
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) {
+      const expected = option === "--json" ? "an output file" : "a directory";
+      stderr(`audit-text: ${option} requires ${expected}`);
+      return 2;
+    }
+    if (option === "--json") {
+      jsonPath = value;
+    } else {
+      projectDir = value;
+    }
+    index++;
+  }
+
+  try {
+    const findings = auditTarget(target, projectDir, readFileSync, { frontMatter });
+    for (const path of findings.skipped) {
+      stderr(`warning: skipped unreadable entry: ${path}`);
+    }
+    if (jsonPath !== undefined) {
+      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-text: ${problem}`);
+        return 1;
+      }
+    }
+    stdout(formatFindings(findings));
+    return 0;
+  } catch (error) {
+    if (error instanceof UnsupportedSelection) {
+      stderr(`audit-text: ${error.message}`);
+      return 1;
+    }
+    // The report is written without throwing, and an unreadable entry below a
+    // selected directory is skipped. So a file fault here is the selected path
+    // itself refusing to be read.
+    stderr(`audit-text: ${pathFailure(error, target, "<file-or-directory>", "cannot be read")}`);
+    return 1;
+  }
+}
+
 export interface TextAuditResult extends Findings {
   skipped: string[];
 }
@@ -134,113 +243,4 @@ export function formatFindings(findings: TextAuditResult): string {
     "The user decides whether the text suits its readers and purpose.",
   );
   return lines.join("\n");
-}
-
-/**
- * The text audit command.
- *
- *   bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]
- *
- * `--project-dir` sets where paths are reported from and where the acronyms
- * file is looked for; the default is the current directory. `--json` also
- * writes the findings to that file, replacing it. `--no-front-matter` reads a
- * leading "---" block as text.
- *
- * Any of `--jev`, `--jev-preview`, `--send`, `--yes` or
- * `--include-judged-text` hands the whole command to `runAuditCli` in text
- * mode, which can send document text to TypeSafe. Its arguments and its exit
- * codes, 0 to 4, then apply, and the result is a promise.
- *
- * Otherwise nothing leaves the machine and the result is a number. Exit 0
- * means the audit ran, whatever it found. Exit 1 means the path could not be
- * read, the file has an unsupported ending, or the findings file could not
- * be written. Exit 2 means the arguments were wrong.
- *
- * @param argv The whole command line, so the path is at index 2.
- * @param stdout Receives the table of findings.
- * @param stderr Receives a warning for each skipped entry, and the reason for
- *     exit 1 or 2.
- * @param dependencies Passed to `runAuditCli`, and unused otherwise.
- */
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-  dependencies: AuditDependencies = {},
-): number | Promise<number> {
-  if (argv.slice(3).some(option => ["--jev", "--jev-preview", "--send", "--yes", "--include-judged-text"].includes(option))) {
-    return runAuditCli("text", argv, stdout, stderr, dependencies);
-  }
-  const target = argv[2];
-  if (!target) {
-    stderr(
-      "Usage: bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]",
-    );
-    return 2;
-  }
-  let jsonPath: string | undefined;
-  let projectDir = process.cwd();
-  // A file in a repository may open with front matter, which is metadata. A pull
-  // request description cannot, and GitHub shows a leading "---" block as a rule
-  // and a heading, so the check that reads one says there is no front matter.
-  let frontMatter = true;
-  const seenOptions = new Set<string>();
-  for (let index = 3; index < argv.length; index++) {
-    const option = argv[index];
-    if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
-      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(
-        `audit-text: ${kind} of ${option.length} characters at argument ${index - 1}; `
-          + "expected --json, --project-dir or --no-front-matter",
-      );
-      return 2;
-    }
-    if (seenOptions.has(option)) {
-      stderr(`audit-text: ${option} appears more than once`);
-      return 2;
-    }
-    seenOptions.add(option);
-    if (option === "--no-front-matter") {
-      frontMatter = false;
-      continue;
-    }
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      const expected = option === "--json" ? "an output file" : "a directory";
-      stderr(`audit-text: ${option} requires ${expected}`);
-      return 2;
-    }
-    if (option === "--json") {
-      jsonPath = value;
-    } else {
-      projectDir = value;
-    }
-    index++;
-  }
-
-  try {
-    const findings = auditTarget(target, projectDir, readFileSync, { frontMatter });
-    for (const path of findings.skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
-    }
-    if (jsonPath !== undefined) {
-      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
-      if (problem !== null) {
-        stderr(`audit-text: ${problem}`);
-        return 1;
-      }
-    }
-    stdout(formatFindings(findings));
-    return 0;
-  } catch (error) {
-    if (error instanceof UnsupportedSelection) {
-      stderr(`audit-text: ${error.message}`);
-      return 1;
-    }
-    // The report is written without throwing, and an unreadable entry below a
-    // selected directory is skipped. So a file fault here is the selected path
-    // itself refusing to be read.
-    stderr(`audit-text: ${pathFailure(error, target, "<file-or-directory>", "cannot be read")}`);
-    return 1;
-  }
 }

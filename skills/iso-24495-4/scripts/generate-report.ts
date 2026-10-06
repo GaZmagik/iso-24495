@@ -6,100 +6,6 @@ import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
 import { readJsonFile, unexpectedKind, writeTextFile, type JsonFile } from "./lib/failure.ts";
 import { existsSync } from "node:fs";
 
-export interface ReportInput {
-  findings: Findings;
-  evidence: Evidence;
-  maturity: Maturity;
-  state: AuditState | null;
-  /** ISO 8601 timestamp for this audit, passed in so runs are reproducible. */
-  now: string;
-}
-
-/**
- * Builds the gap report for one audit, and the audit state with this audit
- * added to its history.
- *
- * @param input The three results to merge and the state so far. A `state` of
- *     `null` means a first audit. The input is not altered: the history is
- *     copied before the new snapshot joins it.
- * @returns `report` is Markdown. Its Trend section appears only once the
- *     history holds two audits or more. `state` holds every earlier snapshot
- *     and one more, and is what the caller must save for the next audit.
- *     Nothing is written to disk.
- * @throws A `TypeError` when an input lacks a part the report reads, such as
- *     `findings.totals`. The shape is not checked first.
- */
-export function generateReport(input: ReportInput): { report: string; state: AuditState } {
-  const { findings, evidence, maturity, now } = input;
-  const snapshots = input.state ? structuredClone(input.state.snapshots) : [];
-  snapshots.push({
-    timestamp: now,
-    totals: structuredClone(findings.totals),
-    overall: maturity.overall,
-  });
-  const state: AuditState = { snapshots };
-
-  const lines: string[] = [];
-  lines.push("# Plain Language Gap Analysis");
-  lines.push("");
-  lines.push(
-    `> Provisional: this analysis is based on the public scope of ISO/CD 24495-4 (committee draft, unpublished). It is not a compliance statement and confers no certification. Audit date: ${now}.`,
-  );
-  lines.push("");
-  lines.push("## Maturity");
-  lines.push("");
-  lines.push("| Dimension | Level | Blocking criteria |");
-  lines.push("|-----------|-------|-------------------|");
-  for (const [dimension, result] of Object.entries(maturity.dimensions)) {
-    lines.push(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
-  }
-  lines.push("");
-  lines.push(`Overall maturity (weakest dimension): **${maturity.overall}**.`);
-  lines.push("");
-  lines.push("## Evidence");
-  lines.push("");
-  lines.push("| Artefact category | Found | Paths |");
-  lines.push("|-------------------|-------|-------|");
-  for (const [category, artefact] of Object.entries(evidence.artefacts)) {
-    lines.push(
-      `| ${category} | ${artefact.found ? "yes" : "no"} | ${artefact.paths.join("<br>") || "-"} |`,
-    );
-  }
-  lines.push("");
-  lines.push("## Corpus findings");
-  lines.push("");
-  lines.push("| Rule | Violations |");
-  lines.push("|------|------------|");
-  for (const [rule, count] of Object.entries(findings.totals)) {
-    lines.push(`| ${rule} | ${count} |`);
-  }
-  lines.push("");
-  lines.push(
-    "Corpus metrics are proxies for the Measurement dimension only. Text quality alone never raises a maturity level.",
-  );
-  if (snapshots.length >= 2) {
-    lines.push("");
-    lines.push("## Trend");
-    lines.push("");
-    lines.push("| Audit date | Overall | Total violations |");
-    lines.push("|------------|---------|------------------|");
-    for (const snapshot of snapshots) {
-      const total = Object.values(snapshot.totals).reduce((a, b) => a + b, 0);
-      lines.push(`| ${snapshot.timestamp} | ${snapshot.overall} | ${total} |`);
-    }
-  }
-  lines.push("");
-  lines.push("## Limitations");
-  lines.push("");
-  lines.push("- The underlying standard is an unpublished committee draft; criteria may change.");
-  lines.push("- Text heuristics are English-centric and approximate.");
-  lines.push("- Maturity levels reflect the evidence supplied; absent evidence scores as absent.");
-  lines.push("- A human reviewer must validate this report before the organisation acts on it.");
-  lines.push("");
-
-  return { report: lines.join("\n"), state };
-}
-
 /**
  * Reads the three audit results, writes the gap report and records the audit
  * in the state file.
@@ -197,4 +103,98 @@ export function runCli(
     );
     return 1;
   }
+}
+
+export interface ReportInput {
+  findings: Findings;
+  evidence: Evidence;
+  maturity: Maturity;
+  state: AuditState | null;
+  /** ISO 8601 timestamp for this audit, passed in so runs are reproducible. */
+  now: string;
+}
+
+/**
+ * Builds the gap report for one audit, and the audit state with this audit
+ * added to its history.
+ *
+ * @param input The three results to merge and the state so far. A `state` of
+ *     `null` means a first audit. The input is not altered: the history is
+ *     copied before the new snapshot joins it.
+ * @returns `report` is Markdown. Its Trend section appears only once the
+ *     history holds two audits or more. `state` holds every earlier snapshot
+ *     and one more, and is what the caller must save for the next audit.
+ *     Nothing is written to disk.
+ * @throws A `TypeError` when an input lacks a part the report reads, such as
+ *     `findings.totals`. The shape is not checked first.
+ */
+export function generateReport(input: ReportInput): { report: string; state: AuditState } {
+  const { findings, evidence, maturity, now } = input;
+  const snapshots = input.state ? structuredClone(input.state.snapshots) : [];
+  snapshots.push({
+    timestamp: now,
+    totals: structuredClone(findings.totals),
+    overall: maturity.overall,
+  });
+  const state: AuditState = { snapshots };
+
+  const lines: string[] = [];
+  lines.push("# Plain Language Gap Analysis");
+  lines.push("");
+  lines.push(
+    `> Provisional: this analysis is based on the public scope of ISO/CD 24495-4 (committee draft, unpublished). It is not a compliance statement and confers no certification. Audit date: ${now}.`,
+  );
+  lines.push("");
+  lines.push("## Maturity");
+  lines.push("");
+  lines.push("| Dimension | Level | Blocking criteria |");
+  lines.push("|-----------|-------|-------------------|");
+  for (const [dimension, result] of Object.entries(maturity.dimensions)) {
+    lines.push(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
+  }
+  lines.push("");
+  lines.push(`Overall maturity (weakest dimension): **${maturity.overall}**.`);
+  lines.push("");
+  lines.push("## Evidence");
+  lines.push("");
+  lines.push("| Artefact category | Found | Paths |");
+  lines.push("|-------------------|-------|-------|");
+  for (const [category, artefact] of Object.entries(evidence.artefacts)) {
+    lines.push(
+      `| ${category} | ${artefact.found ? "yes" : "no"} | ${artefact.paths.join("<br>") || "-"} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## Corpus findings");
+  lines.push("");
+  lines.push("| Rule | Violations |");
+  lines.push("|------|------------|");
+  for (const [rule, count] of Object.entries(findings.totals)) {
+    lines.push(`| ${rule} | ${count} |`);
+  }
+  lines.push("");
+  lines.push(
+    "Corpus metrics are proxies for the Measurement dimension only. Text quality alone never raises a maturity level.",
+  );
+  if (snapshots.length >= 2) {
+    lines.push("");
+    lines.push("## Trend");
+    lines.push("");
+    lines.push("| Audit date | Overall | Total violations |");
+    lines.push("|------------|---------|------------------|");
+    for (const snapshot of snapshots) {
+      const total = Object.values(snapshot.totals).reduce((a, b) => a + b, 0);
+      lines.push(`| ${snapshot.timestamp} | ${snapshot.overall} | ${total} |`);
+    }
+  }
+  lines.push("");
+  lines.push("## Limitations");
+  lines.push("");
+  lines.push("- The underlying standard is an unpublished committee draft; criteria may change.");
+  lines.push("- Text heuristics are English-centric and approximate.");
+  lines.push("- Maturity levels reflect the evidence supplied; absent evidence scores as absent.");
+  lines.push("- A human reviewer must validate this report before the organisation acts on it.");
+  lines.push("");
+
+  return { report: lines.join("\n"), state };
 }

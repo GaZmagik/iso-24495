@@ -10,6 +10,48 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+/**
+ * Reads a report file and checks it against the description.
+ *
+ *   bun scripts/description-report-cli.ts <report.json> <description>
+ *
+ * Exit 0 prints the number of findings. Exit 1 says why the report cannot be
+ * trusted. Exit 2 means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the two paths are at index 2 and 3.
+ * @param projectDir The directory the audit ran in, as `checkReport` needs it.
+ * @param stdout Receives the number of findings and nothing else.
+ * @param stderr Receives the usage line or the reason.
+ * @returns The exit code. A report file that is missing or unreadable is
+ *     exit 1, not exit 2.
+ */
+export function runCli(
+  argv: string[],
+  projectDir: string,
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const [reportPath, description] = [argv[2], argv[3]];
+  if (!reportPath || !description) {
+    stderr("Usage: bun scripts/description-report-cli.ts <report.json> <description>");
+    return 2;
+  }
+  let reportText: string;
+  try {
+    reportText = readFileSync(reportPath, "utf8");
+  } catch {
+    stderr("description report: the report cannot be read.");
+    return 1;
+  }
+  const check = checkReport(reportText, description, projectDir);
+  if (!check.ok) {
+    stderr(`description report: ${check.reason}.`);
+    return 1;
+  }
+  stdout(String(check.findings));
+  return 0;
+}
+
 /** Whether a report can be trusted, and if so how many findings it holds. */
 export type ReportCheck = { ok: true; findings: number } | { ok: false; reason: string };
 
@@ -66,46 +108,4 @@ export function checkReport(reportText: string, description: string, projectDir:
     return { ok: false, reason: `the report skipped ${count} ${count === 1 ? "entry" : "entries"}` };
   }
   return { ok: true, findings: violations.length };
-}
-
-/**
- * Reads a report file and checks it against the description.
- *
- *   bun scripts/description-report-cli.ts <report.json> <description>
- *
- * Exit 0 prints the number of findings. Exit 1 says why the report cannot be
- * trusted. Exit 2 means the arguments were wrong.
- *
- * @param argv The whole command line, so the two paths are at index 2 and 3.
- * @param projectDir The directory the audit ran in, as `checkReport` needs it.
- * @param stdout Receives the number of findings and nothing else.
- * @param stderr Receives the usage line or the reason.
- * @returns The exit code. A report file that is missing or unreadable is
- *     exit 1, not exit 2.
- */
-export function runCli(
-  argv: string[],
-  projectDir: string,
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const [reportPath, description] = [argv[2], argv[3]];
-  if (!reportPath || !description) {
-    stderr("Usage: bun scripts/description-report-cli.ts <report.json> <description>");
-    return 2;
-  }
-  let reportText: string;
-  try {
-    reportText = readFileSync(reportPath, "utf8");
-  } catch {
-    stderr("description report: the report cannot be read.");
-    return 1;
-  }
-  const check = checkReport(reportText, description, projectDir);
-  if (!check.ok) {
-    stderr(`description report: ${check.reason}.`);
-    return 1;
-  }
-  stdout(String(check.findings));
-  return 0;
 }
