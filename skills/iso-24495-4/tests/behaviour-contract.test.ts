@@ -2541,6 +2541,45 @@ describe("emphasis marks either side of a link boundary", () => {
     }
   });
 
+  test("a closer passes over an opener in another label to reach its own", () => {
+    // A closer searches back no further than the first mark of its own text, so it
+    // meets a mark of another label only when one of its own stands before that label.
+    // Every case above lacks that earlier mark, and so none of them reached the check
+    // that the two marks share a label: it could be removed with every test passing.
+    // Here the closer outside must pass over the opener in the label and take the
+    // first mark. A browser shows "x in or*der to go." with the first three words
+    // emphasised, and the reader does not see the phrase.
+    for (const text of [
+      "*x in [or*](u)der* to go.",
+      "**x in [or**](u)der** to go.",
+      "_x in [_or](u)der_ to go.",
+      "~~x in [or~~](u)der~~ to go.",
+      "*x in ![or*](chart.png)der* to go.",
+      "# *x in [or*](u)der* to go",
+      ["*x in [or*][r]der* to go.", "", "[r]: https://example.com"].join(BREAK),
+      // The same from inside: a closer in an image label passes over a link label in it.
+      "![*x in [or*](u)der* to go](chart.png).",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // The mark passed over stays on the page, and the pair around it is removed.
+    expect(findingsIn("*The tenant [sh*](u)all* vacate.")).toEqual([]);
+    expect(findingsIn("*The tenant [a*](u) shall* vacate.")).toEqual(legal);
+  });
+
+  test("a search that failed in one text does not stop a search in another", () => {
+    // A closer with no opener is remembered, so a later one like it does not search the
+    // same marks again. That record is kept for each label apart. The closer in the
+    // label finds nothing, and the closer after it, outside, must still reach the first
+    // mark: a browser shows "x y*z in order to go." with all but the last word emphasised.
+    expect(findingsIn("*x [y*z](u) in or*der to go.")).toEqual(wordy);
+    // It is kept for each length of closer too. Two marks may not close one inside a
+    // word, and one mark after them may.
+    expect(findingsIn("x*y a**b in or*der to go.")).toEqual(wordy);
+    // Three marks may close three, though their lengths add up to a multiple of three.
+    expect(findingsIn("a***b in or***der to go.")).toEqual(wordy);
+  });
+
   test("marks that pair on one side of the boundary are removed as before", () => {
     expect(findingsIn("We did this in order to finish the work.")).toEqual(wordy);
     for (const text of [
