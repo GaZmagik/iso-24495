@@ -2507,3 +2507,107 @@ describe("a filler opening and the marks around it", () => {
     }
   });
 });
+
+describe("emphasis marks either side of a link boundary", () => {
+  // A link is replaced by its label before the marks are paired, so a mark
+  // outside a link sat beside one inside it and the two were taken for a pair.
+  // A browser pairs the marks of a label on their own: "in *or[der*](u) to"
+  // shows both asterisks, and the reader does not see the phrase.
+  const wordy = ['wordy-phrase at line 1: "in order to" says what "to" says'];
+  const legal = ['legalese at line 1: banned term "shall"'];
+
+  test("a mark outside a link does not pair with a mark inside it", () => {
+    for (const text of [
+      "in *or[der*](u) to go.",
+      "We did this in *or[der*](u) to finish the work.",
+      "We did this in [*or](u)der* to finish the work.",
+      "We did this in **or[der**](u) to finish the work.",
+      "We did this in _or[der_](u) to finish the work.",
+      "We did this in ~~or[der~~](u) to finish the work.",
+      "We did this in *or![der*](chart.png) to finish the work.",
+      "The tenant sh*a[ll*](u) vacate the premises.",
+      "# We did this in *or[der*](u) to finish",
+      "- We did this in *or[der*](u) to finish the work.",
+      // A reference link with a definition is a link, so its label is a boundary too.
+      ["We did this in *or[der*][r] to finish the work.", "", "[r]: https://example.com"].join(BREAK),
+      ["We did this in *or[der*] to finish the work.", "", "[der*]: https://example.com"].join(BREAK),
+      // A run of marks that straddles the boundary is split there.
+      "We did this in or*[*der](u) to finish the work.",
+      // One label inside another: each is read on its own.
+      "We did this in [or*[der*](u)](v) to finish the work.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+  });
+
+  test("marks that pair on one side of the boundary are removed as before", () => {
+    expect(findingsIn("We did this in order to finish the work.")).toEqual(wordy);
+    for (const text of [
+      // Bold around a link: both marks are outside it.
+      "We did this **in [order](u) to** finish the work.",
+      "**We did this in [order](u) to finish the work.**",
+      // Bold inside a label: both marks are inside it.
+      "We did this [**in** order](u) to finish the work.",
+      "We did this in [**order**](u) to finish the work.",
+      "We did this in [or*de*r](u) to finish the work.",
+      // A pair outside and a pair inside, each on its own side.
+      "We did this *in [or*de*r](u) to* finish the work.",
+      "We did this ~~in [_order_](u) to~~ finish the work.",
+      "We did this in [or*de*r](u) to finish the ![*work*](chart.png).",
+      "# We did this **in [order](u) to** finish",
+      "# We did this in [or*de*r](u) to finish",
+    ]) {
+      expect(findingsIn(text), text).toEqual(wordy);
+    }
+    expect(findingsIn("**The tenant [shall](u) vacate.**")).toEqual(legal);
+    expect(findingsIn("[**The tenant** shall](u) vacate.")).toEqual(legal);
+    // The label holds a pair of its own, and the mark left over outside it has no partner.
+    expect(findingsIn("The tenant *sh[*a*ll](u) vacate.")).toEqual(legal);
+  });
+
+  test("brackets that are not a link are no boundary", () => {
+    // A reference with no definition is text, brackets and all, so its marks pair with
+    // the marks around it as they would in any other text.
+    expect(findingsIn("The tenant [sh*all] vac*ate.")).toEqual(legal);
+    expect(findingsIn("The tenant [sh*all][nowhere] vac*ate.")).toEqual(legal);
+    const defined = ["The tenant [sh*all] vac*ate.", "", "[sh*all]: https://example.com"].join(BREAK);
+    expect(findingsIn(defined)).toEqual([]);
+  });
+
+  test("the acronym, enumeration and filler rules read the same boundary", () => {
+    const undefinedAcronym = ['acronym-undefined at line 1: define acronym "QZX" on first use'];
+    expect(findingsIn("Ask the QZX team.")).toEqual(undefinedAcronym);
+    expect(findingsIn("Ask the [**QZX**](u) team.")).toEqual(undefinedAcronym);
+    expect(findingsIn("**Ask the [QZX](u) team.**")).toEqual(undefinedAcronym);
+    expect(findingsIn("Ask the Q*Z[X*](u) team.")).toEqual([]);
+
+    const ranked = ["prose-enumeration at line 1: enumeration ranks 1, 2, 3 in prose; consider a list"];
+    expect(findingsIn("First we plan. Second we build. Third we test.")).toEqual(ranked);
+    expect(findingsIn("[Fi*rs*t](u) we plan. Second we build. Third we test.")).toEqual(ranked);
+    expect(findingsIn("Fi*r[st*](u) we plan. Second we build. Third we test.")).toEqual([]);
+
+    const filler = ['filler-opening at line 1: opens with "certainly" instead of the answer'];
+    expect(findingsIn("Certainly, here it is.")).toEqual(filler);
+    expect(findingsIn("[**Certainly**](u), here it is.")).toEqual(filler);
+    expect(findingsIn("*Cert[ainly*](u), here it is.")).toEqual([]);
+  });
+
+  test("a line keeps its number when a link ahead of the marks spans lines", () => {
+    const text = ["See [the", "guide](https://example.com", "'title') first.", "We did this in *or[der*](u) to finish.",
+      "We did this in **order** to finish."].join(BREAK);
+    expect(findingsIn(text)).toEqual(['wordy-phrase at line 5: "in order to" says what "to" says']);
+  });
+
+  test("marks and labels in great number still take time in proportion to the text", () => {
+    const shapes: Array<[name: string, text: string]> = [
+      ["a closer in every label", "a [b*](u) ".repeat(50_000)],
+      ["an opener outside and a closer inside", "*a [b*](u) ".repeat(50_000)],
+      ["a pair in every label", "[*b*](u) ".repeat(50_000)],
+      ["closers after many labels", "[*b](u) ".repeat(25_000) + "a* ".repeat(25_000)],
+      ["labels inside labels", "[a ".repeat(2_000) + "*b* " + "](u) ".repeat(2_000)],
+    ];
+    for (const [name, text] of shapes) {
+      expect(elapsed(() => auditText(text)), name).toBeLessThan(15_000);
+    }
+  }, HOSTILE_TIMEOUT_MS);
+});

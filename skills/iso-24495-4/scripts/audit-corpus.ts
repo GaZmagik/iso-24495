@@ -6,6 +6,9 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  labelledHeadings,
+  labelledProseBlocks,
+  type LabelledBlock,
   markdownLinks,
   mergedSentences,
   normaliseReference,
@@ -725,7 +728,7 @@ function acronymViolations(
   const seen = new Set<string>();
   const definitionLocations = new Map<string, { line: number; column: number }>();
   const document = readDocument(text, reading);
-  const blocks = readerProseBlocks(text, reading);
+  const blocks = labelledProseBlocks(text, reading);
   // The block each line sits in. The words before a parenthesis carry across a soft
   // line break, which is a space to the reader, so "identity and access" wrapped
   // before "management (IAM)" still spells the acronym. They never carry across a
@@ -834,13 +837,14 @@ function acronymViolations(
  *
  * Paired emphasis marks are taken out of each word, so "**IAM**" is the acronym and
  * "**(identity" opens an expansion. The marks are paired across the whole block, because
- * emphasis can open on one line and close on the next. The column is where the first
+ * emphasis can open on one line and close on the next, and never across the edge of a
+ * link label. The column is where the first
  * character left of the word sits in the source line, marks before it counted. It is
  * compared with where a definition sits in that line, so "**(IAM)**" must not appear to
  * start before its own bracket.
  */
-function unmarkedTokens(block: ProseBlock): Array<{ raw: string; line: number; column: number }> {
-  const marks = new Set(emphasisMarkOffsets(block.lines.join("\n")));
+function unmarkedTokens(block: LabelledBlock): Array<{ raw: string; line: number; column: number }> {
+  const marks = new Set(emphasisMarkOffsets(block.lines.join("\n"), block.labels));
   const tokens: Array<{ raw: string; line: number; column: number }> = [];
   let lineStart = 0;
   for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex++) {
@@ -922,12 +926,16 @@ const PROPER_NAME_CONTEXT = new RegExp(
  * removed the same way: the struck words are still on the page, and were already
  * reported where the whole phrase was struck. Code spans and escaped marks stay as
  * written, so a term in backticks is still named and not used.
+ *
+ * A link is read as its label, and the edge of the label still counts. A mark outside
+ * a link is not paired with a mark inside it, because a browser does not pair them:
+ * "in *or[der*](u) to" shows both asterisks, and the reader does not see the phrase.
  */
 function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
   const blocks = [
-    ...readerProseBlocks(text, reading).map(withoutEmphasisMarks),
-    ...headings(text, reading)
-      .map((heading) => ({ line: heading.line, lines: [withoutEmphasis(heading.text)] })),
+    ...labelledProseBlocks(text, reading).map(withoutEmphasisMarks),
+    ...labelledHeadings(text, reading)
+      .map((heading) => ({ line: heading.line, lines: [withoutEmphasis(heading.lines[0] as string, heading.labels)] })),
   ];
   return blocks.sort((a, b) => a.line - b.line);
 }
@@ -936,10 +944,11 @@ function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
  * The block with its paired emphasis marks removed, on the same lines.
  *
  * The marks are paired across the whole block, because emphasis can open on one line
- * and close on the next. No line ending is removed, so each line keeps its number.
+ * and close on the next, and never across the edge of a link label. No line ending is
+ * removed, so each line keeps its number.
  */
-function withoutEmphasisMarks(block: ProseBlock): ProseBlock {
-  return { line: block.line, lines: withoutEmphasis(block.lines.join("\n")).split("\n") };
+function withoutEmphasisMarks(block: LabelledBlock): ProseBlock {
+  return { line: block.line, lines: withoutEmphasis(block.lines.join("\n"), block.labels).split("\n") };
 }
 
 function legaleseViolations(text: string, reading: Reading): Violation[] {
@@ -1207,7 +1216,7 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
   // Front matter is metadata, not the opening sentence. It arrives as an
   // ordinary prose block, so without this the first real sentence of every
   // templated document escaped the rule entirely.
-  const blocks = readerProseBlocks(text, reading);
+  const blocks = labelledProseBlocks(text, reading);
   if (blocks.length === 0) return [];
   // The marks of paired emphasis are removed, not the words inside them:
   // "**Certainly!**" is still a filler opening, and removing the emphasised
@@ -1294,9 +1303,10 @@ function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
 
 function proseEnumerationViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
+  for (const block of labelledProseBlocks(text, reading)) {
     // Read without emphasis marks, which hid "_First_" and "**(1)**" from the patterns.
-    const paragraph = withoutEmphasis(block.lines.join(" "));
+    // A space is as long as the line break it stands for, so the labels stay in place.
+    const paragraph = withoutEmphasis(block.lines.join(" "), block.labels);
     const ranks = new Set<number>();
     // A hyphenated compound is one word, not a rank: "third-party service" is
     // not a third item, and counting it turned ordinary prose into a finding.

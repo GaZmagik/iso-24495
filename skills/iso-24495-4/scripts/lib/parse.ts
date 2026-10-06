@@ -41,6 +41,26 @@ export interface ProseBlock {
   lines: string[];
 }
 
+/**
+ * Where one link or image label sits in text whose links were replaced by
+ * their labels: the offset of its first character, and the offset just past
+ * its last.
+ */
+export interface LabelRange {
+  start: number;
+  end: number;
+}
+
+/** A block of reader text, with where each link label sits in it. */
+export interface LabelledBlock extends ProseBlock {
+  /**
+   * Every label that stands in place of its link or image, as offsets into
+   * the lines joined by line breaks. A label inside another label is listed
+   * too. The order is not defined.
+   */
+  labels: LabelRange[];
+}
+
 export interface Heading {
   level: number;
   line: number;
@@ -297,6 +317,8 @@ interface Container {
 interface Parsed {
   paragraphs: ProseBlock[];
   headings: Heading[];
+  /** Where the link labels sit in the text of each heading, in the order of `headings`. */
+  headingLabels: LabelRange[][];
   /** Front matter and fenced code: lines no rule reads. */
   hidden: Set<number>;
   /** Table lines: structure, but rules about tables still read them. */
@@ -709,11 +731,14 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     }
     block.lines = visibleInline(source).split("\n");
   }
+  const headingLabels: LabelRange[][] = [];
   for (const heading of found) {
-    heading.text = visibleText(heading.text, references);
+    const labels: LabelRange[] = [];
+    heading.text = visibleText(heading.text, references, labels);
+    headingLabels.push(labels);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+  return { paragraphs, headings: found, headingLabels, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
 }
 
 /**
@@ -1132,19 +1157,19 @@ function labelStart(link: MarkdownLink): number {
   return link.start + (link.image ? 2 : 1);
 }
 
-/** The label a reader sees in place of a link, or the link untouched where it stays. */
-function flattenedLink(
-  link: MarkdownLink,
-  whole: string,
-  label: string,
-  references?: ReadonlySet<string>,
-): string {
-  // An empty label is still a link, and a reader sees nothing where it stands. Leaving it
-  // as written counted its destination and title as prose. The rule that reports a link
-  // with no text reads the source lines, so it is unaffected.
-  if (link.kind === "inline") return keepLines(whole, label);
+/**
+ * Whether a reader sees the label in place of this link.
+ *
+ * An inline link always reads as its label. An empty label is still a link, and a
+ * reader sees nothing where it stands. Leaving it as written counted its destination
+ * and title as prose. The rule that reports a link with no text reads the source lines,
+ * so it is unaffected. A reference reads as its label only where the document defines
+ * it; otherwise its brackets are text and it stays as written.
+ */
+function readsAsLabel(link: MarkdownLink, references?: ReadonlySet<string>): boolean {
+  if (link.kind === "inline") return true;
   const named = link.kind === "reference" ? link.target || link.label : link.label;
-  return references?.has(normaliseReference(named)) ? keepLines(whole, label) : whole;
+  return references?.has(normaliseReference(named)) ?? false;
 }
 
 /**
@@ -1153,18 +1178,21 @@ function flattenedLink(
  * A label may hold a link or an image of its own, so the labels are closed with a stack
  * rather than by reading each one again from the start. Every character is then read
  * once, however deeply the text nests.
+ *
+ * @param labels Receives where each label sits in the result, for a caller that needs
+ *     to know which words came from inside a link. The result is the same without it.
  */
-function flattenLinks(text: string, references?: ReadonlySet<string>): string {
-  const flattening: Flattening = { open: [], flattened: "", at: 0 };
+function flattenLinks(text: string, references?: ReadonlySet<string>, labels: LabelRange[] = []): string {
+  const flattening: Flattening = { open: [], flattened: "", at: 0, labels };
   for (const link of markdownLinks(text)) {
     while (flattening.open.length > 0) {
-      const inner = flattening.open.at(-1) as { link: MarkdownLink; label: string };
+      const inner = flattening.open.at(-1) as OpenLabel;
       if (link.start < labelStart(inner.link) + inner.link.label.length) break;
       closeLabel(flattening, text, references);
     }
     writeFragment(flattening, text.slice(flattening.at, link.start));
     flattening.at = labelStart(link);
-    flattening.open.push({ link, label: "" });
+    flattening.open.push({ link, label: "", labels: [] });
   }
   while (flattening.open.length > 0) {
     closeLabel(flattening, text, references);
@@ -1172,10 +1200,19 @@ function flattenLinks(text: string, references?: ReadonlySet<string>): string {
   return flattening.flattened + text.slice(flattening.at);
 }
 
+/** A label still being read. Its own `labels` are the ones inside it, measured from its start. */
+interface OpenLabel {
+  link: MarkdownLink;
+  label: string;
+  labels: LabelRange[];
+}
+
 interface Flattening {
-  open: Array<{ link: MarkdownLink; label: string }>;
+  open: OpenLabel[];
   flattened: string;
   at: number;
+  /** Where each finished label sits in `flattened`. */
+  labels: LabelRange[];
 }
 
 /** Adds text to the innermost open label, or to the result where no label is open. */
@@ -1187,16 +1224,28 @@ function writeFragment(flattening: Flattening, fragment: string): void {
 
 /** Ends the innermost open label and writes what a reader sees in its place. */
 function closeLabel(flattening: Flattening, text: string, references?: ReadonlySet<string>): void {
-  const inner = flattening.open.pop() as { link: MarkdownLink; label: string };
+  const inner = flattening.open.pop() as OpenLabel;
   inner.label += text.slice(flattening.at, labelStart(inner.link) + inner.link.label.length);
   flattening.at = inner.link.end;
-  writeFragment(flattening,
-    flattenedLink(inner.link, text.slice(inner.link.start, flattening.at), inner.label, references));
+  const whole = text.slice(inner.link.start, flattening.at);
+  if (!readsAsLabel(inner.link, references)) {
+    // The link stays as written, so the labels found inside it are not in the result.
+    writeFragment(flattening, whole);
+    return;
+  }
+  const outer = flattening.open.at(-1);
+  const from = outer === undefined ? flattening.flattened.length : outer.label.length;
+  const found = outer === undefined ? flattening.labels : outer.labels;
+  found.push({ start: from, end: from + inner.label.length });
+  for (const label of inner.labels) {
+    found.push({ start: from + label.start, end: from + label.end });
+  }
+  writeFragment(flattening, keepLines(whole, inner.label));
 }
 
 
-function visibleText(text: string, references?: ReadonlySet<string>): string {
-  return flattenLinks(visibleInline(text), references);
+function visibleText(text: string, references?: ReadonlySet<string>, labels?: LabelRange[]): string {
+  return flattenLinks(visibleInline(text), references, labels);
 }
 
 /**
@@ -1225,6 +1274,42 @@ export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlo
   return parsed.paragraphs.map((block) => ({
     line: block.line,
     lines: visibleText(block.lines.join("\n"), parsed.references).split("\n"),
+  }));
+}
+
+/**
+ * The blocks `readerProseBlocks` returns, each with where its link labels sit.
+ *
+ * Once a link is replaced by its label, nothing in the text says where the
+ * link was. A rule that pairs emphasis marks needs to know, because a mark
+ * outside a link never pairs with one inside it.
+ *
+ * @returns The same blocks, lines and line numbers as `readerProseBlocks`.
+ *     `labels` is empty for a block with no link that reads as its label.
+ *     Empty when the text holds no prose.
+ */
+export function labelledProseBlocks(text: string, reading: Reading = {}): LabelledBlock[] {
+  const parsed = parse(toLines(text), reading);
+  return parsed.paragraphs.map((block) => {
+    const labels: LabelRange[] = [];
+    const lines = visibleText(block.lines.join("\n"), parsed.references, labels).split("\n");
+    return { line: block.line, lines, labels };
+  });
+}
+
+/**
+ * Every heading as a block of one line, with where its link labels sit.
+ *
+ * @returns One block for each heading `headings` returns, in the same order.
+ *     Its one line is that heading's `text`, and `line` is where the heading
+ *     starts. Empty when the text has no heading.
+ */
+export function labelledHeadings(text: string, reading: Reading = {}): LabelledBlock[] {
+  const parsed = parse(toLines(text), reading);
+  return parsed.headings.map((heading, index) => ({
+    line: heading.line,
+    lines: [heading.text],
+    labels: parsed.headingLabels[index] as LabelRange[],
   }));
 }
 
