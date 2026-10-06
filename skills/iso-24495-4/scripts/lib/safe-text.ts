@@ -5,8 +5,11 @@
 // break or a terminal escape sequence. Printed as it stands, the first forges
 // a line of output and the second drives the terminal that shows it.
 //
-// The plain audits and the Jev audit both print such text. This module imports
+// Every command that prints such text prints it through this module. It imports
 // nothing, so each of them can use it without depending on another.
+//
+// A report written with --json is not printed and is not cleaned. It is data
+// for another program, which needs the path and the wording as they were found.
 
 /**
  * The warning a command prints for an entry its audit passed over.
@@ -19,6 +22,16 @@
  */
 export function skippedEntryWarning(path: string): string {
   return `warning: skipped unreadable entry: ${safeText(path)}`;
+}
+
+/**
+ * Text nobody has read, made safe to print as one cell of a Markdown table.
+ *
+ * @returns The text as `safeText` cleans it, with a backslash before each
+ *     pipe so that it cannot end the cell. Empty when nothing else was in it.
+ */
+export function safeCell(text: string): string {
+  return safeText(text).replaceAll("|", "\\|");
 }
 
 /**

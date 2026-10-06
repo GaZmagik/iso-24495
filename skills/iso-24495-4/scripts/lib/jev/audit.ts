@@ -7,7 +7,7 @@ import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvide
 import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
-import { safeText, skippedEntryWarning } from "../safe-text.ts";
+import { safeCell, safeText, skippedEntryWarning } from "../safe-text.ts";
 
 export const DISCLOSURE_VERSION = "0.8.0-r1";
 export const LIMITATION = "Only purpose and colour receive calibrated decisions. Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability. Correlated blocks do not extend that guarantee.";
@@ -295,14 +295,14 @@ export function formatFindings(report: JevReport): string {
     ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
     "|------|------|------|-------|------|-------|---------|---------|"];
-  for (const finding of report.localFindings) lines.push(`| ${cell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${cell(finding.detail)} |`);
+  for (const finding of report.localFindings) lines.push(`| ${safeCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
   for (const result of report.results.filter(result => result.band !== "pass")) {
     const diagnosis = result.diagnosisGate;
     const refinement = diagnosis === undefined ? "" : ` neither score ${diagnosis.score}, cut-off ${diagnosis.cutOff}, prerequisite ${diagnosis.prerequisite}.`;
-    lines.push(`| ${cell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${cell(result.detail)}${refinement} Excerpt: ${cell(result.excerpt)} |`);
+    lines.push(`| ${safeCell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${safeCell(result.detail)}${refinement} Excerpt: ${safeCell(result.excerpt)} |`);
   }
   lines.push("| File | Check | Assessed | Pass | Fail | Unsure | Skipped |", "|------|-------|----------|------|------|--------|---------|");
-  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${cell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
+  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${safeCell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
   lines.push("Colour passes appear only in counts and never approve a document. Unsure asserts no fault. Findings are proxies, not an ISO judgement.");
   return lines.join("\n");
 }
@@ -314,7 +314,6 @@ function formatEvidence(gates: readonly GateEvidence[]): string[] {
   return ["| Gate | Cut-off | Prerequisite | Clusters | Wrong | Lower bound |", "|------|---------|--------------|----------|-------|-------------|",
     ...gates.map(gate => `| ${gate.id} | ${gate.cutOff} | ${gate.dependencies.join(", ") || "none"} | ${gate.clusters} | ${gate.wrong} | ${gate.bound} |`)];
 }
-function cell(text: string): string { return safeText(text).replaceAll("|", "\\|"); }
 function payloadBytes(plan: DocumentPlan): number { return plan.candidates.reduce((sum, candidate) => sum + Buffer.byteLength(JSON.stringify(candidate.body)), 0); }
 function scopeDigest(selection: Selection, args: Arguments): string { return sha256(JSON.stringify({ paths: selection.paths, bodies: selection.documents.flatMap(document => document.plan.candidates.map(candidate => candidate.body)), report: args.json === undefined ? null : resolve(args.json), includeText: args.includeText })); }
 function writeAuditLog(record: AuditLog, path: string): void { mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(record) + "\n"); }
@@ -347,7 +346,7 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
   return result;
 }
 function formatMechanical(findings: Findings): string {
-  return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${cell(file)} | ${finding.line} | ${finding.rule} | ${cell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
+  return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${safeCell(file)} | ${finding.line} | ${finding.rule} | ${safeCell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
 }
 function readArguments(mode: "text" | "design", argv: string[]): Arguments {
   if (!argv[2] || argv[2].startsWith("--")) throw new Error();

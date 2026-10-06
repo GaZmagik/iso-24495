@@ -275,3 +275,28 @@ test("the refusal covers any closed leading block the guard rejects, and nothing
       .toContain(`Not sent: a [2Jb.md, because its ${REFUSAL}.`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+// This one confirms what the Jev audit already did, so it passed on its first
+// run. It is here so the design audit is held to the same test as the others.
+test("the Jev audit prints a file name, a finding and an excerpt without control characters", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-unread-"));
+  try {
+    const [escape, control, override] = [27, 0x9b, 0x202e].map(code => String.fromCharCode(code)) as [string, string, string];
+    // Windows refuses an escape character in a file name and allows the other two.
+    const name = `gu${override}ide${control}.md`;
+    writeFileSync(join(directory, name), `# Title${escape}[2J\n\nUse [here](https://x.invalid/${escape}[2J${control}) for the ${override}guide.\n`);
+    const bodies: string[] = [];
+    const out: string[] = [];
+    const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", directory, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), recordingDependencies(bodies));
+    expect(await run("text", ["--jev-preview"])).toBe(0);
+    expect(await run("text", ["--jev", "--send", "--yes"])).toBe(0);
+    expect(await run("design", ["--send", "--yes"])).toBe(0);
+    const printed = out.join("\n");
+    for (const character of [escape, control, override]) expect(printed).not.toContain(character);
+    expect(printed).toContain("| gu ide .md | 3 | link-text | link text \"here\" describes no destination (https://x.invalid/ [2J ) |");
+    expect(printed).toContain("- gu ide .md: 1 eligible openings, 1 eligible blocks, 2 requests.");
+    expect(printed).toContain("Excerpt: # Title [2J Use [here](https://x.invalid/ [2J ) for the guid |");
+    expect(printed).toContain("Excerpt: Use here for the guide. |");
+    expect(bodies.length).toBeGreaterThan(0);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

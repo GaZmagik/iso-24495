@@ -367,3 +367,25 @@ describe("runCli", () => {
     expect(stderr).toEqual([]);
   });
 });
+
+describe("a dry run prints a referrer nobody has read", () => {
+  // A referrer is whatever name GitHub or the fixture gives. A dry run prints
+  // the tables to a terminal, so the name is cleaned there. The file is data
+  // for the next run, so it keeps the name as it arrived.
+  test.each([27, 0x9b, 0x202e])("character %i is printed as a space and written as it is", async (code) => {
+    const character = String.fromCharCode(code);
+    const referrer = `evil${character}[2J.example`;
+    const raw = { ...RAW, referrers: [{ referrer, count: 3, uniques: 1 }] };
+    const dry = harness({ fetchSnapshot: async () => raw });
+    expect(await runCli(["bun", "cli", "--dry-run", "data"], (t) => dry.stdout.push(t), (t) => dry.stderr.push(t), dry.deps)).toBe(0);
+    const printed = dry.stdout.join("\n");
+    expect(printed).not.toContain(character);
+    expect(printed).toContain("2026-08-22,evil [2J.example,3,1");
+    expect(printed).toContain("--- referrers.csv ---\nsnapshot_date,referrer,views,uniques\n2026-08-22,evil [2J.example,3,1");
+    expect(dry.files.size).toBe(0);
+
+    const real = harness({ fetchSnapshot: async () => raw });
+    expect(await runCli(["bun", "cli", "data"], (t) => real.stdout.push(t), (t) => real.stderr.push(t), real.deps)).toBe(0);
+    expect(real.files.get(join("data", "referrers.csv"))).toContain(`2026-08-22,${referrer},3,1`);
+  });
+});

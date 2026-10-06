@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
+import { safeCell, safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
 
 const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
@@ -30,5 +30,15 @@ describe("text nobody has read", () => {
     expect(safeText("  a  \t b | c  ")).toBe("a b | c");
     expect(safeText(`${LINE_FEED}${ESCAPE}`)).toBe("");
     expect(safeText("")).toBe("");
+  });
+});
+
+describe("a table cell nobody has read", () => {
+  test("a cell is cleaned as safeText cleans it, and its pipes are escaped", () => {
+    const control = String.fromCharCode(0x9b);
+    expect(safeCell(`a${ESCAPE}[2J | b${control}${RIGHT_TO_LEFT_OVERRIDE}c${LINE_FEED}d`)).toBe("a [2J \\| b c d");
+    expect(safeCell("docs/guide.md")).toBe("docs/guide.md");
+    expect(safeCell(`${LINE_FEED}`)).toBe("");
+    expect(safeCell("")).toBe("");
   });
 });

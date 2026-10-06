@@ -26,6 +26,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 
 /**
  * Whether every version site in a checkout agrees, and the changelog records the
@@ -35,7 +36,10 @@ import { join } from "node:path";
  * @param root The checkout to read. Nothing is written and no tag is read.
  * @returns The report. `version` is what `.claude-plugin/plugin.json` states,
  *     or an empty string where it states no text. `problems` is empty only
- *     when every site agrees, so test that list and not `version`.
+ *     when every site agrees, so test that list and not `version`. A problem
+ *     is written to be printed, so a skill directory is named in it with
+ *     control characters and marks that reverse text direction made spaces.
+ *     `skills` is data and keeps each name as the directory listing gave it.
  */
 export function checkVersionSites(root: string): VersionReport {
   const problems: string[] = [];
@@ -75,10 +79,10 @@ export function checkVersionSites(root: string): VersionReport {
     if (text === null) continue;
     const found = skillVersion(text);
     if ("problem" in found) {
-      problems.push(`${skill} ${found.problem}`);
+      problems.push(`${safeText(skill)} ${found.problem}`);
       continue;
     }
-    requireValue(problems, `${skill} metadata.version`, found.stated, version);
+    requireValue(problems, `${safeText(skill)} metadata.version`, found.stated, version);
   }
 
   const changelog = read(root, problems, "CHANGELOG.md");
@@ -149,12 +153,16 @@ function skillVersion(text: string): { stated: unknown } | { problem: string } {
   return { stated: isObject(metadata) ? metadata.version : undefined };
 }
 
-/** A file's text, or null with a problem recorded where it cannot be read. */
+/**
+ * A file's text, or null with a problem recorded where it cannot be read. A
+ * skill's path holds a name from a directory listing, so the problem shows the
+ * path cleaned.
+ */
 function read(root: string, problems: string[], path: string): string | null {
   try {
     return readFileSync(join(root, path), "utf8");
   } catch {
-    problems.push(`${path} cannot be read.`);
+    problems.push(`${safeText(path)} cannot be read.`);
     return null;
   }
 }

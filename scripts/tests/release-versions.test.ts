@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkVersionSites } from "../release-versions.ts";
 import { edit, SKILLS, withCheckout } from "./fixtures/release-checkout.ts";
@@ -165,5 +165,28 @@ describe("checkVersionSites, which the normal gate runs", () => {
       "  version: \"0.7.0\"",
       "  iso-standard: \"ISO 24495-1:2023\"",
     ], "\n# Skill\n\n---\n\nversion: \"0.6.2\"\n")).toEqual([]);
+  });
+});
+
+describe("a skill directory nobody has read", () => {
+  // The skill names come from a directory listing, and a problem is printed.
+  // The list of skills is data, so it keeps each name as the listing gave it.
+  test("a control character or a direction mark in its name is not printed in a problem", () => {
+    withCheckout("0.7.0", (root) => {
+      const control = String.fromCharCode(0x9b);
+      const override = String.fromCharCode(0x202e);
+      const name = `iso-24495-x${override}[2J${control}y`;
+      mkdirSync(join(root, "skills", name));
+      const report = checkVersionSites(root);
+      expect(report.problems).toEqual(["skills/iso-24495-x [2J y/SKILL.md cannot be read."]);
+      expect(report.skills).toContain(`skills/${name}/SKILL.md`);
+
+      writeFileSync(join(root, "skills", name, "SKILL.md"), "no front matter\n");
+      expect(checkVersionSites(root).problems).toEqual(["skills/iso-24495-x [2J y/SKILL.md has no front matter."]);
+
+      writeFileSync(join(root, "skills", name, "SKILL.md"), "---\nmetadata:\n  version: \"0.6.0\"\n---\n");
+      expect(checkVersionSites(root).problems)
+        .toEqual(["skills/iso-24495-x [2J y/SKILL.md metadata.version states \"0.6.0\", not \"0.7.0\"."]);
+    });
   });
 });

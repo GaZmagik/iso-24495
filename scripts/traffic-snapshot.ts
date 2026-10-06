@@ -14,13 +14,17 @@
 
 import { join } from "node:path";
 import { unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
+import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 
 /**
  * Takes one traffic snapshot and merges it into the three CSV files.
  *
  *   bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]
  *
- * `--dry-run` prints the three files and writes none. `--from-file` reads the
+ * `--dry-run` prints the three files and writes none. A referrer is a name
+ * nobody has read, so each printed line has its control characters and marks
+ * that reverse text direction made spaces. A written file keeps the name as
+ * it arrived. `--from-file` reads the
  * four responses from a JSON file and leaves the network alone. Any other
  * argument is taken as the data directory, and the last one wins.
  *
@@ -114,7 +118,7 @@ export async function runCli(
   for (const file of files) {
     if (dryRun) {
       writeOut("--- " + file.name + " ---");
-      writeOut(file.text.trimEnd());
+      writeOut(file.text.trimEnd().split("\n").map(safeText).join("\n"));
       continue;
     }
     deps.writeText(join(directory, file.name), file.text);
