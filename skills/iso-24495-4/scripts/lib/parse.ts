@@ -375,16 +375,12 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   let invisible: { until: string; depth: number } | null = null;
   let rawCode: { closing: RegExp; depth: number } | null = null;
 
-  const closeParagraph = (): void => {
-    paragraph = null;
-  };
-
   for (let i = 0; i < lines.length; i++) {
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
-      closeParagraph();
+      paragraph = null;
       continue;
     }
     if (i <= tableUntil) continue;
@@ -400,7 +396,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         if (rawCode.closing.test(text)) rawCode = null;
         readable[i] = "";
         markup[i] = "";
-        closeParagraph();
+        paragraph = null;
         continue;
       }
     }
@@ -410,7 +406,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         // An HTML block cannot escape the quotation or list item that owns it.
         // Carrying its close marker past that boundary hid ordinary margin text.
         invisible = null;
-        closeParagraph();
+        paragraph = null;
         stack.length = matched;
       } else {
         const outside = withoutInvisible(text, invisible.until);
@@ -424,7 +420,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         readable[i] = text;
         markup[i] = text;
         if (text.trim() === "") {
-          closeParagraph();
+          paragraph = null;
           continue;
         }
       }
@@ -450,7 +446,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     }
 
     if (rest.trim() === "") {
-      closeParagraph();
+      paragraph = null;
       if (!allMatched) stack.length = matched;
       continue;
     }
@@ -463,13 +459,13 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     const previousItem = stack[matched];
     if (!lazy) {
       if (!allMatched) {
-        closeParagraph();
+        paragraph = null;
         stack.length = matched;
       }
       for (;;) {
         const quote = QUOTE_MARKER.exec(text);
         if (quote !== null) {
-          closeParagraph();
+          paragraph = null;
           text = text.slice(quote[0].length);
           stack.push({ kind: "quote", column: 0 });
           openedQuote = true;
@@ -484,7 +480,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
           ? null
           : listMarkerAt(text, paragraph !== null);
         if (marker !== null) {
-          closeParagraph();
+          paragraph = null;
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
           const unordered = /^ {0,3}[-*+]/.test(consumed);
@@ -518,7 +514,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       readable[i] = text;
       markup[i] = text;
       // Invisible markup interrupts a paragraph, so the halves stay separate.
-      closeParagraph();
+      paragraph = null;
       if (text.trim() === "") continue;
     }
     // Structural rules exclude raw HTML code specimens. The calibrated reading stays unchanged.
@@ -528,7 +524,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       if (!closing.test(text)) rawCode = { closing, depth: stack.length };
       readable[i] = "";
       markup[i] = "";
-      closeParagraph();
+      paragraph = null;
       continue;
     }
     // A tab is structural indentation, not link-definition whitespace. The
@@ -550,7 +546,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     const fenceOpen = FENCE_OPEN.exec(text);
     if (fenceOpen !== null
       && !(fenceOpen[2][0] === "`" && fenceOpen[3].includes("`"))) {
-      closeParagraph();
+      paragraph = null;
       fence = { char: fenceOpen[2][0], length: fenceOpen[2].length };
       hidden.add(i);
       readable[i] = "";
@@ -560,7 +556,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
 
     const atx = ATX_HEADING.exec(text);
     if (atx !== null) {
-      closeParagraph();
+      paragraph = null;
       if (stack.length === 0) rootHeadingLines.add(i + 1);
       found.push({
         level: atx[1].length,
@@ -585,12 +581,12 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
       for (let row = paragraph.line - 1; row < i; row++) blocks.delete(row);
-      closeParagraph();
+      paragraph = null;
       continue;
     }
 
     if (THEMATIC_BREAK.test(text)) {
-      closeParagraph();
+      paragraph = null;
       continue;
     }
 
@@ -609,7 +605,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       && text.includes("|")
       && isDividerRow(divider.trim())
       && cellCount(text.trim()) === cellCount(divider.trim())) {
-      closeParagraph();
+      paragraph = null;
       // Line-based table rules need the content after its quote or list
       // markers. Keeping the raw container syntax made a quoted empty header
       // invisible even though a listener still hears that table.
@@ -1060,32 +1056,43 @@ function flattenedLink(
  * once, however deeply the text nests.
  */
 function flattenLinks(text: string, references?: ReadonlySet<string>): string {
-  const open: Array<{ link: MarkdownLink; label: string }> = [];
-  let flattened = "";
-  let at = 0;
-  const write = (fragment: string): void => {
-    const inner = open.at(-1);
-    if (inner === undefined) flattened += fragment;
-    else inner.label += fragment;
-  };
-  const close = (): void => {
-    const inner = open.pop() as { link: MarkdownLink; label: string };
-    inner.label += text.slice(at, labelStart(inner.link) + inner.link.label.length);
-    at = inner.link.end;
-    write(flattenedLink(inner.link, text.slice(inner.link.start, at), inner.label, references));
-  };
+  const flattening: Flattening = { open: [], flattened: "", at: 0 };
   for (const link of markdownLinks(text)) {
-    while (open.length > 0) {
-      const inner = open.at(-1) as { link: MarkdownLink; label: string };
+    while (flattening.open.length > 0) {
+      const inner = flattening.open.at(-1) as { link: MarkdownLink; label: string };
       if (link.start < labelStart(inner.link) + inner.link.label.length) break;
-      close();
+      closeLabel(flattening, text, references);
     }
-    write(text.slice(at, link.start));
-    at = labelStart(link);
-    open.push({ link, label: "" });
+    writeFragment(flattening, text.slice(flattening.at, link.start));
+    flattening.at = labelStart(link);
+    flattening.open.push({ link, label: "" });
   }
-  while (open.length > 0) close();
-  return flattened + text.slice(at);
+  while (flattening.open.length > 0) {
+    closeLabel(flattening, text, references);
+  }
+  return flattening.flattened + text.slice(flattening.at);
+}
+
+interface Flattening {
+  open: Array<{ link: MarkdownLink; label: string }>;
+  flattened: string;
+  at: number;
+}
+
+/** Adds text to the innermost open label, or to the result where no label is open. */
+function writeFragment(flattening: Flattening, fragment: string): void {
+  const inner = flattening.open.at(-1);
+  if (inner === undefined) flattening.flattened += fragment;
+  else inner.label += fragment;
+}
+
+/** Ends the innermost open label and writes what a reader sees in its place. */
+function closeLabel(flattening: Flattening, text: string, references?: ReadonlySet<string>): void {
+  const inner = flattening.open.pop() as { link: MarkdownLink; label: string };
+  inner.label += text.slice(flattening.at, labelStart(inner.link) + inner.link.label.length);
+  flattening.at = inner.link.end;
+  writeFragment(flattening,
+    flattenedLink(inner.link, text.slice(inner.link.start, flattening.at), inner.label, references));
 }
 
 

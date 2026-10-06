@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { auditText, configHash, isAuditedDocument, listTextFiles, projectAcronyms } from "../../audit-corpus.ts";
 import type { Findings } from "../types.ts";
 import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvidence } from "./catalogue.ts";
-import { createAsk, JevError, type ClientOptions } from "./client.ts";
+import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
 
@@ -57,33 +57,36 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   const report = emptyReport(selection, true);
   const items = selection.documents.flatMap(document => document.plan.candidates.map(candidate => ({ document, candidate })));
   const sent = new Set<number>();
-  let next = 0;
-  let failed = false;
-  const worker = async (): Promise<void> => {
-    while (!failed && next < items.length) {
-      const index = next++;
-      const { document, candidate } = items[index];
-      sent.add(index);
-      try {
-        const decision = classify(candidate.kind, await ask(candidate.body));
-        const result = judgement(document.file, candidate, decision, args.includeText);
-        report.results.push(result);
-      } catch { failed = true; }
-    }
-  };
-  await Promise.all(Array.from({ length: 4 }, worker));
+  const queue: Queue = { items, sent, next: 0, failed: false };
+  await Promise.all(Array.from({ length: 4 }, () => worker(queue, ask, args.includeText, report)));
   report.results.sort((first, second) => selection.documents.findIndex(document => document.file === first.file) - selection.documents.findIndex(document => document.file === second.file) || first.line - second.line || first.id.localeCompare(second.id));
-  if (failed) { report.complete = false; report.results = []; }
+  if (queue.failed) { report.complete = false; report.results = []; }
   fillCoverage(report);
   report.results = report.results.filter(result => result.band !== "pass");
   try {
-    const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: !failed };
+    const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: !queue.failed };
     (dependencies.writeLog ?? writeAuditLog)(record, join(args.projectDir, ".iso-24495-4", "jev-audit.jsonl"));
     if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report }, null, 2));
   } catch { stderr("The audit log or report could not be written. Execution is incomplete."); return 1; }
   stdout(formatFindings(report));
-  if (failed) { stderr("Jev execution is incomplete. Jev verdicts were discarded; mechanical findings remain available."); return 3; }
+  if (queue.failed) { stderr("Jev execution is incomplete. Jev verdicts were discarded; mechanical findings remain available."); return 3; }
   return 0;
+}
+
+interface Queue { items: Array<{ document: SelectedDocument; candidate: Candidate }>; sent: Set<number>; next: number; failed: boolean }
+
+/** Asks about one queued candidate after another, until none is left or one fails. */
+async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevReport): Promise<void> {
+  while (!queue.failed && queue.next < queue.items.length) {
+    const index = queue.next++;
+    const { document, candidate } = queue.items[index];
+    queue.sent.add(index);
+    try {
+      const decision = classify(candidate.kind, await ask(candidate.body));
+      const result = judgement(document.file, candidate, decision, includeText);
+      report.results.push(result);
+    } catch { queue.failed = true; }
+  }
 }
 
 export function selectDocuments(target: string, projectDir: string, mode: "text" | "design" = "design", read = readFileSync, frontMatter = true): Selection {
