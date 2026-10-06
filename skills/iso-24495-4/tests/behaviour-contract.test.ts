@@ -8,6 +8,7 @@ import {
   ENGINE_THRESHOLDS,
   projectAcronyms,
 } from "../scripts/audit-corpus.ts";
+import { withoutEmphasis } from "../scripts/lib/inline-wording.ts";
 import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
 import { REFERENCE_SHAPES } from "./fixtures/reference-blocks.ts";
 import {
@@ -2217,5 +2218,262 @@ ${sentence}`)
     expect(readme).toContain(capability);
     expect(auditText("The form was approved by the manager.\n\nThe office opened, and the service changed.")).toEqual([]);
     expect(capability).not.toMatch(/active voice|main idea/i);
+  });
+});
+
+/** Every finding as one comparable line, so two texts can be held to the same result. */
+function findingsIn(text: string): string[] {
+  return auditText(text).map((v) => `${v.rule} at line ${v.line}: ${v.detail}`);
+}
+
+describe("emphasis marks inside or beside a word", () => {
+  test("a word rule finds a marked word or phrase exactly as it finds the plain one", () => {
+    // The word rules matched their patterns against Markdown source. A mark inside a
+    // phrase broke the match, and an underscore beside a word removed the word boundary,
+    // so "in **order** to" and "_shall_" were never reported. A reader sees the same words.
+    const cases: Array<[rule: string, plain: string, marked: string[]]> = [
+      ["wordy-phrase", "We did this in order to finish the work.", [
+        "We did this in **order** to finish the work.",
+        "We did this in *order* to finish the work.",
+        "We did this in _order_ to finish the work.",
+        "We did this in __order__ to finish the work.",
+        "We did this **in** order to finish the work.",
+        "We did this in or*de*r to finish the work.",
+        "We did this _in order to_ finish the work.",
+        "We did this __in order to__ finish the work.",
+        "We did this **in order to** finish the work.",
+        "We did this ***in** order* to finish the work.",
+      ]],
+      ["legalese", "The tenant shall vacate the premises.", [
+        "The tenant sh*all* vacate the premises.",
+        "The tenant sh**all** vacate the premises.",
+        "The tenant **sh**all vacate the premises.",
+        "The tenant _shall_ vacate the premises.",
+        "The tenant __shall__ vacate the premises.",
+        "The tenant **shall** vacate the premises.",
+      ]],
+      ["complex-word", "Please utilise the tool.", [
+        "Please util*ise* the tool.",
+        "Please **util**ise the tool.",
+        "Please _utilise_ the tool.",
+      ]],
+      ["double-negative", "This is not uncommon here.", [
+        "This is not un*common* here.",
+        "This is *not* uncommon here.",
+        "This is _not uncommon_ here.",
+        "This is __not__ uncommon here.",
+      ]],
+      ["doublet", "It is null and void today.", [
+        "It is null *and* void today.",
+        "It is **null** and **void** today.",
+        "It is _null and void_ today.",
+      ]],
+      ["acronym-undefined", "Ask the QZX team.", [
+        "Ask the **QZX** team.",
+        "Ask the *QZX* team.",
+        "Ask the _QZX_ team.",
+        "Ask the __QZX__ team.",
+        "Ask the *Q*ZX team.",
+        "Ask the Q**ZX** team.",
+      ]],
+      ["acronym-undefined", "Ask the team about QZX.", [
+        "Ask the team about **QZX**.",
+        "Ask the team about **QZX.**",
+        "Ask the team about _QZX_.",
+      ]],
+      ["prose-enumeration", "First we plan. Second we build. Third we test.", [
+        "_First_ we plan. _Second_ we build. _Third_ we test.",
+        "__First__ we plan. __Second__ we build. __Third__ we test.",
+        "**First** we plan. *Second* we build. _Third_ we test.",
+        "Fir*st* we plan. Sec*ond* we build. Thi*rd* we test.",
+      ]],
+      ["prose-enumeration", "We (1) plan, (2) build and (3) test.", [
+        "We **(1)** plan, **(2)** build and **(3)** test.",
+        "We _(1)_ plan, _(2)_ build and _(3)_ test.",
+      ]],
+      ["wordy-phrase", "# We did this in order to finish", [
+        "# We did this in **order** to finish",
+        "# We did this _in order to_ finish",
+      ]],
+      ["legalese", "- The tenant shall vacate.", ["- The tenant sh*all* vacate.", "- The tenant _shall_ vacate."]],
+      ["legalese", "> The tenant shall vacate.", ["> The tenant sh*all* vacate.", "> The tenant _shall_ vacate."]],
+    ];
+    for (const [rule, plain, marked] of cases) {
+      expect(rulesFor(plain), plain).toContain(rule);
+      for (const text of marked) {
+        expect(findingsIn(text), text).toEqual(findingsIn(plain));
+      }
+    }
+  });
+
+  test("a marked acronym is defined, and defines, as the plain one does", () => {
+    const defined = "The quick zebra xylophone (QZX) is here. Use the QZX.";
+    expect(findingsIn(defined)).toEqual([]);
+    for (const text of [
+      "The quick zebra xylophone (**QZX**) is here. Use the QZX.",
+      "The quick zebra xylophone **(QZX)** is here. Use the QZX.",
+      "The quick zebra xylophone (_QZX_) is here. Use the QZX.",
+      "The **quick zebra xylophone** (QZX) is here. Use the **QZX**.",
+      "The **QZX** (quick zebra xylophone) is here. Use the QZX.",
+      "The QZX **(quick zebra xylophone)** is here. Use the QZX.",
+      // Marks before the definition must not move it after the use beside it.
+      "**The** *quick* **zebra** *xylophone* (QZX) is here. Use the QZX.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // A mark inside a word of the expansion split the word, so its initial was lost.
+    for (const text of [
+      "The q*uick* zebra xylophone (QZX) is here. Use the QZX.",
+      "The quick **z**ebra xylo*phone* (QZX) is here. Use the QZX.",
+      "The ~~quick~~ zebra xylo~~phone~~ (**QZX**) is here. Use the QZX.",
+      "| Term | Meaning |" + BREAK + "|---|---|" + BREAK + "| q*uick* zebra xylophone (QZX) | a toy |"
+        + BREAK + BREAK + "Use the QZX.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // A mark with no partner stays on the page, so the bracket holds more than the acronym.
+    const loose = "The quick zebra xylophone (*QZX) is here. Use the QZX.";
+    expect(findingsIn(loose)).toEqual(['acronym-undefined at line 1: define acronym "QZX" on first use']);
+    // A use before the definition is still reported once, on the line it is on.
+    const usedFirst = ["Use the **QZX** first.", "", "The quick zebra xylophone (QZX) is here."];
+    expect(findingsIn(usedFirst.join(BREAK)))
+      .toEqual(['acronym-undefined at line 1: define acronym "QZX" on first use']);
+  });
+
+  test("a finding names the line its phrase starts on, wherever the marks sit", () => {
+    const wrapped = ["We restarted the service", "in **order** to apply it.", "It then ran."];
+    expect(findingsIn(wrapped.join(BREAK)))
+      .toEqual(['wordy-phrase at line 2: "in order to" says what "to" says']);
+    // Emphasis that opens on one line and closes on the next is still emphasis.
+    const spanning = ["The _tenant", "shall_ vacate the premises."];
+    expect(findingsIn(spanning.join(BREAK))).toEqual(['legalese at line 2: banned term "shall"']);
+    // A phrase that wraps is reported where it starts.
+    const split = ["Lead text here.", "", "We restarted it in **order**", "to apply the change."];
+    expect(findingsIn(split.join(BREAK)))
+      .toEqual(['wordy-phrase at line 3: "in order to" says what "to" says']);
+    const later = ["# Title", "", "Plain words.", "", "- one", "- It is *not* un**common** here."];
+    expect(findingsIn(later.join(BREAK)))
+      .toEqual(['double-negative at line 6: "not uncommon" makes the reader unpick two negatives']);
+  });
+
+  test("an underscore inside a word is not emphasis, so an identifier is not a finding", () => {
+    // CommonMark reads an asterisk inside a word as emphasis and an underscore there as a
+    // literal character. A reader sees "sh_all_" with its underscores, which is no word.
+    for (const text of [
+      "Set snake_shall_name before the call.",
+      "Set shall_name and name_shall and in_order_to here.",
+      "The tenant sh_all_ vacate the premises.",
+      "We did this in_order_to finish the work.",
+      "Read QZX_LIMIT and MAX_QZX from the file.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+  });
+
+  test("a mark with no partner, an escaped mark and code hide nothing new", () => {
+    const SLASH = String.fromCharCode(92);
+    for (const text of [
+      // No partner, so the reader sees the asterisk.
+      "We did this in *order to finish the work.",
+      "The tenant sh*all vacate the premises.",
+      "We did this in order * to finish, 2 * 3 times.",
+      // Escaped, so the reader sees both asterisks.
+      `We did this in ${SLASH}*order${SLASH}* to finish the work.`,
+      `The tenant sh${SLASH}*all${SLASH}* vacate the premises.`,
+      // Code is read as it was before: a span holding the term alone names it.
+      "Use the `in order to` phrase here.",
+      "Use the `in *order* to` phrase here.",
+      "Use the `shall` word and the `sh*all*` form.",
+      ["```", "We did this in **order** to finish.", "The tenant sh*all* vacate.", "```"].join(BREAK),
+      "    The tenant sh*all* vacate, in **order** to finish.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // A sentence in a code span was read before this change, and still is.
+    expect(findingsIn("Write `the tenant shall vacate` there."))
+      .toEqual(['legalese at line 1: banned term "shall"']);
+  });
+
+  test("struck words are still words on the page", () => {
+    // A struck word was already reported when the whole of it was struck. A reader still
+    // sees it, and a screen reader says it without the strike, so a strike inside a phrase
+    // is removed like emphasis. Only the two-tilde form is a strike.
+    const wordy = findingsIn("We did this in order to finish the work.");
+    const legal = findingsIn("The tenant shall vacate.");
+    expect(wordy).toHaveLength(1);
+    expect(legal).toHaveLength(1);
+    expect(findingsIn("We did this ~~in order to~~ finish the work.")).toEqual(wordy);
+    expect(findingsIn("We did this in ~~order~~ to finish the work.")).toEqual(wordy);
+    expect(findingsIn("The tenant ~~shall~~ vacate.")).toEqual(legal);
+    expect(findingsIn("The tenant sh~~all~~ vacate.")).toEqual(legal);
+    expect(findingsIn("We did this in ~order~ to finish the work.")).toEqual([]);
+    expect(findingsIn("We did this in ~~order to finish the work.")).toEqual([]);
+  });
+
+  test("a term that is quoted is named, with or without emphasis", () => {
+    // Quotation marks name a word, and emphasis does not. A word in both is named: the
+    // reader sees a quoted word. Before, the marks inside the quotation hid the naming.
+    for (const text of [
+      'The word "shall" is the one to avoid.',
+      'The word "**shall**" is the one to avoid.',
+      'The word **"shall"** is the one to avoid.',
+      "The word '*shall*' is the one to avoid.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    expect(rulesFor("**The tenant shall vacate.**")).toContain("legalese");
+  });
+
+  test("marks that complete a longer word leave no finding for the shorter one", () => {
+    // A reader sees "shall*ow*" as the word "shallow". Before, the mark ended the word
+    // early and "shall" was reported.
+    expect(findingsIn("The shallow end is safe.")).toEqual([]);
+    expect(findingsIn("The shall*ow* end is safe.")).toEqual([]);
+    expect(findingsIn("Read the QZX*es* list.")).toEqual(findingsIn("Read the QZXes list."));
+  });
+
+  test("removing marks takes time in proportion to the text, whatever the marks", () => {
+    // One call for each shape against a fixed budget. The slowest shape took about a
+    // quarter of a second at this size. Without its record of failed searches, the
+    // pairing searches back from every closer to the start of the text: that took 31
+    // seconds on the closers alone.
+    const shapes: Array<[name: string, text: string]> = [
+      ["pairs", "*a* ".repeat(100_000)],
+      ["openers with no closer", "*a ".repeat(100_000)],
+      ["closers with no opener", "a* ".repeat(100_000)],
+      ["openers, then their closers", "*a ".repeat(50_000) + "a* ".repeat(50_000)],
+      ["marks inside words", "a**b*c ".repeat(100_000)],
+      ["closers of every kind", "a* b_ c** d__ e~~ ".repeat(100_000)],
+      ["one long run", `a${"*".repeat(100_000)}b${"*".repeat(100_000)}`],
+      ["strikes", "~~a~~ ".repeat(100_000)],
+    ];
+    for (const [name, text] of shapes) {
+      expect(elapsed(() => withoutEmphasis(text)), name).toBeLessThan(3_000);
+    }
+    // The audit as a whole, which reads the marks once for the word rules, once for the
+    // acronym rule and once for the enumeration rule.
+    const closers = "a* ".repeat(100_000);
+    expect(elapsed(() => auditText(closers))).toBeLessThan(15_000);
+    const nested = "*a ".repeat(50_000) + "a* ".repeat(50_000);
+    expect(elapsed(() => auditText(nested))).toBeLessThan(15_000);
+  }, HOSTILE_TIMEOUT_MS);
+
+  test("a document without marks is read as before", () => {
+    const text = [
+      "# The tenant shall vacate",
+      "",
+      "We did this in order to finish. It is not uncommon to utilise the QZX.",
+      "It is null and void. First we plan. Second we build. Third we test.",
+    ].join(BREAK);
+    expect(findingsIn(text)).toEqual([
+      "paragraph-length at line 3: 6 sentences (limit 5)",
+      'legalese at line 1: banned term "shall"',
+      'acronym-undefined at line 3: define acronym "QZX" on first use',
+      'doublet at line 4: redundant phrase "null and void"; consider "void"',
+      "prose-enumeration at line 3: enumeration ranks 1, 2, 3 in prose; consider a list",
+      'wordy-phrase at line 3: "in order to" says what "to" says',
+      'complex-word at line 3: "utilise" where "use" would do',
+      'double-negative at line 3: "not uncommon" makes the reader unpick two negatives',
+    ]);
   });
 });
