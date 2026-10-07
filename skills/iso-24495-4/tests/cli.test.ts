@@ -162,11 +162,11 @@ describe("audit-evidence runCli", () => {
       expect(output.stdout.join("\n")).toBe(
         "| Artefact category | Found | Paths |\n" +
         "|-------------------|-------|-------|\n" +
-        "| policy | yes | docs/plain-language-policy.md |\n" +
-        "| review-workflow | yes | .github/PULL_REQUEST_TEMPLATE.md |\n" +
-        "| automated-checks | yes | .github/workflows/text-lint.yml |\n" +
-        "| training | yes | training/introduction.md |\n" +
-        "| glossary | yes | glossary.md |",
+        "| policy | yes | `docs/plain-language-policy.md` |\n" +
+        "| review-workflow | yes | `.github/PULL_REQUEST_TEMPLATE.md` |\n" +
+        "| automated-checks | yes | `.github/workflows/text-lint.yml` |\n" +
+        "| training | yes | `training/introduction.md` |\n" +
+        "| glossary | yes | `glossary.md` |",
       );
       expect(JSON.parse(readFileSync(jsonPath, "utf8")).artefacts.policy.found).toBe(true);
     } finally {
@@ -346,14 +346,14 @@ describe("command line entry files", () => {
     const file = join(CORPUS, "legalese-sample.md");
     const { stdout, exitCode } = await runScript(TEXT_AUDIT_SCRIPT, [file, "--project-dir", CORPUS]);
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("| legalese-sample.md | 3 | legalese |");
+    expect(stdout).toContain("| `legalese-sample.md` | 3 | legalese |");
     expect(stdout).toContain("The user decides whether the text suits its readers and purpose.");
   }, ENTRY_TIMEOUT_MS);
 
   test("audit-evidence-cli reports the fixture repository", async () => {
     const { stdout, exitCode } = await run("audit-evidence-cli.ts", [REPOSITORY]);
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("| policy | yes | docs/plain-language-policy.md |");
+    expect(stdout).toContain("| policy | yes | `docs/plain-language-policy.md` |");
   }, ENTRY_TIMEOUT_MS);
 
   test("score-maturity-cli reports the sample answers", async () => {
@@ -447,6 +447,8 @@ describe("command line entry files", () => {
 
       const evidencePath = join(workspace, "evidence.json");
       const printedEvidence = capture();
+      // The table writes each path as a code span, and none of these holds a backtick.
+      const TICK = String.fromCharCode(96);
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidencePath],
         () => {}, () => {});
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY],
@@ -461,7 +463,7 @@ describe("command line entry files", () => {
           found: boolean; paths: string[];
         }>).map(([category, record]) =>
           `| ${category} | ${record.found ? "yes" : "no"} | `
-          + `${record.paths.join("<br>") || "-"} |`),
+          + `${record.paths.map((path) => `${TICK}${path}${TICK}`).join("<br>") || "-"} |`),
       ]);
 
       const maturityPath = join(workspace, "maturity.json");
@@ -543,7 +545,8 @@ describe("command line entry files", () => {
         violations: Array<{ rule: string; line: number; detail: string }>;
       }>).flatMap(([file, record]) => record.violations
         .map((violation) =>
-          `| ${file} | ${violation.line} | ${violation.rule} | ${violation.detail} |`));
+          // The table writes the file as a code span, and this path holds no backtick.
+          `| ${String.fromCharCode(96)}${file}${String.fromCharCode(96)} | ${violation.line} | ${violation.rule} | ${violation.detail} |`));
       expect(savedRows.length, "the probe must produce findings").toBeGreaterThan(0);
       expect(
         rows(printedAudit.stdout.join("\n")),
@@ -1004,8 +1007,8 @@ describe("audit-evidence prints a path nobody has read", () => {
       expect(printed).not.toContain(control);
       expect(printed).not.toContain(override);
       const slash = String.fromCharCode(92);
-      expect(output.stdout[2]).toBe(`| policy | yes | style-guide${slash}u202e[2J${slash}u009bx.md |`);
-      expect(output.stdout[6]).toBe("| glossary | yes | glossary.md |");
+      expect(output.stdout[2]).toBe("| policy | yes | " + String.fromCharCode(96) + `style-guide${slash}u202e[2J${slash}u009bx.md` + String.fromCharCode(96) + " |");
+      expect(output.stdout[6]).toBe("| glossary | yes | `glossary.md` |");
       expect(JSON.parse(readFileSync(jsonPath, "utf8")).artefacts.policy.paths).toEqual([name]);
     } finally {
       rmSync(workspace, { recursive: true, force: true });

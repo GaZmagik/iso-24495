@@ -218,8 +218,9 @@ export function auditTarget(
  *
  * A file name comes from a directory walk and a detail quotes the document, so
  * neither has been read. The file name is printed as `safePathCell` prints a
- * path: every character is kept or shown as its code, so two files never
- * share a printed name. A rule and a detail are cleaned with `safeCell`: a
+ * path: a code span in which every character is kept or shown as its code, so
+ * two files never share a printed name and a renderer reads none of it as
+ * Markdown. A rule and a detail are cleaned with `safeCell`: a
  * control character, a line break or a mark that reverses text direction
  * becomes a space, each run of white space becomes one space, and a pipe is
  * escaped.

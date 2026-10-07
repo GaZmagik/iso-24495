@@ -10,7 +10,9 @@
 //
 // A path and quoted wording are printed in two ways. `safePath` keeps every
 // character of a path or shows it as its code, so that two paths never print
-// alike. `safeText` makes wording fit one line, and a finding that quotes it
+// alike. That is plain text for a terminal. Where the output is Markdown that
+// will be rendered, `safePathCell` and `safePathCode` put the same text in a
+// code span, so that a renderer reads none of it as Markdown. `safeText` makes wording fit one line, and a finding that quotes it
 // is placed by its line number.
 //
 // A report written with --json is not printed and is not cleaned. It is data
@@ -39,14 +41,52 @@ export function skippedEntryWarning(path: string, windows: boolean = onWindows()
 }
 
 /**
- * A path made fit to print as one cell of a Markdown table.
+ * A path made fit to print as one cell of a Markdown table that will be
+ * rendered.
+ *
+ * A table is printed to be rendered, and a renderer reads a name as Markdown:
+ * "a&#32;b.md" showed as "a b.md", "a<br>b.md" broke the line, asterisks
+ * became emphasis and brackets a link. So the path is written as a code span,
+ * where every character is shown as it is written.
  *
  * @param windows Whether a backslash separates directories, as for `safePath`.
- * @returns The path as `safePath` prints it, with a backslash before each
- *     pipe so that it cannot end the cell. Empty for an empty path.
+ * @returns The path as `safePathCode` writes it, with a backslash before each
+ *     pipe. A table is cut into cells before a code span is read, so a pipe
+ *     must be escaped inside one as well, and the renderer takes that
+ *     backslash out again. An empty path gives a span of two spaces.
  */
 export function safePathCell(path: string, windows: boolean = onWindows()): string {
-  return safePath(path, windows).replaceAll("|", `${BACKSLASH}|`);
+  return codeSpan(safePath(path, windows).replaceAll("|", `${BACKSLASH}|`));
+}
+
+/**
+ * A path made fit to print in a line of Markdown that will be rendered, such
+ * as a sentence of a report.
+ *
+ * @param windows Whether a backslash separates directories, as for `safePath`.
+ * @returns A code span that shows the path as `safePath` prints it, codes and
+ *     doubled backslashes included: a backslash is an ordinary character in a
+ *     code span, so what a reader sees is that printed form and reads back in
+ *     one way. The fence is one backtick longer than the longest run of
+ *     backticks in the path. A path that is empty, or that opens or closes
+ *     with a space or a backtick, has one space added each side, which a
+ *     renderer takes off again. For a path of spaces alone it does not, and
+ *     that path is shown with the two spaces added. A pipe is left alone, so
+ *     a table cell needs `safePathCell`.
+ */
+export function safePathCode(path: string, windows: boolean = onWindows()): string {
+  return codeSpan(safePath(path, windows));
+}
+
+/** Text of one line as a Markdown code span, as `safePathCode` describes. */
+function codeSpan(text: string): string {
+  let longest = 0;
+  for (const run of text.match(/`+/g) ?? []) {
+    longest = Math.max(longest, run.length);
+  }
+  const fence = "`".repeat(longest + 1);
+  const padding = text === "" || /^[ `]|[ `]$/.test(text) ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
 }
 
 /**
@@ -75,8 +115,9 @@ export function safePathCell(path: string, windows: boolean = onWindows()): stri
  * @param path A path as a directory walk or an input file gave it.
  * @param windows Whether a backslash separates directories. Left out, it is
  *     true where the command runs on Windows.
- * @returns The printed form, which is empty for an empty path. A pipe is
- *     left alone, so a table cell needs `safePathCell`.
+ * @returns The printed form, which is empty for an empty path. It is plain
+ *     text for a terminal. Markdown that will be rendered needs
+ *     `safePathCode`, or `safePathCell` in a table.
  */
 export function safePath(path: string, windows: boolean = onWindows()): string {
   return path

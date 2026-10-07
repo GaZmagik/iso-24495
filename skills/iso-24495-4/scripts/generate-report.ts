@@ -153,7 +153,8 @@ export interface ReportInput {
  *     nobody has read: a control character, a line break or a mark that
  *     reverses text direction becomes a space, and a pipe is escaped. An
  *     evidence path is the one exception: it is printed as `safePathCell`
- *     prints a path, with every character kept or shown as its code. Its
+ *     prints a path, a code span with every character kept or shown as its
+ *     code. Its
  *     Trend section appears only once the history holds two audits or more. `state` holds every earlier snapshot
  *     and one more, as given and not cleaned, and is what the caller must
  *     save for the next audit.

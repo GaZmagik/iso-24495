@@ -71,11 +71,11 @@ describe("generateReport", () => {
     "",
     "| Artefact category | Found | Paths |",
     "|-------------------|-------|-------|",
-    "| policy | yes | docs/plain-language-policy.md |",
-    "| review-workflow | yes | .github/PULL_REQUEST_TEMPLATE.md |",
-    "| automated-checks | yes | .github/workflows/text-lint.yml |",
-    "| training | yes | training/introduction.md |",
-    "| glossary | yes | glossary.md |",
+    "| policy | yes | `docs/plain-language-policy.md` |",
+    "| review-workflow | yes | `.github/PULL_REQUEST_TEMPLATE.md` |",
+    "| automated-checks | yes | `.github/workflows/text-lint.yml` |",
+    "| training | yes | `training/introduction.md` |",
+    "| glossary | yes | `glossary.md` |",
     "",
     "## Corpus findings",
     "",
@@ -142,7 +142,8 @@ describe("a report built from files nobody has read", () => {
       // code, the line break included, and the pipe escaped.
       const slash = String.fromCharCode(92);
       const shown = `${slash}u${code.toString(16).padStart(4, "0")}`;
-      expect(report).toContain(`| ${clean} | yes | x${shown}[2J${slash}|y${slash}u000az<br>docs/policy.md |`);
+      const tick = String.fromCharCode(96);
+      expect(report).toContain(`| ${clean} | yes | ${tick}x${shown}[2J${slash}|y${slash}u000az${tick}<br>${tick}docs/policy.md${tick} |`);
       expect(report).toContain(`| ${clean} | ${clean} |`);
       expect(report).toContain(`| ${clean} | ${clean} | 0${clean} |`);
       // Each row is still one line of the table.

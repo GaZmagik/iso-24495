@@ -15,9 +15,9 @@ import type { Evidence } from "./lib/types.ts";
  *
  * `--json` also writes the evidence to that file, replacing it. The file holds
  * each path as the walk gave it. The table shows each path as `safePathCell`
- * prints it, with a control character or a mark that reverses text direction
- * shown as its code and a pipe escaped, because a file name is text nobody
- * has read.
+ * prints it: a code span, with a control character or a mark that reverses
+ * text direction shown as its code and a pipe escaped, because a file name is
+ * text nobody has read.
  *
  * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
  * could not be read in full or the evidence file could not be written. Exit 2
