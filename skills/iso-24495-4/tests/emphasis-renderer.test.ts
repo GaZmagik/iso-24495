@@ -11,6 +11,14 @@ import { headings, readerProseBlocks } from "../scripts/lib/parse.ts";
 // A block that may hold a link is out of scope. The audit removes no mark from it, so
 // there is nothing of the pairing to compare. The contract tests hold that reading.
 //
+// A bare address is out of scope as well, and this comparison cannot see that class.
+// GitHub links "https://e.com/*x" with no bracket, and the asterisk is part of the
+// link. Bun's renderer links bare addresses only when asked, with `autolinks`, and it
+// then writes a closing tag with no opening tag for a mark inside the address. Its
+// output cannot be the reference there, as the last test shows. So that class is held
+// by hand-written cases alone, in the contract tests. Each of them was put to GitHub's
+// renderer through its API when it was written; no test asks GitHub again.
+//
 // The text is generated from a fixed seed, so every run reads the same cases.
 
 const WORDS = ["a", "b", "in", "or", "der", "to"];
@@ -47,6 +55,31 @@ describe("the words the audit reads are the words a renderer shows", () => {
     expect({ compared, withMarksRemoved, headings: headingsCompared })
       .toEqual({ compared: 60_000, withMarksRemoved: 10_065, headings: 12_000 });
   }, 60_000);
+
+  test("no generated case holds what the audit reads as a possible link", () => {
+    // The generator makes no bracket, no colon, no slash and no "w", so nothing here
+    // is an address. Were that to change, the comparison above would be reading
+    // blocks the audit leaves alone.
+    const random = generator(24495);
+    for (let made = 0; made < CASES; made++) {
+      const inline = inlineText(random, 10);
+      expect(/[[<]|:[/][/]|www[.]/i.test(inline), inline).toBe(false);
+    }
+  });
+
+  test("Bun's renderer cannot referee a mark inside a bare address", () => {
+    const text = "https://e.com/*x in or*der to go.";
+    // Without the option the address is no link, and the two asterisks pair.
+    expect(Bun.markdown.html(text)).toBe("<p>https://e.com/<em>x in or</em>der to go.</p>\n");
+    // With it the address is a link that holds the first asterisk, as on GitHub. The
+    // second asterisk then has no partner, and GitHub shows it. Bun writes a closing
+    // tag for it that nothing opened. Should this ever fail, Bun has changed, and the
+    // generated comparison may be able to take addresses in.
+    const linked = Bun.markdown.html(text, { autolinks: true });
+    expect(linked).toBe('<p><a href="https://e.com/*x">https://e.com/*x</a> in or</em>der to go.</p>\n');
+    expect(linked.split("<em>").length).toBe(1);
+    expect(linked.split("</em>").length).toBe(2);
+  });
 
   test("in the cases the reviews named, once the link is taken out of each", () => {
     for (const text of [

@@ -1031,7 +1031,7 @@ function withoutEmphasisMarks(block: ProseBlock, written: readonly string[], spa
 }
 
 /**
- * Whether source lines may hold a link, an image or an autolink.
+ * Whether source lines may hold a link, an image, an autolink or a bare address.
  *
  * A block that may hold one is read as it was before emphasis was paired at all: no
  * mark is removed. A link has syntax of its own, and a mark can sit in it or across its
@@ -1040,19 +1040,32 @@ function withoutEmphasisMarks(block: ProseBlock, written: readonly string[], spa
  * destination that closed a code span further on. A mark left in can only hide a
  * finding.
  *
- * None of the three can be written without "[" or "<", so lines that hold neither
- * character hold no link. That is the whole test. It does not ask whether a bracket is
- * a link, because that question is the one the pairing kept getting wrong. So a bracket
- * in a code span, an escaped bracket, a task marker and an HTML tag all count. Counting
- * one too many loses a finding in that block. Missing a link reports words that no
- * reader sees.
+ * Four pieces of text are looked for, and a line that holds none holds no link:
+ *
+ * - "[", which every link, image and reference needs;
+ * - "<", which every autolink in angle brackets and every HTML tag needs;
+ * - "://", which every bare address with a protocol needs, such as one that begins
+ *   "https://";
+ * - "www.", in capitals or small letters, which every other bare address needs.
+ *
+ * GitHub links a bare address with no bracket, and a mark inside the address is part
+ * of that link: "https://e.com/*x in or*der to" shows "or*der". An email address is
+ * not looked for. GitHub finds one in text it has already read for emphasis, so the
+ * marks pair across it, and "mailto:" and "xmpp:" are found the same way.
+ *
+ * That is the whole test. It does not ask whether a bracket is a link or a word is an
+ * address, because that question is the one the pairing kept getting wrong. So a
+ * bracket in a code span, an escaped bracket, a task marker, an HTML tag and any
+ * "://" all count. Counting one too many loses a finding in that block. Missing a link
+ * reports words that no reader sees.
  *
  * @param written The document as `toLines` gives it, one entry for each source line.
  * @param first The index of the first line to read, and `count` how many to read.
  * @returns False when `count` is 0 or the lines lie past the end of the document.
  */
 function mayHoldLink(written: readonly string[], first: number, count: number): boolean {
-  return written.slice(first, first + count).some((line) => line.includes("[") || line.includes("<"));
+  return written.slice(first, first + count).some((line) =>
+    line.includes("[") || line.includes("<") || line.includes("://") || line.toLowerCase().includes("www."));
 }
 
 function legaleseViolations(text: string, reading: Reading): Violation[] {

@@ -103,9 +103,10 @@ export function withoutEmphasis(source: string): string {
  * same way. It is counted because the struck words are still on the page: a
  * reader sees them, and a screen reader says them with no sign of the strike.
  *
- * A link is not read as one. Its brackets and its destination are ordinary
- * characters here, so a mark in them can pair with a mark outside, which a
- * browser never does. The audit therefore passes only text that holds no link.
+ * A link is not read as one, and nor is a bare address. Its brackets, its
+ * destination and its address are ordinary characters here, so a mark in them
+ * can pair with a mark outside, which a browser never does. The audit
+ * therefore passes only text that holds no link and no bare address.
  *
  * @param source Inline Markdown, which may run over several lines.
  * @returns The offset of every `*`, `_` and `~` that belongs to a pair, in

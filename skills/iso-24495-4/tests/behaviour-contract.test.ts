@@ -2520,8 +2520,8 @@ describe("a filler opening and the marks around it", () => {
 
 describe("a block that may hold a link keeps its emphasis marks", () => {
   // Emphasis marks were paired around links in three ways, and each way reported words
-  // that a browser does not show. So a block whose source lines hold "[" or "<" is now
-  // read as it was before emphasis was paired at all. No mark is removed there, and a
+  // that a browser does not show. So a block whose source lines hold "[", "<", "://" or
+  // "www." is now read as it was before emphasis was paired at all. No mark is removed there, and a
   // phrase that emphasis splits in such a block is not found. Every expectation in
   // this group is what the code before the pairing gave for the same text.
   const TICK = String.fromCharCode(96);
@@ -2627,6 +2627,56 @@ describe("a block that may hold a link keeps its emphasis marks", () => {
       "We did this in **order** to finish, see <https://example.com>.",
     ]) {
       expect(findingsIn(text), text).toEqual([]);
+    }
+  });
+
+  test("a bare address is a link too, with neither bracket", () => {
+    // GitHub links an address written with no bracket at all. A mark inside the address
+    // is part of the link there, so "or*der" after it keeps its asterisk and the reader
+    // does not see the phrase. Each of these was put to GitHub's own renderer.
+    for (const text of [
+      "https://e.com/*x in or*der to go.",
+      "www.e.com/*x in or*der to go.",
+      "http://e.com/_x in or_der to go, as a_b says_.",
+      // GitHub strips this one of its link and still shows both asterisks.
+      "ftp://e.com/*x in or*der to go.",
+      // The mark that ends an address is not part of it, and has no partner here.
+      "https://e.com/a*b* in or*der to go.",
+      "# www.e.com/*x in or*der to go",
+      "- www.e.com/*x in or*der to go.",
+      // The address and the phrase on two lines of one paragraph.
+      ["See https://e.com/*x for more.", "We did this in or*der to finish."].join(BREAK),
+      ["We did this in or*der to finish.", "See https://e.com/x* for more."].join(BREAK),
+      // An address alone in its block.
+      "https://e.com/in*order*to",
+      "www.e.com/sh*all*",
+      // Not an address on GitHub, which reads "www." in small letters only. It is
+      // read as one all the same: the test for an address asks as little as it can.
+      "WWW.e.com/*x in or*der to go.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // The block beside the address is read as before.
+    expect(findingsIn(["https://e.com/*x", "", "We did this in **order** to finish."].join(BREAK))).toEqual(wordy(3));
+    // Both scans for an acronym keep the marks in such a block.
+    expect(findingsIn(["identi*ty and access", "management* (IAM), as www.e.com says. Use IAM."].join(BREAK)))
+      .toEqual(['acronym-undefined at line 2: define acronym "IAM" on first use']);
+  });
+
+  test("an email address shields no mark, so its block keeps the emphasis fix", () => {
+    // GitHub finds an email address in text it has already read for emphasis. So the
+    // marks pair across the address, the reader sees the phrase, and it is reported.
+    // Each of these was put to GitHub's renderer, which shows "in order to" for all.
+    for (const text of [
+      "mail a*b@e.com in or*der to go.",
+      "mailto:a@e.com/*x in or*der to go.",
+      "xmpp:a@e.com/x*y in or*der to go.",
+      "Write to a@e.com in **order** to go.",
+      // A colon, a slash or a full stop alone makes no address.
+      "Note: it ran w.w.w and a/b in **order** to go.",
+      "The crowd said awww in **order** to go.",
+    ]) {
+      expect(findingsIn(text), text).toEqual(wordy(1));
     }
   });
 
