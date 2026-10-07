@@ -970,32 +970,41 @@ interface OpenBracket {
  * and everything after the label are removed. A link then switches off every bracket
  * that opened before it, because a link cannot sit inside the label of a link: the
  * inner one is the link and the outer brackets are text. An image can hold a link, so
- * it switches nothing off. A backslash escape and a code span are stepped over.
+ * it switches nothing off.
  *
- * Nothing here scans ahead. Each question about what follows a bracket is answered
- * from `linkMarks`, which reads the block once.
+ * A code span, an autolink and an HTML tag bind tighter than a link. Each is stepped
+ * over where the pass meets it, so a bracket inside one opens and closes nothing, and a
+ * backslash inside a code span escapes nothing. They are found in this pass and not
+ * before it, because a backtick or an angle bracket inside a destination is part of the
+ * link, and only this pass knows where a link has just ended.
  *
- * Two things a renderer reads are not read here. An HTML tag or an autolink is not
- * stepped over, so a bracket inside one can pair with a bracket outside it. And a
- * backslash escapes inside a code span as it does outside.
+ * Nothing here scans ahead for a bracket. Each question about what follows one is
+ * answered from `linkMarks`, which reads the block once.
  *
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
  *     gives it.
+ * @returns The block at the same length, with U+FFFF where each character of link
+ *     syntax stood. The block itself where it holds no link, as for empty text.
  */
-function linksAsLabels(source: string, references: ReadonlySet<string>): string {
+export function linksAsLabels(source: string, references: ReadonlySet<string>): string {
   const marks = linkMarks(source);
   const units = source.split("");
   const open: OpenBracket[] = [];
   // How many of the open brackets, counted from the first, a link has switched off.
   let switchedOff = 0;
+  // The character a backslash last escaped. An exclamation mark there makes no image.
+  let escapedAt = -1;
   for (let at = 0; at < source.length; at++) {
-    if (marks.escaped[at + 1] === 1) {
+    if (source[at] === "\\" && ESCAPABLE_AFTER_BACKSLASH.test(source[at + 1] ?? "")) {
       at++;
+      escapedAt = at;
     } else if (source[at] === "`") {
-      at = (marks.afterCode[at] as number) - 1;
+      at = codeSpanEnd(source, at, marks) - 1;
+    } else if (source[at] === "<") {
+      at = angleEnd(source, at, marks) - 1;
     } else if (source[at] === "[") {
-      open.push({ at, image: source[at - 1] === "!" && marks.escaped[at - 1] === 0 });
+      open.push({ at, image: source[at - 1] === "!" && escapedAt !== at - 1 });
     } else if (source[at] === "]" && open.length > 0) {
       const opener = open.pop() as OpenBracket;
       const live = opener.image || open.length >= switchedOff;
@@ -1009,6 +1018,108 @@ function linksAsLabels(source: string, references: ReadonlySet<string>): string 
     }
   }
   return units.join("");
+}
+
+// The punctuation a backslash escapes, which is all of it in ASCII.
+const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
+
+/**
+ * The offset just past the code span that opens with the run of backticks at `at`, or
+ * just past that run where no later run has its length and so no span opens.
+ */
+function codeSpanEnd(source: string, at: number, marks: LinkMarks): number {
+  let end = at;
+  while (source[end] === "`") end++;
+  const length = end - at;
+  const later = marks.backtickRuns.get(length) ?? [];
+  // The runs behind this one can close nothing that is still to come.
+  while (later.length > 0 && (later.at(-1) as number) < end) {
+    later.pop();
+  }
+  return later.length > 0 ? (later.at(-1) as number) + length : end;
+}
+
+// An address in angle brackets: a scheme and a colon, or an email address.
+const AUTOLINK = /<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!$%&*+/=?^_{|}~-]+@[A-Za-z0-9.-]+)>/y;
+// The four kinds of raw HTML that run to a closing mark of their own.
+const HTML_TO_CLOSING_MARK: ReadonlyArray<[opening: RegExp, closing: string]> = [
+  [/<!--/y, "-->"],
+  [/<[?]/y, "?>"],
+  [/<!\[CDATA\[/y, "]]>"],
+  [/<![A-Za-z]/y, ">"],
+];
+
+/**
+ * The offset just past the autolink or the piece of raw HTML that opens at "<", or
+ * just past the "<" where it opens neither.
+ */
+function angleEnd(source: string, at: number, marks: LinkMarks): number {
+  AUTOLINK.lastIndex = at;
+  if (AUTOLINK.test(source)) return AUTOLINK.lastIndex;
+  for (const [opening, closing] of HTML_TO_CLOSING_MARK) {
+    opening.lastIndex = at;
+    if (!opening.test(source)) continue;
+    // A comment may close on the dashes that open it, as "<!-->" does.
+    const end = unclosedFrom(source, closing, at + 2, marks);
+    return end === -1 ? at + 1 : end + closing.length;
+  }
+  return tagEnd(source, at, marks);
+}
+
+/**
+ * Where `closing` next stands at or after `from`, or -1. A search that finds nothing
+ * is remembered, so that many openings with no closing mark are not each searched
+ * to the end of the block.
+ */
+function unclosedFrom(source: string, closing: string, from: number, marks: LinkMarks): number {
+  if (marks.neverCloses.has(closing)) return -1;
+  const found = source.indexOf(closing, from);
+  if (found === -1) marks.neverCloses.add(closing);
+  return found;
+}
+
+const TAG_NAME = /<[/]?[A-Za-z][A-Za-z0-9-]*/y;
+const ATTRIBUTE_NAME = /[A-Za-z_:][A-Za-z0-9_.:-]*/y;
+// A value with no quotes holds no white space, quote, "=", "<", ">" or backtick.
+const BARE_VALUE = new RegExp(`[^\\s${String.fromCharCode(34, 39)}=<>${String.fromCharCode(96)}]+`, "y");
+
+/**
+ * The offset just past the HTML tag that opens at "<", or just past the "<" where
+ * what follows is no tag. This is the CommonMark rule for an opening and a closing
+ * tag: a name, then attributes each after white space, each with a value or none,
+ * and ">" or "/>".
+ */
+function tagEnd(source: string, at: number, marks: LinkMarks): number {
+  TAG_NAME.lastIndex = at;
+  if (!TAG_NAME.test(source)) return at + 1;
+  let next = TAG_NAME.lastIndex;
+  const closing = source[at + 1] === "/";
+  // A closing tag has no attribute, and an attribute needs white space before it.
+  while (!closing && (marks.nextText[next] as number) > next) {
+    const end = attributeEnd(source, marks.nextText[next] as number, marks);
+    if (end === -1) break;
+    next = end;
+  }
+  const last = marks.nextText[next] as number;
+  if (source[last] === ">") return last + 1;
+  return !closing && source[last] === "/" && source[last + 1] === ">" ? last + 2 : at + 1;
+}
+
+/** The offset just past the attribute that starts at `at`, its value included, or -1 where none starts there. */
+function attributeEnd(source: string, at: number, marks: LinkMarks): number {
+  ATTRIBUTE_NAME.lastIndex = at;
+  if (!ATTRIBUTE_NAME.test(source)) return -1;
+  const name = ATTRIBUTE_NAME.lastIndex;
+  const equals = marks.nextText[name] as number;
+  if (source[equals] !== "=") return name;
+  const value = marks.nextText[equals + 1] as number;
+  const quote = source.charCodeAt(value);
+  if (quote === 34 || quote === 39) {
+    const end = unclosedFrom(source, source[value] as string, value + 1, marks);
+    return end === -1 ? -1 : end + 1;
+  }
+  BARE_VALUE.lastIndex = value;
+  return BARE_VALUE.test(source) ? BARE_VALUE.lastIndex : -1;
 }
 
 /** Puts `REMOVED` at each place from `from` up to `to`, but for a line break or a pipe. */
@@ -1104,8 +1215,13 @@ interface LinkMarks {
   escaped: Uint8Array;
   /** For "(", the ")" that closes it, or -1. */
   closer: Int32Array;
-  /** For the first backtick of a run, the offset just past its code span, or past the run where no span opens. */
-  afterCode: Int32Array;
+  /**
+   * For each length of a run of backticks, where the runs of that length start, the
+   * last of them first. `codeSpanEnd` drops each one as the reading passes it.
+   */
+  backtickRuns: Map<number, number[]>;
+  /** The closing marks that a search has already failed to find. */
+  neverCloses: Set<string>;
   /** The next character that is not white space, or the length of the block. */
   nextText: Int32Array;
   /** The next white space or control character, or the length of the block. */
@@ -1134,7 +1250,8 @@ function linkMarks(source: string): LinkMarks {
   const marks: LinkMarks = {
     escaped: new Uint8Array(size),
     closer: new Int32Array(size).fill(-1),
-    afterCode: new Int32Array(size),
+    backtickRuns: new Map(),
+    neverCloses: new Set(),
     nextText: new Int32Array(size).fill(source.length),
     nextSpace: new Int32Array(size).fill(source.length),
     nextAngle: new Int32Array(size).fill(-1),
@@ -1154,7 +1271,7 @@ function linkMarks(source: string): LinkMarks {
       continue;
     }
     atLineStart = false;
-    if (code === 92 && /[!-/:-@[-`{-~]/.test(source[at + 1] ?? "")) {
+    if (code === 92 && ESCAPABLE_AFTER_BACKSLASH.test(source[at + 1] ?? "")) {
       marks.escaped[at + 1] = 1;
       at++;
     } else if (code === 40) {
@@ -1163,8 +1280,6 @@ function linkMarks(source: string): LinkMarks {
       marks.closer[open.pop() as number] = at;
     }
   }
-  // For each length of a run of backticks, where the nearest later run of that length starts.
-  const laterRun = new Map<number, number>();
   let runEnd = -1;
   for (let at = source.length - 1; at >= 0; at--) {
     const code = marks.escaped[at] === 1 ? 0 : source.charCodeAt(at);
@@ -1175,14 +1290,14 @@ function linkMarks(source: string): LinkMarks {
     marks.nextDouble[at] = code === 34 ? at : (marks.nextDouble[at + 1] as number);
     marks.nextSingle[at] = code === 39 ? at : (marks.nextSingle[at + 1] as number);
     marks.nextClose[at] = code === 41 ? at : (marks.nextClose[at + 1] as number);
-    if (code !== 96) continue;
+    // A run of backticks is every backtick in a row, whatever stands before the first:
+    // inside a code span a backslash escapes nothing.
+    if (source[at] !== "`") continue;
     if (runEnd === -1) runEnd = at + 1;
-    if (at > 0 && source[at - 1] === "`" && marks.escaped[at - 1] === 0) continue;
-    // A code span closes at the next run of the same length, and nowhere else.
-    const length = runEnd - at;
-    const closing = laterRun.get(length);
-    marks.afterCode[at] = closing === undefined ? runEnd : closing + length;
-    laterRun.set(length, at);
+    if (source[at - 1] === "`") continue;
+    const starts = marks.backtickRuns.get(runEnd - at) ?? [];
+    starts.push(at);
+    marks.backtickRuns.set(runEnd - at, starts);
     runEnd = -1;
   }
   return marks;

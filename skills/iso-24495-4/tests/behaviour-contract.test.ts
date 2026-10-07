@@ -6,6 +6,7 @@ import {
   auditCorpus,
   auditText,
   ENGINE_THRESHOLDS,
+  linksAsLabels,
   projectAcronyms,
   withLinksAsLabels,
 } from "../scripts/audit-corpus.ts";
@@ -2776,9 +2777,10 @@ describe("labels nested to great depth", () => {
     }
   }, 2 * HOSTILE_TIMEOUT_MS);
 
-  // These time the reading of links alone. The whole audit is slow on two of them for
-  // reasons older than that reading and outside it, which a budget on the audit would
-  // only hide: "<a " many times over, and a reference after every label.
+  // These time the reading of links in one block, and nothing else. The whole audit is
+  // slow on three of them for reasons older than that reading and outside it, which a
+  // budget on the audit would only hide: "<a " many times over, a reference after every
+  // label, and many code spans, which the parser itself reads slowly.
   test("the shapes beside that one are read in proportion to their length too", () => {
     const count = 16_000;
     const shapes: Array<[name: string, text: string]> = [
@@ -2790,10 +2792,20 @@ describe("labels nested to great depth", () => {
       ["nested labels whose angle brackets never close", "[".repeat(count) + "x" + "](<a ".repeat(count)],
       ["titles that never close", "[".repeat(count) + "x" + "](u 't ".repeat(count)],
       ["a reference after every label", "[".repeat(count) + "x" + "][r] ".repeat(count)],
+      ["a tag holding a bracket after every link", `[x](u) <i title="["> `.repeat(count)],
+      ["tags that never close", `<i title="[ `.repeat(count)],
+      ["comments that never close", "<!-- [ ".repeat(count)],
+      ["instructions and declarations that never close", "<? [ <!D [ <![CDATA[ ".repeat(count)],
+      ["a code span holding a bracket after every link", `[x](u) ${String.fromCharCode(96)}[${String.fromCharCode(96)} `.repeat(count)],
+      ["a code span of its own length for every label", Array.from({ length: 170 }, (_unused, length) =>
+        `[${String.fromCharCode(96).repeat(length + 1)}x${String.fromCharCode(96).repeat(length + 1)}](u) `).join("").repeat(8)],
+      ["backticks that close nothing, in every label", `[${String.fromCharCode(96)}x](u) ${String.fromCharCode(96).repeat(2)} `.repeat(count)],
+      ["autolinks that never close", "<https://e.com/[ ".repeat(count)],
       ["backticks of every length", "[".repeat(count) + Array.from({ length: 150 }, (_unused, length) => String.fromCharCode(96).repeat(length + 1)).join(" x](u) ")],
     ];
+    const none = new Set<string>();
     for (const [name, text] of shapes) {
-      expect(elapsed(() => withLinksAsLabels(text)), name).toBeLessThan(750);
+      expect(elapsed(() => linksAsLabels(text, none)), name).toBeLessThan(750);
     }
   }, HOSTILE_TIMEOUT_MS);
 });
@@ -3020,6 +3032,49 @@ describe("a link between an expansion and its acronym", () => {
     // The mark of a quotation at the start of a line is no part of a title that wraps.
     expect(acronyms(["> identity and access [management](guide", "> 'a title') (IAM).", "", use].join(BREAK))).toEqual([]);
     expect(acronyms(["- identity and access [management](guide", "  'a title') (IAM).", "", use].join(BREAK))).toEqual([]);
+  });
+
+  // A code span, an autolink and an HTML tag bind tighter than a link, so each is found
+  // first and a bracket inside one opens and closes nothing. Each of these was put to
+  // the renderer of GitHub.
+  test("a code span, an autolink and an HTML tag are found before a link is", () => {
+    const slash = String.fromCharCode(92);
+    const tick = String.fromCharCode(96);
+    const quote = String.fromCharCode(34);
+    const use = "Use IAM.";
+    const link = (before: string): string[] => [`identity and access ${before}[management](guide) (IAM).`, use];
+    const text = (before: string): string[] => [`identity and access ${before}management](guide) (IAM).`, use];
+    // A backslash in a code span escapes nothing, so the span ends at the backtick after it
+    // and the link that follows is a link.
+    expect(acronyms([`identity and access ${tick}${slash}${tick} [management](guide) ${tick} (IAM).`, use].join(BREAK))).toEqual([]);
+    expect(acronyms(link(`${tick}${tick}${slash}${tick}${slash}${tick}${tick} `).join(BREAK))).toEqual([]);
+    // A bracket in a tag, in an autolink or in a comment opens nothing, so "](guide)" is shown.
+    for (const before of [
+      `<i title=${quote}[${quote}>`,
+      `<i title=${quote}>[${quote}>`,
+      "<i title='['>",
+      "<i data-x=[>",
+      "</i[>".replace("[", " ") + "<b title='['>",
+      "<https://e.com/[>",
+      "<!-- [ -->",
+      "<?php [ ?>",
+      "<![CDATA[ x ]]>",
+    ]) {
+      expect(acronyms(text(before).join(BREAK)), before).toEqual(undefinedAt("IAM", 2));
+    }
+    // What only looks like a tag is text, so a link after it is still a link. The text
+    // itself holds letters, so the link is looked for and not the acronym.
+    for (const before of ["<3 ", "</i ", "< i> ", `<i title=${quote} `, "<i title= > ", "<i/ > ", "<!-- ", "<? ", "<![CDATA[ ", "<!D ", "<a@b ", "<x:y z> "]) {
+      const read = withLinksAsLabels(link(before).join(BREAK));
+      expect(read.includes("](guide)"), before).toBe(false);
+      expect(read.startsWith(`identity and access ${before}`), before).toBe(true);
+    }
+    // A link read first keeps what is in its destination out of all this.
+    // The backtick in this destination opens no code span, so the two after it are one,
+    // and the bracket inside that span opens nothing.
+    const read = withLinksAsLabels(`[one](<u${tick}v>) ${tick}[${tick}two](three)`);
+    expect(read.includes("[one]")).toBe(false);
+    expect(read.endsWith(`${tick}[${tick}two](three)`)).toBe(true);
   });
 
   test("what a reader does see between them still counts", () => {
