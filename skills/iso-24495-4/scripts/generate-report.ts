@@ -6,7 +6,7 @@ import { EVIDENCE_SHAPE, FINDINGS_SHAPE, MATURITY_SHAPE, STATE_SHAPE } from "./l
 import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
 import { readJsonFile, writeTextFile, type JsonFile } from "./lib/failure.ts";
 import { shapeProblem } from "./lib/json-shape.ts";
-import { safeCell } from "./lib/safe-text.ts";
+import { safeCell, safePathCell } from "./lib/safe-text.ts";
 import { existsSync } from "node:fs";
 
 /**
@@ -151,7 +151,9 @@ export interface ReportInput {
  * @returns `report` is Markdown. Every value in it that came from an input is
  *     cleaned with `safeCell`, numbers included, because an input is a file
  *     nobody has read: a control character, a line break or a mark that
- *     reverses text direction becomes a space, and a pipe is escaped. Its
+ *     reverses text direction becomes a space, and a pipe is escaped. An
+ *     evidence path is the one exception: it is printed as `safePathCell`
+ *     prints a path, with every character kept or shown as its code. Its
  *     Trend section appears only once the history holds two audits or more. `state` holds every earlier snapshot
  *     and one more, as given and not cleaned, and is what the caller must
  *     save for the next audit.
@@ -192,7 +194,7 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   lines.push("|-------------------|-------|-------|");
   for (const [category, artefact] of Object.entries(evidence.artefacts)) {
     lines.push(
-      `| ${cell(category)} | ${artefact.found ? "yes" : "no"} | ${artefact.paths.map(cell).join("<br>") || "-"} |`,
+      `| ${cell(category)} | ${artefact.found ? "yes" : "no"} | ${artefact.paths.map((path) => safePathCell(String(path))).join("<br>") || "-"} |`,
     );
   }
   lines.push("");

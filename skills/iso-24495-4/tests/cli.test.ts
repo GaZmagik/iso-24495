@@ -140,7 +140,9 @@ describe("audit-corpus runCli", () => {
       rmSync(target, { recursive: true, force: true });
       const output = capture();
       expect(runCorpusCli(["bun", "audit-corpus-cli.ts", temp], output.writeOut, output.writeErr)).toBe(0);
-      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(temp, "dangling")}`]);
+      // A path is printed with forward slashes on every platform.
+      const printed = join(temp, "dangling").split(String.fromCharCode(92)).join("/");
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printed}`]);
       expect(output.stdout.at(-1)).toBe("\nTotal: 0 across 1 files.");
       expect(output.stdout.join("\n")).not.toContain("opening-version-date");
     } finally {
@@ -943,6 +945,9 @@ describe("a command never passes on what the runtime said about a failure", () =
 // shows here that each command cleans the path it prints.
 describe("a skipped entry is printed with its path cleaned", () => {
   const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
+  /** The link as a command prints it: forward slashes, and the mark as its code. */
+  const printedLink = (directory: string): string =>
+    `${join(directory, "report").split(String.fromCharCode(92)).join("/")}${String.fromCharCode(92)}u202edm.exe`;
 
   /** A directory holding one link that an audit skips, whose name reverses text direction. */
   function withReversingLink(run: (directory: string) => void): void {
@@ -962,7 +967,7 @@ describe("a skipped entry is printed with its path cleaned", () => {
     withReversingLink((directory) => {
       const output = capture();
       expect(runCorpusCli(["bun", "audit-corpus-cli.ts", directory], output.writeOut, output.writeErr)).toBe(0);
-      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(directory, "report dm.exe")}`]);
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printedLink(directory)}`]);
     });
   });
 
@@ -974,7 +979,7 @@ describe("a skipped entry is printed with its path cleaned", () => {
         output.writeOut,
         output.writeErr,
       )).toBe(0);
-      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(directory, "report dm.exe")}`]);
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printedLink(directory)}`]);
     });
   });
 });
@@ -983,7 +988,7 @@ describe("audit-evidence prints a path nobody has read", () => {
   // The paths come from a directory walk. A C1 control and a right-to-left
   // override are allowed in a file name on every platform, and an escape
   // character on Linux and macOS.
-  test("a control character or a direction mark in a file name becomes a space, and the JSON keeps it", () => {
+  test("a control character or a direction mark in a file name is printed as its code, and the JSON keeps it", () => {
     const workspace = mkdtempSync(join(tmpdir(), "iso-evidence-unread-"));
     const temp = mkdtempSync(join(tmpdir(), "iso-evidence-unread-out-"));
     try {
@@ -998,7 +1003,8 @@ describe("audit-evidence prints a path nobody has read", () => {
       const printed = output.stdout.join("\n");
       expect(printed).not.toContain(control);
       expect(printed).not.toContain(override);
-      expect(output.stdout[2]).toBe("| policy | yes | style-guide [2J x.md |");
+      const slash = String.fromCharCode(92);
+      expect(output.stdout[2]).toBe(`| policy | yes | style-guide${slash}u202e[2J${slash}u009bx.md |`);
       expect(output.stdout[6]).toBe("| glossary | yes | glossary.md |");
       expect(JSON.parse(readFileSync(jsonPath, "utf8")).artefacts.policy.paths).toEqual([name]);
     } finally {
