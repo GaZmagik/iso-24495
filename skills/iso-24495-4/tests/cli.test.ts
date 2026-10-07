@@ -861,6 +861,54 @@ describe("a command never passes on what the runtime said about a failure", () =
     });
   });
 
+  // The command held "no state file" as null, which is also what a state file
+  // holding the JSON text null parses to. Such a file skipped the shape check,
+  // and the command replaced it and the report beside it and exited 0.
+  test("generate-report refuses a state file that holds null, and leaves it and the report alone", () => {
+    withWorkspace((workspace) => {
+      const write = (name: string, value: unknown): string => {
+        const path = join(workspace, name);
+        writeFileSync(path, JSON.stringify(value));
+        return path;
+      };
+      const level = { level: 2, missing: [] };
+      const inputs = [
+        write("findings.json", { configHash: "abcd1234", files: {}, totals: { legalese: 2 } }),
+        write("evidence.json", { artefacts: { policy: { found: true, paths: ["policy.md"] } } }),
+        write("maturity.json", {
+          dimensions: { governance: level, capability: level, process: level, measurement: level, culture: level },
+          overall: 2,
+        }),
+      ];
+      const state = join(workspace, "state.json");
+      const report = join(workspace, "report.md");
+      const run = (out: (text: string) => number, err: (text: string) => number) => runReportCli(
+        ["bun", "generate-report-cli.ts", ...inputs, "--state", state, "--out", report], out, err,
+        () => "2026-10-07T12:00:00.000Z");
+      for (const [written, found] of [
+        ["null", "null"],
+        ["  null\n", "null"],
+        ["0", "a number"],
+        ["false", "a true or false value"],
+        ['""', "a string"],
+        ["[]", "an array"],
+      ] as Array<[string, string]>) {
+        writeFileSync(state, written);
+        writeFileSync(report, "KEEP");
+        expectFixedFailure(run, `generate-report: --state must be an object; got ${found}`);
+        expect(readFileSync(state, "utf8"), written).toBe(written);
+        expect(readFileSync(report, "utf8"), written).toBe("KEEP");
+      }
+
+      // No state file is still a first audit, and it starts the history.
+      rmSync(state);
+      const first = capture();
+      expect(run(first.writeOut, first.writeErr), first.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(state, "utf8")).snapshots).toHaveLength(1);
+      expect(readFileSync(report, "utf8")).toStartWith("# Plain Language Gap Analysis");
+    });
+  });
+
   test("audit-text", () => {
     withWorkspace((workspace) => {
       const absent = join(workspace, `${MARKER}.md`);

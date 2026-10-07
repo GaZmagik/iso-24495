@@ -42,6 +42,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **A mark beside a link is judged beside its bracket.** `in or*[der](u)* to` was reported as the phrase `in order to`, because the marks were paired once the link had been replaced by its label. A browser shows both asterisks there, since a mark before a bracket cannot open emphasis. Marks are now paired in the text with its links still written out. A generated comparison with Bun's Markdown renderer runs in the test suite.
 - **An acronym definition is read with the same link boundaries as its uses.** `identi*ty and access` above `management [*(IAM)](u)` was read as a definition, because the scan for definitions paired the two asterisks across the edge of the link. A browser shows both asterisks, so `IAM` is now reported as undefined there.
 - **The description check reports a file that vanishes between its reads.** `scripts/audit-pull-request-text.sh` reads its file more than once. When the file was removed after the first read, Bun printed its own error, with the whole path and a stack trace. The check then called the description empty and exited 1. It now exits 2 and says in fixed words that the file cannot be read again.
+- **A state file holding `null` is refused.** `generate-report-cli.ts` took a state file that held the JSON text `null` for no state file at all. It skipped the shape check, replaced the file and overwrote the report. An existing state file of any wrong shape now exits 1, and leaves both files as they were.
 
 ## [0.7.0] - 2026-09-20
 

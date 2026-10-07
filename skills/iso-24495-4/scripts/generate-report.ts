@@ -62,9 +62,13 @@ export function runCli(
     return 2;
   }
   const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
-  // A state file that does not exist yet is a first audit, not a failure.
+  // A state file that does not exist yet is a first audit, not a failure. Whether
+  // one exists is kept apart from what it holds, because no value can stand for
+  // "no file": a state file holding the JSON text null parses to null, and that
+  // file was once taken for a first audit, never checked, and replaced.
+  const stateExists = statePath ? existsSync(statePath) : false;
   const inputs: JsonFile[] = [
-    statePath && existsSync(statePath) ? readJsonFile(statePath, "--state") : { ok: true, value: null },
+    stateExists ? readJsonFile(statePath as string, "--state") : { ok: true, value: undefined },
     readJsonFile(findingsPath, "<findings.json>"),
     readJsonFile(evidencePath, "<evidence.json>"),
     readJsonFile(maturityPath, "<maturity.json>"),
@@ -81,7 +85,7 @@ export function runCli(
   const shape = shapeProblem(findings, FINDINGS_SHAPE, "<findings.json>")
     ?? shapeProblem(evidence, EVIDENCE_SHAPE, "<evidence.json>")
     ?? maturityProblem(maturity)
-    ?? (priorState === null ? null : shapeProblem(priorState, STATE_SHAPE, "--state"));
+    ?? (stateExists ? shapeProblem(priorState, STATE_SHAPE, "--state") : null);
   if (shape !== null) {
     stderr(`generate-report: ${shape}`);
     return 1;
@@ -91,7 +95,7 @@ export function runCli(
     findings: findings as Findings,
     evidence: evidence as Evidence,
     maturity: maturity as Maturity,
-    state: priorState as AuditState | null,
+    state: stateExists ? priorState as AuditState : null,
     now: now(),
   });
   const stateProblem = statePath ? writeTextFile(statePath, JSON.stringify(state, null, 2), "--state") : null;
