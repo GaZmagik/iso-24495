@@ -7,6 +7,7 @@ import {
   auditText,
   ENGINE_THRESHOLDS,
   projectAcronyms,
+  withLinksAsLabels,
 } from "../scripts/audit-corpus.ts";
 import { withoutEmphasis } from "../scripts/lib/inline-wording.ts";
 import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
@@ -2762,6 +2763,39 @@ describe("labels nested to great depth", () => {
       expect(elapsed(() => auditText(text)), `${depth} levels`).toBeLessThan(4_000);
     }
   }, 2 * HOSTILE_TIMEOUT_MS);
+
+  // A check of whether each "](" opened a link scanned forward from every one of them,
+  // and the scans shared nothing. Labels nested with an open parenthesis in each
+  // destination made every scan run to the end: 16,000 levels took eight seconds, where
+  // the audit took one before that check was written.
+  test("labels nested with open parentheses are read in proportion to their length", () => {
+    const open = (depth: number): string => "[".repeat(depth) + "x" + "](()".repeat(depth) + ")".repeat(depth);
+    for (const depth of [8_000, 16_000]) {
+      const text = open(depth);
+      expect(elapsed(() => auditText(text)), `${depth} levels`).toBeLessThan(4_000);
+    }
+  }, 2 * HOSTILE_TIMEOUT_MS);
+
+  // These time the reading of links alone. The whole audit is slow on two of them for
+  // reasons older than that reading and outside it, which a budget on the audit would
+  // only hide: "<a " many times over, and a reference after every label.
+  test("the shapes beside that one are read in proportion to their length too", () => {
+    const count = 16_000;
+    const shapes: Array<[name: string, text: string]> = [
+      ["parentheses that never close", "[x](".repeat(count)],
+      ["nested labels whose parentheses never close", "[".repeat(count) + "x" + "](".repeat(count)],
+      ["closing parentheses with no opener", "[x])".repeat(count)],
+      ["nested brackets with no parenthesis at all", "[".repeat(count) + "x" + "]".repeat(count)],
+      ["angle brackets that never close", "[x](<a ".repeat(count)],
+      ["nested labels whose angle brackets never close", "[".repeat(count) + "x" + "](<a ".repeat(count)],
+      ["titles that never close", "[".repeat(count) + "x" + "](u 't ".repeat(count)],
+      ["a reference after every label", "[".repeat(count) + "x" + "][r] ".repeat(count)],
+      ["backticks of every length", "[".repeat(count) + Array.from({ length: 150 }, (_unused, length) => String.fromCharCode(96).repeat(length + 1)).join(" x](u) ")],
+    ];
+    for (const [name, text] of shapes) {
+      expect(elapsed(() => withLinksAsLabels(text)), name).toBeLessThan(750);
+    }
+  }, HOSTILE_TIMEOUT_MS);
 });
 
 describe("an acronym definition whose emphasis runs over a line break", () => {
@@ -2926,6 +2960,66 @@ describe("a link between an expansion and its acronym", () => {
     ]) {
       expect(acronyms(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
     }
+  });
+
+  // Whether brackets form a link was decided in text that earlier steps had already
+  // changed, and at the call of one of the two scans alone. Each of these was wrong.
+  test("a link is decided on the source as written, and both scans read the one result", () => {
+    // The two scans counted places in two texts, so the definition was put after the
+    // use that follows it.
+    expect(acronyms("[guide](two three) identity and access management (IAM). Use IAM.")).toEqual([]);
+    expect(acronyms("[guide](two three) Use IAM, the identity and access management (IAM).")).toEqual(undefinedAt("IAM", 1));
+    // The escape had become two spaces, so a destination holding one seemed to hold a space.
+    const slash = String.fromCharCode(92);
+    expect(acronyms([`identity and access [management](foo${slash}_bar) (IAM).`, "Use IAM."].join(BREAK))).toEqual([]);
+    expect(acronyms([`identity and access [management](foo${slash}) bar) (IAM).`, "Use IAM."].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+    // A destination in angle brackets had gone as a tag, and a title with no destination
+    // was allowed for its sake. It is text.
+    expect(acronyms(["identity and access [management]( 'a title') (IAM).", "Use IAM."].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+    expect(acronyms(["identity and access [management](<two three> 'a title') (IAM).", "Use IAM."].join(BREAK))).toEqual([]);
+    expect(acronyms(["identity and access [management](two three) (IAM).", "Use IAM."].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+  });
+
+  test("a link inside the label of a link leaves the outer brackets as text", () => {
+    // A page shows the inner link alone, and "(guide)" after it as written.
+    expect(acronyms(["[identity [and](one) access management](guide) (IAM).", "Use IAM."].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+    expect(acronyms(["[identity [and](one) access management](#) (IAM).", "Use IAM."].join(BREAK))).toEqual([]);
+    // An image may hold a link, and both are read.
+    expect(acronyms(["![identity [and](one) access management](guide.png) (IAM).", "Use IAM."].join(BREAK))).toEqual([]);
+  });
+
+  test("a reference is a link where the document defines it, and switches the outer brackets off like any link", () => {
+    const defined = ["", "[and]: https://example.com/and"];
+    const outer = (inner: string): string[] => [`[identity ${inner} access management](guide) (IAM).`, "Use IAM."];
+    // Each inner form is a link, so the outer brackets are text and "(guide)" is shown.
+    for (const inner of ["[and]", "[and][]", "[and][and]", "[it][and]", "[and](<)"]) {
+      expect(acronyms([...outer(inner), ...defined].join(BREAK)), inner).toEqual(undefinedAt("IAM", 2));
+    }
+    // None of these is a link, so the outer brackets are one, and its destination is not read.
+    // A second pair that names nothing the document defines leaves the first as text too.
+    for (const inner of ["[and][1]", "[1]", "[1][]", "[1][2]"]) {
+      expect(acronyms([...outer(inner), ...defined].join(BREAK)), inner).toEqual([]);
+    }
+    expect(acronyms(outer("[and]").join(BREAK)), "with no definition").toEqual([]);
+  });
+
+  test("an escape, a code span and the mark of a quotation are read as a renderer reads them", () => {
+    const slash = String.fromCharCode(92);
+    const tick = String.fromCharCode(96);
+    const use = "Use IAM.";
+    // A bracket in a code span opens nothing, so the bracket after it closes nothing.
+    expect(acronyms([`identity and access ${tick}[${tick}management](guide) (IAM).`, use].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+    // A code span closes at the next run of backticks of its own length, and at no other.
+    expect(acronyms([`identity and access ${tick}${tick}[${tick}x${tick}${tick} management](guide) (IAM).`, use].join(BREAK)))
+      .toEqual(undefinedAt("IAM", 2));
+    expect(acronyms([`identity and access ${tick}${tick}1${tick} [management](guide) (IAM).`, use].join(BREAK))).toEqual([]);
+    // An escaped exclamation mark makes no image, so a link inside the label switches the brackets off.
+    expect(acronyms([`${slash}![identity [and](one) access management](guide) (IAM).`, use].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+    // A backslash escapes punctuation alone, so this destination ends at its space.
+    expect(acronyms([`identity and access [management](two${slash} three) (IAM).`, use].join(BREAK))).toEqual(undefinedAt("IAM", 2));
+    // The mark of a quotation at the start of a line is no part of a title that wraps.
+    expect(acronyms(["> identity and access [management](guide", "> 'a title') (IAM).", "", use].join(BREAK))).toEqual([]);
+    expect(acronyms(["- identity and access [management](guide", "  'a title') (IAM).", "", use].join(BREAK))).toEqual([]);
   });
 
   test("what a reader does see between them still counts", () => {
