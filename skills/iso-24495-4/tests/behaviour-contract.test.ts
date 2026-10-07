@@ -2863,14 +2863,66 @@ describe("a link between an expansion and its acronym", () => {
       ["[identity and access management](guide) (IAM).", "Use IAM."],
       ["[identity and access management](#) (IAM).", "Use IAM."],
       ["identity and access [management](the-guide.md) (IAM). Use IAM."],
-      ["identity [and](one) access [management](two three) (IAM). Use IAM."],
+      ["identity [and](one) access [management](two) (IAM). Use IAM."],
       // A destination and a title that wrap, with the link over three lines.
-      ["[identity and", "access management](the", "guide 'a title') (IAM). Use IAM."],
+      ["[identity and", "access management](the-guide", "'a title') (IAM). Use IAM."],
       // A reference that the document defines is a link, and its label is not read.
       ["identity and access [management][guide] (IAM). Use IAM.", "", "[guide]: https://example.com"],
       // A table row and a heading are read by the same scan.
       ["| Term | Meaning |", "|---|---|", "| [identity and access management](guide) (IAM) | a service |", "", "Use IAM."],
       ["# [identity and access management](guide) (IAM)", "", "Use IAM."],
+    ]) {
+      expect(acronyms(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
+    }
+  });
+
+  test("brackets that form no link keep their words", () => {
+    // "(two three)" is no destination, because it holds a space outside angle brackets,
+    // so a page shows it as written and its words stand before the acronym. The scan
+    // dropped them with the brackets, and the acronym was read as defined.
+    for (const lines of [
+      ["identity and access [management](two three) (IAM).", "Use IAM."],
+      ["identity [and](one) access [management](two three) (IAM).", "Use IAM."],
+      ["identity [and](one two) access [management](guide) (IAM).", "Use IAM."],
+      ["identity and access [management](two three 'a title') (IAM).", "Use IAM."],
+      // An angle bracket that is never closed, and a parenthesis that is never closed.
+      ["identity and access [management](<two) (IAM).", "Use IAM."],
+      ["identity and access [management](two(three) (IAM).", "Use IAM."],
+      ["identity and access [management](<two < three>) (IAM).", "Use IAM."],
+      // A title needs a destination before it, and white space between the two.
+      ["identity and access [management]('a title') (IAM).", "Use IAM."],
+      ["identity and access [management](<./two three>'a title') (IAM).", "Use IAM."],
+      // A title with no space before it, and words after a title.
+      ["identity and access [management](two'a title') (IAM).", "Use IAM."],
+      ["identity and access [management](two 'a title' three) (IAM).", "Use IAM."],
+      // A link inside the label of brackets that form none is still a link.
+      ["[identity [and](one) access management](two three) (IAM).", "Use IAM."],
+    ]) {
+      expect(acronyms(lines.join(BREAK)), lines.join(" / ")).toEqual(undefinedAt("IAM", 2));
+    }
+    // A destination that wraps holds white space, so it is none.
+    const wrapped = ["[identity and", "access management](the", "guide 'a title') (IAM).", "Use IAM."];
+    expect(acronyms(wrapped.join(BREAK))).toEqual(undefinedAt("IAM", 4));
+  });
+
+  test("a destination and a title in any of their forms are a link", () => {
+    for (const lines of [
+      ["identity and access [management](two) (IAM).", "Use IAM."],
+      ["identity and access [management](<two three>) (IAM).", "Use IAM."],
+      ["identity and access [management](<./the guide.md>) (IAM).", "Use IAM."],
+      ["identity and access [management](<./the guide.md> 'a title') (IAM).", "Use IAM."],
+      ['identity and access [management](two "a title") (IAM).', "Use IAM."],
+      ["identity and access [management](two 'a title') (IAM).", "Use IAM."],
+      ["identity and access [management](two (a title)) (IAM).", "Use IAM."],
+      ["identity and access [management](<two three> 'a title') (IAM).", "Use IAM."],
+      ["identity and access [management](two(three)) (IAM).", "Use IAM."],
+      // GitHub reads this as a link to "two(three", though the parenthesis never closes.
+      ["identity and access [management](two(three 'a title') (IAM).", "Use IAM."],
+      ["identity and access [management]( two ) (IAM).", "Use IAM."],
+      [`identity and access [management](two${String.fromCharCode(9)}'a title') (IAM).`, "Use IAM."],
+      ["identity and access [management]() (IAM).", "Use IAM."],
+      ["identity and access [management](two", "'a title') (IAM). Use IAM."],
+      ["identity and access ![management](chart.png 'a title') (IAM).", "Use IAM."],
     ]) {
       expect(acronyms(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
     }
