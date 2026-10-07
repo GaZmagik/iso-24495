@@ -31,9 +31,11 @@ import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
  * Exit 0 means the files were written, or printed on a dry run. Exit 1 means
  * the API or the fixture could not be read, or the payload was malformed, and
  * no file was written. Exit 1 means the same where a table exists and cannot
- * be read: every table is read before any is written, so the history is left
- * as it was. A missed day can be fetched again, and a history written over
- * cannot. Exit 1 also means a file could not be written. The
+ * be read, or is malformed as `MalformedTable` describes: every table is read
+ * before any is written, so the history is left as it was. A missed day can be
+ * fetched again, and a history written over cannot. A malformed table is for a
+ * person to repair, and every run is refused until it is. Exit 1 also means a
+ * file could not be written. The
  * files are written one after another, so those before it stay written, and
  * the reason names them. Exit 2 means no data directory was given.
  *
@@ -135,6 +137,15 @@ export async function runCli(
       return 1;
     }
   }
+  // A table that is there and is malformed stops the run for the same reason. Read as
+  // far as it can be, it loses rows, and the new table would be written over the rest.
+  for (const [name, header] of TABLE_HEADERS) {
+    const table = readTable(existing[name] ?? null, header);
+    if ("fault" in table) {
+      writeErr("Could not read " + name + ": " + table.fault + ". No table was written, so the history is as it was.");
+      return 1;
+    }
+  }
   const files = [
     { name: "daily.csv", text: mergeDaily(existing["daily.csv"] ?? null, snapshot) },
     { name: "windows.csv", text: mergeWindows(existing["windows.csv"] ?? null, date, snapshot) },
@@ -231,6 +242,32 @@ export function textIfPresent(read: () => string): string | null {
   }
 }
 
+/**
+ * A kept table is malformed, so it cannot be read whole and nothing may be written
+ * over it. Each merge throws this. `runCli` looks at every table first, so it
+ * reports the fault and never meets the throw.
+ *
+ * A table is malformed where:
+ *
+ * - a quote never closes;
+ * - its first row is not the header this command writes, cell for cell;
+ * - a row has more or fewer cells than that header;
+ * - a quote stands anywhere but around a whole cell, or doubled inside one.
+ *
+ * What a cell holds is not looked at. So a count that is not a number is kept, and
+ * so is a row made of two rows by a quote on each, where its cells come to the
+ * right number. Blank rows are passed over, and blank rows alone are no table.
+ */
+export class MalformedTable extends Error {
+  constructor(
+    /** What is wrong, in fixed words that quote nothing from the table. A row is named by its line. */
+    readonly fault: string,
+  ) {
+    super("A traffic table is malformed");
+    this.name = "MalformedTable";
+  }
+}
+
 export interface Deps {
   /** The text of a file, null where there is no such file. Throws for a file that cannot be read. */
   readText(path: string): string | null;
@@ -277,6 +314,11 @@ const WINDOW_HEADER = [
   "watchers",
 ];
 const REFERRER_HEADER = ["snapshot_date", "referrer", "views", "uniques"];
+const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
+  ["daily.csv", DAILY_HEADER],
+  ["windows.csv", WINDOW_HEADER],
+  ["referrers.csv", REFERRER_HEADER],
+];
 
 const USAGE = [
   "Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]",
@@ -383,24 +425,41 @@ function csvCell(value: string): string {
   return needsQuotes ? '"' + value.replace(/"/g, '""') + '"' : value;
 }
 
-function splitCsvLine(line: string): string[] {
+/**
+ * The cells of one row, or null where a quote stands anywhere but around a whole
+ * cell or doubled inside one. Such a row was once read with its quotes dropped.
+ *
+ * @param row One row as `rowTexts` cuts it, so every quote in it closes.
+ */
+function splitCsvLine(row: string): string[] | null {
   const cells: string[] = [];
   let cell = "";
   let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index] as string;
-    if (quoted && character === '"' && line[index + 1] === '"') {
-      cell += '"';
-      index += 1;
+  // Whether the cell was in quotes and its closing quote has been read.
+  let closed = false;
+  for (let index = 0; index < row.length; index += 1) {
+    const character = row[index] as string;
+    if (quoted) {
+      if (character !== '"') {
+        cell += character;
+      } else if (row[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        quoted = false;
+        closed = true;
+      }
       continue;
     }
-    if (character === '"') {
-      quoted = !quoted;
-      continue;
-    }
-    if (character === "," && !quoted) {
+    if (character === ",") {
       cells.push(cell);
       cell = "";
+      closed = false;
+      continue;
+    }
+    if (closed || (character === '"' && cell !== "")) return null;
+    if (character === '"') {
+      quoted = true;
       continue;
     }
     cell += character;
@@ -412,24 +471,63 @@ function splitCsvLine(line: string): string[] {
 /**
  * The rows of a table without its header, each as its cells.
  *
+ * @throws MalformedTable where the table is malformed, as that class describes.
+ */
+function readRows(existing: string | null, header: string[]): string[][] {
+  const table = readTable(existing, header);
+  if ("fault" in table) throw new MalformedTable(table.fault);
+  return table.rows;
+}
+
+/**
+ * The rows of a table without its header, each as its cells, or what is wrong with
+ * the table in the words `MalformedTable` carries.
+ *
  * A row ends at a line break that stands outside quotes. The table was once cut at
  * every line break before any quote was read. The writer puts a name holding a line
  * break in quotes, so on the next run that one row was read as two broken ones, and
- * the history kept them.
+ * the history kept them. Reading by the quotes does not mend a table left in that
+ * state: its rows have too few cells, so it is malformed, and it is refused.
  *
  * White space at either end of a row is dropped, which takes the carriage return of
  * a Windows line ending, and a row left blank is passed over. `csvCell` quotes any
  * value that this would change.
+ *
+ * @param header The header this command writes for the table. The first row that is
+ *     not blank must be it.
  */
-function readRows(existing: string | null): string[][] {
-  const rows = rowTexts(existing ?? "")
-    .map((row) => row.trim())
-    .filter((row) => row !== "");
-  return rows.slice(1).map(splitCsvLine);
+function readTable(existing: string | null, header: string[]): { rows: string[][] } | { fault: string } {
+  const texts = rowTexts(existing ?? "");
+  if (texts === null) return { fault: "it holds a quote that never closes" };
+  const rows: string[][] = [];
+  let headerRead = false;
+  let nextLine = 1;
+  for (const text of texts) {
+    const line = nextLine;
+    nextLine += text.split("\n").length;
+    const row = text.trim();
+    if (row === "") continue;
+    const cells = splitCsvLine(row);
+    if (cells === null) return { fault: "the row on line " + line + " holds a quote that is not around a whole cell" };
+    if (!headerRead) {
+      if (JSON.stringify(cells) !== JSON.stringify(header)) return { fault: "its first row is not the header this command writes" };
+      headerRead = true;
+      continue;
+    }
+    if (cells.length !== header.length) {
+      const held = cells.length === 1 ? "1 cell" : cells.length + " cells";
+      return { fault: "the row on line " + line + " has " + held + " where the header has " + header.length };
+    }
+    rows.push(cells);
+  }
+  return { rows };
 }
 
-/** The text of each row of a table, cut at each line break that is not inside quotes. */
-function rowTexts(table: string): string[] {
+/**
+ * The text of each row of a table, cut at each line break that is not inside quotes.
+ * Null where a quote never closes, so the last row would run to the end of the table.
+ */
+function rowTexts(table: string): string[] | null {
   const rows: string[] = [];
   let quoted = false;
   let start = 0;
@@ -443,7 +541,7 @@ function rowTexts(table: string): string[] {
     }
   }
   rows.push(table.slice(start));
-  return rows;
+  return quoted ? null : rows;
 }
 
 // Writes the rows back with the newest reading for each key winning, because a
@@ -467,14 +565,14 @@ function writeRows(header: string[], rows: string[][], keyWidth: number): string
  * figures for a day are still moving while it is in progress. Every other kept row
  * stays, which is how the series outlives the fourteen days GitHub holds.
  *
- * @param existing The file as it stands. `null` and an empty string both mean
- *     there is none yet. Its first line is taken to be the header and dropped
- *     unread, so text with no header loses its first row.
+ * @param existing The file as it stands. `null`, an empty string and blank lines
+ *     alone all mean there is none yet.
  * @param snapshot A day that has clones and no views gets zero views, and the
  *     reverse.
  * @returns The whole file: the header, then one row for each day in date
  *     order, ending with a line break. Only the header when there is nothing
  *     kept and the snapshot has no days. Nothing is written to disk.
+ * @throws MalformedTable where `existing` is malformed, as that class describes.
  */
 export function mergeDaily(existing: string | null, snapshot: Snapshot): string {
   const byDate = new Map<string, string[]>();
@@ -487,7 +585,7 @@ export function mergeDaily(existing: string | null, snapshot: Snapshot): string 
     row[4] = String(point.uniques);
     byDate.set(point.timestamp, row);
   }
-  return writeRows(DAILY_HEADER, [...readRows(existing), ...byDate.values()], 1);
+  return writeRows(DAILY_HEADER, [...readRows(existing, DAILY_HEADER), ...byDate.values()], 1);
 }
 
 /**
@@ -497,13 +595,14 @@ export function mergeDaily(existing: string | null, snapshot: Snapshot): string 
  * These totals cannot be rebuilt from daily.csv, so each reading is kept. A
  * second reading on the same date replaces the first; a new date appends.
  *
- * @param existing The file as it stands. `null` and an empty string both mean
- *     there is none yet. Its first line is dropped unread, as a header.
+ * @param existing The file as it stands. `null`, an empty string and blank lines
+ *     alone all mean there is none yet.
  * @param date The day the snapshot was taken, as YYYY-MM-DD. It is the key.
  * @param snapshot The window length recorded is the number of daily clone
  *     points, whatever the views list holds.
  * @returns The whole file: the header, then one row for each date in date
  *     order, ending with a line break. Nothing is written to disk.
+ * @throws MalformedTable where `existing` is malformed, as that class describes.
  */
 export function mergeWindows(existing: string | null, date: string, snapshot: Snapshot): string {
   const row = [
@@ -517,7 +616,7 @@ export function mergeWindows(existing: string | null, date: string, snapshot: Sn
     String(snapshot.repo.forks),
     String(snapshot.repo.watchers),
   ];
-  return writeRows(WINDOW_HEADER, [...readRows(existing), row], 1);
+  return writeRows(WINDOW_HEADER, [...readRows(existing, WINDOW_HEADER), row], 1);
 }
 
 /**
@@ -528,12 +627,13 @@ export function mergeWindows(existing: string | null, date: string, snapshot: Sn
  * date replaces the rows for referrers it still lists, and leaves in place a
  * referrer that the first reading listed and the second does not.
  *
- * @param existing The file as it stands. `null` and an empty string both mean
- *     there is none yet. Its first line is dropped unread, as a header.
+ * @param existing The file as it stands. `null`, an empty string and blank lines
+ *     alone all mean there is none yet.
  * @param date The day the snapshot was taken, as YYYY-MM-DD.
  * @returns The whole file: the header, then the rows ordered by date and
  *     referrer, ending with a line break. A snapshot with no referrers returns
  *     the kept rows alone. Nothing is written to disk.
+ * @throws MalformedTable where `existing` is malformed, as that class describes.
  */
 export function mergeReferrers(existing: string | null, date: string, snapshot: Snapshot): string {
   const rows = snapshot.referrers.map((entry) => [
@@ -542,7 +642,7 @@ export function mergeReferrers(existing: string | null, date: string, snapshot: 
     String(entry.count),
     String(entry.uniques),
   ]);
-  return writeRows(REFERRER_HEADER, [...readRows(existing), ...rows], 2);
+  return writeRows(REFERRER_HEADER, [...readRows(existing, REFERRER_HEADER), ...rows], 2);
 }
 
 // Why the traffic API could not be read, in fixed words. An endpoint is named
