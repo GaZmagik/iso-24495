@@ -66,9 +66,10 @@ export function runCli(
   // one exists is kept apart from what it holds, because no value can stand for
   // "no file": a state file holding the JSON text null parses to null, and that
   // file was once taken for a first audit, never checked, and replaced.
-  const stateExists = statePath ? existsSync(statePath) : false;
+  const existingState = statePath && existsSync(statePath) ? statePath : undefined;
+  const stateExists = existingState !== undefined;
   const inputs: JsonFile[] = [
-    stateExists ? readJsonFile(statePath as string, "--state") : { ok: true, value: undefined },
+    existingState !== undefined ? readJsonFile(existingState, "--state") : { ok: true, value: undefined },
     readJsonFile(findingsPath, "<findings.json>"),
     readJsonFile(evidencePath, "<evidence.json>"),
     readJsonFile(maturityPath, "<maturity.json>"),

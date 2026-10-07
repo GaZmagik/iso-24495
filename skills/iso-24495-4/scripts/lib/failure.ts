@@ -17,6 +17,7 @@ const FILE_FAULTS: ReadonlyMap<string, string> = new Map([
   ["EPERM", "permission refused"],
   ["EISDIR", "a directory where a file was expected"],
   ["ENOTDIR", "a file where a directory was expected"],
+  ["EBUSY", "in use by another program"],
 ]);
 
 // `Error` itself is the fallback, so it is not listed.
