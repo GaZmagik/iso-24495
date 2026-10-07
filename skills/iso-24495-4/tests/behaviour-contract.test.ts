@@ -2904,6 +2904,41 @@ describe("a link between an expansion and its acronym", () => {
     [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
   const acronyms = (text: string) => findingsIn(text).filter((finding) => finding.startsWith("acronym"));
 
+  // A reference label holds at most 999 characters, as CommonMark has it. Of two
+  // nested pairs of brackets only one is the link, so the limit decides what is read.
+  // A review moved the limit by one and no test failed.
+  //
+  // The renderer of GitHub reads one character more: asked on 2026-10-08, it took a
+  // label of 1,000 characters for a reference and refused one of 1,001. This rule
+  // keeps the limit that CommonMark states and that Bun renders.
+  test("a reference label of 999 characters is a label, and one of 1,000 is not", () => {
+    const nested = (spaces: number): string => {
+      const label = " ".repeat(spaces) + "management";
+      expect(label).toHaveLength(spaces + 10);
+      return [`[identity and access [${label}]](guide) (IAM).`, "Use IAM.", "", `[${label}]: /u`].join(BREAK);
+    };
+    // At 999 the inner pair is a link to the reference. The outer pair is then text,
+    // and "(guide)" stands between the expansion and its acronym.
+    for (const spaces of [0, 988, 989]) {
+      expect(acronyms(nested(spaces)), `${spaces + 10}`).toEqual(undefinedAt("IAM", 2));
+      expect(Bun.markdown.html(nested(spaces)), `${spaces + 10}`).toContain('href="/u"');
+    }
+    // At 1,000 the inner pair is no label, so the outer pair is the link and its label is read.
+    for (const spaces of [990, 991]) {
+      expect(acronyms(nested(spaces)), `${spaces + 10}`).toEqual([]);
+      expect(Bun.markdown.html(nested(spaces)), `${spaces + 10}`).toContain('href="guide"');
+    }
+    // The limit alone, with the reference given, so that nothing else can set it.
+    const marked = (length: number): number[] => {
+      const label = "a".repeat(length);
+      const syntax = linkSyntaxIn(`[${label}]`, new Set([label]));
+      expect(syntax).toHaveLength(length + 2);
+      expect([...syntax.subarray(1, length + 1)].includes(1)).toBe(false);
+      return [syntax[0] as number, syntax[length + 1] as number];
+    };
+    expect([998, 999, 1_000, 1_001].map(marked)).toEqual([[1, 1], [1, 1], [0, 0], [0, 0]]);
+  });
+
   test("a word in a destination is no word of the expansion", () => {
     for (const lines of [
       ["[identity and access management](guide) (IAM).", "Use IAM."],
