@@ -80,6 +80,9 @@ if ! cat -- "$TEXT" > /dev/null 2>&1; then
   exit 2
 fi
 
+# What a later read of the same file says when it fails.
+READ_AGAIN_FAILED="The path given as the first argument, $GIVEN_LENGTH characters long, names a file that was read once and cannot be read again."
+
 if [ -n "$SUMMARY" ]; then
   printf '## Pull request description audit\n\n' >> "$SUMMARY"
 fi
@@ -90,9 +93,20 @@ fi
 # reads it. Whitespace is whatever JavaScript's \s matches, which includes the
 # no-break space, the other Unicode space characters and the byte order mark,
 # so the answer is the same on every platform whatever its locale.
+#
+# The file was read just above, and it is read again here and by the audit below.
+# It can vanish or be locked between two reads. A review removed it after the
+# first, and this step then threw: Bun printed its own diagnostic, with the path
+# and a stack trace, and left with 1, which is the code for an empty description.
+# So the step catches a failed read and leaves with 2, and prints nothing.
 EMPTY_STATUS=0
 DESCRIPTION_FILE="$TEXT" bun -e '
-  const source = require("node:fs").readFileSync(process.env.DESCRIPTION_FILE, "utf8");
+  let source;
+  try {
+    source = require("node:fs").readFileSync(process.env.DESCRIPTION_FILE, "utf8");
+  } catch {
+    process.exit(2);
+  }
   process.exit(/\S/.test(source) ? 0 : 1);
 ' || EMPTY_STATUS=$?
 if [ "$EMPTY_STATUS" -eq 1 ]; then
@@ -100,7 +114,7 @@ if [ "$EMPTY_STATUS" -eq 1 ]; then
   exit 1
 fi
 if [ "$EMPTY_STATUS" -ne 0 ]; then
-  echo "The path given as the first argument, $GIVEN_LENGTH characters long, names a file that exists but cannot be read." >&2
+  echo "$READ_AGAIN_FAILED" >&2
   exit 2
 fi
 
@@ -116,6 +130,12 @@ AUDIT_STATUS=0
 bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts "$TEXT" --no-front-matter \
   --json "$FINDINGS" > "$TABLE" || AUDIT_STATUS=$?
 if [ "$AUDIT_STATUS" -ne 0 ]; then
+  # The audit reads the file once more. Where it failed because the file can no
+  # longer be read, that is the exit 2 this header promises, not a failed audit.
+  if ! cat -- "$TEXT" > /dev/null 2>&1; then
+    echo "$READ_AGAIN_FAILED" >&2
+    exit 2
+  fi
   report "The audit did not run to completion (exit $AUDIT_STATUS), so the description was not checked."
   exit 3
 fi
