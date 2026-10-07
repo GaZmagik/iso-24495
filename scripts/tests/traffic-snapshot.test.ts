@@ -614,3 +614,163 @@ describe("textIfPresent", () => {
     }
   }, 30_000);
 });
+
+describe("a table is read back as it was written", () => {
+  const LINE_FEED = String.fromCharCode(10);
+  const CARRIAGE_RETURN = String.fromCharCode(13);
+  const QUOTE = String.fromCharCode(34);
+
+  /** Every record of a table but its header, read by the rules the writer follows and by nothing of the module. */
+  function records(table: string): string[][] {
+    const rows: string[][] = [[""]];
+    let quoted = false;
+    for (let at = 0; at < table.length; at++) {
+      const character = table[at] as string;
+      const row = rows.at(-1) as string[];
+      if (quoted && character === QUOTE && table[at + 1] === QUOTE) {
+        row[row.length - 1] += QUOTE;
+        at++;
+      } else if (character === QUOTE) {
+        quoted = !quoted;
+      } else if (!quoted && character === ",") {
+        row.push("");
+      } else if (!quoted && character === LINE_FEED) {
+        rows.push([""]);
+      } else {
+        row[row.length - 1] += character;
+      }
+    }
+    expect(quoted, "every quote is closed").toBe(false);
+    // The writer ends the table with a line break, so the last record is empty.
+    expect(rows.pop()).toEqual([""]);
+    return rows.slice(1);
+  }
+
+  /** A snapshot holding these referrers and nothing else worth reading. */
+  function snapshotWith(referrers: string[]): Snapshot {
+    return { ...snapshotOf(RAW), referrers: referrers.map((referrer, index) => ({ referrer, count: index + 7, uniques: index + 2 })) };
+  }
+
+  // The writer put a name holding a line break in quotes, as it should. The reader
+  // cut the table into lines before it read the quotes, so on the next run that row
+  // became two broken ones: "2000-01-01,first" and a stray "second,7,2".
+  test("a referrer holding a line break is one row on the next run, and the run after", async () => {
+    const name = `first${LINE_FEED}second`;
+    const { deps, files, stdout, stderr } = harness({ fetchSnapshot: async () => ({ ...RAW, referrers: [{ referrer: name, count: 7, uniques: 2 }] }) });
+    const table = (): string => files.get(join("data", "referrers.csv")) as string;
+    deps.today = () => "2000-01-01";
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+    expect(records(table())).toEqual([["2000-01-01", name, "7", "2"]]);
+    for (const [day, held] of [["2000-01-02", 2], ["2000-01-03", 3]] as Array<[string, number]>) {
+      deps.today = () => day;
+      expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+      const rows = records(table());
+      expect(rows).toHaveLength(held);
+      expect(rows[0]).toEqual(["2000-01-01", name, "7", "2"]);
+      expect(rows.at(-1)).toEqual([day, name, "7", "2"]);
+    }
+    expect(stderr).toEqual([]);
+  });
+
+  test("generated names holding commas, quotes, line breaks and carriage returns come back equal across three runs", () => {
+    const pieces = ["a", "b", "example.com", ",", QUOTE, QUOTE + QUOTE, LINE_FEED, CARRIAGE_RETURN, CARRIAGE_RETURN + LINE_FEED, " ",
+      LINE_FEED + LINE_FEED, String.fromCharCode(9)];
+    const random = sequence(24495);
+    const name = (): string => {
+      let made = "";
+      const length = Math.floor(random() * 6);
+      for (let piece = 0; piece < length; piece++) {
+        made += pieces[Math.floor(random() * pieces.length)] as string;
+      }
+      return made;
+    };
+    let compared = 0;
+    for (let trial = 0; trial < 300; trial++) {
+      const expected: string[][] = [];
+      let table: string | null = null;
+      for (const date of ["2000-01-01", "2000-01-02", "2000-01-03"]) {
+        const names = [...new Set(Array.from({ length: 1 + Math.floor(random() * 4) }, name))];
+        table = mergeReferrers(table, date, snapshotWith(names));
+        names.forEach((referrer, index) => expected.push([date, referrer, String(index + 7), String(index + 2)]));
+        // Every row written so far, on this run and on each one before it.
+        const read = records(table);
+        const key = (row: string[]): string => JSON.stringify(row);
+        if (JSON.stringify(read.map(key).sort()) !== JSON.stringify(expected.map(key).sort())) {
+          expect(read.map(key).sort()).toEqual(expected.map(key).sort());
+        }
+        compared += expected.length;
+      }
+      // A run that adds nothing writes the same table again.
+      expect(mergeReferrers(table, "2000-01-03", snapshotWith([]))).toBe(table as string);
+    }
+    expect(compared).toBeGreaterThan(3_000);
+  });
+
+  test("the other two tables keep a row whose key holds a line break", () => {
+    const odd = `2000-01-01${LINE_FEED}x, ${QUOTE}y${QUOTE}${CARRIAGE_RETURN}`;
+    const base = snapshotOf(RAW);
+    const first: Snapshot = { ...base, clones: { ...base.clones, days: [{ timestamp: odd, count: 5, uniques: 3 }] }, views: { ...base.views, days: [] } };
+    let daily = mergeDaily(null, first);
+    expect(records(daily)).toEqual([[odd, "5", "3", "0", "0"]]);
+    for (let run = 0; run < 2; run++) {
+      daily = mergeDaily(daily, base);
+    }
+    expect(records(daily)).toContainEqual([odd, "5", "3", "0", "0"]);
+    expect(records(daily)).toHaveLength(3);
+
+    let windows = mergeWindows(null, odd, base);
+    const held = records(windows)[0] as string[];
+    expect(held[0]).toBe(odd);
+    for (const date of ["2000-01-02", "2000-01-03"]) {
+      windows = mergeWindows(windows, date, base);
+    }
+    expect(records(windows)).toContainEqual(held);
+    expect(records(windows)).toHaveLength(3);
+  });
+
+  test("a value the reader would change is written in quotes", () => {
+    const base = snapshotOf(RAW);
+    // White space at the end of a row is dropped when the row is read, so a first or
+    // last cell that opens or closes with it is quoted.
+    for (const key of ["2000-01-01 ", " 2000-01-01", `2000-01-01${CARRIAGE_RETURN}`, `${String.fromCharCode(9)}2000-01-01`]) {
+      let windows = mergeWindows(null, key, base);
+      expect(windows.split(LINE_FEED)[1]).toStartWith(`${QUOTE}${key}${QUOTE},`);
+      windows = mergeWindows(windows, "2000-01-02", base);
+      expect(records(windows).map((row) => row[0])).toEqual([key, "2000-01-02"].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+    }
+    // A carriage return inside a name is quoted too, as other readers of these tables expect.
+    const inside = `a${CARRIAGE_RETURN}b`;
+    expect(mergeReferrers(null, "2000-01-01", snapshotWith([inside])).split(LINE_FEED)[1]).toBe(`2000-01-01,${QUOTE}${inside}${QUOTE},7,2`);
+    expect(mergeReferrers(null, "2000-01-01", snapshotWith(["plain.example"])).split(LINE_FEED)[1]).toBe("2000-01-01,plain.example,7,2");
+  });
+
+  test("a table with no line break after its last row keeps that row", () => {
+    const kept = ["snapshot_date,referrer,views,uniques", "2000-01-01,a.example,1,1", "2000-01-01,b.example,2,2"].join(LINE_FEED);
+    expect(records(mergeReferrers(kept, "2000-01-02", snapshotWith([])))).toEqual([
+      ["2000-01-01", "a.example", "1", "1"],
+      ["2000-01-01", "b.example", "2", "2"],
+    ]);
+  });
+
+  test("a table as it is in the repository today reads as it did", () => {
+    // Windows line endings, a blank line and a space after the last cell, as a hand
+    // edit leaves them.
+    const kept = ["snapshot_date,referrer,views,uniques", "2000-01-01,a.example,1,1 ", "", "2000-01-01,b.example,2,2", ""].join(CARRIAGE_RETURN + LINE_FEED);
+    expect(records(mergeReferrers(kept, "2000-01-02", snapshotWith([])))).toEqual([
+      ["2000-01-01", "a.example", "1", "1"],
+      ["2000-01-01", "b.example", "2", "2"],
+    ]);
+  });
+});
+
+/** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */
+function sequence(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
