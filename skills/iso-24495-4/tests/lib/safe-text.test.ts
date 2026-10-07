@@ -380,11 +380,27 @@ describe("a character that draws nothing is shown as its code", () => {
     expect(safePath(`${man}${String.fromCodePoint(0x200d)}${woman}.md`, false)).toBe(`${man}${code(0x200d)}${woman}.md`);
   });
 
+  // The object replacement character stands for something that is not there. Unicode
+  // classes it as a symbol, so no property finds it, and a review drew "ab.md" and the
+  // same name with it between the letters to the same pixels in three fonts.
+  test("the object replacement character is shown as its code, though it is a symbol", () => {
+    const object = String.fromCharCode(0xfffc);
+    expect(/[\p{C}\p{Z}\p{Default_Ignorable_Code_Point}]/u.test(object)).toBe(false);
+    expect(safePath(`a${object}b.md`, false)).toBe(`a${code(0xfffc)}b.md`);
+    expect(safePath(`a${object}b.md`, true)).toBe(`a${code(0xfffc)}b.md`);
+    expect(safePath(`a${object}b.md`, false)).not.toBe(safePath("ab.md", false));
+    expect(safePath(object + object, false)).toBe(code(0xfffc) + code(0xfffc));
+    // Its neighbours are a format character and the replacement character, which draws.
+    expect(safePath(String.fromCharCode(0xfffb), false)).toBe(code(0xfffb));
+    expect(safePath(String.fromCharCode(0xfffd), false)).toBe(String.fromCharCode(0xfffd));
+    expect(safePathCell(`a${object}b.md`, false)).toBe(`${String.fromCharCode(96)}a${code(0xfffc)}b.md${String.fromCharCode(96)}`);
+  });
+
   test("what is left alone: a mark that draws, a blank that is a symbol, and private use", () => {
     // A combining mark with no letter before it still draws. The braille blank is a
     // symbol to Unicode, though it looks like a space. A private use character draws
     // whatever a font gives it. None is in a class the formatter reads, so each stays.
-    for (const point of [0x301, 0x2800, 0xe000, 0xfffc]) {
+    for (const point of [0x301, 0x2800, 0xe000, 0x10ffff]) {
       const name = `a${String.fromCodePoint(point)}b.md`;
       expect(safePath(name, false), `U+${point.toString(16)}`).toBe(name);
     }
