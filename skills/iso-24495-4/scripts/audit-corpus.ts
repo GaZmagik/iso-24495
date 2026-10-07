@@ -6,6 +6,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  inlineText,
   markdownLinks,
   mergedSentences,
   normaliseReference,
@@ -750,18 +751,18 @@ function acronymViolations(
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
   let recent: string[] = [];
   let previousBlock: number | undefined;
-  const marksByLine = pairedMarksByLine(document.lines, blockOfLine, written);
+  const definitionLines = linesForDefinitions(document, blockOfLine, written);
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
     const block = blockOfLine.get(i);
     if (block === undefined || block !== previousBlock) recent = [];
     previousBlock = block;
     // Read without paired emphasis marks, so "(**IAM**)" defines as "(IAM)" does and
-    // "ident*ity*" still gives its initial. The text is one source line, and its marks
-    // were paired across the whole block the line sits in. A block that may hold a link
-    // has none, and is read as written.
-    const marks = marksByLine[i] as number[];
-    const sourceLine = withoutOffsets(document.lines[i] as string, 0, new Set(marks));
+    // "ident*ity*" still gives its initial. The text is one line, and its marks were
+    // paired across the whole block the line sits in. A block that may hold a link has
+    // none, and is read with each link replaced by its label.
+    const { text: line, marks } = definitionLines[i] as { text: string; marks: number[] };
+    const sourceLine = withoutOffsets(line, 0, new Set(marks));
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");
@@ -834,7 +835,8 @@ function acronymViolations(
 }
 
 /**
- * For each line of a document, where its paired emphasis marks sit in that line.
+ * The lines the scan for acronym definitions reads, and where the paired emphasis marks
+ * sit in each.
  *
  * The marks are paired across the whole block a line sits in, because emphasis can open
  * on one line and close on a later one. Pairing each line alone left "identi*ty and
@@ -844,44 +846,56 @@ function acronymViolations(
  *
  * They agree about links as well, because both ask `mayHoldLink` about the same source
  * lines. A block that may hold a link gives no marks here and none to `unmarkedTokens`,
- * so both read it as written, for the reason `mayHoldLink` gives.
+ * for the reason `mayHoldLink` gives.
  *
- * A line in no block, such as a table row, is paired alone, and is asked about alone.
+ * Such a block is read with each link replaced by its label, as the uses are read. A
+ * reader never sees a destination, and with the links written out its words counted as
+ * words of the expansion: "[identity and access management](guide) (IAM)" spelt AMG.
+ * A destination that held "(ABC)" was read as an acronym in brackets too. A link can
+ * wrap, so the links are replaced across the block and not line by line.
  *
- * @param lines The document as `readDocument` gives it, one entry for each source line.
+ * A line in no block, such as a table row, is read alone.
+ *
+ * @param document The document as `readDocument` gives it.
  * @param blockOfLine The block each line sits in, by the index of the line. Lines of one
  *     block share a number and follow one another.
  * @param written The same lines as `toLines` gives them, which is what `mayHoldLink`
  *     reads.
- * @returns One list for each line, in the same order: the offsets of its paired marks,
- *     ascending and counted from the start of that line. Empty for a line with none.
+ * @returns One entry for each line of the document, in the same order. `text` is the
+ *     line, and `marks` the offsets of its paired marks, ascending and counted from the
+ *     start of `text`. `marks` is empty for a line with none.
  */
-function pairedMarksByLine(
-  lines: readonly string[],
+function linesForDefinitions(
+  document: { lines: readonly string[]; references: ReadonlySet<string> },
   blockOfLine: ReadonlyMap<number, number>,
   written: readonly string[],
-): number[][] {
-  const marksByLine: number[][] = lines.map(() => []);
-  for (let first = 0; first < lines.length;) {
+): Array<{ text: string; marks: number[] }> {
+  const read: Array<{ text: string; marks: number[] }> = [];
+  for (let first = 0; first < document.lines.length;) {
     const block = blockOfLine.get(first);
     let last = first;
     while (block !== undefined && blockOfLine.get(last + 1) === block) last++;
-    let line = first;
+    const source = document.lines.slice(first, last + 1).join("\n");
+    const linked = mayHoldLink(written, first, last - first + 1);
+    // Replacing a link keeps every line ending, so there is one text for each line.
+    const texts = (linked ? inlineText(source, document.references) : source).split("\n");
+    const marks = linked ? [] : emphasisMarkOffsets(source);
     let lineStart = 0;
-    const marks = mayHoldLink(written, first, last - first + 1)
-      ? []
-      : emphasisMarkOffsets(lines.slice(first, last + 1).join("\n"));
-    for (const mark of marks) {
-      // A mark is never the line break, so this stops on the line that holds it.
-      while (mark > lineStart + (lines[line] as string).length) {
-        lineStart += (lines[line] as string).length + 1;
-        line++;
+    let next = 0;
+    for (let line = first; line <= last; line++) {
+      const text = texts[line - first] ?? "";
+      const inLine: number[] = [];
+      // A mark is never the line break, so each one falls inside a line.
+      while (next < marks.length && (marks[next] as number) < lineStart + text.length) {
+        inLine.push((marks[next] as number) - lineStart);
+        next++;
       }
-      (marksByLine[line] as number[]).push(mark - lineStart);
+      read.push({ text, marks: inLine });
+      lineStart += text.length + 1;
     }
     first = last + 1;
   }
-  return marksByLine;
+  return read;
 }
 
 /**

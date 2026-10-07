@@ -2798,3 +2798,59 @@ describe("an acronym definition whose emphasis runs over a line break", () => {
     expect(findingsIn(heading.join(BREAK)).filter((finding) => finding.startsWith("acronym"))).toEqual([]);
   });
 });
+
+describe("a link between an expansion and its acronym", () => {
+  // The scan for definitions read source lines, where a link is still written out, so
+  // the words of its destination counted as words of the expansion. A reader never
+  // sees a destination. "[identity and access management](guide) (IAM)" gave the
+  // initials AMG, and IAM was reported as undefined on its next use.
+  const undefinedAt = (acronym: string, line: number) =>
+    [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
+  const acronyms = (text: string) => findingsIn(text).filter((finding) => finding.startsWith("acronym"));
+
+  test("a word in a destination is no word of the expansion", () => {
+    for (const lines of [
+      ["[identity and access management](guide) (IAM).", "Use IAM."],
+      ["[identity and access management](#) (IAM).", "Use IAM."],
+      ["identity and access [management](the-guide.md) (IAM). Use IAM."],
+      ["identity [and](one) access [management](two three) (IAM). Use IAM."],
+      // A destination and a title that wrap, with the link over three lines.
+      ["[identity and", "access management](the", "guide 'a title') (IAM). Use IAM."],
+      // A reference that the document defines is a link, and its label is not read.
+      ["identity and access [management][guide] (IAM). Use IAM.", "", "[guide]: https://example.com"],
+      // A table row and a heading are read by the same scan.
+      ["| Term | Meaning |", "|---|---|", "| [identity and access management](guide) (IAM) | a service |", "", "Use IAM."],
+      ["# [identity and access management](guide) (IAM)", "", "Use IAM."],
+    ]) {
+      expect(acronyms(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
+    }
+  });
+
+  test("what a reader does see between them still counts", () => {
+    // A reference with no definition is text, brackets and all, so its second half is
+    // a word on the page.
+    expect(acronyms("identity and access [management][guide] (IAM). Use IAM.")).toEqual(undefinedAt("IAM", 1));
+    // The alternative text of an image is read out where the image stands.
+    expect(acronyms("identity and access management ![chart](guide.png) (IAM). Use IAM."))
+      .toEqual(undefinedAt("IAM", 1));
+    expect(acronyms("identity and access management guide (IAM). Use IAM.")).toEqual(undefinedAt("IAM", 1));
+  });
+
+  test("an acronym in a destination defines nothing", () => {
+    // "(ABC)" here is the destination of the link. It was read as an acronym in
+    // brackets after the words that spell it, so the use below went unreported.
+    expect(acronyms(["Use the [alpha beta cat](ABC) now.", "", "ABC is used."].join(BREAK)))
+      .toEqual(undefinedAt("ABC", 3));
+    expect(acronyms(["Use the alpha beta cat (ABC) now.", "", "ABC is used."].join(BREAK))).toEqual([]);
+  });
+
+  test("a definition after a link on its line is placed where the reader meets it", () => {
+    // The place of a definition was counted in the source line and the place of a use
+    // in the text without its links. A long destination ahead of both put the
+    // definition after its own use, and the use was reported.
+    expect(acronyms("[See](https://example.com/a/long/address) identity and access management (IAM). Use IAM."))
+      .toEqual([]);
+    expect(acronyms("[See](https://example.com/a/long/address) the IAM, identity and access management (IAM)."))
+      .toEqual(undefinedAt("IAM", 1));
+  });
+});
