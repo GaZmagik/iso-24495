@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withLinksAsLabels } from "../scripts/audit-corpus.ts";
+import { acronymReading } from "../scripts/audit-corpus.ts";
 import { proseBlocks } from "../scripts/lib/parse.ts";
 import { GITHUB_LINK_FORMS } from "./fixtures/github-link-forms.ts";
 
@@ -18,7 +18,6 @@ import { GITHUB_LINK_FORMS } from "./fixtures/github-link-forms.ts";
 const SLASH = String.fromCharCode(92);
 const BREAK = String.fromCharCode(10);
 const TICK = String.fromCharCode(96);
-const FILLER = String.fromCharCode(0xffff);
 const CASES = 40_000;
 
 /** For each form set aside, the letters GitHub showed for it. */
@@ -99,24 +98,23 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       "A paragraph [eleven](twelve", "'thirteen') and [r].", "",
       "[r]: https://example.com", "",
     ].join(BREAK);
-    const read = withLinksAsLabels(document).split(BREAK);
-    const written = document.split(BREAK);
-    const gone = (text: string): string => text.replaceAll(FILLER, "");
-    // Front matter, fenced and indented code and the line that defines a reference are as written.
+    const read = acronymReading(document).lines;
+    expect(read).toHaveLength(document.split(BREAK).length);
+    // Front matter, fenced and indented code and the line that defines a reference are
+    // blank to every rule, so no link is looked for in them.
     for (const line of [0, 1, 2, 10, 11, 12, 14, 19]) {
-      expect(read[line], `line ${line + 1}`).toBe(written[line] as string);
+      expect(read[line], `line ${line + 1}`).toBe("");
     }
-    expect(gone(read[4] as string)).toBe("# A heading one");
+    expect(read[4]).toBe("# A heading one");
     // A pipe in a destination is kept, so the row has the cells it had.
-    expect(gone(read[8] as string)).toBe("| three| | six |");
-    expect(gone(read[16] as string)).toBe("A paragraph eleven");
-    expect(gone(read[17] as string)).toBe(" and r.");
-    expect(read.map((line) => line.length)).toEqual(written.map((line) => line.length));
+    expect(read[8]).toBe("| three| | six |");
+    expect(read[16]).toBe("A paragraph eleven");
+    expect(read[17]).toBe(" and r.");
     // A heading over two lines is one block, so a link that wraps in it is one link.
-    const heading = withLinksAsLabels(["A heading [fourteen", "fifteen](sixteen)", "===", ""].join(BREAK)).split(BREAK);
-    expect(heading.slice(0, 2).map(gone)).toEqual(["A heading fourteen", "fifteen"]);
-    // A document with no square bracket is handed back as it is.
-    expect(withLinksAsLabels("No link here.")).toBe("No link here.");
+    const heading = acronymReading(["A heading [fourteen", "fifteen](sixteen)", "===", ""].join(BREAK)).lines;
+    expect(heading.slice(0, 2)).toEqual(["A heading fourteen", "fifteen"]);
+    // A document with no square bracket is read as the parser gives it.
+    expect(acronymReading("No link here.")).toEqual({ lines: ["No link here."], blocks: [{ line: 1, lines: ["No link here."] }] });
   });
 
   test("the document keeps its shape, so every line and every block is where it was", () => {
@@ -125,10 +123,9 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const lines = Array.from({ length: 1 + Math.floor(random() * 4) }, () =>
         `${pick(random, ["", "- ", "> ", "1. ", "# ", "  "])}[${pieces(random, LABEL, 3)}](${pieces(random, TAIL, 4)}) and [r] ${pick(random, ["", "| a |"])}`);
       const document = [...lines, "", "[r]: https://example.com", ""].join(BREAK);
-      const read = withLinksAsLabels(document);
-      expect(read.length, document).toBe(document.length);
-      expect(read.split(BREAK).map((line) => line.length)).toEqual(document.split(BREAK).map((line) => line.length));
-      expect(proseBlocks(read).map((block) => [block.line, block.lines.length]), document)
+      const read = acronymReading(document);
+      expect(read.lines, document).toHaveLength(document.split(BREAK).length);
+      expect(read.blocks.map((block) => [block.line, block.lines.length]), document)
         .toEqual(proseBlocks(document).map((block) => [block.line, block.lines.length]));
     }
   });
@@ -136,7 +133,7 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
 
 /** The words the acronym rule reads in a document of one block. */
 function readingText(document: string): string {
-  return proseBlocks(withLinksAsLabels(document)).map((block) => block.lines.join(" ")).join(" ").replaceAll(FILLER, "");
+  return acronymReading(document).blocks.map((block) => block.lines.join(" ")).join(" ");
 }
 
 /** The letters a page shows for rendered HTML, an image as its alternative text, which is what a screen reader says. */

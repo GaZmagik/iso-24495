@@ -730,12 +730,8 @@ function acronymViolations(
   // below take their text from this one value, so a place in one is the same place in
   // the other. They once read two texts, and a definition was then put after the use
   // that followed it.
-  const read = withLinksAsLabels(text, reading);
-  const document = readDocument(read, reading);
-  const lines = document.lines.map(withoutRemoved);
+  const { lines, blocks } = acronymReading(text, reading);
   const written = toLines(text);
-  const blocks = proseBlocks(read, reading)
-    .map((block) => ({ line: block.line, lines: block.lines.map(withoutRemoved) }));
   // The block each line sits in. The words before a parenthesis carry across a soft
   // line break, which is a space to the reader, so "identity and access" wrapped
   // before "management (IAM)" still spells the acronym. They never carry across a
@@ -748,7 +744,7 @@ function acronymViolations(
   });
   // The text of a setext heading can wrap across lines, and it is one heading, so
   // those lines are one block too, numbered after the prose blocks.
-  headings(read, reading).forEach((heading, index) => {
+  headings(text, reading).forEach((heading, index) => {
     for (let offset = 0; offset < heading.lines; offset++) {
       blockOfLine.set(heading.line - 1 + offset, blocks.length + index);
     }
@@ -760,7 +756,6 @@ function acronymViolations(
   let previousBlock: number | undefined;
   const marksByLine = pairedMarksByLine(lines, blockOfLine, written);
   for (let i = 0; i < lines.length; i++) {
-    if (document.hidden(i)) continue;
     const block = blockOfLine.get(i);
     if (block === undefined || block !== previousBlock) recent = [];
     previousBlock = block;
@@ -891,44 +886,85 @@ function pairedMarksByLine(
   return marksByLine;
 }
 
-// Stands where a character of link syntax stood, until the document has been read
-// into blocks. It is U+FFFF, which Unicode gives to no character.
-const REMOVED = String.fromCharCode(0xffff);
-
-/** A line without the places `withLinksAsLabels` left where link syntax stood. */
-function withoutRemoved(line: string): string {
-  return line.replaceAll(REMOVED, "");
-}
-
 /**
- * A document in which each link and image is its label, for the acronym rule.
+ * What the acronym rule reads: the document with each link and image as its label.
  *
  * A reader never sees a destination or a title, so the rule must not read their words:
  * "[identity and access management](guide) (IAM)" defines IAM. Brackets that form no
  * link are shown as written, so their words stay.
  *
- * Which brackets form a link is decided here and nowhere later, on the source lines
- * as written: before a backslash escape is taken for the character it escapes, and
- * before anything in angle brackets is taken for an HTML tag. Both happened first
- * once, and each made a link look like text.
+ * Which brackets form a link is decided once, by `linkSyntax`, on the source lines as
+ * written: before a backslash escape is taken for the character it escapes, and before
+ * anything in angle brackets is taken for an HTML tag. Both scans of the rule read this
+ * one result.
  *
- * The document keeps its shape. Each character of link syntax becomes U+FFFF and no
- * character is added or dropped, so every line is as long as it was and starts as it
- * did, and a block is where it was. A line break and a pipe inside a destination or a
- * title are kept for the same reason. The caller reads the blocks and then drops
- * every U+FFFF.
+ * What was removed is carried beside the text and never written into it. The document
+ * is read into lines and blocks twice, with one character standing where link syntax
+ * stood in the first reading and another in the second, and a place is dropped where
+ * the two readings differ. A character the document itself holds is alike in both, so
+ * it is kept, whatever it is. One character once stood for "removed" and every copy of
+ * it was deleted afterwards, the copies in the document too. Each copy keeps the
+ * shape of the document: every line is as long as it was and starts as it did, so
+ * every block is where it was.
  *
- * @returns The text itself where it holds no square bracket. Otherwise its lines joined
- *     by line breaks, with links replaced in each prose block, each heading and each
- *     other line a rule reads, such as a table row. A reference link is replaced only
- *     where the document defines its label. Code, front matter and the lines that
- *     define references are left alone.
+ * @returns `lines` has one entry for each source line, as `readDocument` gives them,
+ *     blank for code, front matter and a line that defines a reference. `blocks` are
+ *     the prose blocks as `proseBlocks` gives them. Both are without the syntax of
+ *     every link. A reference link is replaced only where the document defines its
+ *     label. With no square bracket in the text, both are as the parser gives them.
  */
-export function withLinksAsLabels(text: string, reading: Reading = {}): string {
+export function acronymReading(text: string, reading: Reading = {}): { lines: string[]; blocks: ProseBlock[] } {
+  const removed = linkSyntax(text, reading);
+  const [one, two] = removed === null
+    ? [text, text]
+    : [marked(removed, String.fromCharCode(0xffff)), marked(removed, String.fromCharCode(0xfffe))];
+  const [linesOne, linesTwo] = [readDocument(one, reading).lines, readDocument(two, reading).lines];
+  const [blocksOne, blocksTwo] = [proseBlocks(one, reading), proseBlocks(two, reading)];
+  return {
+    lines: linesOne.map((line, index) => whereAlike(line, linesTwo[index] as string)),
+    blocks: blocksOne.map((block, index) => ({
+      line: block.line,
+      lines: block.lines.map((line, at) => whereAlike(line, (blocksTwo[index] as ProseBlock).lines[at] as string)),
+    })),
+  };
+}
+
+/** The characters of one text that stand unchanged at the same place in another of its length. */
+function whereAlike(one: string, two: string): string {
+  if (one === two) return one;
+  let alike = "";
+  for (let at = 0; at < one.length; at++) {
+    if (one[at] === two[at]) alike += one[at];
+  }
+  return alike;
+}
+
+/** The source lines of a document, and for each line a 1 at every place where link syntax stands. */
+interface LinkSyntax {
+  written: string[];
+  removed: Uint8Array[];
+}
+
+/** The document with `mark` at every place where link syntax stands, and nothing else changed. */
+function marked(syntax: LinkSyntax, mark: string): string {
+  return syntax.written
+    .map((line, index) => [...line].map((unit, at) => ((syntax.removed[index] as Uint8Array)[at] === 1 ? mark : unit)).join(""))
+    .join("\n");
+}
+
+/**
+ * Where the syntax of every link and image stands in a document, or null where the
+ * text holds no square bracket and so no link.
+ *
+ * Links are looked for in each prose block, each heading and each other line a rule
+ * reads, such as a table row, so no link runs from one block into the next. Code,
+ * front matter and the lines that define references are left alone.
+ */
+function linkSyntax(text: string, reading: Reading): LinkSyntax | null {
   const written = toLines(text);
-  if (!written.some((line) => line.includes("["))) return text;
+  if (!written.some((line) => line.includes("["))) return null;
   const document = readDocument(text, reading);
-  const read = [...written];
+  const removed = written.map((line) => new Uint8Array(line.length));
   const inBlock = new Set<number>();
   const spans = [
     ...proseBlocks(text, reading).map((block) => [block.line - 1, block.lines.length]),
@@ -949,9 +985,14 @@ export function withLinksAsLabels(text: string, reading: Reading = {}): string {
   for (const [first, count] of spans) {
     const source = written.slice(first, first + count).join("\n");
     if (!source.includes("[")) continue;
-    read.splice(first, count, ...linksAsLabels(source, document.references).split("\n"));
+    const inBlockRemoved = linkSyntaxIn(source, document.references);
+    let start = 0;
+    for (let line = first; line < first + count; line++) {
+      (removed[line] as Uint8Array).set(inBlockRemoved.subarray(start, start + (written[line] as string).length));
+      start += (written[line] as string).length + 1;
+    }
   }
-  return read.join("\n");
+  return { written, removed };
 }
 
 /** An opening square bracket that no closing one has met yet. */
@@ -962,12 +1003,11 @@ interface OpenBracket {
 }
 
 /**
- * The lines of one block with each link in them replaced as `withLinksAsLabels`
- * describes.
+ * Where the syntax of each link and image stands in the lines of one block.
  *
  * Brackets are paired as CommonMark pairs them, in one pass from left to right. A
  * closing bracket takes the nearest opening one. Where a link follows, the two brackets
- * and everything after the label are removed. A link then switches off every bracket
+ * and everything after the label are its syntax, and the label is not. A link then switches off every bracket
  * that opened before it, because a link cannot sit inside the label of a link: the
  * inner one is the link and the outer brackets are text. An image can hold a link, so
  * it switches nothing off.
@@ -984,12 +1024,14 @@ interface OpenBracket {
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
  *     gives it.
- * @returns The block at the same length, with U+FFFF where each character of link
- *     syntax stood. The block itself where it holds no link, as for empty text.
+ * @returns One entry for each character of the block: 1 where it is link syntax, and 0
+ *     elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
+ *     cells. The entry for a line break means nothing: the caller takes the lines one
+ *     at a time. All 0 where the block holds no link, and empty for empty text.
  */
-export function linksAsLabels(source: string, references: ReadonlySet<string>): string {
+export function linkSyntaxIn(source: string, references: ReadonlySet<string>): Uint8Array {
   const marks = linkMarks(source);
-  const units = source.split("");
+  const syntax = new Uint8Array(source.length);
   const open: OpenBracket[] = [];
   // How many of the open brackets, counted from the first, a link has switched off.
   let switchedOff = 0;
@@ -1011,13 +1053,16 @@ export function linksAsLabels(source: string, references: ReadonlySet<string>): 
       switchedOff = Math.min(switchedOff, open.length);
       const end = live ? linkEnd(source, opener, at, marks, references) : -1;
       if (end === -1) continue;
-      remove(units, opener.at - (opener.image ? 1 : 0), opener.at + 1);
-      remove(units, at, end);
+      syntax.fill(1, opener.at - (opener.image ? 1 : 0), opener.at + 1);
+      syntax.fill(1, at, end);
       if (!opener.image) switchedOff = open.length;
       at = end - 1;
     }
   }
-  return units.join("");
+  for (let at = 0; at < source.length; at++) {
+    if (source[at] === "|") syntax[at] = 0;
+  }
+  return syntax;
 }
 
 // The punctuation a backslash escapes, which is all of it in ASCII.
@@ -1122,13 +1167,6 @@ function attributeEnd(source: string, at: number, marks: LinkMarks): number {
   return BARE_VALUE.test(source) ? BARE_VALUE.lastIndex : -1;
 }
 
-/** Puts `REMOVED` at each place from `from` up to `to`, but for a line break or a pipe. */
-function remove(units: string[], from: number, to: number): void {
-  for (let at = from; at < to; at++) {
-    if (units[at] !== "\n" && units[at] !== "|") units[at] = REMOVED;
-  }
-}
-
 /**
  * The offset just past the link that a closing bracket ends, or -1 where it ends none.
  *
@@ -1204,7 +1242,7 @@ function inlineLinkEnd(source: string, open: number, marks: LinkMarks): number {
 }
 
 /**
- * What `linksAsLabels` asks about a block, each answer an offset into it.
+ * What `linkSyntaxIn` asks about a block, each answer an offset into it.
  *
  * Every list has an entry for each character and two more, so that a question about
  * the place just past the end has an answer. "Next" means at that offset or after it.

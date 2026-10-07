@@ -6,9 +6,9 @@ import {
   auditCorpus,
   auditText,
   ENGINE_THRESHOLDS,
-  linksAsLabels,
+  acronymReading,
+  linkSyntaxIn,
   projectAcronyms,
-  withLinksAsLabels,
 } from "../scripts/audit-corpus.ts";
 import { withoutEmphasis } from "../scripts/lib/inline-wording.ts";
 import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
@@ -2805,7 +2805,7 @@ describe("labels nested to great depth", () => {
     ];
     const none = new Set<string>();
     for (const [name, text] of shapes) {
-      expect(elapsed(() => linksAsLabels(text, none)), name).toBeLessThan(750);
+      expect(elapsed(() => linkSyntaxIn(text, none)), name).toBeLessThan(750);
     }
   }, HOSTILE_TIMEOUT_MS);
 });
@@ -3065,16 +3065,39 @@ describe("a link between an expansion and its acronym", () => {
     // What only looks like a tag is text, so a link after it is still a link. The text
     // itself holds letters, so the link is looked for and not the acronym.
     for (const before of ["<3 ", "</i ", "< i> ", `<i title=${quote} `, "<i title= > ", "<i/ > ", "<!-- ", "<? ", "<![CDATA[ ", "<!D ", "<a@b ", "<x:y z> "]) {
-      const read = withLinksAsLabels(link(before).join(BREAK));
+      const read = acronymReading(link(before).join(BREAK)).blocks[0]?.lines[0] as string;
       expect(read.includes("](guide)"), before).toBe(false);
-      expect(read.startsWith(`identity and access ${before}`), before).toBe(true);
+      expect(read.endsWith("management (IAM)."), before).toBe(true);
     }
     // A link read first keeps what is in its destination out of all this.
     // The backtick in this destination opens no code span, so the two after it are one,
     // and the bracket inside that span opens nothing.
-    const read = withLinksAsLabels(`[one](<u${tick}v>) ${tick}[${tick}two](three)`);
-    expect(read.includes("[one]")).toBe(false);
-    expect(read.endsWith(`${tick}[${tick}two](three)`)).toBe(true);
+    expect(acronymReading(`[one](<u${tick}v>) ${tick}[${tick}two](three)`).blocks[0]?.lines)
+      .toEqual([`one ${tick}[${tick}two](three)`]);
+  });
+
+  // The reading once wrote U+FFFF where link syntax stood and then deleted every U+FFFF,
+  // the ones the document held as well. A document that holds one must keep it: with
+  // it gone, "(I" and "AM)" closed up into a definition that no reader was given.
+  test("a character the document holds is never taken for removed link syntax", () => {
+    const use = "Use IAM.";
+    for (const code of [0xffff, 0xfffe, 0xfffd]) {
+      const odd = String.fromCharCode(code);
+      const name = `U+${code.toString(16)}`;
+      // In an acronym, with and without a link in the block.
+      expect(acronyms([`identity and access management (I${odd}AM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      expect(acronyms([`[identity](u) and access management (I${odd}AM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      // In a word of the expansion: the two halves are two words.
+      expect(acronyms([`[identity](u) and acc${odd}ess management (IAM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      // In the label of a link, and beside the syntax that is removed.
+      expect(acronyms([`identity and access [manage${odd}ment](guide) (IAM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      expect(acronyms([`identity and access [management${odd}](guide) (${odd}IAM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      // The character is still in what the rule reads, and the link syntax is not.
+      const read = acronymReading(`${odd}[one${odd}](two)${odd}`).lines[0];
+      expect(read, name).toBe(`${odd}one${odd}${odd}`);
+    }
+    // With no such character, each of those is a definition.
+    expect(acronyms(["[identity](u) and access [management](guide) (IAM).", use].join(BREAK))).toEqual([]);
   });
 
   test("what a reader does see between them still counts", () => {
