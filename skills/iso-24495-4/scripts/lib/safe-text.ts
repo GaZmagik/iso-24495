@@ -20,11 +20,24 @@
 
 const BACKSLASH = "\\";
 
-// What a path may hold that a reader cannot see for what it is: a control
-// character, a character that prints as nothing, such as a mark that changes
-// text direction or a zero-width space, half a surrogate pair, a line or
-// paragraph separator, and every space but the plain one.
-const UNSEEN_IN_A_PATH = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]|(?! )\p{Zs}/gu;
+// What a path may hold that a reader cannot see for what it is. Each part is
+// a class that Unicode defines, so no list here can fall behind:
+//
+// - a control character, and a format character such as a mark that changes
+//   text direction or a zero-width space;
+// - half a surrogate pair;
+// - a line or paragraph separator, and every space but the plain one;
+// - every character Unicode says to leave undrawn where a font has no shape
+//   for it, its "default ignorable" property. That adds the variation
+//   selectors, the combining grapheme joiner, the Hangul fillers, the tag
+//   characters and the places kept empty for more of the kind.
+//
+// A combining mark that draws, such as an accent, is in none of these and is
+// kept, so a name written with one stays readable. Three things that can
+// still pass unseen are also in none: a symbol that is drawn blank, as the
+// braille blank is; a private use character; and a code point not yet given a
+// character.
+const UNSEEN_IN_A_PATH = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|(?! )\p{Zs}/gu;
 
 /**
  * The warning a command prints for an entry its audit passed over.
@@ -104,8 +117,11 @@ function codeSpan(text: string): string {
  * - A character a reader cannot see for what it is prints as its code: a
  *   backslash, "u" and four hexadecimal digits, or the digits in braces for a
  *   character past the basic plane. Those are the control characters, the
- *   characters that print as nothing, the marks that change text direction
- *   among them, and all white space but the plain space.
+ *   characters that draw nothing, and all white space but the plain space.
+ *   A variation selector, a zero-width joiner and a mark that changes text
+ *   direction draw nothing, so an emoji that needs one keeps its picture and
+ *   has the code beside it. A combining mark that draws, such as an accent,
+ *   is kept.
  * - A plain space is kept wherever it stands, and nothing is trimmed.
  *
  * A backslash that opens a code stands alone and a backslash from a name is

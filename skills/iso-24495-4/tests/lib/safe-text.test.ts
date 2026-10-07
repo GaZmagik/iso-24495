@@ -278,6 +278,119 @@ describe("a path in Markdown that is rendered", () => {
   });
 });
 
+describe("a character that draws nothing is shown as its code", () => {
+  /** The printed form of one code point: four digits in the basic plane, and braces past it. */
+  const shown = (point: number): string =>
+    point > 0xffff ? `${BACKSLASH}u{${point.toString(16)}}` : code(point);
+  const UNSEEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|(?! )\p{Zs}/u;
+  const PRINTABLE = /^[ -~]*$/;
+
+  // A combining grapheme joiner and a variation selector draw nothing, and both went
+  // through as they were. "ab.md" and the same name with one of them between the
+  // letters printed alike, in a code span as well, since there is nothing to see.
+  test("a combining grapheme joiner and a variation selector no longer hide in a name", () => {
+    const plain = safePath("ab.md", false);
+    for (const point of [0x34f, 0xfe0f, 0xfe00, 0x180b, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x2065, 0xfff0]) {
+      const printed = safePath(`a${String.fromCodePoint(point)}b.md`, false);
+      expect(printed, `U+${point.toString(16)}`).toBe(`a${shown(point)}b.md`);
+      expect(printed).not.toBe(plain);
+      expect(PRINTABLE.test(printed), printed).toBe(true);
+    }
+    // An interlinear annotation anchor draws nothing and is not in that Unicode property.
+    // It is a format character, which is why that class is read as well.
+    const anchor = String.fromCodePoint(0xfff9);
+    expect(/\p{Default_Ignorable_Code_Point}/u.test(anchor)).toBe(false);
+    expect(safePath(`a${anchor}b.md`, false)).toBe(`a${code(0xfff9)}b.md`);
+    // Past the basic plane: a variation selector of the second block, and a tag that is not assigned.
+    expect(safePath(`a${String.fromCodePoint(0xe0100)}b.md`, false)).toBe(`a${BACKSLASH}u{e0100}b.md`);
+    expect(safePath(`a${String.fromCodePoint(0xe0080)}b.md`, false)).toBe(`a${BACKSLASH}u{e0080}b.md`);
+    expect(safePathCell(`a${String.fromCodePoint(0x34f)}b.md`, false)).toBe(`${String.fromCharCode(96)}a${code(0x34f)}b.md${String.fromCharCode(96)}`);
+  });
+
+  test("every code point that Unicode says to leave undrawn is shown as its code", () => {
+    let checked = 0;
+    for (let point = 0; point <= 0x10ffff; point++) {
+      // Half a surrogate pair is no code point, and is tested where it stands alone.
+      if (point >= 0xd800 && point <= 0xdfff) continue;
+      const character = String.fromCodePoint(point);
+      if (!/\p{Default_Ignorable_Code_Point}/u.test(character)) continue;
+      checked++;
+      if (safePath(character, false) !== shown(point)) expect(safePath(character, false), `U+${point.toString(16)}`).toBe(shown(point));
+    }
+    // The count is that of the Unicode version this runtime carries, pinned so that
+    // the loop cannot quietly check nothing.
+    expect(checked).toBe(4_174);
+  });
+
+  test("in generated names, one unseen character more gives a printed form of its own, in visible characters", () => {
+    const unseen: number[] = [];
+    for (let point = 0; point <= 0x10ffff; point++) {
+      if (point >= 0xd800 && point <= 0xdfff) continue;
+      if (UNSEEN.test(String.fromCodePoint(point))) unseen.push(point);
+    }
+    expect(unseen.length).toBeGreaterThan(4_000);
+    const base = "ab.md";
+    const random = sequence(24495);
+    const names = new Set<string>();
+    while (names.size < 3_000) {
+      const point = unseen[Math.floor(random() * unseen.length)] as number;
+      const at = Math.floor(random() * (base.length + 1));
+      names.add(base.slice(0, at) + String.fromCodePoint(point) + base.slice(at));
+    }
+    const printed = [...names].map((name) => safePath(name, false));
+    for (const form of printed) {
+      if (!PRINTABLE.test(form) || form === base) expect(form).toBe("a form in visible characters that is not the base name");
+    }
+    expect(new Set(printed).size).toBe(names.size);
+  });
+
+  test("a name a reader can read is left as it is written", () => {
+    const acute = String.fromCodePoint(0x301);
+    const names = [
+      // "cafe" with a combining acute accent: the mark draws, on the letter before it.
+      `cafe${acute}.md`,
+      // The same word with the one-character letter. The two print alike, as the owner accepted.
+      `caf${String.fromCodePoint(0xe9)}.md`,
+      // Devanagari, with a vowel sign and a virama, which are combining marks that draw.
+      `${String.fromCodePoint(0x928, 0x92e, 0x938, 0x94d, 0x924, 0x947)}.md`,
+      // Arabic, Thai with a tone mark, Hangul syllables, Han.
+      `${String.fromCodePoint(0x645, 0x644, 0x641)}.md`,
+      `${String.fromCodePoint(0xe19, 0xe49, 0xe33)}.md`,
+      `${String.fromCodePoint(0xd55c, 0xae00)}.md`,
+      `${String.fromCodePoint(0x6587, 0x4ef6)}.md`,
+      // An emoji that needs no selector, and a letter with two combining marks.
+      `${String.fromCodePoint(0x1f4c4)}.md`,
+      `a${String.fromCodePoint(0x308, 0x304)}.md`,
+    ];
+    for (const name of names) {
+      expect(safePath(name, false), name).toBe(name);
+      expect(safePath(name, true), name).toBe(name);
+    }
+  });
+
+  test("an emoji keeps its picture, and the selector or joiner beside it is shown", () => {
+    const heart = String.fromCodePoint(0x2764);
+    // A heart asked for in colour: the heart stays, and the selector is shown after it.
+    expect(safePath(`${heart}${String.fromCodePoint(0xfe0f)}.md`, false)).toBe(`${heart}${code(0xfe0f)}.md`);
+    expect(safePath(`${heart}.md`, false)).toBe(`${heart}.md`);
+    // A keycap: digit, selector, enclosing mark. The mark draws, so it stays.
+    expect(safePath(`1${String.fromCodePoint(0xfe0f, 0x20e3)}.md`, false)).toBe(`1${code(0xfe0f)}${String.fromCodePoint(0x20e3)}.md`);
+    // Two people joined into one picture: each stays, and the joiner between them is shown.
+    const [man, woman] = [String.fromCodePoint(0x1f468), String.fromCodePoint(0x1f469)];
+    expect(safePath(`${man}${String.fromCodePoint(0x200d)}${woman}.md`, false)).toBe(`${man}${code(0x200d)}${woman}.md`);
+  });
+
+  test("what is left alone: a mark that draws, a blank that is a symbol, and private use", () => {
+    // A combining mark with no letter before it still draws. The braille blank is a
+    // symbol to Unicode, though it looks like a space. A private use character draws
+    // whatever a font gives it. None is in a class the formatter reads, so each stays.
+    for (const point of [0x301, 0x2800, 0xe000, 0xfffc]) {
+      const name = `a${String.fromCodePoint(point)}b.md`;
+      expect(safePath(name, false), `U+${point.toString(16)}`).toBe(name);
+    }
+  });
+});
+
 /** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */
 function sequence(seed: number): () => number {
   let state = seed >>> 0;
