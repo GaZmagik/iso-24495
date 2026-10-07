@@ -1,100 +1,84 @@
 import { describe, expect, test } from "bun:test";
-import { emphasisMarkOffsets, withoutEmphasis } from "../scripts/lib/inline-wording.ts";
-import { flattenedOffsets, labelledHeadings, labelledProseBlocks, type LabelledBlock } from "../scripts/lib/parse.ts";
+import { withoutEmphasis } from "../scripts/lib/inline-wording.ts";
+import { headings, readerProseBlocks } from "../scripts/lib/parse.ts";
 
 // The words the audit reads, held against the words a renderer shows.
 //
-// The rules about words read a block with its links replaced by their labels and
-// its paired emphasis marks removed. Whether that is right was checked for two
-// rounds against the code before it with the marks taken out by hand, which is
-// the code's own idea of right. A renderer is the true reference: it is what a
-// reader sees. Bun ships one, so this needs no dependency.
+// The rules about words read a block with its paired emphasis marks removed, where the
+// block holds no link. A renderer is the true reference for that: it is what a reader
+// sees. Bun ships one, so this needs no dependency.
+//
+// A block that may hold a link is out of scope. The audit removes no mark from it, so
+// there is nothing of the pairing to compare. The contract tests hold that reading.
 //
 // The text is generated from a fixed seed, so every run reads the same cases.
 
-const DEFINITION = "[r]: https://example.com";
 const WORDS = ["a", "b", "in", "or", "der", "to"];
 const MARKS = ["*", "*", "**", "_", "__", "***"];
 const CASES = 60_000;
 
-/**
- * Where Bun's renderer and the CommonMark reference implementation part.
- *
- * A mark that touches the inside of a label's bracket, with punctuation on its
- * other side, can both open and close by the CommonMark rules, because a bracket
- * is punctuation. Two such runs whose lengths add up to a multiple of three then
- * do not pair. Bun's renderer reads the bracket there as the edge of the text, so
- * the mark can only open, or only close, and the pair is made: it shows
- * "![**,*](u)" with the alternative text "*,", where the reference keeps "**,*".
- * The audit follows the reference. The class is set aside here and counted.
- */
-const RENDERER_DEPARTS = /\[[*_]+(?=[\p{P}\p{S}])|(?<=[\p{P}\p{S}])[*_]+\]/u;
-
 describe("the words the audit reads are the words a renderer shows", () => {
-  test("in generated text of emphasis marks, links, images and reference links", () => {
+  test("in generated text of words and emphasis marks that holds no link", () => {
     const random = generator(24495);
     let compared = 0;
-    let setAside = 0;
     let withMarksRemoved = 0;
-    let headings = 0;
+    let headingsCompared = 0;
     const differing: string[] = [];
     for (let made = 0; made < CASES; made++) {
-      const inline = inlineText(random, 10, false).trim();
-      if (RENDERER_DEPARTS.test(inline)) {
-        setAside++;
-        continue;
-      }
+      const inline = inlineText(random, 10).trim();
       // A line that opens with a mark or a space could be a list item, a rule or code.
-      const opening = /^[A-Za-z![]/.test(inline) ? "" : "x ";
+      const opening = /^[A-Za-z]/.test(inline) ? "" : "x ";
       const heading = made % 5 === 0;
       const text = `${heading ? "# " : ""}${opening}${inline}`;
-      const document = [text, "", DEFINITION, ""].join("\n");
-      const shown = shownWords(document, heading ? "h1" : "p");
-      const blocks = heading ? labelledHeadings(document) : labelledProseBlocks(document);
-      expect(blocks, text).toHaveLength(1);
-      const read = readWords(blocks[0] as LabelledBlock);
+      expect(text.includes("[") || text.includes("<"), text).toBe(false);
+      const shown = shownWords(text, heading ? "h1" : "p");
+      const read = readWords(text, heading);
       compared++;
-      if (heading) headings++;
+      if (heading) headingsCompared++;
       if (read.removed > 0) withMarksRemoved++;
-      if (read.words !== shown) differing.push(`${JSON.stringify(text)} is read as ${JSON.stringify(read.words)} and shown as ${JSON.stringify(shown)}`);
+      if (read.words !== shown) {
+        differing.push(`${JSON.stringify(text)} is read as ${JSON.stringify(read.words)} and shown as ${JSON.stringify(shown)}`);
+      }
     }
     expect(differing.slice(0, 5)).toEqual([]);
     expect(differing).toHaveLength(0);
-    // The counts are pinned, so a change to the generator or to what is set aside
-    // cannot quietly empty the comparison.
-    expect({ compared, setAside, withMarksRemoved, headings })
-      .toEqual({ compared: 44_303, setAside: 15_697, withMarksRemoved: 6_311, headings: 8_842 });
+    // The counts are pinned, so a change to the generator cannot quietly empty the
+    // comparison. Nothing is set aside: every generated case is compared.
+    expect({ compared, withMarksRemoved, headings: headingsCompared })
+      .toEqual({ compared: 60_000, withMarksRemoved: 10_065, headings: 12_000 });
   }, 60_000);
 
-  test("in the cases the reviewer and the tests name", () => {
+  test("in the cases the reviews named, once the link is taken out of each", () => {
     for (const text of [
-      "in or*[der](u)* to go.",
-      "in *or[der*](u) to go.",
-      "*x in [or*](u)der* to go.",
-      "We did this in **[order](u)** to finish.",
-      "We did this in [or*de*r](u) to finish the ![*work*](chart.png).",
-      "The tenant sh**a*[*ll**](u) vacate.",
-      "*x [y*z](u) in or*der to go.",
-      "See [x](a*b*c) in *order* to go.",
+      "in or*der* to go.",
+      "in *order* to go.",
+      "*x in or*der* to go.",
+      "We did this in **order** to finish.",
+      "We did this in or*de*r to finish the *work*.",
+      "The tenant sh**a**ll** vacate.",
+      "*x y*z in or*der to go.",
     ]) {
-      const document = [text, "", DEFINITION, ""].join("\n");
-      expect(readWords(labelledProseBlocks(document)[0] as LabelledBlock).words, text).toBe(shownWords(document, "p"));
+      expect(readWords(text, false).words, text).toBe(shownWords(text, "p"));
     }
   });
 });
 
-/** The words of a block as the rules about words read them, and how many marks were removed. */
-function readWords(block: LabelledBlock): { words: string; removed: number } {
-  const marks = flattenedOffsets(emphasisMarkOffsets(block.source, block.links), block.source, block.links);
-  return { words: spaced(withoutEmphasis(block.lines.join("\n"), marks)), removed: marks.length };
+/** The words of a document of one block as the rules about words read them, and how many marks were removed. */
+function readWords(document: string, heading: boolean): { words: string; removed: number } {
+  const blocks = heading
+    ? headings(document).map((found) => found.text)
+    : readerProseBlocks(document).map((block) => block.lines.join("\n"));
+  expect(blocks, document).toHaveLength(1);
+  const read = blocks[0] as string;
+  const unmarked = withoutEmphasis(read);
+  return { words: spaced(unmarked), removed: read.length - unmarked.length };
 }
 
-/** The words Bun's renderer shows for a document of one block, an image as its alternative text. */
+/** The words Bun's renderer shows for a document of one block. */
 function shownWords(document: string, element: "p" | "h1"): string {
   const html = Bun.markdown.html(document);
   expect(html.startsWith(`<${element}>`) && html.trimEnd().endsWith(`</${element}>`), document).toBe(true);
   return spaced(html
-    .replace(/<img [^>]*?alt="([^"]*)"[^>]*>/g, "$1")
     .replace(/<[^>]+>/g, "")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
@@ -107,47 +91,27 @@ function spaced(text: string): string {
 }
 
 /**
- * Inline Markdown of words, spaces, punctuation and emphasis marks, with links, images
- * and reference links whose labels are made the same way.
+ * Inline Markdown of words, spaces, punctuation and emphasis marks, and nothing else.
  *
  * The marks are placed without regard to pairing, so most of them have no partner or
- * the wrong one. Two things are never made, because the audit states them as limits:
- * a link inside the label of a link, at any depth, which CommonMark reads as the inner
- * link alone; and two bracketed things that touch where the second could be read as
- * the reference of the first.
+ * the wrong one. No bracket is made, so no text made here holds a link.
  */
-function inlineText(random: () => number, most: number, insideLink: boolean): string {
+function inlineText(random: () => number, most: number): string {
   let text = "";
-  let bareBrackets = false;
   const count = 1 + Math.floor(random() * most);
   for (let made = 0; made < count; made++) {
-    const piece = inlinePiece(random, insideLink, bareBrackets);
-    text += piece;
-    bareBrackets = piece === "[n]" || piece === "[r]" || piece === "[r][]";
+    text += inlinePiece(random);
   }
   return text;
 }
 
-/** One piece of generated text. After brackets with no destination, no further bracket is made. */
-function inlinePiece(random: () => number, insideLink: boolean, afterBareBrackets: boolean): string {
+/** One piece of generated text. */
+function inlinePiece(random: () => number): string {
   const choice = random();
-  if (choice < 0.3) return pick(random, WORDS);
-  if (choice < 0.45) return " ";
-  if (choice < 0.75) return pick(random, MARKS);
-  if (choice < 0.8) return random() < 0.5 ? "." : ",";
-  if (choice < 0.88) {
-    if (insideLink || afterBareBrackets) return "a";
-    return `[${inlineText(random, 4, true)}]${random() < 0.7 ? "(u)" : "[r]"}`;
-  }
-  if (choice < 0.94) {
-    return afterBareBrackets ? "b" : `![${inlineText(random, 4, insideLink)}](u)`;
-  }
-  if (afterBareBrackets) return " ";
-  // A reference with no definition, which stays as written, and the two short forms
-  // of one that has a definition.
-  const kind = random();
-  if (kind < 0.4 || insideLink) return "[n]";
-  return kind < 0.7 ? "[r]" : "[r][]";
+  if (choice < 0.4) return pick(random, WORDS);
+  if (choice < 0.58) return " ";
+  if (choice < 0.92) return pick(random, MARKS);
+  return random() < 0.5 ? "." : ",";
 }
 
 function pick(random: () => number, choices: readonly string[]): string {
