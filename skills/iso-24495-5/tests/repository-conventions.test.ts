@@ -1506,11 +1506,19 @@ describe("repository writing conventions", () => {
       // judgement that the description is clear.
       const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
 
-      test("the decision lives in a script a contributor can run", () => {
+      // The script once did the work itself: three reads, three programs and two
+      // temporary files, each a place to fail in another program's words. Three
+      // reviews running found one. It now starts one program and does nothing else.
+      test("the script only starts the program that holds the decision", () => {
         expect(existsSync(auditScript), "scripts/audit-pull-request-text.sh must exist").toBe(true);
         const script = readFileSync(auditScript, "utf8");
-        expect(script, "the script must fail on the first error").toMatch(/^set -euo pipefail$/m);
-        expect(script, "the script must run the shipped audit").toMatch(/audit-text-cli\.ts/);
+        expect(script.includes(String.fromCharCode(13)), "the script must hold no carriage return").toBe(false);
+        const commands = script.split("\n").filter((line) => line.trim() !== "" && !line.startsWith("#"));
+        expect(commands).toEqual([
+          "set -euo pipefail",
+          'exec bun "$(dirname -- "$0")/audit-pull-request-text-cli.ts" "$@"',
+        ]);
+        expect(existsSync(join(REPOSITORY_ROOT, "scripts", "audit-pull-request-text-cli.ts"))).toBe(true);
       });
 
       test("plain text passes, whichever line endings it arrives with", () => {
@@ -1578,9 +1586,6 @@ describe("repository writing conventions", () => {
       // as a rule and a heading. The audit read it as metadata, and passed a
       // description whose only text sat inside it.
       test("a leading front matter block is read as text", () => {
-        const script = readFileSync(auditScript, "utf8");
-        expect(script, "the script must tell the audit there is no front matter")
-          .toMatch(/audit-text-cli\.ts.*--no-front-matter/);
         const result = audit("---\nnote: We shall pay.\n---\n");
         expect(result.status, result.output).toBe(0);
         expect(result.output).toContain("legalese");
@@ -1608,6 +1613,21 @@ describe("repository writing conventions", () => {
           const blocked = audit(" \n", "description.md", { GITHUB_STEP_SUMMARY: forBash(summary) });
           expect(blocked.status).toBe(1);
           expect(readFileSync(summary, "utf8")).toContain("empty or holds only whitespace");
+
+          // A summary that cannot be written is said in fixed words, and the verdict
+          // stands. With the variable naming a directory, bash once printed its own
+          // diagnostic with the whole path and the script left with 1.
+          const unwritable = join(directory, "PRIVATE-directory");
+          mkdirSync(unwritable);
+          const given = forBash(unwritable);
+          const advised = audit(`${"word ".repeat(40)}stop.`, "description.md", { GITHUB_STEP_SUMMARY: given });
+          expect(advised.status, advised.output).toBe(0);
+          expect(advised.output).toContain("The audit reported 1 finding.");
+          expect(advised.output).toContain(
+            `The step summary named by GITHUB_STEP_SUMMARY, a path ${given.length} characters long, could not be written. The result above is complete without it.\n`,
+          );
+          expect(advised.output.includes("PRIVATE"), advised.output).toBe(false);
+          expect(audit(" \n", "description.md", { GITHUB_STEP_SUMMARY: given }).status).toBe(1);
         } finally {
           rmSync(directory, { recursive: true, force: true });
         }
@@ -1621,84 +1641,31 @@ describe("repository writing conventions", () => {
         expect(result.output).toContain("did not run");
       });
 
-      // A report that does not show a file was read proves nothing, so it cannot
-      // pass. The audit skips a symbolic link rather than following it, and
-      // reports empty totals with no file entry at all: totals alone would have
-      // called that a pass. A Windows account without the right to make a file
-      // link cannot build that case, so a stand-in audit writes each bad report
-      // into a copy of the repository, which every platform can run.
-      test("a report that shows no file was read blocks with the same code", () => {
-        const repository = mkdtempSync(join(tmpdir(), "iso-24495-report-"));
-        try {
-          mkdirSync(join(repository, "scripts"));
-          const script = join(repository, "scripts", "audit-pull-request-text.sh");
-          writeFileSync(script, readFileSync(auditScript, "utf8"), "utf8");
-          // The script reads the report through this checker, so the copy needs it too.
-          for (const helper of ["description-report.ts", "description-report-cli.ts"]) {
-            writeFileSync(join(repository, "scripts", helper),
-              readFileSync(join(REPOSITORY_ROOT, "scripts", helper), "utf8"), "utf8");
-          }
-          const auditDirectory = join(repository, "skills", "iso-24495-text-audit", "scripts");
-          mkdirSync(auditDirectory, { recursive: true });
-          const description = join(repository, "description.md");
-          writeFileSync(description, "This description reads plainly.\n", "utf8");
-          const standIn = (body: string): { status: number | null; output: string } => {
-            writeFileSync(join(auditDirectory, "audit-text-cli.ts"), [
-              "const out = process.argv[process.argv.indexOf(\"--json\") + 1];",
-              "const { writeFileSync } = await import(\"node:fs\");",
-              body,
-            ].join("\n"), "utf8");
-            return runCheck(script, description);
-          };
-          const writes = (reportText: string): number | null =>
-            standIn(`writeFileSync(out, ${JSON.stringify(reportText)});`).status;
-          const entries = (files: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
-            JSON.stringify({ files, totals: {}, skipped: [], ...extra });
-
-          // The rows a review measured against a search for the text
-          // "violations": four of these five were decided wrongly.
-          expect(writes(entries({ "description.md": { violations: [] } })), "a sound report")
-            .toBe(0);
-          expect(writes(entries({ "other.md": { violations: [] } })), "a report naming another file")
-            .toBe(3);
-          expect(writes("\"violations\":"), "invalid JSON holding the searched text").toBe(3);
-          expect(writes(entries({}, { skipped: [description], violations: [] })),
-            "the description skipped, with a violations list at the top level").toBe(3);
-          expect(writes("{\"files\" : {\"description.md\" : {\"violations\" : []}}, \"skipped\" : []}"),
-            "a sound report spaced differently").toBe(0);
-
-          // A report naming the description beside another file, or one that
-          // skipped anything, did not read the description alone.
-          expect(writes(entries({ "description.md": { violations: [] }, "other.md": { violations: [] } })),
-            "a report naming a second file").toBe(3);
-          expect(writes(entries({ "description.md": { violations: [] } }, { skipped: ["other.md"] })),
-            "a report that skipped an entry").toBe(3);
-
-          // The count the script states comes from the report it checked.
-          const one = entries({ "description.md": { violations: [{ rule: "legalese" }] } });
-          expect(standIn(`writeFileSync(out, ${JSON.stringify(one)});`).output)
-            .toContain("The audit reported 1 finding.");
-
-          expect(standIn("writeFileSync(out, \"\");").status, "an empty report").toBe(3);
-          expect(standIn("writeFileSync(out, '{\"files\": {}, \"totals\": {}}');").status,
-            "no file read").toBe(3);
-          expect(standIn("process.exit(0);").status, "no report written").toBe(3);
-          expect(standIn("process.exit(1);").status, "an audit that fails").toBe(3);
-        } finally {
-          rmSync(repository, { recursive: true, force: true });
-        }
-
+      // The audit does not follow a symbolic link. The script once left that to the
+      // audit, which skipped the link, and a report with no file in it was then
+      // refused with exit 3. The program now asks what the path names before it
+      // reads, and a link is a wrong argument like a directory. A Windows account
+      // without the right to make a file link cannot build the first case, and the
+      // tests of the program cover it on every platform.
+      test("a linked description and a directory are refused before anything is read", () => {
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-link-"));
         try {
+          const refusedDirectory = runCheck(auditScript, directory);
+          expect(refusedDirectory.status).toBe(2);
+          expect(refusedDirectory.output).toBe(
+            `The path given as the first argument, ${forBash(directory).length} characters long, names a directory, where a file is needed.\n`,
+          );
           const target = join(directory, "target.md");
           writeFileSync(target, "This description reads plainly.\n", "utf8");
           const link = join(directory, "description.md");
           try {
             symlinkSync(target, link, "file");
           } catch {
-            return; // this account cannot make a file link; the stand-in above covers it
+            return; // this account cannot make a file link
           }
-          expect(runCheck(auditScript, link).status, "a linked description").toBe(3);
+          const refusedLink = runCheck(auditScript, link);
+          expect(refusedLink.status, "a linked description").toBe(2);
+          expect(refusedLink.output).toContain("names a symbolic link, which this check does not follow.");
         } finally {
           rmSync(directory, { recursive: true, force: true });
         }
@@ -1712,35 +1679,22 @@ describe("repository writing conventions", () => {
         const override = String.fromCharCode(0x202e);
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-refused-"));
         try {
-          const refused: Array<[fault: string, path: string, message: RegExp]> = [
-            ["no directory", `${forBash(directory)}/gone${escape}[2J${override}dir/description.md`,
-              /^There is no directory holding the path given as the first argument, which is \d+ characters long, so nothing can be read.\n$/],
-            ["no file", `${forBash(directory)}/gone${escape}[2J${override}.md`,
-              /^The path given as the first argument, \d+ characters long, names no file to read.\n$/],
+          const refused: Array<[fault: string, path: string]> = [
+            ["no directory", `${forBash(directory)}/gone${escape}[2J${override}dir/description.md`],
+            ["no file", `${forBash(directory)}/gone${escape}[2J${override}.md`],
           ];
-          for (const [fault, path, message] of refused) {
+          for (const [fault, path] of refused) {
             const result = runCheck(auditScript, path);
             expect(result.status, fault).toBe(2);
-            expect(result.output, fault).toMatch(message);
+            // The length is that of the argument as it was given, not as it was resolved.
+            expect(result.output, fault)
+              .toBe(`The path given as the first argument, ${path.length} characters long, names no file to read.\n`);
             for (const part of [escape, override, "[2J", "gone"]) {
               expect(result.output.includes(part), `${fault}: part of the path was printed`).toBe(false);
             }
           }
-          // The length is that of the argument as it was given, not as it was resolved.
-          const plain = `${forBash(directory)}/gone${escape}[2J.md`;
-          expect(runCheck(auditScript, plain).output)
-            .toBe(`The path given as the first argument, ${plain.length} characters long, names no file to read.\n`);
         } finally {
           rmSync(directory, { recursive: true, force: true });
-        }
-        // Two of the four messages need a file that exists and cannot be read, which
-        // the tests below can build on one platform each. So the script itself is read:
-        // no line that prints may name the variable that holds the path.
-        const printing = readFileSync(auditScript, "utf8").split("\n")
-          .filter((line) => /^\s*(?:echo|printf|report)\b/.test(line));
-        expect(printing.length).toBeGreaterThan(10);
-        for (const line of printing) {
-          expect(/\$\{?(?:TEXT|GIVEN|DIRECTORY)\b/.test(line), line).toBe(false);
         }
       });
 
@@ -1778,10 +1732,6 @@ describe("repository writing conventions", () => {
       // this one holds a real lock there. Elsewhere it checks that the script
       // reads the file before judging it, which is the guard both cases need.
       test("a file that refuses to be read exits 2, whatever refuses it", async () => {
-        const script = readFileSync(auditScript, "utf8");
-        expect(script, "the script must read the file before judging its text").toMatch(
-          /if ! cat -- "\$TEXT" > \/dev\/null 2>&1; then\s+echo "[^"]*cannot be read\."[^\n]*\n\s+exit 2/,
-        );
         if (process.platform !== "win32") {
           return;
         }
@@ -1811,8 +1761,11 @@ describe("repository writing conventions", () => {
             const reader = holder.stdout.getReader();
             const { value } = await reader.read();
             expect(new TextDecoder().decode(value), "the lock must be held").toContain("locked");
-            const run = Bun.spawnSync(["bash", forBash(auditScript), forBash(file)]);
-            expect(run.exitCode, "a locked file must exit 2").toBe(2);
+            const run = runCheck(auditScript, file);
+            expect(run.status, "a locked file must exit 2").toBe(2);
+            expect(run.output).toBe(
+              `The path given as the first argument, ${forBash(file).length} characters long, names a file that exists but cannot be read.\n`,
+            );
           } finally {
             holder.kill();
             await holder.exited;
@@ -1821,44 +1774,6 @@ describe("repository writing conventions", () => {
           rmSync(directory, { recursive: true, force: true });
         }
       }, 30_000);
-
-      // The script reads its file more than once, and a review made the file
-      // vanish after the first read. The step that tests for an empty
-      // description then threw. Bun printed its own diagnostic, with the path
-      // and a stack trace, and exited 1, which is the code for an empty
-      // description. Each later step that reads the file is made to lose it
-      // here, by a shell function that stands in for the command before it.
-      test("a file that vanishes after the first read exits 2, in fixed words", () => {
-        const vanishing: Array<[step: string, hook: string]> = [
-          ["before the test for an empty description",
-            "cat() { command cat \"$@\"; result=$?; command rm -- \"$2\"; return \"$result\"; }; export -f cat"],
-          ["before the audit",
-            "bun() { if [ \"$1\" != \"-e\" ]; then command rm -f -- \"$VANISHING\"; fi; command bun \"$@\"; }; export -f bun"],
-        ];
-        for (const [step, hook] of vanishing) {
-          const directory = mkdtempSync(join(tmpdir(), "iso-24495-PRIVATE-"));
-          try {
-            const file = join(directory, "race.md");
-            writeFileSync(file, "Words.\n", "utf8");
-            const run = Bun.spawnSync(
-              ["bash", "-c", `${hook}; bash "$1" "$2"`, "_", forBash(auditScript), forBash(file)],
-              { env: checkEnvironment({ VANISHING: forBash(file) }) },
-            );
-            const decoder = new TextDecoder();
-            const printed = `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`;
-            expect(run.exitCode, `${step}: ${printed}`).toBe(2);
-            expect(existsSync(file), `${step}: the file must have vanished`).toBe(false);
-            expect(printed, step).toContain(
-              `The path given as the first argument, ${forBash(file).length} characters long, names a file that was read once and cannot be read again.\n`,
-            );
-            for (const part of ["PRIVATE", "race.md", "ENOENT", "Bun v", "[eval]", "empty or holds only whitespace"]) {
-              expect(printed.includes(part), `${step}: printed ${JSON.stringify(part)} in: ${printed}`).toBe(false);
-            }
-          } finally {
-            rmSync(directory, { recursive: true, force: true });
-          }
-        }
-      }, 60_000);
 
       // A name beginning with a dash reached `dirname` as an option, and the
       // failure was swallowed. A file that did not exist then resolved to the
