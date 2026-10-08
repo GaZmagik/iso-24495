@@ -3303,3 +3303,78 @@ describe("a line that holds only a space Markdown does not count as white space"
     expect(frontMatterRange(["---", "title: a", space, "---", "text"])).toEqual({ start: 0, end: 3 });
   });
 });
+
+// Half a surrogate pair is no character. A renderer shows U+FFFD for it, which is a
+// symbol, and CommonMark lets an underscore open emphasis after a symbol. The pairing
+// read the half as it stood, as neither a space nor a symbol, so the underscore opened
+// nothing and the phrase a page shows was not read. Issue 43. A file read as UTF-8
+// cannot hold half a pair, so this reaches only a caller that passes a string.
+describe("an emphasis mark beside half a surrogate pair", () => {
+  const HIGH = String.fromCharCode(0xd83d);
+  const LOW = String.fromCharCode(0xde00);
+  const SHOWN = String.fromCharCode(0xfffd);
+  const FACE = String.fromCodePoint(0x1f600);
+  /** Lines with a place for one character beside a mark. Each holds a phrase the wordy rule knows. */
+  const BESIDE: Array<[name: string, made: (held: string) => string]> = [
+    ["before an underscore", (held) => `${held}_in_ order to proceed.`],
+    ["before two underscores", (held) => `${held}__in__ order to proceed.`],
+    ["before an asterisk", (held) => `${held}*in* order to proceed.`],
+    ["before two asterisks", (held) => `${held}**in** order to proceed.`],
+    ["before two tildes", (held) => `${held}~~in~~ order to proceed.`],
+    ["after an underscore that closes", (held) => `Proceed _in order to_${held} see it.`],
+    ["after two underscores that close", (held) => `Proceed __in order to__${held} see it.`],
+    ["after an asterisk that closes", (held) => `Proceed *in order to*${held} see it.`],
+    ["between two underscores", (held) => `Proceed in order to see _${held}_ here.`],
+    ["before an underscore, after a letter", (held) => `x${held}_in_ order to proceed.`],
+    ["before an underscore, on a second line", (held) => `Proceed.${BREAK}${held}_in_ order to see it.`],
+  ];
+
+  test("the case that was reported", () => {
+    expect(findingsIn(`${HIGH}_in_ order to proceed.`)).toEqual(findingsIn(`${SHOWN}_in_ order to proceed.`));
+    expect(findingsIn(`${HIGH}_in_ order to proceed.`).filter((finding) => finding.startsWith("wordy-phrase"))).toHaveLength(1);
+    expect(withoutEmphasis(`${HIGH}_in_ order to proceed.`)).toBe(`${HIGH}in order to proceed.`);
+    expect(Bun.markdown.html(`${HIGH}_in_ order to proceed.`)).toContain("<em>in</em>");
+  });
+
+  test.each(BESIDE)("%s, either half is read as U+FFFD is read", (_name, made) => {
+    const shown = made(SHOWN);
+    for (const half of [HIGH, LOW]) {
+      expect(withoutEmphasis(made(half))).toBe(withoutEmphasis(shown).replaceAll(SHOWN, half));
+      expect(findingsIn(made(half))).toEqual(findingsIn(shown));
+    }
+    // Two halves that are not a pair are two halves: low then high.
+    expect(withoutEmphasis(made(LOW + HIGH))).toBe(withoutEmphasis(made(SHOWN + SHOWN)).replaceAll(SHOWN + SHOWN, LOW + HIGH));
+  });
+
+  test("the marks are taken wherever U+FFFD would have them taken", () => {
+    const taken = BESIDE.filter(([, made]) => withoutEmphasis(made(SHOWN)) !== made(SHOWN)).map(([name]) => name);
+    expect(taken).toHaveLength(BESIDE.length);
+    for (const [name, made] of BESIDE) {
+      expect(withoutEmphasis(made(HIGH)), name).not.toBe(made(HIGH));
+    }
+  });
+
+  test("a whole character outside the basic plane beside a mark is read as it was", () => {
+    // An emoji is a symbol, and was read as one: the two halves of a pair are one character.
+    expect(BESIDE.map(([, made]) => withoutEmphasis(made(FACE)))).toEqual([
+      `${FACE}in order to proceed.`,
+      `${FACE}in order to proceed.`,
+      `${FACE}in order to proceed.`,
+      `${FACE}in order to proceed.`,
+      `${FACE}in order to proceed.`,
+      `Proceed in order to${FACE} see it.`,
+      `Proceed in order to${FACE} see it.`,
+      `Proceed in order to${FACE} see it.`,
+      `Proceed in order to see ${FACE} here.`,
+      `x${FACE}in order to proceed.`,
+      `Proceed.${BREAK}${FACE}in order to see it.`,
+    ]);
+    // A letter outside the basic plane is a letter, so an underscore after it opens nothing.
+    const letter = String.fromCodePoint(0x10400);
+    expect(withoutEmphasis(`${letter}_in_ order to proceed.`)).toBe(`${letter}_in_ order to proceed.`);
+    expect(withoutEmphasis(`${letter}*in* order to proceed.`)).toBe(`${letter}in order to proceed.`);
+    // And a letter in the basic plane is as it was.
+    expect(withoutEmphasis("x_in_ order to proceed.")).toBe("x_in_ order to proceed.");
+    expect(withoutEmphasis(`${SHOWN}_in_ order to proceed.`)).toBe(`${SHOWN}in order to proceed.`);
+  });
+});
