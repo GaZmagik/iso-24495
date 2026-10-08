@@ -6,7 +6,19 @@ interface Token { text: string; literal: boolean; run?: Run }
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const PUNCTUATION = /[\p{P}\p{S}]/u;
 
-/** Render wording without interpreting escaped punctuation or code as emphasis. */
+/**
+ * The wording a reader sees for a piece of inline Markdown.
+ *
+ * An inline link or image becomes its label, a code span becomes its
+ * contents, paired emphasis markers are removed, and character references are
+ * decoded. An escaped character and the contents of a code span are kept
+ * literally, so neither is read as emphasis or as a character reference.
+ *
+ * @param source One heading, label or line. Block structure is not read. A
+ *     reference link stays as written, because no definitions are passed.
+ * @returns The rendered wording. An emphasis marker with no partner stays in
+ *     the text. Empty for empty source.
+ */
 export function renderInline(source: string): string {
   const text = inlineText(source);
   const spans = codeSpanEnds(text);

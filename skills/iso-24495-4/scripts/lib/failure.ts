@@ -33,6 +33,10 @@ const BUILT_IN_ERRORS = [
  * Reads `path` and parses it as JSON. `source` is the argument that named the
  * path, as the usage line writes it, so the problem tells the user which
  * argument to correct. Never throws.
+ *
+ * @returns The parsed value, whose shape is not checked. Otherwise a problem
+ *     that gives the path or the file by its length and is safe to print. An
+ *     empty file is not valid JSON, so it is a problem too.
  */
 export function readJsonFile(path: string, source: string): JsonFile {
   let text: string;
@@ -52,6 +56,9 @@ export function readJsonFile(path: string, source: string): JsonFile {
 /**
  * Writes `text` to `path`. `source` is the option that named the path. Returns
  * the problem, or null once the text is written. Never throws.
+ *
+ * A file already at `path` is replaced. A missing parent directory is not
+ * created, and is reported as a problem.
  */
 export function writeTextFile(path: string, text: string, source: string): string | null {
   try {

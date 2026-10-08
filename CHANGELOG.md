@@ -27,6 +27,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 - **Error messages report a shape, never a rejected value.** A value that has just failed a check holds whatever the caller passed, so quoting it puts unknown text in a log. The audit commands, the release checks, the description report and the traffic snapshot now state the format expected and the length or type of what arrived. A version or release tag is still quoted once it matches its pattern.
 - **No command repeats a runtime error's own message.** Bun's JSON parser quotes the token it stopped on, and a missing file's error quotes its whole path. Each command now names the argument at fault, gives the path or file by its length, and states the fault in fixed words. A failure nothing expected is reported by its built-in type, such as `TypeError`, and still exits with a failure code. The traffic snapshot names a failed endpoint and its HTTP status number, and drops the server's status text.
+- **Interface comments on the plugin's own code.** Every exported function in the shipped TypeScript now states its return, its empty case and what it throws. The code skill now separates three points its wording had blurred. A comment is optional, an interface comment that exists must state those three things, and a project without code comments should document its source files elsewhere.
 
 ## [0.7.0] - 2026-09-20
 

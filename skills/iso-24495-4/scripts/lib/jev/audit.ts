@@ -25,6 +25,56 @@ interface Counts { assessed: number; pass: number; fail: number; unsure: number;
 export interface Judgement extends Decision { file: string; line: number; id: string; excerpt: string; stateHash: string; state?: Record<string, string | number>; detail: string }
 export interface JevReport { complete: boolean; limitation: string; evidence: GateEvidence[]; results: Judgement[]; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
 
+/**
+ * Runs the calibrated Jev audit for one file or directory, as a preview or as
+ * a send. Document text leaves this machine only on a send, and only after
+ * agreement.
+ *
+ * Arguments, after the file or directory at `argv[2]`:
+ *
+ * - `--send` sends once agreement is given. Without it the run is a preview.
+ * - `--yes` stands for agreement where input or output is not a terminal. At
+ *   a terminal it is not enough: the user is still asked, and must type
+ *   exactly "yes".
+ * - `--json <file>` writes the report to that file, replacing it.
+ * - `--include-judged-text` adds the full judged text to that report, and is
+ *   refused without `--json`.
+ * - `--project-dir <directory>` sets where paths are reported from and where
+ *   the send log goes. The default is the current directory.
+ * - Text mode needs `--jev-preview`, or `--jev` together with `--send`.
+ *   Design mode previews unless `--send` is given.
+ * - `--no-front-matter` is refused here, as is any option given twice.
+ *
+ * Exit codes:
+ *
+ * - 0: the preview or the send completed. Findings and unsure results never
+ *   change it.
+ * - 1: a local failure. The selected path could not be read or is not a
+ *   supported document, or the report or the send log could not be written.
+ * - 2: the arguments were invalid, agreement was missing or was not "yes", or
+ *   the selected content changed between the preview and the send.
+ * - 3: the calibration files failed their integrity check and nothing was
+ *   sent, or the service failed and every Jev verdict was discarded.
+ * - 4: `TYPESAFE_API_KEY` is missing or holds a control character.
+ *
+ * A send reads the key from the environment and posts each request to
+ * TypeSafe, where charges may apply. It then appends one line to
+ * `.iso-24495-4/jev-audit.jsonl` under the project directory, creating that
+ * folder, and does so for a failed send as well. Exit 1 after agreement can
+ * therefore mean that text was sent and only the log or the report failed.
+ * A preview writes nothing but the `--json` report.
+ *
+ * @param mode "text" also prints the mechanical findings and accepts `.txt`
+ *     files. "design" accepts Markdown alone.
+ * @param argv The whole command line.
+ * @param stdout Receives the mechanical findings in text mode, then the
+ *     disclosure, then the Jev findings after a send.
+ * @param stderr Receives a warning for each skipped entry, and the reason for
+ *     every exit code but 0.
+ * @param dependencies Replacements for the environment, the terminal, the
+ *     client, the clock, the document reader and the log writer. Each
+ *     defaults to the real one.
+ */
 export async function runAuditCli(mode: "text" | "design", argv: string[], stdout: (text: string) => void, stderr: (text: string) => void, dependencies: AuditDependencies = {}): Promise<number> {
   let args: Arguments;
   try { args = readArguments(mode, argv); } catch { stderr("Invalid audit arguments. Use --jev-preview or --jev --send for text; use --send for design. Non-interactive sending also requires --yes. Full judged text requires --include-judged-text and --json <file>."); return 2; }
@@ -89,6 +139,31 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
   }
 }
 
+/**
+ * Reads the selected file or directory and plans what a Jev audit would send
+ * for each document. Nothing is sent.
+ *
+ * @param target A file or a directory, resolved against the current
+ *     directory. A directory is walked at any depth without following links.
+ * @param projectDir Files are named by their path from it, with forward
+ *     slashes, and its `.iso-24495-4/acronyms.json` supplies known acronyms.
+ * @param mode "design", the default, takes Markdown alone and leaves
+ *     `mechanical` without files. "text" also takes `.txt` files and runs the
+ *     mechanical audit; a `.txt` file gets a plan with no requests.
+ * @param read Replaces the file reader.
+ * @param frontMatter False makes the mechanical audit read a leading "---"
+ *     block as text. The Jev plan reads it as front matter either way.
+ * @returns `documents` holds a plan for each file read, and `paths` the full
+ *     path of each. `skipped` holds every entry passed over. A target that is
+ *     itself a symbolic link is skipped and not read, so `skipped` names it
+ *     and every other list is empty. A directory with no supported file
+ *     returns empty lists.
+ * @throws The file system error when the target does not exist or a selected
+ *     directory cannot be listed. An `Error` when a selected file has an
+ *     unsupported ending or cannot be read. A file that cannot be read inside
+ *     a selected directory is skipped instead. Whatever `planDocument`
+ *     throws.
+ */
 export function selectDocuments(target: string, projectDir: string, mode: "text" | "design" = "design", read = readFileSync, frontMatter = true): Selection {
   const selected = resolve(target);
   const project = resolve(projectDir);
@@ -115,6 +190,22 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
   return selection;
 }
 
+/**
+ * The disclosure a user reads before agreeing to send: the recipient and
+ * model, each selected path, the requests for each file, the five largest
+ * payloads, the privacy terms, the limitation and the calibration evidence.
+ *
+ * @param selection What `selectDocuments` returned. An empty selection gives
+ *     the same text with totals of zero.
+ * @param includeText True says that the full judged text will be saved to
+ *     `json`, so `json` must then be given.
+ * @param json The report path named in that sentence. It is not written.
+ * @returns The text, one statement to a line. Paths in it have control
+ *     characters removed.
+ * @throws Whatever `calibrationEvidence` throws, because the evidence table
+ *     is read from disk and checked on every call. A `TypeError` when
+ *     `includeText` is true and `json` is absent.
+ */
 export function formatPlan(selection: Selection, includeText = false, json?: string): string {
   const candidates = selection.documents.flatMap(document => document.plan.candidates);
   const largest = [...selection.documents].sort((first, second) => payloadBytes(second.plan) - payloadBytes(first.plan) || first.file.localeCompare(second.file)).slice(0, 5);
@@ -135,6 +226,16 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
   ].join("\n");
 }
 
+/**
+ * The Jev section of a report as text: whether execution completed, the
+ * limitation, the evidence table, the findings and the coverage counts.
+ *
+ * @returns Markdown tables joined by line breaks. The findings table lists
+ *     each local finding and each result that did not pass; a pass appears in
+ *     the coverage counts alone. A report with no findings and no coverage
+ *     keeps both table headers and has no rows. Cells have control characters
+ *     removed and pipes escaped.
+ */
 export function formatFindings(report: JevReport): string {
   const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`, LIMITATION,
     ...formatEvidence(report.evidence),
@@ -152,6 +253,14 @@ export function formatFindings(report: JevReport): string {
   return lines.join("\n");
 }
 
+/**
+ * Text made safe to print on one line, for a path or an excerpt nobody has
+ * read. Control characters and the marks that reverse text direction become
+ * spaces, each run of white space becomes one space, and the ends are trimmed.
+ *
+ * @returns The cleaned text, which is empty when nothing else was in it. A
+ *     pipe is left alone, so a table cell needs it escaped as well.
+ */
 export function safeText(text: string): string { return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim(); }
 function formatEvidence(gates: readonly GateEvidence[]): string[] {
   return ["| Gate | Cut-off | Prerequisite | Clusters | Wrong | Lower bound |", "|------|---------|--------------|----------|-------|-------------|",

@@ -50,6 +50,23 @@ function matchCategory(category: string, path: string, root: string): boolean {
   }
 }
 
+/**
+ * Which plain language artefacts a workspace holds, by category.
+ *
+ * A file is matched by its path alone, so its presence is recorded and its
+ * quality is not judged. The one exception is a workflow file, which is read
+ * to see whether it names a prose checker. `node_modules` and `.git` are not
+ * entered.
+ *
+ * @param dir The workspace to walk, at any depth. Links are followed, and
+ *     nothing guards against one that forms a cycle.
+ * @returns An entry for every name in `CATEGORIES`, each with the matching
+ *     paths from `dir`, sorted, with forward slashes. A category with no
+ *     match has `found: false` and no paths, which is the result for an empty
+ *     workspace.
+ * @throws The file system error when `dir`, or anything beneath it, cannot be
+ *     read. A dangling link is such a case, and nothing is skipped.
+ */
 export function auditEvidence(dir: string): Evidence {
   const paths: string[] = [];
   walk(dir, dir, paths);
@@ -61,6 +78,21 @@ export function auditEvidence(dir: string): Evidence {
   return evidence;
 }
 
+/**
+ * Sweeps a workspace for plain language artefacts and prints what it found.
+ *
+ *   bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]
+ *
+ * `--json` also writes the evidence to that file, replacing it.
+ *
+ * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
+ * could not be read in full or the evidence file could not be written. Exit 2
+ * means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the workspace is at index 2.
+ * @param stdout Receives the table, one line at a time.
+ * @param stderr Receives the usage line or the reason for exit 1 or 2.
+ */
 export function runCli(
   argv: string[],
   stdout: (text: string) => void,

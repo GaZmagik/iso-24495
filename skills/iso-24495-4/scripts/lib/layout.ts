@@ -10,6 +10,23 @@ const DATE_FIELD = /^(?:Date|Updated|Last updated|Reviewed)\s*:?\s*(.+)$/i;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 export interface LayoutOptions extends Reading { fileName?: string }
 
+/**
+ * The layout findings for one Markdown text: `opening-version-date`,
+ * `bullet-depth`, `contents-list` and `overview-label`.
+ *
+ * The contents and overview rules apply only to a document with six or more
+ * level-2 headings outside any list or quotation. The edition advisory
+ * applies only to a document with a level-1 title.
+ *
+ * @param text The whole document. It is read as Markdown whatever it holds,
+ *     so the caller decides whether a file is Markdown.
+ * @param reading `fileName` exempts README, CONTRIBUTING, SECURITY and
+ *     PULL_REQUEST_TEMPLATE files from the edition advisory, by the last part
+ *     of the path and in any letter case. `frontMatter` set to false switches
+ *     that advisory off and reads a leading "---" block as text.
+ * @returns The findings, with each `line` counted from 1. They are not sorted
+ *     by line. Empty when no rule fires, as for empty text.
+ */
 export function layoutViolations(text: string, reading: LayoutOptions = {}): Violation[] {
   const parsed = structure(text, reading);
   const findings: Violation[] = [];
@@ -40,11 +57,27 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   return findings;
 }
 
-/** Render inline wording for comparison while retaining case, punctuation and numbering. */
+/**
+ * Render inline wording for comparison while retaining case, punctuation and numbering.
+ *
+ * @returns The wording as `renderInline` gives it, with each run of white
+ *     space made one space and none at either end. Empty for blank text.
+ */
 export function normaliseWording(text: string): string {
   return renderInline(text).replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The fragment identifier that a link uses to reach each heading.
+ *
+ * @param wordings The text of every heading in the document, in document
+ *     order. A repeated wording takes the suffix -1, then -2, so a list that
+ *     leaves headings out gives the later repeats the wrong identifier.
+ * @returns One identifier for each wording, in the same order: lower case,
+ *     with spaces as hyphens, and punctuation other than hyphens and
+ *     underscores removed. A wording with
+ *     no letter or digit gives an empty identifier. Empty for an empty list.
+ */
 export function headingIds(wordings: readonly string[]): string[] {
   const used = new Set<string>();
   return wordings.map(wording => {
