@@ -32,7 +32,16 @@ describe("calibrated engine", () => {
     expect(purpose("0.12", "0.02", "0.04", "0.82").diagnosis).toBeUndefined();
     expect(classify("block", { colour_only: probability("0.17") }).band).toBe("pass");
     expect(classify("block", { colour_only: probability("0.17000000000000001") }).band).toBe("unsure");
-    expect(planDocument("Plain text.").findings[0].rule).toBe("opening-title");
+    expect(planDocument("Plain text.").findings[0]?.rule).toBe("opening-title");
     expect(planDocument("# Title\n\n---\n").candidates).toHaveLength(1);
+  });
+  test("an opening answer that lacks an option is refused by name", () => {
+    const given = { both: parseDecimal("0.05"), task_only: parseDecimal("0.02"), scope_only: parseDecimal("0.03"), neither: parseDecimal("0.9") };
+    for (const option of Object.keys(given)) {
+      const rest = Object.fromEntries(Object.entries(given).filter(([name]) => name !== option));
+      expect(() => classify("opening", { purpose: rest }), option).toThrow(new TypeError(`The purpose answer holds no probability for ${option}.`));
+    }
+    expect(() => classify("opening", {})).toThrow(TypeError);
+    expect(() => classify("block", {})).toThrow(TypeError);
   });
 });
