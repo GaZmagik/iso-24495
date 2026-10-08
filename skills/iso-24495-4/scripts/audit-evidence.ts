@@ -38,14 +38,15 @@ export function runCli(
     return 2;
   }
   const jsonFlag = argv.indexOf("--json");
-  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+  const jsonPath = jsonFlag === -1 ? undefined : argv[jsonFlag + 1];
+  if (jsonFlag !== -1 && !jsonPath) {
     stderr("audit-evidence: --json requires an output file");
     return 2;
   }
   try {
     const evidence = auditEvidence(dir);
-    if (jsonFlag !== -1) {
-      const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2), "--json");
+    if (jsonPath !== undefined) {
+      const problem = writeTextFile(jsonPath, JSON.stringify(evidence, null, 2), "--json");
       if (problem !== null) {
         stderr(`audit-evidence: ${problem}`);
         return 1;
@@ -53,8 +54,7 @@ export function runCli(
     }
     stdout("| Artefact category | Found | Paths |");
     stdout("|-------------------|-------|-------|");
-    for (const category of CATEGORIES) {
-      const { found, paths } = evidence.artefacts[category];
+    for (const [category, { found, paths }] of Object.entries(evidence.artefacts)) {
       stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.map((path) => safePathCell(path)).join("<br>") || "-"} |`);
     }
     return 0;
