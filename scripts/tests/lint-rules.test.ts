@@ -39,7 +39,11 @@ const BACKSLASH = String.fromCharCode(92);
  * The last line has no line ending, which is its breach.
  */
 const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = [
+  // A reference directive counts only above the first statement, so the three
+  // forms come first.
   [["@typescript-eslint/triple-slash-reference"], "/// <reference path=\"./probe.d.ts\" />"],
+  [["@typescript-eslint/triple-slash-reference"], "/// <reference lib=\"esnext\" />"],
+  [["@typescript-eslint/triple-slash-reference"], "/// <reference types=\"bun\" />"],
   [["@typescript-eslint/ban-ts-comment"], "// @ts-nocheck"],
   [["@typescript-eslint/ban-ts-comment"], "// @ts-ignore"],
   [["no-var"], "export var legacy = 1;"],

@@ -70,7 +70,12 @@ export default defineConfig([
       "no-restricted-syntax": ["error", ...GUIDE_SYNTAX],
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-namespace": "error",
-      "@typescript-eslint/triple-slash-reference": "error",
+      // The recommended set allows a "lib" reference and, where the module is
+      // not also imported, a "types" one. The hand-written test allowed none.
+      "@typescript-eslint/triple-slash-reference": [
+        "error",
+        { lib: "never", path: "never", types: "never" },
+      ],
     },
   },
 ]);
