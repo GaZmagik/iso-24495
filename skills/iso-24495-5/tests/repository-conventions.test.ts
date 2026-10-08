@@ -2002,8 +2002,10 @@ describe("repository writing conventions", () => {
   // The gate asks for agreement and nothing more. Whether the version is later
   // than every release is the release preflight's question, asked before a tag
   // exists, because a checkout of a tagged release is consistent and has to
-  // pass. scripts/release-versions.ts holds all three stages, and its own tests
-  // hold the cases, on fixtures rather than this repository's history.
+  // pass. scripts/release-versions.ts holds this check and describes all three
+  // stages. The preflight is scripts/release-preflight.ts and the pushed tag
+  // check is scripts/release-tag.ts. Each module's own tests hold its cases, on
+  // fixtures rather than this repository's history.
   describe("release versions", () => {
     test("every manifest and every skill names the same version, and the changelog records it", () => {
       const report = checkVersionSites(REPOSITORY_ROOT);
