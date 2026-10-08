@@ -7,6 +7,10 @@
 // The first group below copies the rules gts 7.0.0 switches on, less the
 // formatter. The second group holds the rules a hand-written test used to
 // check by regular expression.
+//
+// scripts/tests/lint-rules.test.ts gives the linter one breach of each rule
+// named here, and fails when a rule does not report or a rule here has no
+// breach. Add a rule and its breach together.
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
