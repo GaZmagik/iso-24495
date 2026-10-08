@@ -48,7 +48,10 @@ The log records transmission and does not prove agreement.
 Only purpose and colour receive calibrated decisions.
 Missing level-1 titles produce local `opening-title` findings and skip purpose assessment.
 Colour assessment continues for every non-empty prose block, without keyword filtering.
-Code and front matter remain excluded, and raw HTML structure is unsupported.
+Code and recognised front matter remain excluded, and raw HTML structure is unsupported.
+
+A leading `---` block counts as front matter only when it is closed and every line has a plain YAML shape.
+A document whose closed leading block fails that test is not sent at all, and the preview names it.
 
 The opening request sends purpose Choice and reader together.
 The block request sends colour and position together.

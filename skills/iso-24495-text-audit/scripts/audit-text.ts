@@ -8,7 +8,7 @@ import {
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { pathFailure, writeTextFile } from "../../iso-24495-4/scripts/lib/failure.ts";
-import { skippedEntryWarning } from "../../iso-24495-4/scripts/lib/safe-text.ts";
+import { safeCell, skippedEntryWarning } from "../../iso-24495-4/scripts/lib/safe-text.ts";
 import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 import { runAuditCli, type AuditDependencies } from "../../iso-24495-4/scripts/lib/jev/audit.ts";
@@ -212,17 +212,17 @@ export function auditTarget(
   return findings;
 }
 
-function tableCell(value: string): string {
-  return value.replaceAll("|", "\\|").replaceAll(/\r?\n/g, " ");
-}
-
 /**
  * The result of a text audit as a Markdown table, one row for each finding,
  * followed by the counts and the two closing statements.
  *
+ * A file name comes from a directory walk and a detail quotes the document, so
+ * neither has been read. Each cell is cleaned with `safeCell`: a control
+ * character, a line break or a mark that reverses text direction becomes a
+ * space, each run of white space becomes one space, and a pipe is escaped.
+ *
  * @returns The lines joined by line breaks. With no findings the table has
- *     its header and no rows, and the counts still appear. A pipe in a cell
- *     is escaped and a line break becomes a space.
+ *     its header and no rows, and the counts still appear.
  */
 export function formatFindings(findings: TextAuditResult): string {
   const lines = [
@@ -232,7 +232,7 @@ export function formatFindings(findings: TextAuditResult): string {
   for (const [file, result] of Object.entries(findings.files)) {
     for (const violation of result.violations) {
       lines.push(
-        `| ${tableCell(file)} | ${violation.line} | ${tableCell(violation.rule)} | ${tableCell(violation.detail)} |`,
+        `| ${safeCell(file)} | ${violation.line} | ${safeCell(violation.rule)} | ${safeCell(violation.detail)} |`,
       );
     }
   }

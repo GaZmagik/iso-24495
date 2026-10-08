@@ -117,3 +117,35 @@ describe("generateReport", () => {
     expect(report).toContain("## Trend");
   });
 });
+
+describe("a report built from files nobody has read", () => {
+  // Every value in the report comes from a JSON file the user names. The
+  // evidence paths come from a directory walk, and the rest is whatever the
+  // file holds, a number included: nothing checks its shape.
+  test("no control character, direction mark or line break from an input reaches the report", () => {
+    for (const code of [27, 0x9b, 0x202e]) {
+      const character = String.fromCharCode(code);
+      const unread = `x${character}[2J|y\nz`;
+      const asNumber = unread as unknown as number;
+      const { report, state } = generateReport({
+        findings: { configHash: "c", files: {}, totals: { [unread]: asNumber } },
+        evidence: { artefacts: { [unread]: { found: true, paths: [unread, "docs/policy.md"] } } },
+        maturity: { dimensions: { [unread]: { level: asNumber, missing: [unread, "owner-accountable"] } }, overall: asNumber },
+        state: { snapshots: [{ timestamp: unread, totals: { legalese: asNumber }, overall: asNumber }] },
+        now: NOW,
+      });
+      const clean = "x [2J\\|y z";
+      expect(report).not.toContain(character);
+      expect(report).toContain(`| ${clean} | ${clean} | ${clean}, owner-accountable |`);
+      expect(report).toContain(`Overall maturity (weakest dimension): **${clean}**.`);
+      expect(report).toContain(`| ${clean} | yes | ${clean}<br>docs/policy.md |`);
+      expect(report).toContain(`| ${clean} | ${clean} |`);
+      expect(report).toContain(`| ${clean} | ${clean} | 0${clean} |`);
+      // Each row is still one line of the table.
+      expect(report.split("\n").filter((line) => line.includes("[2J")).every((line) => line.startsWith("| ") || line.startsWith("Overall"))).toBe(true);
+      // The state is data for the next audit, so it keeps what it was given.
+      expect(state.snapshots[0]?.timestamp).toBe(unread);
+      expect(state.snapshots[1]?.totals).toEqual({ [unread]: asNumber });
+    }
+  });
+});

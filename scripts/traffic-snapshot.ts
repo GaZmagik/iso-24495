@@ -13,28 +13,33 @@
 // this file holds the network call and nothing else.
 
 import { join } from "node:path";
-import { unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
+import { pathFailure, unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
+import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 
 /**
  * Takes one traffic snapshot and merges it into the three CSV files.
  *
  *   bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]
  *
- * `--dry-run` prints the three files and writes none. `--from-file` reads the
+ * `--dry-run` prints the three files and writes none. A referrer is a name
+ * nobody has read, so each printed line has its control characters and marks
+ * that reverse text direction made spaces. A written file keeps the name as
+ * it arrived. `--from-file` reads the
  * four responses from a JSON file and leaves the network alone. Any other
  * argument is taken as the data directory, and the last one wins.
  *
  * Exit 0 means the files were written, or printed on a dry run. Exit 1 means
  * the API or the fixture could not be read, or the payload was malformed, and
- * no file was written. Exit 2 means no data directory was given.
+ * no file was written. Exit 1 also means a file could not be written. The
+ * files are written one after another, so those before it stay written, and
+ * the reason names them. Exit 2 means no data directory was given.
  *
  * @param argv The whole command line, so the arguments start at index 2.
  * @param writeOut Receives the dry-run output and the closing summary line.
  * @param writeErr Receives the usage text or the reason for exit 1.
  * @param deps The network call, the file access and the clock. `readText`
- *     must return `null` for a file that does not exist. A failure in
- *     `writeText` is not caught, so the promise rejects and files written
- *     before it stay written.
+ *     must return `null` for a file that does not exist. Whatever `writeText`
+ *     throws is caught and reported as exit 1, in this module's own words.
  */
 export async function runCli(
   argv: string[],
@@ -111,13 +116,29 @@ export async function runCli(
       text: mergeReferrers(deps.readText(join(directory, "referrers.csv")), date, snapshot),
     },
   ];
+  const written: string[] = [];
   for (const file of files) {
     if (dryRun) {
       writeOut("--- " + file.name + " ---");
-      writeOut(file.text.trimEnd());
+      writeOut(file.text.trimEnd().split("\n").map(safeText).join("\n"));
       continue;
     }
-    deps.writeText(join(directory, file.name), file.text);
+    try {
+      deps.writeText(join(directory, file.name), file.text);
+    } catch (error) {
+      // The runtime names the whole path in its message, so the message is not
+      // read. The file is named from the fixed list above.
+      writeErr(
+        "Could not write " +
+          file.name +
+          ": " +
+          pathFailure(error, directory, "<data-directory>", "cannot be written to") +
+          ". " +
+          (written.length === 0 ? "No table was written." : "Already written: " + written.join(", ") + "."),
+      );
+      return 1;
+    }
+    written.push(file.name);
   }
   writeOut(
     date +

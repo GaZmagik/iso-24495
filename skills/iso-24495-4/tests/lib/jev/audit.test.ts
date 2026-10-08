@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, type AuditDependencies } from "../../../scripts/lib/jev/audit.ts";
 import { MODEL } from "../../../scripts/lib/jev/catalogue.ts";
+import { planDocument } from "../../../scripts/lib/jev/engine.ts";
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
 import { runCli as runDesignCli } from "../../../../iso-24495-design-audit/scripts/design-audit.ts";
 
@@ -152,5 +153,188 @@ test("complete exports, local title findings, unsure decisions and log failures 
     expect(JSON.parse(readFileSync(reportFile, "utf8")).jev.localFindings[0].rule).toBe("opening-title");
     dependencies.terminal = { inputIsTTY: true, outputIsTTY: true, prompt: async () => { rmSync(file); return "yes"; } };
     expect(await run(["--jev", "--send"])).toBe(1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+// Two functions decide what front matter is. The calibrated guard that the plan
+// uses accepts a leading "---" block only when each line has a conservative
+// shape, and a tab after a YAML colon fails it. The plan then read the metadata
+// as prose and queued it for sending.
+const TAB_BLOCK = "---\nversion: 1.0\napi_key:\tPRIVATE_SENTINEL\n\n---\n# Tab guide\n\nTab instructions. The supplier shall act.";
+const SPACE_BLOCK = "---\nversion: 1.0\napi_key: SPACE_SENTINEL\n\n---\n# Space guide\n\nSpace instructions.";
+const NO_BLOCK = "# Plain guide\n\nPlain instructions.";
+const REFUSAL = "front matter could not be recognised safely";
+
+/** Dependencies whose transport keeps every request body and answers each one so that it passes. */
+function recordingDependencies(bodies: string[]): AuditDependencies {
+  return {
+    env: { TYPESAFE_API_KEY: "key" }, now: () => new Date("2026-10-06T12:00:00Z"),
+    terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
+    client: { fetch: async (_url, init) => { bodies.push(init.body); const body = JSON.parse(init.body); return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "both", confidence: 0.8, probabilities: { both: 0.8, task_only: 0.1, scope_only: 0.05, neither: 0.05 } } : { type: "noul", noul: 0.5 }])) }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+    writeLog: () => {},
+  };
+}
+
+test("a leading block the calibrated guard does not recognise is refused in the preview and never sent", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-front-matter-"));
+  try {
+    writeFileSync(join(directory, "tab.md"), TAB_BLOCK);
+    writeFileSync(join(directory, "space.md"), SPACE_BLOCK);
+    writeFileSync(join(directory, "plain.md"), NO_BLOCK);
+    const bodies: string[] = [];
+    const out: string[] = [];
+    const warnings: string[] = [];
+    const dependencies = recordingDependencies(bodies);
+    const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", directory, "--project-dir", directory, ...args], text => out.push(text), text => warnings.push(text), dependencies);
+
+    // Agreement is given on the preview, so the refusal has to be there.
+    expect(await run("design", [])).toBe(0);
+    expect(out.join("\n")).toContain(`- tab.md: not sent, because its ${REFUSAL}.`);
+    expect(out.join("\n")).toContain("Documents not sent: 1 of 3.");
+    expect(out.join("\n")).toContain("- space.md: 1 eligible openings, 1 eligible blocks, 2 requests.");
+    expect(out.join("\n")).toContain("Total: 4 requests, 8 questions.");
+    expect(warnings).toEqual([`warning: not sent: tab.md: ${REFUSAL}`]);
+    expect(bodies).toHaveLength(0);
+
+    const selection = selectDocuments(directory, directory);
+    expect(selection.documents.map(document => [document.file, document.refusal, document.plan.candidates.length]))
+      .toEqual([["plain.md", undefined, 2], ["space.md", undefined, 2], ["tab.md", REFUSAL, 0]]);
+    expect(selection.documents[0].plan).toEqual(planDocument(NO_BLOCK));
+    expect(selection.documents[1].plan).toEqual(planDocument(SPACE_BLOCK));
+    expect(selection.paths).toHaveLength(3);
+
+    const reportFile = join(directory, "report.json");
+    out.length = 0;
+    expect(await run("design", ["--send", "--yes", "--json", reportFile])).toBe(0);
+    expect(bodies).toHaveLength(4);
+    const sent = bodies.join("\n");
+    expect(sent).toContain("Space instructions.");
+    expect(sent).toContain("Plain instructions.");
+    for (const withheld of ["PRIVATE_SENTINEL", "api_key", "Tab instructions", "Tab guide", "SPACE_SENTINEL"]) expect(sent).not.toContain(withheld);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    expect(report.jev.notSent).toEqual([{ file: "tab.md", reason: REFUSAL }]);
+    expect(report.jev.complete).toBe(true);
+    expect(out.join("\n")).toContain(`Not sent: tab.md, because its ${REFUSAL}.`);
+
+    // The mechanical audit sends nothing, so it still reads the refused document.
+    out.length = 0;
+    expect(await run("text", ["--jev-preview"])).toBe(0);
+    expect(out.join("\n")).toContain("| tab.md | 8 | legalese | banned term \"shall\" |");
+    expect(bodies).toHaveLength(4);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("a refused document selected alone completes with nothing sent", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-front-matter-alone-"));
+  try {
+    const file = join(directory, "tab.md");
+    writeFileSync(file, TAB_BLOCK);
+    const bodies: string[] = [];
+    const out: string[] = [];
+    const logged: string[][] = [];
+    const dependencies = recordingDependencies(bodies);
+    dependencies.writeLog = record => { logged.push(record.paths); };
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], text => out.push(text), text => out.push(text), dependencies)).toBe(0);
+    expect(bodies).toHaveLength(0);
+    expect(out.join("\n")).toContain("Total: 0 requests, 0 questions.");
+    expect(out.join("\n")).toContain("Documents not sent: 1 of 1.");
+    expect(logged).toEqual([[file]]);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("the refusal covers any closed leading block the guard rejects, and nothing else", () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-front-matter-shapes-"));
+  try {
+    const refusalFor = (text: string, name = "doc.md") => {
+      writeFileSync(join(directory, name), text);
+      return selectDocuments(join(directory, name), directory, "text").documents[0];
+    };
+    // Not YAML at all, and still refused: a block someone meant as metadata can be
+    // malformed, and a test that needed valid YAML would send exactly that block.
+    expect(refusalFor("---\nkey: [unclosed\nsecret here\n---\n# Title\n\nWords.").refusal).toBe(REFUSAL);
+    expect(refusalFor("---\nsecret:\tvalue\n...\n# Title\n\nWords.").refusal).toBe(REFUSAL);
+    expect(refusalFor("---\r\nsecret:\tvalue\r\n---\r\n# Title\r\n\r\nWords.").refusal).toBe(REFUSAL);
+    // The case the wider test costs: a document that opens with a rule and holds another.
+    const ruled = refusalFor("---\n\nA paragraph a reader reads.\n\n---\n\n# Title\n\nWords.");
+    expect(ruled.refusal).toBe(REFUSAL);
+    expect(ruled.plan).toEqual({ candidates: [], findings: [] });
+
+    // One rule with nothing closing it is not a block, so the document is planned as before.
+    const opened = "---\n\n# Title\n\nWords.";
+    expect(refusalFor(opened).refusal).toBeUndefined();
+    expect(refusalFor(opened).plan).toEqual(planDocument(opened));
+    // A rule lower down is not a leading block.
+    const lower = "# Title\n\nWords.\n\n---\n\nMore words.\n\n---\n";
+    expect(refusalFor(lower).refusal).toBeUndefined();
+    expect(refusalFor(lower).plan).toEqual(planDocument(lower));
+    // A text file is never planned, so there is nothing to refuse.
+    expect(refusalFor(TAB_BLOCK, "note.txt").refusal).toBeUndefined();
+    expect(refusalFor(TAB_BLOCK, "note.txt").plan.candidates).toHaveLength(0);
+
+    expect(formatFindings({ complete: true, limitation: "test", evidence: [], results: [], localFindings: [], coverage: [], notSent: [{ file: `a${String.fromCharCode(27)}[2Jb.md`, reason: REFUSAL }] }))
+      .toContain(`Not sent: a [2Jb.md, because its ${REFUSAL}.`);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+// This one confirms what the Jev audit already did, so it passed on its first
+// run. It is here so the design audit is held to the same test as the others.
+test("the Jev audit prints a file name, a finding and an excerpt without control characters", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-unread-"));
+  try {
+    const [escape, control, override] = [27, 0x9b, 0x202e].map(code => String.fromCharCode(code)) as [string, string, string];
+    // Windows refuses an escape character in a file name and allows the other two.
+    const name = `gu${override}ide${control}.md`;
+    writeFileSync(join(directory, name), `# Title${escape}[2J\n\nUse [here](https://x.invalid/${escape}[2J${control}) for the ${override}guide.\n`);
+    const bodies: string[] = [];
+    const out: string[] = [];
+    const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", directory, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), recordingDependencies(bodies));
+    expect(await run("text", ["--jev-preview"])).toBe(0);
+    expect(await run("text", ["--jev", "--send", "--yes"])).toBe(0);
+    expect(await run("design", ["--send", "--yes"])).toBe(0);
+    const printed = out.join("\n");
+    for (const character of [escape, control, override]) expect(printed).not.toContain(character);
+    expect(printed).toContain("| gu ide .md | 3 | link-text | link text \"here\" describes no destination (https://x.invalid/ [2J ) |");
+    expect(printed).toContain("- gu ide .md: 1 eligible openings, 1 eligible blocks, 2 requests.");
+    expect(printed).toContain("Excerpt: # Title [2J Use [here](https://x.invalid/ [2J ) for the guid |");
+    expect(printed).toContain("Excerpt: Use here for the guide. |");
+    expect(bodies.length).toBeGreaterThan(0);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+// Four workers share one queue. A worker that meets a failure sets a flag, and
+// every worker checks the flag before it takes the next request. Without that
+// check the other requests were still sent after the run had already failed,
+// and their verdicts were then thrown away.
+test("once a reply fails, no request that is still queued is sent", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-stop-"));
+  try {
+    const file = join(directory, "doc.md");
+    const paragraphs = Array.from({ length: 20 }, (_, index) => `Paragraph number ${index + 1} of the guide.`);
+    writeFileSync(file, `# Title\n\n${paragraphs.join("\n\n")}\n`);
+    expect(selectDocuments(file, directory).documents[0].plan.candidates).toHaveLength(21);
+    let sent = 0;
+    let logged: { complete: boolean; digest: string } | undefined;
+    const out: string[] = [];
+    const dependencies: AuditDependencies = {
+      env: { TYPESAFE_API_KEY: "key" },
+      terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
+      // HTTP 400 is refused at once and never tried again, so each request is one call.
+      client: { fetch: async () => { sent++; return new Response("refused", { status: 400 }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+      writeLog: record => { logged = record; },
+    };
+    const reportFile = join(directory, "report.json");
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => out.push(text), text => out.push(text), dependencies)).toBe(3);
+    // One request for each of the four workers, which all started before any reply arrived.
+    expect(sent).toBe(4);
+    expect(logged?.complete).toBe(false);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    expect(report.jev.complete).toBe(false);
+    expect(report.jev.results).toEqual([]);
+    expect(out.join("\n")).toContain("Jev execution is incomplete.");
+
+    // The same document sends all 21 when nothing fails, so the 4 above is the stop and not a limit.
+    const bodies: string[] = [];
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], () => {}, () => {}, recordingDependencies(bodies))).toBe(0);
+    expect(bodies).toHaveLength(21);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -1,4 +1,4 @@
-import { codeSpanEnds, inlineText } from "./parse.ts";
+import { codeSpanEnds, inlineText, type LabelRange } from "./parse.ts";
 import entities from "./html-entities.json";
 
 /** A run of one mark, and the part of it that no pair has taken yet. */
@@ -13,7 +13,20 @@ interface Run {
   original: number;
   open: boolean;
   close: boolean;
+  /**
+   * The link label the run sits in, or `OUTSIDE` for text in no label. A mark
+   * pairs only with a mark in the same one.
+   */
+  scope: number;
 }
+
+/** From this offset to the next stretch, the innermost link label is `scope`. */
+interface Stretch {
+  from: number;
+  scope: number;
+}
+const OUTSIDE = -1;
+const NO_LABELS: readonly Stretch[] = [{ from: 0, scope: OUTSIDE }];
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const PUNCTUATION = /[\p{P}\p{S}]/u;
 const EMPHASIS = "*_";
@@ -80,13 +93,15 @@ export function renderInline(source: string): string {
  * @param source Inline Markdown, which may run over several lines. Pass a
  *     whole paragraph, because emphasis can open on one line and close on a
  *     later one.
+ * @param labels Where link labels sit in the source, as `emphasisMarkOffsets`
+ *     takes them.
  * @returns The source without the marks `emphasisMarkOffsets` names. The
  *     source itself where it holds no paired mark, as for empty source.
  */
-export function withoutEmphasis(source: string): string {
+export function withoutEmphasis(source: string, labels: readonly LabelRange[] = []): string {
   const kept: string[] = [];
   let from = 0;
-  for (const mark of emphasisMarkOffsets(source)) {
+  for (const mark of emphasisMarkOffsets(source, labels)) {
     kept.push(source.slice(from, mark));
     from = mark + 1;
   }
@@ -103,20 +118,65 @@ export function withoutEmphasis(source: string): string {
  * same way. It is counted because the struck words are still on the page: a
  * reader sees them, and a screen reader says them with no sign of the strike.
  *
+ * A link is a boundary. Where links were replaced by their labels, pass where
+ * the labels sit: a mark inside a label then pairs only with another in the
+ * same label, and a mark outside every label only with another outside. So
+ * emphasis can still wrap a whole link, and can sit inside a label, and the
+ * two asterisks of "*or[der*](u)" are left alone, as a browser leaves them.
+ * A run of marks that crosses the edge of a label is read as two runs. This
+ * keeps the boundary and nothing more: whether a mark may open or close is
+ * still judged from the characters beside it once the link syntax is gone.
+ *
  * @param source Inline Markdown, which may run over several lines.
+ * @param labels Each link label in the source, by its offsets, as
+ *     `labelledProseBlocks` gives them. Labels may sit inside one another and
+ *     must not otherwise overlap. With none, the whole source is one text.
  * @returns The offset of every `*`, `_` and `~` that belongs to a pair, in
  *     ascending order, one entry for each character. A mark with no partner,
  *     an escaped mark and a mark inside a code span are not listed. Empty
  *     when nothing is paired, as for empty source.
  */
-export function emphasisMarkOffsets(source: string): number[] {
-  return pairedMarks(delimiterRuns(source, EMPHASIS + STRIKE)).sort((a, b) => a - b);
+export function emphasisMarkOffsets(source: string, labels: readonly LabelRange[] = []): number[] {
+  return pairedMarks(delimiterRuns(source, EMPHASIS + STRIKE, labelStretches(labels))).sort((a, b) => a - b);
 }
 
-/** Every run of the given marks that stands outside a code span and is not escaped. */
-function delimiterRuns(text: string, markers: string): Run[] {
+/**
+ * The text cut into stretches at every edge of a label, each with the innermost label
+ * it lies in. The first stretch starts at offset 0.
+ */
+function labelStretches(labels: readonly LabelRange[]): readonly Stretch[] {
+  if (labels.length === 0) return NO_LABELS;
+  const edges: Array<{ at: number; opens: boolean; id: number; end: number }> = [];
+  labels.forEach((label, id) => {
+    // An empty label holds no character, so it bounds nothing.
+    if (label.start >= label.end) return;
+    edges.push({ at: label.start, opens: true, id, end: label.end });
+    edges.push({ at: label.end, opens: false, id, end: label.end });
+  });
+  // At one offset the labels that end there close first. Of those that start there,
+  // the one that reaches furthest is the outer one, so it opens first.
+  edges.sort((a, b) => a.at - b.at || Number(a.opens) - Number(b.opens) || b.end - a.end);
+  const stretches: Stretch[] = [{ from: 0, scope: OUTSIDE }];
+  const open: number[] = [];
+  for (let index = 0; index < edges.length; index++) {
+    const edge = edges[index] as { at: number; opens: boolean; id: number };
+    if (edge.opens) open.push(edge.id);
+    else open.pop();
+    if (edges[index + 1]?.at === edge.at) continue;
+    stretches.push({ from: edge.at, scope: open.at(-1) ?? OUTSIDE });
+  }
+  return stretches;
+}
+
+/**
+ * Every run of the given marks that stands outside a code span and is not escaped.
+ *
+ * @param stretches Where the link labels sit. A run ends at the edge of a stretch.
+ */
+function delimiterRuns(text: string, markers: string, stretches: readonly Stretch[] = NO_LABELS): Run[] {
   const spans = codeSpanEnds(text);
   const runs: Run[] = [];
+  let stretch = 0;
   for (let index = 0; index < text.length;) {
     if (text[index] === "\\" && ESCAPABLE.test(text[index + 1] ?? "")) {
       index += 2;
@@ -131,7 +191,9 @@ function delimiterRuns(text: string, markers: string): Run[] {
       index++;
       continue;
     }
-    const run = runAt(text, index);
+    while (((stretches[stretch + 1] as Stretch | undefined)?.from ?? Infinity) <= index) stretch++;
+    const limit = (stretches[stretch + 1] as Stretch | undefined)?.from ?? text.length;
+    const run = runAt(text, index, limit, (stretches[stretch] as Stretch).scope);
     // One tilde is a subscript to some renderers and three open a code fence.
     if (run.marker !== STRIKE || run.original === 2) runs.push(run);
     index = run.end;
@@ -139,11 +201,14 @@ function delimiterRuns(text: string, markers: string): Run[] {
   return runs;
 }
 
-/** The run of one mark that starts here, and whether CommonMark lets it open or close. */
-function runAt(text: string, start: number): Run {
+/**
+ * The run of one mark that starts here and ends before `limit`, and whether CommonMark
+ * lets it open or close.
+ */
+function runAt(text: string, start: number, limit: number, scope: number): Run {
   const marker = text[start];
   let end = start + 1;
-  while (text[end] === marker) end++;
+  while (end < limit && text[end] === marker) end++;
   const before = characterBefore(text, start);
   const after = end < text.length ? String.fromCodePoint(text.codePointAt(end) as number) : " ";
   const left = !/\s/.test(after) && (!PUNCTUATION.test(after) || /\s/.test(before) || PUNCTUATION.test(before));
@@ -158,6 +223,7 @@ function runAt(text: string, start: number): Run {
     original: end - start,
     open: left && (anywhere || !right || PUNCTUATION.test(before)),
     close: right && (anywhere || !left || PUNCTUATION.test(after)),
+    scope,
   };
 }
 
@@ -176,7 +242,8 @@ function characterBefore(text: string, offset: number): string {
  * The offset of every mark that belongs to a pair, in no order.
  *
  * Each closer takes the nearest earlier opener of its own mark, as CommonMark
- * describes. The runs are changed as their marks are taken.
+ * describes, from the runs in its own link label. The runs are changed as
+ * their marks are taken.
  */
 function pairedMarks(runs: Run[]): number[] {
   const marks: number[] = [];
@@ -186,11 +253,18 @@ function pairedMarks(runs: Run[]): number[] {
   // For each kind of closer, the run at or before which it has no opener. Without this
   // a text of closers alone would search back to its start from every one of them.
   const searched = new Map<string, number>();
+  // The first run in each link label. No run before it is in that label, so a closer
+  // there need look no further back. Without this, a closer in each of many labels
+  // would search back over every unpaired opener outside them.
+  const first = new Map<number, number>();
   let last = -1;
   for (let closing = 0; closing < runs.length; closing++) {
     const closer = runs[closing] as Run;
     earlier[closing] = last;
-    if (closer.close) pairCloser(runs, closing, earlier, searched, marks);
+    if (!first.has(closer.scope)) first.set(closer.scope, closing);
+    if (closer.close) {
+      pairCloser(runs, closing, earlier, searched, marks, (first.get(closer.scope) as number) - 1);
+    }
     last = closer.start < closer.end ? closing : earlier[closing] as number;
   }
   return marks;
@@ -203,10 +277,11 @@ function pairCloser(
   earlier: number[],
   searched: Map<string, number>,
   marks: number[],
+  beforeScope: number,
 ): void {
   const closer = runs[closing] as Run;
-  const kind = `${closer.marker}${closer.open}${closer.original % 3}`;
-  const floor = searched.get(kind) ?? -1;
+  const kind = `${closer.marker}${closer.open}${closer.original % 3} ${closer.scope}`;
+  const floor = Math.max(searched.get(kind) ?? -1, beforeScope);
   while (closer.start < closer.end) {
     let opening = earlier[closing] as number;
     while (opening > floor && !canPair(runs[opening] as Run, closer)) {
@@ -229,7 +304,7 @@ function pairCloser(
 
 /** Whether a closer may take this earlier run as its opener. */
 function canPair(opener: Run, closer: Run): boolean {
-  if (!opener.open || opener.marker !== closer.marker) return false;
+  if (!opener.open || opener.marker !== closer.marker || opener.scope !== closer.scope) return false;
   if (!opener.close && !closer.open) return true;
   // CommonMark's rule of three keeps ambiguous intraword runs literal.
   return (opener.original + closer.original) % 3 !== 0

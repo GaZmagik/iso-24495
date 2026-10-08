@@ -71,12 +71,18 @@ export function normaliseWording(text: string): string {
  * The fragment identifier that a link uses to reach each heading.
  *
  * @param wordings The text of every heading in the document, in document
- *     order. A repeated wording takes the suffix -1, then -2, so a list that
- *     leaves headings out gives the later repeats the wrong identifier.
- * @returns One identifier for each wording, in the same order: lower case,
- *     with spaces as hyphens, and punctuation other than hyphens and
- *     underscores removed. A wording with
- *     no letter or digit gives an empty identifier. Empty for an empty list.
+ *     order. An identifier that was already given takes the suffix -1, then
+ *     -2, so a list that leaves headings out gives the later repeats the
+ *     wrong identifier.
+ * @returns One identifier for each wording, in the same order. The wording
+ *     is rendered as `normaliseWording` renders it and put in lower case.
+ *     Every character is then removed unless it is a letter, a number, a
+ *     combining mark, a space, a hyphen or an underscore, and each space
+ *     that is left becomes a hyphen. A wording of hyphens or underscores
+ *     alone is therefore kept whole: "---" gives "---". Only a wording that
+ *     holds none of the kept characters, such as "!!!", gives an empty
+ *     identifier, and a second such wording gives "-1". Empty for an empty
+ *     list.
  */
 export function headingIds(wordings: readonly string[]): string[] {
   const used = new Set<string>();

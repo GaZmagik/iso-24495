@@ -813,3 +813,32 @@ describe("a skipped entry is printed with its path cleaned", () => {
     });
   });
 });
+
+describe("audit-evidence prints a path nobody has read", () => {
+  // The paths come from a directory walk. A C1 control and a right-to-left
+  // override are allowed in a file name on every platform, and an escape
+  // character on Linux and macOS.
+  test("a control character or a direction mark in a file name becomes a space, and the JSON keeps it", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-evidence-unread-"));
+    const temp = mkdtempSync(join(tmpdir(), "iso-evidence-unread-out-"));
+    try {
+      const control = String.fromCharCode(0x9b);
+      const override = String.fromCharCode(0x202e);
+      const name = `style-guide${override}[2J${control}x.md`;
+      writeFileSync(join(workspace, name), "Words.\n");
+      writeFileSync(join(workspace, "glossary.md"), "Words.\n");
+      const jsonPath = join(temp, "evidence.json");
+      const output = capture();
+      expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", workspace, "--json", jsonPath], output.writeOut, output.writeErr)).toBe(0);
+      const printed = output.stdout.join("\n");
+      expect(printed).not.toContain(control);
+      expect(printed).not.toContain(override);
+      expect(output.stdout[2]).toBe("| policy | yes | style-guide [2J x.md |");
+      expect(output.stdout[6]).toBe("| glossary | yes | glossary.md |");
+      expect(JSON.parse(readFileSync(jsonPath, "utf8")).artefacts.policy.paths).toEqual([name]);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+});

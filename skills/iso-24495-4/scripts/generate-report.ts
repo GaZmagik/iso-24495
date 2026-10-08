@@ -4,6 +4,7 @@
 
 import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
 import { readJsonFile, unexpectedKind, writeTextFile, type JsonFile } from "./lib/failure.ts";
+import { safeCell } from "./lib/safe-text.ts";
 import { existsSync } from "node:fs";
 
 /**
@@ -121,9 +122,13 @@ export interface ReportInput {
  * @param input The three results to merge and the state so far. A `state` of
  *     `null` means a first audit. The input is not altered: the history is
  *     copied before the new snapshot joins it.
- * @returns `report` is Markdown. Its Trend section appears only once the
- *     history holds two audits or more. `state` holds every earlier snapshot
- *     and one more, and is what the caller must save for the next audit.
+ * @returns `report` is Markdown. Every value in it that came from an input is
+ *     cleaned with `safeCell`, numbers included, because an input is a file
+ *     nobody has read: a control character, a line break or a mark that
+ *     reverses text direction becomes a space, and a pipe is escaped. Its
+ *     Trend section appears only once the history holds two audits or more. `state` holds every earlier snapshot
+ *     and one more, as given and not cleaned, and is what the caller must
+ *     save for the next audit.
  *     Nothing is written to disk.
  * @throws A `TypeError` when an input lacks a part the report reads, such as
  *     `findings.totals`. The shape is not checked first.
@@ -150,10 +155,10 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   lines.push("| Dimension | Level | Blocking criteria |");
   lines.push("|-----------|-------|-------------------|");
   for (const [dimension, result] of Object.entries(maturity.dimensions)) {
-    lines.push(`| ${dimension} | ${result.level} | ${result.missing.join(", ") || "-"} |`);
+    lines.push(`| ${cell(dimension)} | ${cell(result.level)} | ${result.missing.map(cell).join(", ") || "-"} |`);
   }
   lines.push("");
-  lines.push(`Overall maturity (weakest dimension): **${maturity.overall}**.`);
+  lines.push(`Overall maturity (weakest dimension): **${cell(maturity.overall)}**.`);
   lines.push("");
   lines.push("## Evidence");
   lines.push("");
@@ -161,7 +166,7 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   lines.push("|-------------------|-------|-------|");
   for (const [category, artefact] of Object.entries(evidence.artefacts)) {
     lines.push(
-      `| ${category} | ${artefact.found ? "yes" : "no"} | ${artefact.paths.join("<br>") || "-"} |`,
+      `| ${cell(category)} | ${artefact.found ? "yes" : "no"} | ${artefact.paths.map(cell).join("<br>") || "-"} |`,
     );
   }
   lines.push("");
@@ -170,7 +175,7 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   lines.push("| Rule | Violations |");
   lines.push("|------|------------|");
   for (const [rule, count] of Object.entries(findings.totals)) {
-    lines.push(`| ${rule} | ${count} |`);
+    lines.push(`| ${cell(rule)} | ${cell(count)} |`);
   }
   lines.push("");
   lines.push(
@@ -184,7 +189,7 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
     lines.push("|------------|---------|------------------|");
     for (const snapshot of snapshots) {
       const total = Object.values(snapshot.totals).reduce((a, b) => a + b, 0);
-      lines.push(`| ${snapshot.timestamp} | ${snapshot.overall} | ${total} |`);
+      lines.push(`| ${cell(snapshot.timestamp)} | ${cell(snapshot.overall)} | ${cell(total)} |`);
     }
   }
   lines.push("");
@@ -197,4 +202,9 @@ export function generateReport(input: ReportInput): { report: string; state: Aud
   lines.push("");
 
   return { report: lines.join("\n"), state };
+}
+
+/** A value from an input file as one table cell. The file is not checked, so a number may be anything. */
+function cell(value: unknown): string {
+  return safeCell(String(value));
 }

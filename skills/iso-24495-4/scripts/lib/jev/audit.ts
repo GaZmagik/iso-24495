@@ -1,12 +1,13 @@
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { auditText, configHash, isAuditedDocument, listTextFiles, projectAcronyms } from "../../audit-corpus.ts";
+import { frontMatterRange, toLines } from "../parse.ts";
 import type { Findings } from "../types.ts";
 import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvidence } from "./catalogue.ts";
 import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
-import { safeText, skippedEntryWarning } from "../safe-text.ts";
+import { safeCell, safeText, skippedEntryWarning } from "../safe-text.ts";
 
 export const DISCLOSURE_VERSION = "0.8.0-r1";
 export const LIMITATION = "Only purpose and colour receive calibrated decisions. Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability. Correlated blocks do not extend that guarantee.";
@@ -19,12 +20,20 @@ export interface AuditDependencies {
   read?: (path: string, encoding: "utf8") => string;
   writeLog?: (record: AuditLog, path: string) => void;
 }
-export interface SelectedDocument { file: string; path: string; plan: DocumentPlan }
+// Why a document is refused for sending. The words are fixed, so they are safe to print.
+const UNRECOGNISED_FRONT_MATTER = "front matter could not be recognised safely";
+export interface SelectedDocument {
+  file: string;
+  path: string;
+  plan: DocumentPlan;
+  /** Set when nothing from the document may be sent. The plan is then empty. */
+  refusal?: string;
+}
 export interface Selection { documents: SelectedDocument[]; mechanical: Findings; skipped: string[]; paths: string[] }
 interface Arguments { target: string; projectDir: string; send: boolean; yes: boolean; preview: boolean; json?: string; includeText: boolean; frontMatter: boolean }
 interface Counts { assessed: number; pass: number; fail: number; unsure: number; skipped: number }
 export interface Judgement extends Decision { file: string; line: number; id: string; excerpt: string; stateHash: string; state?: Record<string, string | number>; detail: string }
-export interface JevReport { complete: boolean; limitation: string; evidence: GateEvidence[]; results: Judgement[]; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
+export interface JevReport { complete: boolean; limitation: string; evidence: GateEvidence[]; results: Judgement[]; notSent?: Array<{ file: string; reason: string }>; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
 
 /**
  * Runs the calibrated Jev audit for one file or directory, as a preview or as
@@ -45,6 +54,13 @@ export interface JevReport { complete: boolean; limitation: string; evidence: Ga
  * - Text mode needs `--jev-preview`, or `--jev` together with `--send`.
  *   Design mode previews unless `--send` is given.
  * - `--no-front-matter` is refused here, as is any option given twice.
+ *
+ * A Markdown document that opens with a closed "---" block which
+ * `frontMatterRange` does not accept is refused: nothing from it is planned
+ * or sent, whatever else is. The preview names it before agreement is asked
+ * for, and the Jev findings and the report name it again. Its mechanical
+ * findings are still printed in text mode. A refusal does not change the exit
+ * code, so exit 0 can mean that every selected document was refused.
  *
  * Exit codes:
  *
@@ -70,8 +86,8 @@ export interface JevReport { complete: boolean; limitation: string; evidence: Ga
  * @param argv The whole command line.
  * @param stdout Receives the mechanical findings in text mode, then the
  *     disclosure, then the Jev findings after a send.
- * @param stderr Receives a warning for each skipped entry, and the reason for
- *     every exit code but 0.
+ * @param stderr Receives a warning for each skipped entry and each refused
+ *     document, and the reason for every exit code but 0.
  * @param dependencies Replacements for the environment, the terminal, the
  *     client, the clock, the document reader and the log writer. Each
  *     defaults to the real one.
@@ -83,6 +99,9 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   let selection: Selection;
   try { selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter); } catch { stderr("The selected path could not be read or is not a supported document."); return 1; }
   for (const path of selection.skipped) stderr(skippedEntryWarning(path));
+  for (const document of selection.documents) {
+    if (document.refusal !== undefined) stderr(`warning: not sent: ${safeText(document.file)}: ${document.refusal}`);
+  }
   if (mode === "text") stdout(formatMechanical(selection.mechanical));
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
@@ -155,7 +174,11 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
  * @param frontMatter False makes the mechanical audit read a leading "---"
  *     block as text. The Jev plan reads it as front matter either way.
  * @returns `documents` holds a plan for each file read, and `paths` the full
- *     path of each. `skipped` holds every entry passed over. A target that is
+ *     path of each. A Markdown document that opens with a closed "---" block
+ *     which `frontMatterRange` does not accept has a `refusal` and a plan
+ *     with no requests and no findings, because the plan would read that
+ *     block as prose. It stays in `documents` and `paths`, and its mechanical
+ *     findings are kept. `skipped` holds every entry passed over. A target that is
  *     itself a symbolic link is skipped and not read, so `skipped` names it
  *     and every other list is empty. A directory with no supported file
  *     returns empty lists.
@@ -186,15 +209,40 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
       selection.mechanical.files[file] = { violations };
       for (const finding of violations) selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
     }
+    if (markdown && hasUnrecognisedFrontMatter(text)) {
+      selection.documents.push({ file, path, plan: { candidates: [], findings: [] }, refusal: UNRECOGNISED_FRONT_MATTER });
+      continue;
+    }
     selection.documents.push({ file, path, plan: markdown ? planDocument(text) : { candidates: [], findings: [] } });
   }
   return selection;
 }
 
 /**
+ * Whether a document opens with a closed "---" block that the calibrated guard
+ * does not accept as front matter.
+ *
+ * `planDocument` hides front matter only where `frontMatterRange` accepts it.
+ * That guard is conservative: a tab after a colon is valid YAML and fails it.
+ * The plan then reads the metadata as prose, and it would be sent. The guard
+ * is frozen with the calibration, so the document is refused here instead.
+ *
+ * The block need not be YAML. Metadata with one malformed line is still
+ * metadata, and a test that asked for valid YAML would send exactly that
+ * block. The cost is a document that opens with a horizontal rule and holds a
+ * later line of "---" or "...": it is refused until the leading rule goes.
+ */
+function hasUnrecognisedFrontMatter(text: string): boolean {
+  const lines = toLines(text);
+  if (frontMatterRange(lines) !== null) return false;
+  return /^---[ \t]*$/.test(lines[0] ?? "") && lines.some((line, index) => index > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(line));
+}
+
+/**
  * The disclosure a user reads before agreeing to send: the recipient and
- * model, each selected path, the requests for each file, the five largest
- * payloads, the privacy terms, the limitation and the calibration evidence.
+ * model, each selected path, the requests for each file, each document that
+ * is refused for sending and why, the five largest payloads, the privacy
+ * terms, the limitation and the calibration evidence.
  *
  * @param selection What `selectDocuments` returned. An empty selection gives
  *     the same text with totals of zero.
@@ -209,13 +257,16 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
  */
 export function formatPlan(selection: Selection, includeText = false, json?: string): string {
   const candidates = selection.documents.flatMap(document => document.plan.candidates);
+  const refused = selection.documents.filter(document => document.refusal !== undefined);
   const largest = [...selection.documents].sort((first, second) => payloadBytes(second.plan) - payloadBytes(first.plan) || first.file.localeCompare(second.file)).slice(0, 5);
   return [
     `Transmission preview: TypeSafe, model ${MODEL}, disclosure ${DISCLOSURE_VERSION}.`,
     "Document text leaves this machine when you agree to send. Charges may apply. Pricing and retention have not been checked.",
     "Privacy terms: https://typesafe.ai/legal/privacy-policy and https://typesafe.ai/legal/data-processing.",
     ...selection.paths.map(path => `Selected: ${safeText(path)}`),
-    ...selection.documents.map(document => `- ${safeText(document.file)}: ${document.plan.candidates.filter(candidate => candidate.kind === "opening").length} eligible openings, ${document.plan.candidates.filter(candidate => candidate.kind === "block").length} eligible blocks, ${document.plan.candidates.length} requests.`),
+    ...selection.documents.map(document => document.refusal !== undefined ? `- ${safeText(document.file)}: not sent, because its ${document.refusal}.`
+      : `- ${safeText(document.file)}: ${document.plan.candidates.filter(candidate => candidate.kind === "opening").length} eligible openings, ${document.plan.candidates.filter(candidate => candidate.kind === "block").length} eligible blocks, ${document.plan.candidates.length} requests.`),
+    ...(refused.length === 0 ? [] : [`Documents not sent: ${refused.length} of ${selection.documents.length}. A leading "---" block that is closed but lacks the shape of front matter may hold metadata, so nothing from such a document is sent. Correct the block or remove it to have the document assessed.`]),
     `Total: ${candidates.length} requests, ${candidates.length * 2} questions.`,
     "Purpose travels with the reader companion question; colour travels with the position companion question. Reader and position judgements are discarded.",
     "Five largest payload totals (UTF-8 bytes, including questions):",
@@ -228,8 +279,9 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
 }
 
 /**
- * The Jev section of a report as text: whether execution completed, the
- * limitation, the evidence table, the findings and the coverage counts.
+ * The Jev section of a report as text: whether execution completed, each
+ * document that was refused for sending, the limitation, the evidence table,
+ * the findings and the coverage counts.
  *
  * @returns Markdown tables joined by line breaks. The findings table lists
  *     each local finding and each result that did not pass; a pass appears in
@@ -238,18 +290,19 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
  *     removed and pipes escaped.
  */
 export function formatFindings(report: JevReport): string {
-  const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`, LIMITATION,
+  const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`,
+    ...(report.notSent ?? []).map(document => `Not sent: ${safeText(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
     ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
     "|------|------|------|-------|------|-------|---------|---------|"];
-  for (const finding of report.localFindings) lines.push(`| ${cell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${cell(finding.detail)} |`);
+  for (const finding of report.localFindings) lines.push(`| ${safeCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
   for (const result of report.results.filter(result => result.band !== "pass")) {
     const diagnosis = result.diagnosisGate;
     const refinement = diagnosis === undefined ? "" : ` neither score ${diagnosis.score}, cut-off ${diagnosis.cutOff}, prerequisite ${diagnosis.prerequisite}.`;
-    lines.push(`| ${cell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${cell(result.detail)}${refinement} Excerpt: ${cell(result.excerpt)} |`);
+    lines.push(`| ${safeCell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${safeCell(result.detail)}${refinement} Excerpt: ${safeCell(result.excerpt)} |`);
   }
   lines.push("| File | Check | Assessed | Pass | Fail | Unsure | Skipped |", "|------|-------|----------|------|------|--------|---------|");
-  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${cell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
+  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${safeCell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
   lines.push("Colour passes appear only in counts and never approve a document. Unsure asserts no fault. Findings are proxies, not an ISO judgement.");
   return lines.join("\n");
 }
@@ -261,13 +314,14 @@ function formatEvidence(gates: readonly GateEvidence[]): string[] {
   return ["| Gate | Cut-off | Prerequisite | Clusters | Wrong | Lower bound |", "|------|---------|--------------|----------|-------|-------------|",
     ...gates.map(gate => `| ${gate.id} | ${gate.cutOff} | ${gate.dependencies.join(", ") || "none"} | ${gate.clusters} | ${gate.wrong} | ${gate.bound} |`)];
 }
-function cell(text: string): string { return safeText(text).replaceAll("|", "\\|"); }
 function payloadBytes(plan: DocumentPlan): number { return plan.candidates.reduce((sum, candidate) => sum + Buffer.byteLength(JSON.stringify(candidate.body)), 0); }
 function scopeDigest(selection: Selection, args: Arguments): string { return sha256(JSON.stringify({ paths: selection.paths, bodies: selection.documents.flatMap(document => document.plan.candidates.map(candidate => candidate.body)), report: args.json === undefined ? null : resolve(args.json), includeText: args.includeText })); }
 function writeAuditLog(record: AuditLog, path: string): void { mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(record) + "\n"); }
 
 function emptyReport(selection: Selection, complete: boolean): JevReport {
-  return { complete, limitation: LIMITATION, evidence: calibrationEvidence(), results: [], localFindings: selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding }))),
+  return { complete, limitation: LIMITATION, evidence: calibrationEvidence(), results: [],
+    notSent: selection.documents.flatMap(document => document.refusal === undefined ? [] : [{ file: document.file, reason: document.refusal }]),
+    localFindings: selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding }))),
     coverage: selection.documents.map(document => ({ file: document.file, eligibleOpenings: document.plan.candidates.filter(candidate => candidate.kind === "opening").length, eligibleBlocks: document.plan.candidates.filter(candidate => candidate.kind === "block").length, checks: { purpose: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: 1 }, colour: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: document.plan.candidates.filter(candidate => candidate.kind === "block").length } } })) };
 }
 function fillCoverage(report: JevReport): void {
@@ -292,7 +346,7 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
   return result;
 }
 function formatMechanical(findings: Findings): string {
-  return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${cell(file)} | ${finding.line} | ${finding.rule} | ${cell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
+  return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${safeCell(file)} | ${finding.line} | ${finding.rule} | ${safeCell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
 }
 function readArguments(mode: "text" | "design", argv: string[]): Arguments {
   if (!argv[2] || argv[2].startsWith("--")) throw new Error();

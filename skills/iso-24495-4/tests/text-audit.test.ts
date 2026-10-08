@@ -332,3 +332,71 @@ describe("runCli", () => {
     }
   });
 });
+
+// An escape character, the C1 control that opens the same terminal sequences
+// in one character, and a right-to-left override. A document or a file name
+// can hold any of them, and a finding quotes both.
+const UNREAD_CHARACTERS = [27, 0x9b, 0x202e].map((code) => String.fromCharCode(code));
+
+describe("text nobody has read, in the printed findings", () => {
+  test("formatFindings prints a file name, a rule and a detail without control characters", () => {
+    for (const character of UNREAD_CHARACTERS) {
+      const output = formatFindings({
+        configHash: "abcd1234",
+        files: {
+          [`docs/a${character}[2Jb.md`]: {
+            violations: [{
+              rule: `link${character}text`,
+              line: 1,
+              detail: `link text "here" describes no destination (https://x.invalid/${character}[2J)`,
+            }],
+          },
+        },
+        totals: { "link-text": 1 },
+        skipped: [],
+      });
+      expect(output).not.toContain(character);
+      expect(output).toContain(
+        "| docs/a [2Jb.md | 1 | link text | link text \"here\" describes no destination (https://x.invalid/ [2J) |",
+      );
+    }
+  });
+
+  test("a finding stays on one line whatever line ending it holds", () => {
+    const output = formatFindings({
+      configHash: "abcd1234",
+      files: { "a.md": { violations: [{ rule: "legalese", line: 1, detail: "one\r\ntwo\rthree\nfour | five" }] } },
+      totals: { legalese: 1 },
+      skipped: [],
+    });
+    expect(output.split("\n")[2]).toBe("| a.md | 1 | legalese | one two three four \\| five |");
+  });
+
+  test("the command prints a link destination and a file name without them, and the report keeps them", () => {
+    const project = makeProject();
+    try {
+      const [escape, control, override] = UNREAD_CHARACTERS as [string, string, string];
+      // Windows refuses an escape character in a file name and allows the other two.
+      const name = `gu${override}ide${control}.md`;
+      writeFileSync(join(project, name), `Use [here](https://x.invalid/${escape}[2J${control}).\n`);
+      const report = join(project, "report.json");
+      const output = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", project, "--project-dir", project, "--json", report],
+        output.writeOut,
+        output.writeErr,
+      )).toBe(0);
+      const printed = output.stdout.join("\n");
+      for (const character of UNREAD_CHARACTERS) expect(printed).not.toContain(character);
+      expect(printed).toContain(
+        "| gu ide .md | 1 | link-text | link text \"here\" describes no destination (https://x.invalid/ [2J ) |",
+      );
+      // The JSON report is data for another program, so it holds what was found.
+      const saved = JSON.parse(readFileSync(report, "utf8")) as { files: Record<string, { violations: Array<{ detail: string }> }> };
+      expect(Object.keys(saved.files)).toEqual([name]);
+      expect(saved.files[name]?.violations[0]?.detail).toContain(`${escape}[2J${control}`);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});

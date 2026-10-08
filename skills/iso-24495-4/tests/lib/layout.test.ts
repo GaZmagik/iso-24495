@@ -199,3 +199,33 @@ describe("layout rules", () => {
     expect(parsed.items.map(item => item.depth)).toEqual([1, 2, 3]);
   });
 });
+
+describe("what a heading identifier keeps", () => {
+  // The interface comment said a wording with no letter or digit gives an empty
+  // identifier. It does not: hyphens and underscores are kept. Each line here is a
+  // sentence of the corrected comment, so the comment and the function cannot part again.
+  test("hyphens and underscores are kept, so a wording made of them is its own identifier", () => {
+    expect(headingIds(["---"])).toEqual(["---"]);
+    expect(headingIds(["_"])).toEqual(["_"]);
+    expect(headingIds(["--", "- -", "a - b"])).toEqual(["--", "---", "a---b"]);
+  });
+
+  test("only a wording with none of the kept characters gives an empty identifier", () => {
+    expect(headingIds(["!!!"])).toEqual([""]);
+    expect(headingIds([" "])).toEqual([""]);
+    expect(headingIds([""])).toEqual([""]);
+    expect(headingIds(["!!!", "", "???"])).toEqual(["", "-1", "-2"]);
+    expect(headingIds([])).toEqual([]);
+  });
+
+  test("letters, numbers and combining marks are kept, and each space left becomes a hyphen", () => {
+    const acute = String.fromCharCode(0x301);
+    expect(headingIds([`Cafe${acute} 5!`, "x_y z"])).toEqual([`cafe${acute}-5`, "x_y-z"]);
+    // Removing the ampersand leaves the space on each side of it.
+    expect(headingIds(["a & b"])).toEqual(["a--b"]);
+  });
+
+  test("an identifier already given takes a suffix, whatever wording gave it", () => {
+    expect(headingIds(["a b", "A  B", "a-b"])).toEqual(["a-b", "a-b-1", "a-b-2"]);
+  });
+});
