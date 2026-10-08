@@ -1945,13 +1945,21 @@ describe("repository writing conventions", () => {
         "let m: import(\"type-query\").M;",
         "// import n from \"in-a-comment\";",
         "const o = \"import p from 'in-a-string'\";",
-        "console.log(b, e, f, g, h, i, j, l, m, o);",
+        "const q = await import(\"with-options\", {});",
+        "const r = await import(\"with-attributes\", { with: { type: \"json\" } });",
+        "const s = require(\"required-with-more\", 1);",
+        "const t = require(`required-template`);",
+        "console.log(b, e, f, g, h, i, j, l, m, o, q, r, s, t);",
       ].join("\n");
       expect(writtenImports(source)).toEqual([
         "./relative.ts", "across-lines", "dynamic", "import-equals", "named", "node:fs",
-        "plain-template", "re-exported", "re-exported-whole", "required", "side-effect",
-        "type-only", "type-query", "type-re-exported",
+        "plain-template", "re-exported", "re-exported-whole", "required", "required-template",
+        "required-with-more", "side-effect", "type-only", "type-query", "type-re-exported",
+        "with-attributes", "with-options",
       ]);
+      // A JavaScript file is read by both readings too.
+      expect(writtenImports("await import(\"with-options\", {}); require(\"required\");", "source.mjs"))
+        .toEqual(["required", "with-options"]);
     });
 
     test("the rule refuses a package, a bare built-in and a file it does not read", () => {
@@ -1966,6 +1974,9 @@ describe("repository writing conventions", () => {
         .toEqual(["scripts/a.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
       expect(problems({ "scripts/a.cjs": "require(\"typescript\");" }))
         .toEqual(["scripts/a.cjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      // A review wrote this one inside a branch that only one flag reaches.
+      expect(problems({ "scripts/a.ts": "export async function late(): Promise<void> { await import(\"typescript\", {}); }" }))
+        .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
 
       // A relative import must land on a file this rule also reads, so that no
       // file sits outside it. A review hid a package behind a .mjs file.
@@ -2063,16 +2074,24 @@ function importProblems(sources: ReadonlyMap<string, string>, exists: (path: str
 /**
  * Every module a source imports under a name written in the source.
  *
- * The source is parsed with the TypeScript compiler, so a comment or a string
- * that looks like an import is not one. A name counts as written when it is a
- * string, or a template with nothing substituted into it. The forms read are
- * `import` and `export ... from` declarations, an import of types alone, and
- * `import()` or `require()` called with one written name.
+ * Two readings are joined, and a name either one finds is returned.
  *
- * @param fileName Decides how the source is parsed, by its ending.
+ * The first parses the source with the TypeScript compiler, so a comment or
+ * a string that looks like an import is not one. A name counts as written
+ * when it is a string, or a template with nothing substituted into it. It
+ * reads `import` and `export ... from` declarations, an import of types
+ * alone, and `import()` or `require()` whose first argument is a written
+ * name, whatever arguments follow.
+ *
+ * The second is Bun's own scanner. Bun is what loads these files, so this
+ * rule must not read fewer written names than Bun does. Bun leaves out an
+ * import of types alone, which the first reading supplies.
+ *
+ * @param fileName Decides how the source is parsed, by its ending: as
+ *     TypeScript for `.ts`, and as JavaScript otherwise.
  * @returns The names sorted, each once. Empty for a source that imports
- *     nothing under a written name. A source the compiler cannot parse is
- *     read as far as it parsed, and nothing is thrown.
+ *     nothing under a written name.
+ * @throws What Bun's scanner throws for a source it cannot parse.
  */
 function writtenImports(source: string, fileName = "source.ts"): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
@@ -2083,6 +2102,8 @@ function writtenImports(source: string, fileName = "source.ts"): string[] {
     ts.forEachChild(node, visit);
   };
   visit(file);
+  const loader = fileName.endsWith(".ts") ? "ts" : "js";
+  for (const found of new Bun.Transpiler({ loader }).scanImports(source)) modules.add(found.path);
   return [...modules].sort();
 }
 
@@ -2106,8 +2127,11 @@ function writtenModule(node: ts.Node): string | null {
   }
   if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
     || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+    // The first argument is the name, whatever follows it. A review wrote
+    // import("typescript", {}), and a rule that wanted one argument alone
+    // read nothing there.
     const name = node.arguments[0];
-    if (node.arguments.length === 1 && name !== undefined && ts.isStringLiteralLike(name)) return name.text;
+    if (name !== undefined && ts.isStringLiteralLike(name)) return name.text;
   }
   return null;
 }

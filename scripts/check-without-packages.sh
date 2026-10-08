@@ -10,8 +10,9 @@
 # to a place with no packages, runs each command there, and reads its exit code.
 #
 # What it establishes: each command listed below loads and runs with nothing
-# installed, on the input given here. What it does not: that every path through
-# a command does. An import reached only by another input is not seen.
+# installed, in each documented mode that can run offline. What it does not:
+# that every path through a command does. An import reached only by an input
+# not given here, or by a mode that needs the network, is not seen.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,6 +21,8 @@ cd "$(dirname "$0")/.."
 # path into the text of a trap broke on a path that held an apostrophe, and
 # the copy was left behind.
 COPY_ROOT=""
+# How many commands have run and given the exit code required of them.
+RUNS=0
 
 main() {
   # Set before the directory exists, so that no way out can miss it.
@@ -47,30 +50,106 @@ main() {
   unset TYPESAFE_API_KEY
 
   prove_packages_are_absent "$out"
+  local probes="$RUNS"
 
   local part4="skills/iso-24495-4/scripts"
+  local answers="skills/iso-24495-4/tests/fixtures/answers.sample.json"
+  local text_audit="skills/iso-24495-text-audit/scripts/audit-text-cli.ts"
+  local design_audit="skills/iso-24495-design-audit/scripts/design-audit-cli.ts"
   local version
   version="$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(".claude-plugin/plugin.json", "utf8")).version)')"
 
-  # Every command a user, a skill or a workflow starts. The four Part 4
-  # commands run in the order their skill gives, each reading the last one's
-  # output.
+  # Every command a user, a skill or a workflow starts, in every flag and
+  # mode its usage text or its skill documents that can run offline. One
+  # input for each command was not enough: a review put an import in a branch
+  # that only "--json" reaches, and the command still passed.
+  #
+  # Three modes cannot run here, and are named so that nobody takes them for
+  # covered. A send, which is "--send" on the design audit and "--jev --send"
+  # on the text audit, with or without "--yes": it needs a key, the network
+  # and a person's agreement. The traffic snapshot without "--from-file": it
+  # fetches from GitHub with a token. The release preflight where origin
+  # answers: the copy is not a repository. Each of those commands loads here
+  # in its other modes.
+
+  # A command given nothing prints its usage and stops with code 2.
+  run 2 "$out" bun "$part4/audit-corpus-cli.ts"
+  run 2 "$out" bun "$part4/audit-evidence-cli.ts"
+  run 2 "$out" bun "$part4/score-maturity-cli.ts"
+  run 2 "$out" bun "$part4/generate-report-cli.ts"
+  run 2 "$out" bun "$text_audit"
+  run 2 "$out" bun "$design_audit"
+  run 2 "$out" bash scripts/audit-pull-request-text.sh
+  run 2 "$out" bun scripts/audit-pull-request-text-cli.ts
+  run 2 "$out" bun scripts/traffic-snapshot-cli.ts
+  run 2 "$out" bun scripts/release-tag-cli.ts
+
+  # The four Part 4 commands, printing and then writing. The written files
+  # feed the report, as their skill orders them.
+  run 0 "$out" bun "$part4/audit-corpus-cli.ts" .
   run 0 "$out" bun "$part4/audit-corpus-cli.ts" . --json "$out/findings.json"
+  run 0 "$out" bun "$part4/audit-evidence-cli.ts" .
   run 0 "$out" bun "$part4/audit-evidence-cli.ts" . --json "$out/evidence.json"
-  run 0 "$out" bun "$part4/score-maturity-cli.ts" skills/iso-24495-4/tests/fixtures/answers.sample.json --json "$out/maturity.json"
+  run 0 "$out" bun "$part4/score-maturity-cli.ts" "$answers"
+  run 0 "$out" bun "$part4/score-maturity-cli.ts" "$answers" --json "$out/maturity.json"
+  run 0 "$out" bun "$part4/generate-report-cli.ts" "$out/findings.json" "$out/evidence.json" "$out/maturity.json"
+  run 0 "$out" bun "$part4/generate-report-cli.ts" "$out/findings.json" "$out/evidence.json" "$out/maturity.json" --out "$out/report.md"
+  run 0 "$out" bun "$part4/generate-report-cli.ts" "$out/findings.json" "$out/evidence.json" "$out/maturity.json" --state "$out/state.json"
   run 0 "$out" bun "$part4/generate-report-cli.ts" "$out/findings.json" "$out/evidence.json" "$out/maturity.json" --state "$out/state.json" --out "$out/report.md"
-  run 0 "$out" bun skills/iso-24495-text-audit/scripts/audit-text-cli.ts README.md --project-dir .
-  # A preview. It is offline, and it loads the client that a send would use.
-  run 0 "$out" bun skills/iso-24495-design-audit/scripts/design-audit-cli.ts README.md --project-dir .
+
+  # The text audit: a file and a directory, each option alone, then its
+  # offline preview of the design checks with each report option.
+  run 0 "$out" bun "$text_audit" README.md
+  run 0 "$out" bun "$text_audit" README.md --project-dir .
+  run 0 "$out" bun "$text_audit" skills --project-dir .
+  run 0 "$out" bun "$text_audit" README.md --project-dir . --json "$out/text.json"
+  run 0 "$out" bun "$text_audit" README.md --project-dir . --no-front-matter
+  run 0 "$out" bun "$text_audit" README.md --project-dir . --jev-preview
+  run 0 "$out" bun "$text_audit" README.md --project-dir . --jev-preview --json "$out/text-preview.json"
+  run 0 "$out" bun "$text_audit" README.md --project-dir . --jev-preview --include-judged-text --json "$out/text-judged.json"
+
+  # The design audit, as a preview. It is offline, and it loads the client
+  # that a send would use.
+  run 0 "$out" bun "$design_audit" README.md
+  run 0 "$out" bun "$design_audit" README.md --project-dir .
+  run 0 "$out" bun "$design_audit" skills --project-dir .
+  run 0 "$out" bun "$design_audit" README.md --project-dir . --json "$out/design.json"
+  run 0 "$out" bun "$design_audit" README.md --project-dir . --include-judged-text --json "$out/design-judged.json"
+
+  # The combinations both audits document as refused. Each stops with code 2
+  # while the arguments are read, and none names a send.
+  run 2 "$out" bun "$text_audit" README.md --no-front-matter --no-front-matter
+  run 2 "$out" bun "$text_audit" README.md --jev
+  run 2 "$out" bun "$text_audit" README.md --yes
+  run 2 "$out" bun "$text_audit" README.md --jev-preview --no-front-matter
+  run 2 "$out" bun "$text_audit" README.md --jev-preview --jev
+  run 2 "$out" bun "$text_audit" README.md --jev-preview --include-judged-text
+  run 2 "$out" bun "$design_audit" README.md --no-front-matter
+  run 2 "$out" bun "$design_audit" README.md --jev-preview
+  run 2 "$out" bun "$design_audit" README.md --yes
+  run 2 "$out" bun "$design_audit" README.md --include-judged-text
+  run 2 "$out" bun "$design_audit" README.md --project-dir . --project-dir .
+
+  # The pull request text check, through its shell wrapper and directly, and
+  # with the summary file a workflow gives it.
   run 0 "$out" bash scripts/audit-pull-request-text.sh README.md
   run 0 "$out" bun scripts/audit-pull-request-text-cli.ts README.md
+  GITHUB_STEP_SUMMARY="$out/summary.md" run 0 "$out" bash scripts/audit-pull-request-text.sh README.md
+  GITHUB_STEP_SUMMARY="$out/summary-direct.md" run 0 "$out" bun scripts/audit-pull-request-text-cli.ts README.md
+
+  # The traffic snapshot from a fixture: as a dry run, and writing its files.
+  mkdir "$out/traffic"
   run 0 "$out" bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json --dry-run data
+  run 0 "$out" bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json "$out/traffic"
+
+  # The tag check, on the declared version and on another.
   run 0 "$out" bun scripts/release-tag-cli.ts "v$version"
+  run 1 "$out" bun scripts/release-tag-cli.ts v0.0.0
   # The preflight asks origin for its tags, and this copy is not a repository.
   # So it loads, asks, and stops with the code it documents for that.
   run 2 "$out" bun scripts/release-preflight-cli.ts
 
-  echo "    every shipped command ran with nothing installed"
+  echo "    every shipped command ran with nothing installed, in $((RUNS - probes)) runs"
 }
 
 # Removes the copy, on every way out of this script. Does nothing before the
@@ -176,6 +255,7 @@ run() {
     cat "$out/stderr" >&2
     return 1
   fi
+  RUNS=$((RUNS + 1))
 }
 
 main
