@@ -359,7 +359,9 @@ describe("runCli", () => {
     ]);
   });
 
-  test("--from-file with no path following it is treated as absent", async () => {
+  // This test once held that the option with no path was the same as no option, so
+  // the run went on and asked the network. That was the fault of issue 49.
+  test("--from-file with no path following it is a usage error", async () => {
     const { deps, stdout, stderr } = harness();
     const code = await runCli(
       ["bun", "cli", "data", "--from-file"],
@@ -367,8 +369,51 @@ describe("runCli", () => {
       (t) => stderr.push(t),
       deps,
     );
-    expect(code).toBe(0);
-    expect(stderr).toEqual([]);
+    expect(code).toBe(2);
+    expect(stderr.join(" ")).toContain("Usage");
+  });
+});
+
+// With no value after it, --from-file was read as "no fixture", and the command asked
+// the network, which is the one thing the option is given to prevent. Issue 49.
+describe("--from-file with no file after it", () => {
+  test.each([
+    ["at the end", ["data", "--from-file"]],
+    ["before the directory was given", ["--from-file"]],
+    ["before another option", ["data", "--from-file", "--dry-run"]],
+    ["before another option and the directory", ["--from-file", "--dry-run", "data"]],
+    ["with an empty value", ["data", "--from-file", ""]],
+    ["twice, the second time with none", ["data", "--from-file", "fixture.json", "--from-file"]],
+  ])("%s is a usage error, and the network is not asked", async (_name, args) => {
+    const asked: string[] = [];
+    const { deps, files, stdout, stderr } = harness({
+      fetchSnapshot: async () => {
+        asked.push("the network");
+        return RAW;
+      },
+      readText: (path) => {
+        asked.push(path);
+        return null;
+      },
+    });
+    expect(await runCli(["bun", "cli", ...args], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(2);
+    expect(asked).toEqual([]);
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).toStartWith("Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]");
+    expect([stdout, [...files.keys()]]).toEqual([[], []]);
+  });
+
+  test("with a file after it, the file is read and the network is not asked", async () => {
+    const asked: string[] = [];
+    const { deps, files, stdout, stderr } = harness({
+      fetchSnapshot: async () => {
+        asked.push("the network");
+        return RAW;
+      },
+    });
+    files.set("fixture.json", JSON.stringify(RAW));
+    expect(await runCli(["bun", "cli", "--from-file", "fixture.json", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+    expect([asked, stderr]).toEqual([[], []]);
   });
 });
 
@@ -1025,7 +1070,7 @@ describe("a malformed table stops the run before anything is written", () => {
       for (const mode of [[], ["--dry-run"]]) {
         const { deps, files, stdout, stderr } = harness({ today: () => today });
         expect(await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps), JSON.stringify(today)).toBe(1);
-        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD"]);
+        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a real calendar date, written as YYYY-MM-DD"]);
         expect([stdout, [...files.keys()]]).toEqual([[], []]);
       }
     }
@@ -1123,7 +1168,7 @@ describe("a malformed table stops the run before anything is written", () => {
         }
         const { deps, files, stdout, stderr } = harness({ today: () => date });
         expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps), date).toBe(1);
-        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD"]);
+        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a real calendar date, written as YYYY-MM-DD"]);
         expect([stdout, [...files.keys()]]).toEqual([[], []]);
       }
       for (const date of REAL) {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
+import { drawsNothing, safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
 
 const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
@@ -404,6 +404,29 @@ describe("a character that draws nothing is shown as its code", () => {
       const name = `a${String.fromCodePoint(point)}b.md`;
       expect(safePath(name, false), `U+${point.toString(16)}`).toBe(name);
     }
+  });
+});
+
+describe("text that holds nothing a reader can see", () => {
+  test("is spaces and the characters a printed path shows as their codes, and nothing else", () => {
+    for (const point of [0x20, 0x9, 0xa, 0xd, 0xa0, 0x2002, 0x3000, 0x200b, 0x2060, 0xfeff, 0xad, 0x200d, 0x202e, 0xfe0f, 0x34f, 0xfffc, 0xe0041, 0x2028]) {
+      const character = String.fromCodePoint(point);
+      expect(drawsNothing(character), point.toString(16)).toBe(true);
+      expect(drawsNothing(` ${character}${character} `), point.toString(16)).toBe(true);
+      expect(drawsNothing(`${character}a${character}`), point.toString(16)).toBe(false);
+      // One definition: but for the plain space, it is what a printed path shows as a code.
+      if (point !== 0x20) {
+        expect(safePath(character, false), point.toString(16)).not.toBe(character);
+      }
+    }
+    expect(drawsNothing("")).toBe(true);
+    // A character that draws is seen, whatever it is: a letter, a mark, an emoji, the braille blank.
+    for (const point of [0x61, 0x2d, 0x301, 0x1f600, 0x2800, 0xfffd, 0xe000]) {
+      expect(drawsNothing(String.fromCodePoint(point)), point.toString(16)).toBe(false);
+      expect(safePath(String.fromCodePoint(point), false), point.toString(16)).toBe(String.fromCodePoint(point));
+    }
+    // Asked twice, it answers twice the same: the pattern keeps no place between calls.
+    expect([drawsNothing("a b"), drawsNothing("a b"), drawsNothing("  "), drawsNothing("  ")]).toEqual([false, false, true, true]);
   });
 });
 

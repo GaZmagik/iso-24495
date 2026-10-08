@@ -8,13 +8,14 @@
 // A shell script did this work before, and failed three reviews running. It
 // read the file three times, started three programs and wrote two temporary
 // files, and each of those could fail in another program's words or between
-// two reads. Everything now happens here, in one process: the file is read
-// once, and that one string is tested, audited and reported. There is no
-// second read for a change to the file to reach.
+// two reads. Everything now happens here, in one process: the file is opened
+// once and read once from that handle, and that one string is tested, audited
+// and reported. There is no second read for a change to the file to reach.
 
-import { appendFileSync, lstatSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { auditText, configHash, isAuditedDocument, projectAcronyms } from "../skills/iso-24495-4/scripts/audit-corpus.ts";
 import { unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
+import { drawsNothing } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 import type { Violation } from "../skills/iso-24495-4/scripts/lib/types.ts";
 import { formatFindings } from "../skills/iso-24495-text-audit/scripts/audit-text.ts";
 
@@ -22,7 +23,10 @@ import { formatFindings } from "../skills/iso-24495-text-audit/scripts/audit-tex
 export interface Dependencies {
   /** Says what kind of thing a path names, without following a symbolic link. Throws when nothing is there. */
   inspect: (path: string) => { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean };
-  /** Reads a file as UTF-8 text. Throws when it cannot. */
+  /**
+   * Reads a file as UTF-8 text. Throws when it cannot, and when what it opened is
+   * not the regular file the path names, as `readRegularFile` decides.
+   */
   readText: (path: string) => string;
   /** Audits text that has no front matter. `markdown` says whether the layout rules apply. */
   audit: (text: string, fileName: string, markdown: boolean) => Violation[];
@@ -43,15 +47,17 @@ export interface Dependencies {
  *
  * - Exit 0: the audit ran on a description that is not empty. Any findings are
  *   listed, as advice. A pass does not mean the description is clear.
- * - Exit 1: the description is empty, or holds only whitespace.
+ * - Exit 1: the description is empty, or holds nothing a reader can see.
  * - Exit 2: the arguments were wrong. That includes a path that names nothing,
  *   a directory, a symbolic link, anything else that is not a regular file,
  *   and a file that cannot be read.
  * - Exit 3: the audit did not run. The file has an ending the audit does not
  *   read, or the audit stopped on a failure nothing expected.
  *
- * The file is read once. A pass therefore means that the text which was read
- * is the text which was tested for whitespace and then audited.
+ * The file is opened once and read once, from the handle that was opened. A
+ * pass therefore means that the text which was read is the text which was
+ * tested for emptiness and then audited, and that it came from the regular
+ * file the path names, never through a symbolic link put there in between.
  *
  * The argument is text nobody has read, so no message prints it. A message
  * names the argument and gives its length. The table names the file as the
@@ -113,7 +119,7 @@ export function runCli(
 export function realDependencies(projectDir: string, summaryPath: string | undefined): Dependencies {
   return {
     inspect: (path) => lstatSync(path),
-    readText: (path) => readFileSync(path, "utf8"),
+    readText: (path) => readRegularFile(path),
     audit: (text, fileName, markdown) =>
       auditText(text, { knownAcronyms: projectAcronyms(projectDir), fileName, frontMatter: false, markdown }),
     appendText: (path, text) => appendFileSync(path, text),
@@ -121,12 +127,83 @@ export function realDependencies(projectDir: string, summaryPath: string | undef
   };
 }
 
+/** What a path or an open handle is, and which file it is on which volume. */
+interface FileKind {
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+  dev: bigint;
+  ino: bigint;
+}
+
+/** The file system calls `readRegularFile` makes, so a test can stand in for each. */
+export interface FileCalls {
+  /** Opens a file to read. Refuses a symbolic link where the system can refuse one at open. */
+  open: (path: string) => number;
+  /** What the open handle is. */
+  ofHandle: (handle: number) => FileKind;
+  /** What the path names, without following a symbolic link. */
+  ofPath: (path: string) => FileKind;
+  read: (handle: number) => string;
+  close: (handle: number) => void;
+}
+
+const NOT_THE_FILE = "what was opened is not the regular file the path names";
+
+/**
+ * The text of a regular file, read from the one handle that was inspected.
+ *
+ * `unreadableKind` asks what a path names, and a read by path would ask the file
+ * system again: a file swapped for a symbolic link between the two would be read
+ * through the link. So the file is opened once. What the handle is gets inspected,
+ * and it must be the very file the path names when asked without following a link:
+ * the same file number on the same volume. The text is then read from that handle.
+ * Whatever happens to the path afterwards, the thing inspected is the thing read.
+ *
+ * A second name for one file, made with a hard link, is that file and is read.
+ *
+ * @param files Replaces the file system calls. The default is the real ones.
+ * @throws An error of fixed words where the handle is no regular file, or is not the
+ *     file the path names, or the system refused a link at open. Any other failure
+ *     of a call as the call threw it.
+ */
+export function readRegularFile(path: string, files: FileCalls = REAL_FILES): string {
+  let handle: number;
+  try {
+    handle = files.open(path);
+  } catch (error) {
+    // The code a system gives when it is told not to follow a link and meets one.
+    if (error instanceof Error && "code" in error && error.code === "ELOOP") throw new Error(NOT_THE_FILE);
+    throw error;
+  }
+  try {
+    const opened = files.ofHandle(handle);
+    const named = files.ofPath(path);
+    if (!opened.isFile() || named.isSymbolicLink() || opened.dev !== named.dev || opened.ino !== named.ino) {
+      throw new Error(NOT_THE_FILE);
+    }
+    return files.read(handle);
+  } finally {
+    files.close(handle);
+  }
+}
+
+// Linux and macOS can refuse a symbolic link at open, and Windows has no such flag.
+// The comparison in `readRegularFile` is what holds on all three.
+const REAL_FILES: FileCalls = {
+  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)),
+  ofHandle: (handle) => fstatSync(handle, { bigint: true }),
+  ofPath: (path) => lstatSync(path, { bigint: true }),
+  read: (handle) => readFileSync(handle, "utf8"),
+  close: (handle) => closeSync(handle),
+};
+
 /**
  * Why the path cannot be read as a file, or null when it names a regular file.
  *
  * The audit does not follow a symbolic link, so one is refused here before
  * anything is read. Without that, reading through the link would audit a file
- * the caller did not name.
+ * the caller did not name. This answer gives the words for each kind of thing.
+ * It is `readRegularFile` that holds the read to what it inspected.
  */
 function unreadableKind(path: string, dependencies: Dependencies): string | null {
   let kind: ReturnType<Dependencies["inspect"]>;
@@ -146,15 +223,15 @@ function unreadableKind(path: string, dependencies: Dependencies): string | null
  * An audit of nothing finds nothing, so an empty description would pass having
  * been read by nobody. Emptiness is a test of the Markdown source, not of what
  * a page would show: a description holding a comment or an image is not empty,
- * and the audit reads it. Whitespace is whatever `\s` matches, which includes
- * the no-break space, the other Unicode space characters and the byte order
- * mark.
+ * and the audit reads it. A description is empty when it holds nothing a reader
+ * can see, as `drawsNothing` decides: white space of every kind, and every
+ * character that draws nothing, such as a zero width space or a word joiner.
  *
  * A description has no front matter. GitHub shows a leading "---" block as a
  * rule and a heading, so the audit reads the block as that text.
  */
 function verdict(path: string, text: string, dependencies: Dependencies): { exit: number; parts: string[] } {
-  if (!/\S/.test(text)) {
+  if (drawsNothing(text)) {
     return {
       exit: 1,
       parts: ["The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why."],

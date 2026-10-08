@@ -7,7 +7,8 @@ import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
 import { readJsonFile, writeTextFile, type JsonFile } from "./lib/failure.ts";
 import { shapeProblem } from "./lib/json-shape.ts";
 import { safeCell, safePathCell } from "./lib/safe-text.ts";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 /**
  * Reads the three audit results, writes the gap report and records the audit
@@ -22,7 +23,9 @@ import { existsSync } from "node:fs";
  *
  * Exit 0 means the report was produced. Exit 1 means a file could not be read
  * or written, or an input did not hold the shape its command writes. Exit 2
- * means the arguments were wrong.
+ * means the arguments were wrong. That includes `--state` and `--out` naming
+ * one file, as `asOneFile` decides: the report would be written over the
+ * history. It is refused before anything is read or written.
  *
  * Every input is checked against its shape in `lib/types.ts` before the
  * report is built, the state file included when it exists. A maturity file
@@ -59,6 +62,10 @@ export function runCli(
   }
   if (outFlag !== -1 && !argv[outFlag + 1]) {
     stderr("generate-report: --out requires a report file");
+    return 2;
+  }
+  if (stateFlag !== -1 && outFlag !== -1 && asOneFile(argv[stateFlag + 1]) === asOneFile(argv[outFlag + 1])) {
+    stderr("generate-report: --state and --out name one file; give each a file of its own");
     return 2;
   }
   const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
@@ -114,6 +121,32 @@ export function runCli(
     return 1;
   }
   return 0;
+}
+
+/**
+ * One spelling for the file a path names, so that two paths to one file compare
+ * equal: a relative path and an absolute one, a path through "." or "..", a path
+ * through a symbolic link, and on Windows two cases of one name.
+ *
+ * A file that is there is named as the file system names it. One that is not
+ * there yet is named by its directory as the file system names that, and its own
+ * name as written. Where the directory is not there either, the path is only made
+ * absolute. On Windows the result is in lower case, since a name there is one name
+ * in any case.
+ *
+ * Two links to one file, made with a hard link, are not seen as one.
+ */
+function asOneFile(path: string): string {
+  const absolute = resolve(path);
+  const named = [absolute, dirname(absolute)].map((there) => {
+    try {
+      return realpathSync.native(there);
+    } catch {
+      return null;
+    }
+  });
+  const one = named[0] ?? (named[1] === null ? absolute : join(named[1], basename(absolute)));
+  return process.platform === "win32" ? one.toLowerCase() : one;
 }
 
 /**
