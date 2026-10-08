@@ -81,9 +81,12 @@ describe("a parsed value checked against a documented shape", () => {
 
   test("a member is read only where the value holds it as its own", () => {
     // "toString" is on every object, and is not a member of this one.
-    const shape: Shape = { kind: "object", required: {}, optional: { toString: { kind: "text" } } };
+    // Named apart from the shapes that hold it. Written in place, under a name
+    // every object inherits, the compiler reads "text" as any string.
+    const text: Shape = { kind: "text" };
+    const shape: Shape = { kind: "object", required: {}, optional: { toString: text } };
     expect(shapeProblem({}, shape, "<file>")).toBeNull();
-    const required: Shape = { kind: "object", required: { constructor: { kind: "text" } } };
+    const required: Shape = { kind: "object", required: { constructor: text } };
     expect(shapeProblem({}, required, "<file>")).toBe('<file>, "constructor" must be a string; got nothing');
   });
 });

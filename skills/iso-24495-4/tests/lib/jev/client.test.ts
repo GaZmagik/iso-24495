@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildRequest, MODEL } from "../../../scripts/lib/jev/catalogue.ts";
 import { createAsk, readAnswers, TIMEOUT_MS, systemClock, wait, type Clock, type Fetch } from "../../../scripts/lib/jev/client.ts";
-import { decimalText } from "../../../scripts/lib/jev/decimal.ts";
+import { parseDecimal } from "../../../scripts/lib/jev/decimal.ts";
 
 const OPENING = buildRequest("opening", { opening: "# Title" });
 const BLOCK = buildRequest("block", { paragraph: "Words." });
@@ -13,7 +13,7 @@ const noWait = async () => {};
 describe("exact response validation", () => {
   test("keeps the calibration's exact probability and companion validation", () => {
     const text = JSON.stringify(VALID).replace('"both":0.1', '"both":0.10000000000000001');
-    expect(decimalText(readAnswers(text, OPENING.questions).purpose.both)).toBe("0.10000000000000001");
+    expect(readAnswers(text, OPENING.questions).purpose).toHaveProperty("both", parseDecimal("0.10000000000000001"));
     expect(readAnswers(JSON.stringify({ model: MODEL, answers: { colour_only: { type: "noul", noul: 0.17 }, position_only: { type: "noul", noul: 1 } } }), BLOCK.questions).colour_only).toEqual({ units: 17n, scale: 2 });
   });
   test("rejects malformed JSON, models and all malformed answer shapes", () => {

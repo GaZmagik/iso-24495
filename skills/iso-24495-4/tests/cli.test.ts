@@ -908,7 +908,7 @@ describe("a command never passes on what the runtime said about a failure", () =
       // No state file is still a first audit, and it starts the history.
       rmSync(state);
       const first = capture();
-      expect(run(first.writeOut, first.writeErr), first.stderr).toBe(0);
+      expect(run(first.writeOut, first.writeErr), first.stderr.join("\n")).toBe(0);
       expect(JSON.parse(readFileSync(state, "utf8")).snapshots).toHaveLength(1);
       expect(readFileSync(report, "utf8")).toStartWith("# Plain Language Gap Analysis");
     });

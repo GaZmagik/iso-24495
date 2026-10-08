@@ -8,6 +8,9 @@ import { planDocument } from "../../../scripts/lib/jev/engine.ts";
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
 import { runCli as runDesignCli } from "../../../../iso-24495-design-audit/scripts/design-audit.ts";
 
+/** Dependencies whose environment, terminal and client a test goes on to change. */
+type WiredDependencies = AuditDependencies & Required<Pick<AuditDependencies, "env" | "terminal" | "client">>;
+
 test("preview is offline; send alone is not consent; explicit terminal agreement sends a frozen plan", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-audit-"));
   try {
@@ -15,7 +18,7 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     writeFileSync(file, "# Title\n\nVersion 1.0\n\nThe supplier shall act.\n");
     let sent = 0;
     const output: string[] = [];
-    const dependencies: AuditDependencies = {
+    const dependencies: WiredDependencies = {
       env: { TYPESAFE_API_KEY: "key" }, now: () => new Date("2026-10-03T17:00:00Z"),
       terminal: { inputIsTTY: true, outputIsTTY: true, prompt: async () => "yes" },
       client: { fetch: async (_url, init) => { sent++; const body = JSON.parse(init.body); return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "neither", confidence: 0.86, probabilities: { both: 0.1, task_only: 0.02, scope_only: 0.02, neither: 0.86 } } : { type: "noul", noul: id === "colour_only" ? 0.17 : 0.5 }])) }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
@@ -32,7 +35,7 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     expect(await run("design", ["--send", "--yes", "--json", join(directory, "report.json")])).toBe(0);
     const report = JSON.parse(readFileSync(join(directory, "report.json"), "utf8"));
     expect(report.jev.coverage[0].checks.colour.pass).toBe(2);
-    expect(report.jev.results.some(result => result.band === "pass")).toBe(false);
+    expect(report.jev.results.some((result: { band: string }) => result.band === "pass")).toBe(false);
     expect(report.jev.results[0].state).toBeUndefined();
     expect(report.jev.results[0].stateHash).toBeDefined();
     expect(report.jev.evidence).toEqual([
@@ -87,7 +90,7 @@ test("argument conflicts and local failures are classified without transmission"
     writeFileSync(file, "# Title\n\nWords.");
     let calls = 0;
     const out: string[] = [];
-    const dependencies: AuditDependencies = { env: { TYPESAFE_API_KEY: "key" }, terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => { throw new Error(); } }, client: { fetch: async () => { calls++; throw new Error(); }, clock: { schedule: () => () => {} }, sleep: async () => {} }, writeLog: () => {} };
+    const dependencies: WiredDependencies = { env: { TYPESAFE_API_KEY: "key" }, terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => { throw new Error(); } }, client: { fetch: async () => { calls++; throw new Error(); }, clock: { schedule: () => () => {} }, sleep: async () => {} }, writeLog: () => {} };
     const run = (args: string[], mode: "text" | "design" = "design") => runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
     for (const args of [["--unknown"], ["--send", "--send"], ["--json"], ["--project-dir", "--send"], ["--yes"], ["--include-judged-text"], ["--no-front-matter"], ["--consent", "file"], ["--jev-preview"]]) expect(await run(args)).toBe(2);
     for (const args of [["--jev"], ["--jev-preview", "--send"], ["--jev-preview", "--jev"], ["--jev", "--send", "--no-front-matter"]]) expect(await run(args, "text")).toBe(2);

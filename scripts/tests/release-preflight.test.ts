@@ -14,7 +14,7 @@ import { checkVersionSites } from "../release-versions.ts";
 import { capture, edit, withCheckout } from "./fixtures/release-checkout.ts";
 
 /** What `git ls-remote --tags` prints for these tags, peeled lines included. */
-function listing(...tags: string[]): RemoteTags {
+function listing(...tags: string[]): RemoteTags & { ok: true } {
   const lines = tags.flatMap((tag, index) => [
     `${String(index).padStart(40, "a")}\trefs/tags/${tag}`,
     `${String(index).padStart(40, "b")}\trefs/tags/${tag}^{}`,

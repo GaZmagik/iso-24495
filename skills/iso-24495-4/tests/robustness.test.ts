@@ -64,7 +64,7 @@ describe("robustness and determinism", () => {
       ...FUZZ_INPUTS,
       ...listTextFiles(CORPUS).map((path) => readFileSync(path, "utf8")),
     ];
-    const violations = inputs.flatMap(auditText);
+    const violations = inputs.flatMap((input) => auditText(input));
     expect(violations.length).toBeGreaterThan(0);
     for (const violation of violations) {
       expect(violation.line).toBeGreaterThanOrEqual(1);
