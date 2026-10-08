@@ -260,6 +260,8 @@ A file the script cannot read stops it with a different code, rather than any ve
 
 The script only starts one program, `scripts/audit-pull-request-text.ts`, which reads the file once. The text it tests for emptiness is therefore the text it audits. A directory or a symbolic link is refused like a file that cannot be read.
 
+The file is opened once. Its text is read from that open file, and only where that is the regular file the path names. So a link put in its place between the check and the read is not followed.
+
 Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
 
 `bun test` always measures coverage. Every measured source file must cover 100% of lines and functions. Test files are excluded from those totals.

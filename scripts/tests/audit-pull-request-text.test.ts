@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { realDependencies, runCli, type Dependencies } from "../audit-pull-request-text.ts";
+import { readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
@@ -293,6 +293,146 @@ describe("the real file system", () => {
       expect(runCli(["bun", "cli", workspace], () => {}, (text) => stderr.push(text), realDependencies(ROOT, undefined))).toBe(2);
       expect(runCli(["bun", "cli", join(workspace, "gone.md")], () => {}, (text) => stderr.push(text), realDependencies(ROOT, undefined))).toBe(2);
       expect(stderr.map((line) => line.replace(/^.*long, /, ""))).toEqual(["names a directory, where a file is needed.", "names no file to read."]);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+// The path was inspected by one call and read by another. A file swapped for a link
+// between the two would have been read through the link, and the check would have
+// audited a file nobody named. The file is now opened once: what the open handle is
+// gets inspected, it is held against what the path names, and the text is read from
+// that handle. So the thing inspected is the thing read.
+describe("the file is opened once, and what was opened is what is read", () => {
+  const REFUSED = "what was opened is not the regular file the path names";
+  interface Kind { isFile(): boolean; isSymbolicLink(): boolean; dev: bigint; ino: bigint }
+  const kind = (ino: number, dev = 1, file = true, link = false): Kind =>
+    ({ isFile: () => file, isSymbolicLink: () => link, dev: BigInt(dev), ino: BigInt(ino) });
+
+  /** Reads through calls that stand in for the file system, and lists the calls made. */
+  function reading(handle: Kind, path: Kind, replace: Partial<FileCalls> = {}): { text: string | null; thrown: unknown; calls: string[] } {
+    const calls: string[] = [];
+    const files: FileCalls = {
+      open: (asked) => {
+        calls.push(`open ${asked}`);
+        return 7;
+      },
+      ofHandle: (asked) => {
+        calls.push(`ofHandle ${asked}`);
+        return handle;
+      },
+      ofPath: (asked) => {
+        calls.push(`ofPath ${asked}`);
+        return path;
+      },
+      read: (asked) => {
+        calls.push(`read ${asked}`);
+        return "the text";
+      },
+      close: (asked) => {
+        calls.push(`close ${asked}`);
+      },
+      ...replace,
+    };
+    try {
+      return { text: readRegularFile("a.md", files), thrown: null, calls };
+    } catch (error) {
+      return { text: null, thrown: error, calls };
+    }
+  }
+  const message = (thrown: unknown): string => (thrown as Error).message;
+
+  test("a regular file is opened once, inspected by its handle, and read from that handle", () => {
+    expect(reading(kind(5), kind(5))).toEqual({
+      text: "the text",
+      thrown: null,
+      calls: ["open a.md", "ofHandle 7", "ofPath a.md", "read 7", "close 7"],
+    });
+  });
+
+  test("a handle that is not the file the path names is not read", () => {
+    // The path named a link when it was opened, and names another file now.
+    for (const [name, handle, path] of [
+      ["another file", kind(5), kind(6)],
+      ["a file of the same number on another volume", kind(5, 1), kind(5, 2)],
+      ["a link", kind(5), kind(5, 1, false, true)],
+      ["a link that says it is a file", kind(5), kind(5, 1, true, true)],
+      ["a directory, opened", kind(5, 1, false), kind(5, 1, false)],
+      ["something that is no file", kind(5, 1, false), kind(5)],
+    ] as Array<[string, Kind, Kind]>) {
+      const result = reading(handle, path);
+      expect(message(result.thrown), name).toBe(REFUSED);
+      expect(result.text, name).toBeNull();
+      expect(result.calls.some((call) => call.startsWith("read")), name).toBe(false);
+      expect(result.calls.at(-1), name).toBe("close 7");
+    }
+  });
+
+  test("a link refused where the system can refuse one at open, and every other failure, is thrown as it came", () => {
+    const failure = (code: string): Error => Object.assign(new Error(`${code}: hunter2`), { code });
+    const loop = reading(kind(5), kind(5), {
+      open: () => {
+        throw failure("ELOOP");
+      },
+    });
+    expect(message(loop.thrown)).toBe(REFUSED);
+    expect(loop.calls).toEqual([]);
+    const missing = reading(kind(5), kind(5), {
+      open: () => {
+        throw failure("ENOENT");
+      },
+    });
+    expect((missing.thrown as NodeJS.ErrnoException).code).toBe("ENOENT");
+    // A read that fails still closes what was opened.
+    const unread = reading(kind(5), kind(5), {
+      read: () => {
+        throw failure("EIO");
+      },
+    });
+    expect((unread.thrown as NodeJS.ErrnoException).code).toBe("EIO");
+    expect(unread.calls.at(-1)).toBe("close 7");
+    // So does a path that has gone by the time it is asked what it is.
+    const gone = reading(kind(5), kind(5), {
+      ofPath: () => {
+        throw failure("ENOENT");
+      },
+    });
+    expect((gone.thrown as NodeJS.ErrnoException).code).toBe("ENOENT");
+    expect(gone.calls.at(-1)).toBe("close 7");
+  });
+
+  test("on the real file system: a file is read, a second name for it is read, and a directory and a link are not", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const file = join(workspace, "description.md");
+      writeFileSync(file, "We shall pay.\n");
+      expect(readRegularFile(file)).toBe("We shall pay.\n");
+      // A hard link is the same file under a second name, and is no link to follow.
+      linkSync(file, join(workspace, "second.md"));
+      expect(readRegularFile(join(workspace, "second.md"))).toBe("We shall pay.\n");
+      mkdirSync(join(workspace, "a-directory"));
+      // A directory can be opened, so it is the handle that says it is no file. The
+      // command reads through the same function, and so says the same.
+      expect(() => readRegularFile(join(workspace, "a-directory"))).toThrow(REFUSED);
+      expect(() => realDependencies(ROOT, undefined).readText(join(workspace, "a-directory"))).toThrow(REFUSED);
+      expect(realDependencies(ROOT, undefined).readText(file)).toBe(readRegularFile(file));
+      expect(() => readRegularFile(join(workspace, "nothing.md"))).toThrow();
+      // The command says the same of a file replaced under it as of one it cannot read.
+      const stderr: string[] = [];
+      const swapped = { ...realDependencies(ROOT, undefined), inspect: () => FILE };
+      expect(runCli(["bun", "cli", join(workspace, "a-directory")], () => {}, (text) => stderr.push(text), swapped)).toBe(2);
+      expect(stderr).toEqual([
+        `The path given as the first argument, ${join(workspace, "a-directory").length} characters long, names a file that exists but cannot be read.`,
+      ]);
+      // Where this account may make a symbolic link to a file. Where it may not, as on
+      // Windows without the right to, the last case is passed over.
+      try {
+        symlinkSync(file, join(workspace, "link.md"), "file");
+      } catch {
+        return;
+      }
+      expect(() => readRegularFile(join(workspace, "link.md"))).toThrow(REFUSED);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
