@@ -15,6 +15,123 @@
 import { join } from "node:path";
 import { unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
 
+/**
+ * Takes one traffic snapshot and merges it into the three CSV files.
+ *
+ *   bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]
+ *
+ * `--dry-run` prints the three files and writes none. `--from-file` reads the
+ * four responses from a JSON file and leaves the network alone. Any other
+ * argument is taken as the data directory, and the last one wins.
+ *
+ * Exit 0 means the files were written, or printed on a dry run. Exit 1 means
+ * the API or the fixture could not be read, or the payload was malformed, and
+ * no file was written. Exit 2 means no data directory was given.
+ *
+ * @param argv The whole command line, so the arguments start at index 2.
+ * @param writeOut Receives the dry-run output and the closing summary line.
+ * @param writeErr Receives the usage text or the reason for exit 1.
+ * @param deps The network call, the file access and the clock. `readText`
+ *     must return `null` for a file that does not exist. A failure in
+ *     `writeText` is not caught, so the promise rejects and files written
+ *     before it stay written.
+ */
+export async function runCli(
+  argv: string[],
+  writeOut: (text: string) => void,
+  writeErr: (text: string) => void,
+  deps: Deps,
+): Promise<number> {
+  const args = argv.slice(2);
+  let directory = "";
+  let fromFile = "";
+  let dryRun = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] as string;
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--from-file") {
+      fromFile = args[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+    directory = arg;
+  }
+  if (directory === "") {
+    writeErr(USAGE);
+    return 2;
+  }
+
+  let raw: unknown;
+  if (fromFile === "") {
+    try {
+      raw = await deps.fetchSnapshot();
+    } catch (error) {
+      writeErr("Could not read the traffic API: " + describeApiFailure(error));
+      return 1;
+    }
+  } else {
+    const text = deps.readText(fromFile);
+    if (text === null) {
+      writeErr(
+        "Could not read the fixture: --from-file names a path of " +
+          fromFile.length +
+          " characters that is missing or unreadable",
+      );
+      return 1;
+    }
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      // JSON.parse throws for one reason only, and its message quotes the text.
+      writeErr(
+        "The fixture is not valid JSON: --from-file names a file of " +
+          text.length +
+          " characters that does not parse",
+      );
+      return 1;
+    }
+  }
+
+  const parsed = parseSnapshot(raw);
+  if (!parsed.ok) {
+    writeErr("Refusing to write: " + parsed.problem);
+    return 1;
+  }
+
+  const snapshot = parsed.snapshot;
+  const date = deps.today();
+  const files = [
+    { name: "daily.csv", text: mergeDaily(deps.readText(join(directory, "daily.csv")), snapshot) },
+    { name: "windows.csv", text: mergeWindows(deps.readText(join(directory, "windows.csv")), date, snapshot) },
+    {
+      name: "referrers.csv",
+      text: mergeReferrers(deps.readText(join(directory, "referrers.csv")), date, snapshot),
+    },
+  ];
+  for (const file of files) {
+    if (dryRun) {
+      writeOut("--- " + file.name + " ---");
+      writeOut(file.text.trimEnd());
+      continue;
+    }
+    deps.writeText(join(directory, file.name), file.text);
+  }
+  writeOut(
+    date +
+      ": " +
+      snapshot.clones.uniques +
+      " unique cloners and " +
+      snapshot.views.uniques +
+      " unique visitors across the last " +
+      snapshot.clones.days.length +
+      " days",
+  );
+  return 0;
+}
+
 export interface DailyPoint {
   timestamp: string;
   count: number;
@@ -333,121 +450,4 @@ function describeApiFailure(thrown: unknown): string {
     return endpoint + " returned HTTP " + thrown.status;
   }
   return "the request was stopped by " + unexpectedKind(thrown);
-}
-
-/**
- * Takes one traffic snapshot and merges it into the three CSV files.
- *
- *   bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]
- *
- * `--dry-run` prints the three files and writes none. `--from-file` reads the
- * four responses from a JSON file and leaves the network alone. Any other
- * argument is taken as the data directory, and the last one wins.
- *
- * Exit 0 means the files were written, or printed on a dry run. Exit 1 means
- * the API or the fixture could not be read, or the payload was malformed, and
- * no file was written. Exit 2 means no data directory was given.
- *
- * @param argv The whole command line, so the arguments start at index 2.
- * @param writeOut Receives the dry-run output and the closing summary line.
- * @param writeErr Receives the usage text or the reason for exit 1.
- * @param deps The network call, the file access and the clock. `readText`
- *     must return `null` for a file that does not exist. A failure in
- *     `writeText` is not caught, so the promise rejects and files written
- *     before it stay written.
- */
-export async function runCli(
-  argv: string[],
-  writeOut: (text: string) => void,
-  writeErr: (text: string) => void,
-  deps: Deps,
-): Promise<number> {
-  const args = argv.slice(2);
-  let directory = "";
-  let fromFile = "";
-  let dryRun = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] as string;
-    if (arg === "--dry-run") {
-      dryRun = true;
-      continue;
-    }
-    if (arg === "--from-file") {
-      fromFile = args[index + 1] ?? "";
-      index += 1;
-      continue;
-    }
-    directory = arg;
-  }
-  if (directory === "") {
-    writeErr(USAGE);
-    return 2;
-  }
-
-  let raw: unknown;
-  if (fromFile === "") {
-    try {
-      raw = await deps.fetchSnapshot();
-    } catch (error) {
-      writeErr("Could not read the traffic API: " + describeApiFailure(error));
-      return 1;
-    }
-  } else {
-    const text = deps.readText(fromFile);
-    if (text === null) {
-      writeErr(
-        "Could not read the fixture: --from-file names a path of " +
-          fromFile.length +
-          " characters that is missing or unreadable",
-      );
-      return 1;
-    }
-    try {
-      raw = JSON.parse(text);
-    } catch {
-      // JSON.parse throws for one reason only, and its message quotes the text.
-      writeErr(
-        "The fixture is not valid JSON: --from-file names a file of " +
-          text.length +
-          " characters that does not parse",
-      );
-      return 1;
-    }
-  }
-
-  const parsed = parseSnapshot(raw);
-  if (!parsed.ok) {
-    writeErr("Refusing to write: " + parsed.problem);
-    return 1;
-  }
-
-  const snapshot = parsed.snapshot;
-  const date = deps.today();
-  const files = [
-    { name: "daily.csv", text: mergeDaily(deps.readText(join(directory, "daily.csv")), snapshot) },
-    { name: "windows.csv", text: mergeWindows(deps.readText(join(directory, "windows.csv")), date, snapshot) },
-    {
-      name: "referrers.csv",
-      text: mergeReferrers(deps.readText(join(directory, "referrers.csv")), date, snapshot),
-    },
-  ];
-  for (const file of files) {
-    if (dryRun) {
-      writeOut("--- " + file.name + " ---");
-      writeOut(file.text.trimEnd());
-      continue;
-    }
-    deps.writeText(join(directory, file.name), file.text);
-  }
-  writeOut(
-    date +
-      ": " +
-      snapshot.clones.uniques +
-      " unique cloners and " +
-      snapshot.views.uniques +
-      " unique visitors across the last " +
-      snapshot.clones.days.length +
-      " days",
-  );
-  return 0;
 }

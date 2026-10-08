@@ -6,45 +6,6 @@ import { MATURITY_MODEL } from "./lib/types.ts";
 import type { Maturity } from "./lib/types.ts";
 import { readJsonFile, unexpectedKind, writeTextFile } from "./lib/failure.ts";
 
-export interface Answers {
-  organisation?: string;
-  dimensions: Record<string, Record<string, boolean>>;
-}
-
-/**
- * Scores an organisation against the maturity catalogue.
- *
- * A dimension holds a level only when every criterion at that level and each
- * level below it is answered `true`. Any other answer, a missing one included,
- * counts as not met.
- *
- * @param answers The criteria met, by dimension. A dimension the answers
- *     leave out scores 0, and one the catalogue does not list is ignored.
- * @returns Each catalogue dimension with its level, from 0 to the number of
- *     levels it has, and the unmet criteria of the next level, which is empty
- *     at the top. `overall` is the lowest level of any dimension. Answers
- *     with no `dimensions` score 0 throughout.
- * @throws A `TypeError` when `answers` is `null` or `undefined`.
- */
-export function scoreMaturity(answers: Answers): Maturity {
-  const maturity: Maturity = { dimensions: {}, overall: 0 };
-  let overall = Number.POSITIVE_INFINITY;
-  for (const [dimension, levels] of Object.entries(MATURITY_MODEL)) {
-    const given = answers.dimensions?.[dimension] ?? {};
-    let level = 0;
-    while (level < levels.length && levels[level].every((c) => given[c] === true)) {
-      level++;
-    }
-    const missing = level < levels.length
-      ? levels[level].filter((c) => given[c] !== true)
-      : [];
-    maturity.dimensions[dimension] = { level, missing };
-    overall = Math.min(overall, level);
-  }
-  maturity.overall = Number.isFinite(overall) ? overall : 0;
-  return maturity;
-}
-
 /**
  * Scores an answers file and prints the level of each dimension.
  *
@@ -105,4 +66,43 @@ export function runCli(
     );
     return 1;
   }
+}
+
+export interface Answers {
+  organisation?: string;
+  dimensions: Record<string, Record<string, boolean>>;
+}
+
+/**
+ * Scores an organisation against the maturity catalogue.
+ *
+ * A dimension holds a level only when every criterion at that level and each
+ * level below it is answered `true`. Any other answer, a missing one included,
+ * counts as not met.
+ *
+ * @param answers The criteria met, by dimension. A dimension the answers
+ *     leave out scores 0, and one the catalogue does not list is ignored.
+ * @returns Each catalogue dimension with its level, from 0 to the number of
+ *     levels it has, and the unmet criteria of the next level, which is empty
+ *     at the top. `overall` is the lowest level of any dimension. Answers
+ *     with no `dimensions` score 0 throughout.
+ * @throws A `TypeError` when `answers` is `null` or `undefined`.
+ */
+export function scoreMaturity(answers: Answers): Maturity {
+  const maturity: Maturity = { dimensions: {}, overall: 0 };
+  let overall = Number.POSITIVE_INFINITY;
+  for (const [dimension, levels] of Object.entries(MATURITY_MODEL)) {
+    const given = answers.dimensions?.[dimension] ?? {};
+    let level = 0;
+    while (level < levels.length && levels[level].every((c) => given[c] === true)) {
+      level++;
+    }
+    const missing = level < levels.length
+      ? levels[level].filter((c) => given[c] !== true)
+      : [];
+    maturity.dimensions[dimension] = { level, missing };
+    overall = Math.min(overall, level);
+  }
+  maturity.overall = Number.isFinite(overall) ? overall : 0;
+  return maturity;
 }

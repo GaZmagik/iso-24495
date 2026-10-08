@@ -7,6 +7,60 @@ import { join, relative } from "node:path";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 import type { Evidence } from "./lib/types.ts";
 
+/**
+ * Sweeps a workspace for plain language artefacts and prints what it found.
+ *
+ *   bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]
+ *
+ * `--json` also writes the evidence to that file, replacing it.
+ *
+ * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
+ * could not be read in full or the evidence file could not be written. Exit 2
+ * means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the workspace is at index 2.
+ * @param stdout Receives the table, one line at a time.
+ * @param stderr Receives the usage line or the reason for exit 1 or 2.
+ */
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
+  if (!dir) {
+    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
+    return 2;
+  }
+  const jsonFlag = argv.indexOf("--json");
+  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+    stderr("audit-evidence: --json requires an output file");
+    return 2;
+  }
+  try {
+    const evidence = auditEvidence(dir);
+    if (jsonFlag !== -1) {
+      const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-evidence: ${problem}`);
+        return 1;
+      }
+    }
+    stdout("| Artefact category | Found | Paths |");
+    stdout("|-------------------|-------|-------|");
+    for (const category of CATEGORIES) {
+      const { found, paths } = evidence.artefacts[category];
+      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
+    }
+    return 0;
+  } catch (error) {
+    // The report is written without throwing, so the sweep is the only work
+    // here that touches a file, and every file it touches is under `dir`.
+    stderr(`audit-evidence: ${pathFailure(error, dir, "<workspace-dir>", "cannot be read in full")}`);
+    return 1;
+  }
+}
+
 export const CATEGORIES = [
   "policy",
   "review-workflow",
@@ -76,58 +130,4 @@ export function auditEvidence(dir: string): Evidence {
     evidence.artefacts[category] = { found: matched.length > 0, paths: matched };
   }
   return evidence;
-}
-
-/**
- * Sweeps a workspace for plain language artefacts and prints what it found.
- *
- *   bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]
- *
- * `--json` also writes the evidence to that file, replacing it.
- *
- * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
- * could not be read in full or the evidence file could not be written. Exit 2
- * means the arguments were wrong.
- *
- * @param argv The whole command line, so the workspace is at index 2.
- * @param stdout Receives the table, one line at a time.
- * @param stderr Receives the usage line or the reason for exit 1 or 2.
- */
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const dir = argv[2];
-  if (!dir) {
-    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
-    return 2;
-  }
-  const jsonFlag = argv.indexOf("--json");
-  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
-    stderr("audit-evidence: --json requires an output file");
-    return 2;
-  }
-  try {
-    const evidence = auditEvidence(dir);
-    if (jsonFlag !== -1) {
-      const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2), "--json");
-      if (problem !== null) {
-        stderr(`audit-evidence: ${problem}`);
-        return 1;
-      }
-    }
-    stdout("| Artefact category | Found | Paths |");
-    stdout("|-------------------|-------|-------|");
-    for (const category of CATEGORIES) {
-      const { found, paths } = evidence.artefacts[category];
-      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
-    }
-    return 0;
-  } catch (error) {
-    // The report is written without throwing, so the sweep is the only work
-    // here that touches a file, and every file it touches is under `dir`.
-    stderr(`audit-evidence: ${pathFailure(error, dir, "<workspace-dir>", "cannot be read in full")}`);
-    return 1;
-  }
 }

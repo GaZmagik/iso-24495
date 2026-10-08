@@ -27,6 +27,287 @@ import { layoutViolations } from "./lib/layout.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 
 /**
+ * Audits a corpus directory and prints the count of findings for each rule.
+ *
+ *   bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]
+ *
+ * `--json` also writes the full findings to that file, replacing it.
+ *
+ * Exit 0 means the audit ran, whatever it found. Exit 1 means the directory
+ * could not be listed or the findings file could not be written. Exit 2 means
+ * the arguments were wrong.
+ *
+ * @param argv The whole command line, so the directory is at index 2.
+ * @param stdout Receives the table and the total, one line at a time.
+ * @param stderr Receives a warning for each skipped entry, and the reason for
+ *     exit 1 or 2.
+ */
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
+  if (!dir) {
+    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
+    return 2;
+  }
+  let jsonPath: string | undefined;
+  const seenOptions = new Set<string>();
+  for (let index = 3; index < argv.length; index++) {
+    const option = argv[index];
+    if (option !== "--json") {
+      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
+      stderr(`audit-corpus: ${kind} of ${option.length} characters at argument ${index - 1}; expected --json`);
+      return 2;
+    }
+    if (seenOptions.has(option)) {
+      stderr(`audit-corpus: ${option} appears more than once`);
+      return 2;
+    }
+    seenOptions.add(option);
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) {
+      stderr("audit-corpus: --json requires an output file");
+      return 2;
+    }
+    jsonPath = value;
+    index++;
+  }
+  try {
+    const skipped: string[] = [];
+    const findings = auditCorpus(dir, (path) => skipped.push(path));
+    for (const path of skipped) {
+      stderr(`warning: skipped unreadable entry: ${path}`);
+    }
+    if (jsonPath !== undefined) {
+      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-corpus: ${problem}`);
+        return 1;
+      }
+    }
+    stdout("| Rule | Violations |");
+    stdout("|------|------------|");
+    for (const [rule, count] of Object.entries(findings.totals)) {
+      stdout(`| ${rule} | ${count} |`);
+    }
+    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
+    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
+    return 0;
+  } catch (error) {
+    // The report is written without throwing, and an unreadable entry below
+    // the corpus directory is skipped. So a file fault here is the directory
+    // itself refusing to be listed.
+    stderr(`audit-corpus: ${pathFailure(error, dir, "<corpus-dir>", "cannot be listed")}`);
+    return 1;
+  }
+}
+
+type ReadTextFile = (path: string, encoding: "utf8") => string;
+
+/**
+ * Audits every document under a directory and totals the findings by rule.
+ *
+ * The directory is also the project: its `.iso-24495-4/acronyms.json` applies
+ * to every document. The layout rules run for Markdown files and not for
+ * `.txt` files.
+ *
+ * @param dir The corpus directory.
+ * @param onSkip Called with the path of each entry or file that could not be
+ *     read. Such a file has no entry in the result.
+ * @param readText Replaces the file reader.
+ * @returns `files` is keyed by path from `dir`, with forward slashes, and
+ *     holds an entry for every file read, findings or none. `totals` names
+ *     only the rules that fired. Both are empty for an empty corpus.
+ * @throws The file system error when `dir` itself cannot be listed.
+ */
+export function auditCorpus(
+  dir: string,
+  onSkip?: (path: string) => void,
+  readText: ReadTextFile = readFileSync,
+): Findings {
+  const paths = listTextFiles(dir, onSkip);
+  // A corpus is audited from its own directory, so the project's acronyms
+  // apply to every document in it.
+  const knownAcronyms = projectAcronyms(dir);
+  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
+  for (const path of paths) {
+    const key = relative(dir, path).replaceAll("\\", "/");
+    let text: string;
+    try {
+      text = readText(path, "utf8");
+    } catch {
+      onSkip?.(path);
+      continue;
+    }
+    const violations = auditText(text, { knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
+    findings.files[key] = { violations };
+    for (const v of violations) {
+      findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
+    }
+  }
+  return findings;
+}
+
+export interface AuditOptions extends Reading {
+  /** The selected file name supplies document-specific scope exemptions. */
+  fileName?: string;
+  /** Extra acronyms this project treats as known. */
+  knownAcronyms?: ReadonlySet<string>;
+  /** File-aware callers enable structural rules for Markdown rather than plain text. */
+  markdown?: boolean;
+}
+
+/**
+ * Every mechanical finding in one text.
+ *
+ * The four layout rules (`contents-list`, `opening-version-date`,
+ * `bullet-depth` and `overview-label`) run only when `options.markdown` is
+ * true. It defaults to false, so a caller that passes no options gets the
+ * other rules alone, and nothing in the result says that layout was skipped.
+ *
+ * @param text The whole document, with any line ending.
+ * @param options `markdown` turns the layout rules on; pass true for a
+ *     Markdown file and leave it unset for plain text. `fileName` only
+ *     exempts files such as README from the edition advisory. `knownAcronyms`
+ *     are passed over by the acronym rule, and must be in capitals without
+ *     dots. `frontMatter` set to false reads a leading "---" block as text
+ *     and switches the edition advisory off; unset, the block is metadata.
+ * @returns The findings grouped by rule, not sorted by line. Each `line` is
+ *     counted from 1. Empty when no rule fires, which is the result for empty
+ *     text and is not evidence that the text suits its readers.
+ */
+export function auditText(text: string, options: AuditOptions = {}): Violation[] {
+  // Every rule re-reads the text, so each is told the same thing about front matter.
+  const reading: Reading = { frontMatter: options.frontMatter };
+  const violations: Violation[] = [];
+  const sentenceLengths: number[] = [];
+  const mergedLengths: number[] = [];
+  for (const block of readerProseBlocks(text, reading)) {
+    const paragraph = block.lines.join("\n");
+    // The splitter reports where each sentence starts, so nothing needs locating twice.
+    // Rebuilding a sentence as a regular expression threw on a long one.
+    for (const sentence of locateSentences(paragraph)) {
+      const words = wordCount(sentence.text);
+      if (words > 0) sentenceLengths.push(words);
+      if (words > SENTENCE_WORD_LIMIT) {
+        violations.push({
+          rule: "sentence-length",
+          line: lineAtOffset(block.line, paragraph, sentence.start),
+          detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
+        });
+      }
+    }
+    // Counted from the fewest sentences the paragraph can hold. An unresolved
+    // full stop must never manufacture the sentence that breaks the limit.
+    const fewest = mergedSentences(paragraph).length;
+    for (const sentence of mergedSentences(paragraph)) {
+      const words = wordCount(sentence);
+      if (words > 0) mergedLengths.push(words);
+    }
+    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
+      violations.push({
+        rule: "paragraph-length",
+        line: block.line,
+        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
+      });
+    }
+  }
+  violations.push(...legaleseViolations(text, reading));
+  // The standards specify an average across the document, not a cap; the cap
+  // above only catches genuine sprawl. Small samples are exempt because an
+  // average over a handful of sentences is noise, not judgement.
+  //
+  // Both readings must agree. Taking the longer reading alone let an undecided
+  // full stop lift a document over the ten-sentence sample floor and produce a
+  // finding the joined-up reading could not, which is the opposite of what
+  // abstention is for.
+  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
+    count: lengths.length,
+    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
+  }));
+  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
+    const reported = readings[0];
+    violations.push({
+      rule: "sentence-average",
+      line: 1,
+      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
+    });
+  }
+  const documentHeadings = headings(text, reading);
+  for (let i = 0; i < documentHeadings.length; i++) {
+    const heading = documentHeadings[i];
+    if (heading.level > MAX_HEADING_LEVEL) {
+      violations.push({
+        rule: "heading-depth",
+        line: heading.line,
+        detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const previous = documentHeadings[i - 1];
+    if (previous && heading.level > previous.level + 1) {
+      violations.push({
+        rule: "heading-skip",
+        line: heading.line,
+        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
+    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
+    const headingWords = wordCount(headingText);
+    // Same abstention as the paragraph rule: a heading is only two sentences
+    // if it is two even when every doubtful stop is joined up.
+    const headingSentences = mergedSentences(headingText);
+    if (headingWords > HEADING_WORD_LIMIT) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
+      });
+    } else if (headingSentences.length >= 2) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingSentences.length} sentences in heading`,
+      });
+    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: "heading ends with a full stop",
+      });
+    }
+  }
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set(), reading));
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...doubletViolations(text, reading));
+
+  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+  violations.push(...proseEnumerationViolations(text, reading));
+
+  // The intended readers of a document include everyone who uses it, whether
+  // they see it, hear it or touch it. These two rules are the only ones here
+  // that serve a reader who is not looking at the page.
+  violations.push(...wordyPhraseViolations(text, reading));
+  violations.push(...complexWordViolations(text, reading));
+  violations.push(...doubleNegativeViolations(text, reading));
+  violations.push(...fillerOpeningViolations(text, reading));
+  violations.push(...tableHeaderViolations(text, reading));
+  violations.push(...linkTextViolations(text, reading));
+  violations.push(...imageAltViolations(text, reading));
+  if (options.markdown) violations.push(...layoutViolations(text, { ...reading, fileName: options.fileName }));
+  return violations;
+}
+
+/**
  * Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
  * English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
  * 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
@@ -992,163 +1273,6 @@ export function projectAcronyms(directory: string): ReadonlySet<string> {
   }
 }
 
-export interface AuditOptions extends Reading {
-  /** The selected file name supplies document-specific scope exemptions. */
-  fileName?: string;
-  /** Extra acronyms this project treats as known. */
-  knownAcronyms?: ReadonlySet<string>;
-  /** File-aware callers enable structural rules for Markdown rather than plain text. */
-  markdown?: boolean;
-}
-
-/**
- * Every mechanical finding in one text.
- *
- * The four layout rules (`contents-list`, `opening-version-date`,
- * `bullet-depth` and `overview-label`) run only when `options.markdown` is
- * true. It defaults to false, so a caller that passes no options gets the
- * other rules alone, and nothing in the result says that layout was skipped.
- *
- * @param text The whole document, with any line ending.
- * @param options `markdown` turns the layout rules on; pass true for a
- *     Markdown file and leave it unset for plain text. `fileName` only
- *     exempts files such as README from the edition advisory. `knownAcronyms`
- *     are passed over by the acronym rule, and must be in capitals without
- *     dots. `frontMatter` set to false reads a leading "---" block as text
- *     and switches the edition advisory off; unset, the block is metadata.
- * @returns The findings grouped by rule, not sorted by line. Each `line` is
- *     counted from 1. Empty when no rule fires, which is the result for empty
- *     text and is not evidence that the text suits its readers.
- */
-export function auditText(text: string, options: AuditOptions = {}): Violation[] {
-  // Every rule re-reads the text, so each is told the same thing about front matter.
-  const reading: Reading = { frontMatter: options.frontMatter };
-  const violations: Violation[] = [];
-  const sentenceLengths: number[] = [];
-  const mergedLengths: number[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
-    const paragraph = block.lines.join("\n");
-    // The splitter reports where each sentence starts, so nothing needs locating twice.
-    // Rebuilding a sentence as a regular expression threw on a long one.
-    for (const sentence of locateSentences(paragraph)) {
-      const words = wordCount(sentence.text);
-      if (words > 0) sentenceLengths.push(words);
-      if (words > SENTENCE_WORD_LIMIT) {
-        violations.push({
-          rule: "sentence-length",
-          line: lineAtOffset(block.line, paragraph, sentence.start),
-          detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
-        });
-      }
-    }
-    // Counted from the fewest sentences the paragraph can hold. An unresolved
-    // full stop must never manufacture the sentence that breaks the limit.
-    const fewest = mergedSentences(paragraph).length;
-    for (const sentence of mergedSentences(paragraph)) {
-      const words = wordCount(sentence);
-      if (words > 0) mergedLengths.push(words);
-    }
-    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
-      violations.push({
-        rule: "paragraph-length",
-        line: block.line,
-        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
-      });
-    }
-  }
-  violations.push(...legaleseViolations(text, reading));
-  // The standards specify an average across the document, not a cap; the cap
-  // above only catches genuine sprawl. Small samples are exempt because an
-  // average over a handful of sentences is noise, not judgement.
-  //
-  // Both readings must agree. Taking the longer reading alone let an undecided
-  // full stop lift a document over the ten-sentence sample floor and produce a
-  // finding the joined-up reading could not, which is the opposite of what
-  // abstention is for.
-  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
-    count: lengths.length,
-    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
-  }));
-  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
-    const reported = readings[0];
-    violations.push({
-      rule: "sentence-average",
-      line: 1,
-      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
-    });
-  }
-  const documentHeadings = headings(text, reading);
-  for (let i = 0; i < documentHeadings.length; i++) {
-    const heading = documentHeadings[i];
-    if (heading.level > MAX_HEADING_LEVEL) {
-      violations.push({
-        rule: "heading-depth",
-        line: heading.line,
-        detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
-      });
-    }
-
-    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-    const previous = documentHeadings[i - 1];
-    if (previous && heading.level > previous.level + 1) {
-      violations.push({
-        rule: "heading-skip",
-        line: heading.line,
-        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
-      });
-    }
-
-    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
-    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
-    const headingWords = wordCount(headingText);
-    // Same abstention as the paragraph rule: a heading is only two sentences
-    // if it is two even when every doubtful stop is joined up.
-    const headingSentences = mergedSentences(headingText);
-    if (headingWords > HEADING_WORD_LIMIT) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
-      });
-    } else if (headingSentences.length >= 2) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: `${headingSentences.length} sentences in heading`,
-      });
-    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: "heading ends with a full stop",
-      });
-    }
-  }
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set(), reading));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...doubletViolations(text, reading));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...proseEnumerationViolations(text, reading));
-
-  // The intended readers of a document include everyone who uses it, whether
-  // they see it, hear it or touch it. These two rules are the only ones here
-  // that serve a reader who is not looking at the page.
-  violations.push(...wordyPhraseViolations(text, reading));
-  violations.push(...complexWordViolations(text, reading));
-  violations.push(...doubleNegativeViolations(text, reading));
-  violations.push(...fillerOpeningViolations(text, reading));
-  violations.push(...tableHeaderViolations(text, reading));
-  violations.push(...linkTextViolations(text, reading));
-  violations.push(...imageAltViolations(text, reading));
-  if (options.markdown) violations.push(...layoutViolations(text, { ...reading, fileName: options.fileName }));
-  return violations;
-}
-
 function walk(
   dir: string,
   out: string[],
@@ -1220,128 +1344,4 @@ export function listTextFiles(
   const paths: string[] = [];
   walk(dir, paths, onSkip, true, readDirectory, inspectEntry);
   return paths.sort();
-}
-
-type ReadTextFile = (path: string, encoding: "utf8") => string;
-
-/**
- * Audits every document under a directory and totals the findings by rule.
- *
- * The directory is also the project: its `.iso-24495-4/acronyms.json` applies
- * to every document. The layout rules run for Markdown files and not for
- * `.txt` files.
- *
- * @param dir The corpus directory.
- * @param onSkip Called with the path of each entry or file that could not be
- *     read. Such a file has no entry in the result.
- * @param readText Replaces the file reader.
- * @returns `files` is keyed by path from `dir`, with forward slashes, and
- *     holds an entry for every file read, findings or none. `totals` names
- *     only the rules that fired. Both are empty for an empty corpus.
- * @throws The file system error when `dir` itself cannot be listed.
- */
-export function auditCorpus(
-  dir: string,
-  onSkip?: (path: string) => void,
-  readText: ReadTextFile = readFileSync,
-): Findings {
-  const paths = listTextFiles(dir, onSkip);
-  // A corpus is audited from its own directory, so the project's acronyms
-  // apply to every document in it.
-  const knownAcronyms = projectAcronyms(dir);
-  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
-  for (const path of paths) {
-    const key = relative(dir, path).replaceAll("\\", "/");
-    let text: string;
-    try {
-      text = readText(path, "utf8");
-    } catch {
-      onSkip?.(path);
-      continue;
-    }
-    const violations = auditText(text, { knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
-    findings.files[key] = { violations };
-    for (const v of violations) {
-      findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
-    }
-  }
-  return findings;
-}
-
-/**
- * Audits a corpus directory and prints the count of findings for each rule.
- *
- *   bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]
- *
- * `--json` also writes the full findings to that file, replacing it.
- *
- * Exit 0 means the audit ran, whatever it found. Exit 1 means the directory
- * could not be listed or the findings file could not be written. Exit 2 means
- * the arguments were wrong.
- *
- * @param argv The whole command line, so the directory is at index 2.
- * @param stdout Receives the table and the total, one line at a time.
- * @param stderr Receives a warning for each skipped entry, and the reason for
- *     exit 1 or 2.
- */
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const dir = argv[2];
-  if (!dir) {
-    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
-    return 2;
-  }
-  let jsonPath: string | undefined;
-  const seenOptions = new Set<string>();
-  for (let index = 3; index < argv.length; index++) {
-    const option = argv[index];
-    if (option !== "--json") {
-      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(`audit-corpus: ${kind} of ${option.length} characters at argument ${index - 1}; expected --json`);
-      return 2;
-    }
-    if (seenOptions.has(option)) {
-      stderr(`audit-corpus: ${option} appears more than once`);
-      return 2;
-    }
-    seenOptions.add(option);
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      stderr("audit-corpus: --json requires an output file");
-      return 2;
-    }
-    jsonPath = value;
-    index++;
-  }
-  try {
-    const skipped: string[] = [];
-    const findings = auditCorpus(dir, (path) => skipped.push(path));
-    for (const path of skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
-    }
-    if (jsonPath !== undefined) {
-      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
-      if (problem !== null) {
-        stderr(`audit-corpus: ${problem}`);
-        return 1;
-      }
-    }
-    stdout("| Rule | Violations |");
-    stdout("|------|------------|");
-    for (const [rule, count] of Object.entries(findings.totals)) {
-      stdout(`| ${rule} | ${count} |`);
-    }
-    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
-    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
-    return 0;
-  } catch (error) {
-    // The report is written without throwing, and an unreadable entry below
-    // the corpus directory is skipped. So a file fault here is the directory
-    // itself refusing to be listed.
-    stderr(`audit-corpus: ${pathFailure(error, dir, "<corpus-dir>", "cannot be listed")}`);
-    return 1;
-  }
 }

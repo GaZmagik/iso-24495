@@ -10,6 +10,30 @@
 
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
 
+/**
+ * Read a document once, for the rules that work line by line.
+ *
+ * They skip metadata and code, and deliberately not tables: a rule about
+ * links, images or table headings has to look at a table to do its job.
+ *
+ * @returns `lines` and `markupLines` hold one entry for each source line, so
+ *     index 0 is line 1. A line a reader never sees is blank in both.
+ *     `markupLines` keeps HTML tags and `lines` does not. `hidden` takes such
+ *     an index and is true for front matter and code. `references` holds
+ *     each defined label as `normaliseReference` gives it. Empty text gives
+ *     one empty line.
+ */
+export function readDocument(text: string, reading: Reading = {}): Document {
+  const lines = toLines(text);
+  const parsed = parse(lines, reading);
+  return {
+    lines: parsed.readable.map((line) => visibleInline(line, false)),
+    markupLines: parsed.markup,
+    references: parsed.references,
+    hidden: (index) => parsed.hidden.has(index),
+  };
+}
+
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
@@ -1213,30 +1237,6 @@ export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlo
  */
 export function headings(text: string, reading: Reading = {}): Heading[] {
   return parse(toLines(text), reading).headings;
-}
-
-/**
- * Read a document once, for the rules that work line by line.
- *
- * They skip metadata and code, and deliberately not tables: a rule about
- * links, images or table headings has to look at a table to do its job.
- *
- * @returns `lines` and `markupLines` hold one entry for each source line, so
- *     index 0 is line 1. A line a reader never sees is blank in both.
- *     `markupLines` keeps HTML tags and `lines` does not. `hidden` takes such
- *     an index and is true for front matter and code. `references` holds
- *     each defined label as `normaliseReference` gives it. Empty text gives
- *     one empty line.
- */
-export function readDocument(text: string, reading: Reading = {}): Document {
-  const lines = toLines(text);
-  const parsed = parse(lines, reading);
-  return {
-    lines: parsed.readable.map((line) => visibleInline(line, false)),
-    markupLines: parsed.markup,
-    references: parsed.references,
-    hidden: (index) => parsed.hidden.has(index),
-  };
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and
