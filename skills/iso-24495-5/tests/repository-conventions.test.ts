@@ -1127,6 +1127,12 @@ describe("repository writing conventions", () => {
       expect(script, "the script must audit the repository's own documents").toMatch(
         /audit-corpus-cli\.ts/,
       );
+      expect(script, "the lint must fail on a warning as well as on an error").toMatch(
+        /^node_modules\/\.bin\/eslint \. --max-warnings 0$/m,
+      );
+      expect(script, "the script must run every shipped command with nothing installed").toMatch(
+        /^bash scripts\/check-without-packages\.sh$/m,
+      );
     });
 
     // Windows separators reach bash as escape characters rather than as path
