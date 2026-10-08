@@ -1184,6 +1184,25 @@ describe("repository writing conventions", () => {
       }
     });
 
+    // The gate's linter starts on Node, where everything else runs on Bun. A
+    // runner's own Node moves without notice, so each workflow that runs the
+    // gate names one exact version, and both name the same one.
+    test("each workflow that runs the gate sets up the same exact Node", () => {
+      const versions = ["tests.yml", "release-tag.yml"].map((name) => {
+        const parsed = Bun.YAML.parse(
+          readFileSync(join(REPOSITORY_ROOT, ".github", "workflows", name), "utf8"),
+        ) as { jobs: Record<string, { steps: Array<{ uses?: string; run?: string; with?: Record<string, string> }> }> };
+        const steps = Object.values(parsed.jobs).flatMap((job) => job.steps);
+        const node = steps.findIndex((step) => step.uses?.startsWith("actions/setup-node@"));
+        const gate = steps.findIndex((step) => step.run?.includes("scripts/check.sh"));
+        expect(node, `${name} sets up Node`).toBeGreaterThan(-1);
+        expect(gate, `${name} sets up Node before it runs the gate`).toBeGreaterThan(node);
+        return steps[node]?.with?.["node-version"];
+      });
+      expect(versions[0], "an exact version, not a range").toMatch(/^\d+\.\d+\.\d+$/);
+      expect(versions[1]).toBe(versions[0]);
+    });
+
     test("the README tells a contributor to run the same script", () => {
       const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8");
       expect(readme).toMatch(/scripts\/check\.sh/);
@@ -1846,4 +1865,67 @@ describe("repository writing conventions", () => {
       expect(report.problems).toEqual([]);
     });
   });
+
+  // The type check and the linter are packages, installed for the gate alone.
+  // A user installs the plugin and nothing else, so no shipped script may
+  // import a package: it would run here, where node_modules exists, and fail
+  // for every user. Tests are not shipped to run, and may import what the
+  // gate installs.
+  describe("shipped code needs no installed package", () => {
+    test("every import outside the tests is a relative file or a node: built-in", () => {
+      const shipped = [join(REPOSITORY_ROOT, "skills"), join(REPOSITORY_ROOT, "scripts")]
+        .flatMap((root) => repositoryTextFiles(root))
+        .filter((path) => path.endsWith(".ts"))
+        .map((path) => relative(REPOSITORY_ROOT, path).replaceAll("\\", "/"))
+        .filter((path) => !path.includes("/tests/"));
+      expect(shipped.length).toBeGreaterThanOrEqual(30);
+      expect(shipped).toContain("skills/iso-24495-4/scripts/audit-corpus-cli.ts");
+      expect(shipped).toContain("scripts/traffic-snapshot-cli.ts");
+
+      const imports = shipped.flatMap((path) =>
+        importedModules(readFileSync(join(REPOSITORY_ROOT, path), "utf8")).map((module) => ({ path, module })));
+      expect(imports.length).toBeGreaterThanOrEqual(shipped.length);
+      expect(imports.filter(({ module }) => !/^\.{1,2}\/|^node:/.test(module))).toEqual([]);
+    });
+
+    test("the check sees every form an import takes", () => {
+      const source = [
+        "import type { A } from \"type-only\";",
+        "import { b } from \"named\";",
+        "import \"side-effect\";",
+        "export { c } from \"re-exported\";",
+        "export type { D } from \"type-re-exported\";",
+        "const e = await import(\"dynamic\");",
+        "const f = require(\"required\");",
+        "import { g } from \"node:fs\";",
+        "import { h } from \"./relative.ts\";",
+        "import {",
+        "  i,",
+        "} from \"across-lines\";",
+        "console.log(b, e, f, g, h, i);",
+      ].join("\n");
+      expect(importedModules(source)).toEqual([
+        "./relative.ts", "across-lines", "dynamic", "named", "node:fs", "re-exported", "required",
+        "side-effect", "type-only", "type-re-exported",
+      ]);
+    });
+  });
 });
+
+/**
+ * Every module a TypeScript source imports, by the name it is imported under.
+ *
+ * Two readings are joined. Bun's own scanner finds what runs: static and
+ * dynamic imports, re-exports and `require` calls. It leaves out an import of
+ * types alone, which is erased before the code runs, so a pattern over the
+ * text finds those.
+ *
+ * @returns The names sorted, each once. Empty for a source that imports
+ *     nothing.
+ */
+function importedModules(source: string): string[] {
+  const running = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((found) => found.path);
+  const written = [...source.matchAll(/^(?:import|export)\b[^"';]*?\bfrom\s*"([^"]+)"/gm)]
+    .map((match) => match[1] ?? "");
+  return [...new Set([...running, ...written])].sort();
+}

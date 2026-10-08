@@ -242,6 +242,10 @@ Findings and unsure results never change a completed audit's exit code.
 
 Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
 
+Run `bun install` once after you clone, and have Node on your path. The gate runs a type check and a linter before the tests, and both are development dependencies. The linter starts on Node. The gate installs exactly what `bun.lock` records, and stops when that file and `package.json` disagree.
+
+A user of the plugin installs none of this. No shipped script imports a package, and a test fails when one does.
+
 A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
 
 ```bash
@@ -276,7 +280,11 @@ Every new test receives a mutation check. The implementation is deliberately bro
 
 ## TypeScript style
 
-This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem, and the repository conventions test enforces the mechanically checkable rules.
+This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem.
+
+Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and a few more.
+
+A lint that finds nothing proves little when a rule is switched off by mistake. So a test gives the linter one deliberate breach of each rule that file names, and requires a report for each. Rules of the guide that no tool here checks are left to review.
 
 ## Why this project holds itself to these rules
 

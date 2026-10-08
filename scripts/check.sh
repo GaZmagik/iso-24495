@@ -6,6 +6,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The type check and the linter are development dependencies, and nothing a
+# user of the plugin runs needs them. A frozen install fails when bun.lock and
+# package.json disagree, so the gate never runs a version nobody reviewed.
+echo "==> Development dependencies, exactly as locked"
+bun install --frozen-lockfile
+
+# Each tool is called by its path. "bun run typecheck" once fell through to a
+# different compiler on PATH, in a clone where nothing was installed.
+echo "==> Type check"
+node_modules/.bin/tsc --noEmit
+
+echo "==> Lint"
+node_modules/.bin/eslint .
+
 echo "==> Test suite with coverage thresholds"
 # Tests that start a shell script, or read the whole repository, overran the
 # 5-second default whenever the machine was busy. They check behaviour, not
