@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, posix, relative } from "node:path";
 import ts from "typescript";
 import {
   auditText,
@@ -1870,32 +1870,30 @@ describe("repository writing conventions", () => {
   // The type check and the linter are packages, installed for the gate alone.
   // A user installs the plugin and nothing else, so no shipped script may
   // import a package: it would run here, where node_modules exists, and fail
-  // for every user. Tests are not shipped to run, and may import what the
-  // gate installs.
-  describe("shipped code needs no installed package", () => {
-    test("every import outside the tests is a relative file or a node: built-in", () => {
-      const shipped = [join(REPOSITORY_ROOT, "skills"), join(REPOSITORY_ROOT, "scripts")]
-        .flatMap((root) => repositoryTextFiles(root))
-        .filter((path) => path.endsWith(".ts"))
-        .map((path) => relative(REPOSITORY_ROOT, path).replaceAll("\\", "/"))
-        .filter((path) => !path.includes("/tests/"));
-      expect(shipped.length).toBeGreaterThanOrEqual(30);
-      expect(shipped).toContain("skills/iso-24495-4/scripts/audit-corpus-cli.ts");
-      expect(shipped).toContain("scripts/traffic-snapshot-cli.ts");
+  // for every user.
+  //
+  // What proves that is not here. scripts/check-without-packages.sh copies the
+  // repository to a place with nothing installed and runs every shipped
+  // command there. Two reviews defeated a rule about how an import is spelt,
+  // with a computed name and then with a file the rule did not read, and no
+  // list of spellings can be complete.
+  //
+  // This rule is only the early, readable warning for the honest mistake: a
+  // package named outright. It reads names that are written out, and makes no
+  // claim about a name worked out while the code runs.
+  describe("shipped code names no package in an import", () => {
+    test("every written import outside the tests is a node: built-in or a shipped file", () => {
+      const shipped = shippedSources();
+      expect(shipped.size).toBeGreaterThanOrEqual(30);
+      expect([...shipped.keys()]).toContain("skills/iso-24495-4/scripts/audit-corpus-cli.ts");
+      expect([...shipped.keys()]).toContain("scripts/traffic-snapshot-cli.ts");
 
-      const read = shipped.map((path) => ({
-        path,
-        ...importsOf(readFileSync(join(REPOSITORY_ROOT, path), "utf8")),
-      }));
-      const imports = read.flatMap(({ path, modules }) => modules.map((module) => ({ path, module })));
-      expect(imports.length).toBeGreaterThanOrEqual(shipped.length);
-      expect(imports.filter(({ module }) => !/^\.{1,2}\/|^node:/.test(module))).toEqual([]);
-      // A name worked out while the code runs cannot be checked here, so the
-      // form itself is refused.
-      expect(read.flatMap(({ path, refused }) => refused.map((form) => `${path}: ${form}`))).toEqual([]);
+      const imports = [...shipped.values()].flatMap((source) => writtenImports(source));
+      expect(imports.length).toBeGreaterThanOrEqual(shipped.size);
+      expect(importProblems(shipped, (path) => existsSync(join(REPOSITORY_ROOT, path)))).toEqual([]);
     });
 
-    test("the check sees every form an import with a written name takes", () => {
+    test("the rule sees every form a written import takes", () => {
       const source = [
         "import type { A } from \"type-only\";",
         "import { b } from \"named\";",
@@ -1911,112 +1909,149 @@ describe("repository writing conventions", () => {
         "  i,",
         "} from \"across-lines\";",
         "const j = await import(`plain-template`);",
-        "const k = require(`plain-template-required`);",
         "import l = require(\"import-equals\");",
         "let m: import(\"type-query\").M;",
-        "console.log(b, e, f, g, h, i, j, k, l, m);",
+        "// import n from \"in-a-comment\";",
+        "const o = \"import p from 'in-a-string'\";",
+        "console.log(b, e, f, g, h, i, j, l, m, o);",
       ].join("\n");
-      expect(importsOf(source)).toEqual({
-        modules: [
-          "./relative.ts", "across-lines", "dynamic", "import-equals", "named", "node:fs",
-          "plain-template", "plain-template-required", "re-exported", "re-exported-whole",
-          "required", "side-effect", "type-only", "type-query", "type-re-exported",
-        ],
-        refused: [],
-      });
+      expect(writtenImports(source)).toEqual([
+        "./relative.ts", "across-lines", "dynamic", "import-equals", "named", "node:fs",
+        "plain-template", "re-exported", "re-exported-whole", "required", "side-effect",
+        "type-only", "type-query", "type-re-exported",
+      ]);
     });
 
-    // A review prepended the first two lines below to a shipped script. The
-    // gate passed, and the command failed for a user with nothing installed.
-    test("the check refuses every form whose module it cannot read", () => {
-      const refusedOn = (lines: string[]): string[] => importsOf(lines.join("\n")).refused;
-      expect(refusedOn(["const packageName = \"typescript\";", "await import(packageName);"]))
-        .toEqual(["line 2: import() of a name that is not written out"]);
-      expect(refusedOn(["const name = \"x\";", "", "await import(`${name}-suffix`);"]))
-        .toEqual(["line 3: import() of a name that is not written out"]);
-      expect(refusedOn(["await import(\"a\" + \"b\");"]))
-        .toEqual(["line 1: import() of a name that is not written out"]);
-      expect(refusedOn(["const name = \"x\";", "require(name);"]))
-        .toEqual(["line 2: require() of a name that is not written out"]);
-      expect(refusedOn(["require();"]))
-        .toEqual(["line 1: require() of a name that is not written out"]);
-      expect(refusedOn(["const load = require;", "load(\"x\");"]))
-        .toEqual(["line 1: require used as a value"]);
-      expect(refusedOn(["require.resolve(\"x\");"]))
-        .toEqual(["line 1: require used as a value"]);
-      expect(refusedOn(["import { createRequire } from \"node:module\";", "createRequire(import.meta.url)(\"x\");"]))
-        .toEqual(["line 1: createRequire", "line 2: createRequire"]);
-      expect(refusedOn(["import * as loader from \"node:module\";", "loader.createRequire(import.meta.url);"]))
-        .toEqual(["line 2: createRequire"]);
-      expect(refusedOn(["import.meta.require(\"x\");"]))
-        .toEqual(["line 1: import.meta.require"]);
-      expect(refusedOn(["import.meta.resolve(\"x\");"]))
-        .toEqual(["line 1: import.meta.resolve"]);
-      expect(refusedOn(["import.meta[\"require\"](\"x\");"]))
-        .toEqual(["line 1: import.meta read by a computed name"]);
-      expect(refusedOn(["const { require: load } = import.meta;", "load(\"x\");"]))
-        .toEqual(["line 1: import.meta used whole"]);
-      expect(refusedOn(["const meta = import.meta;", "meta.require(\"x\");"]))
-        .toEqual(["line 1: import.meta used whole"]);
-      expect(refusedOn(["export const loaders = { require };"]))
-        .toEqual(["line 1: require used as a value"]);
-      // A key that happens to be called require is a label.
-      expect(refusedOn(["export const labels = { require: 1 };"])).toEqual([]);
-      // What shipped code does use stays allowed.
-      expect(refusedOn(["console.log(import.meta.dir, import.meta.path, import.meta.url, import.meta.main);"]))
+    test("the rule refuses a package, a bare built-in and a file it does not read", () => {
+      const problems = (files: Record<string, string>, onDisk: string[] = []): string[] =>
+        importProblems(new Map(Object.entries(files)), (path) => onDisk.includes(path));
+
+      expect(problems({ "scripts/a.ts": "import \"typescript\";" }))
+        .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.ts": "import { sep } from \"path\"; console.log(sep);" }))
+        .toEqual(["scripts/a.ts imports \"path\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.mjs": "await import(\"typescript\");" }))
+        .toEqual(["scripts/a.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.cjs": "require(\"typescript\");" }))
+        .toEqual(["scripts/a.cjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+
+      // A relative import must land on a file this rule also reads, so that no
+      // file sits outside it. A review hid a package behind a .mjs file.
+      expect(problems({ "scripts/a.ts": "import \"./loader.mjs\";", "scripts/loader.mjs": "import \"node:fs\";" }))
         .toEqual([]);
+      expect(problems({ "scripts/a.ts": "import \"./loader.mjs\";", "scripts/loader.mjs": "import \"typescript\";" }))
+        .toEqual(["scripts/loader.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.ts": "import \"./loader.wasm\";" }, ["scripts/loader.wasm"]))
+        .toEqual(["scripts/a.ts imports \"./loader.wasm\", which is not a file this rule reads"]);
+      expect(problems({ "skills/x/scripts/a.ts": "import \"../tests/helper.ts\";" }, ["skills/x/tests/helper.ts"]))
+        .toEqual(["skills/x/scripts/a.ts imports \"../tests/helper.ts\", which is not a file this rule reads"]);
+      expect(problems({ "scripts/a.ts": "import \"./missing.ts\";" }))
+        .toEqual(["scripts/a.ts imports \"./missing.ts\", which is not a file this rule reads"]);
+      expect(problems({ "scripts/a.ts": "import \"./b\";", "scripts/b.ts": "" }))
+        .toEqual(["scripts/a.ts imports \"./b\", which is not a file this rule reads"]);
+      expect(problems({ "scripts/lib/a.ts": "import \"../b.ts\";", "scripts/b.ts": "" })).toEqual([]);
+
+      // A JSON file is data and imports nothing, so it need only exist.
+      expect(problems({ "scripts/a.ts": "import data from \"./data.json\"; console.log(data);" }, ["scripts/data.json"]))
+        .toEqual([]);
+      expect(problems({ "scripts/a.ts": "import data from \"./data.json\"; console.log(data);" }))
+        .toEqual(["scripts/a.ts imports \"./data.json\", which is not a file this rule reads"]);
+
+      // No claim is made about a computed name. The run with nothing
+      // installed is what catches these two, which reviews wrote.
+      expect(problems({ "scripts/a.ts": "const name = \"typescript\"; await import(name);" })).toEqual([]);
+      expect(problems({
+        "scripts/a.ts": "import * as loader from \"node:module\"; loader[\"createRequire\"](import.meta.url)(\"typescript\");",
+      })).toEqual([]);
+      // A member that happens to be called require loads nothing. An earlier
+      // form of this rule refused it.
+      expect(problems({ "scripts/a.ts": "export interface ReviewPolicy { require: boolean; }" })).toEqual([]);
     });
   });
 });
 
-/** What a TypeScript source imports, and what it does that could import more. */
-interface Imports {
-  /** Each module imported under a name written in the source, sorted, each once. */
-  modules: string[];
-  /**
-   * Each form whose module cannot be read from the source, as "line N: form",
-   * in the order met. The form is named in fixed words, never quoted.
-   */
-  refused: string[];
+const SOURCE_FILE = /\.(?:ts|js|mjs|cjs)$/;
+
+/**
+ * Every source file under `skills/` and `scripts/` outside the tests: each
+ * `.ts`, `.js`, `.mjs` and `.cjs` file, with its text.
+ *
+ * @returns The text of each file, keyed by its path from the repository root
+ *     with forward slashes.
+ * @throws The file system error when a directory cannot be listed or a file
+ *     cannot be read.
+ */
+function shippedSources(): Map<string, string> {
+  const sources = new Map<string, string>();
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(join(REPOSITORY_ROOT, directory))) {
+      if (SKIPPED_DIRECTORIES.has(entry) || entry === "tests") continue;
+      const path = `${directory}/${entry}`;
+      if (statSync(join(REPOSITORY_ROOT, path)).isDirectory()) walk(path);
+      else if (SOURCE_FILE.test(entry)) sources.set(path, readFileSync(join(REPOSITORY_ROOT, path), "utf8"));
+    }
+  };
+  walk("skills");
+  walk("scripts");
+  return sources;
 }
 
 /**
- * Every module a TypeScript source imports, and every form in it that could
- * import a module this cannot name.
+ * What is wrong with the written imports of a set of source files.
+ *
+ * A written import must be a `node:` built-in or a relative path. A relative
+ * path must name, exactly as written, another file in the set, so that every
+ * file reached is itself read. A relative path to a `.json` file need only
+ * exist, because JSON imports nothing.
+ *
+ * @param sources The text of each file, keyed by its path from the
+ *     repository root with forward slashes.
+ * @param exists Whether a path from the repository root is a file on disk.
+ * @returns One sentence for each import at fault, naming the file and the
+ *     import. Empty when every written import is allowed. Nothing is said
+ *     about an import whose name is not written out.
+ */
+function importProblems(sources: ReadonlyMap<string, string>, exists: (path: string) => boolean): string[] {
+  const problems: string[] = [];
+  for (const [path, source] of sources) {
+    for (const module of writtenImports(source, path)) {
+      if (module.startsWith("node:")) continue;
+      if (!/^\.{1,2}\//.test(module)) {
+        problems.push(`${path} imports "${module}", which is neither relative nor a node: built-in`);
+        continue;
+      }
+      const target = posix.normalize(posix.join(posix.dirname(path), module));
+      const read = sources.has(target) || (target.endsWith(".json") && exists(target));
+      if (!read) problems.push(`${path} imports "${module}", which is not a file this rule reads`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Every module a source imports under a name written in the source.
  *
  * The source is parsed with the TypeScript compiler, so a comment or a string
  * that looks like an import is not one. A name counts as written when it is a
- * string, or a template with nothing substituted into it. An import of types
- * alone counts as an import.
+ * string, or a template with nothing substituted into it. The forms read are
+ * `import` and `export ... from` declarations, an import of types alone, and
+ * `import()` or `require()` called with one written name.
  *
- * Refused, because the module is only known once the code runs:
- *
- * - `import()` or `require()` of anything but one written name;
- * - `require` anywhere but as the function called, which covers a copy of it
- *   and `require.resolve`;
- * - the name `createRequire`, wherever it appears;
- * - `import.meta.require` and `import.meta.resolve`;
- * - `import.meta` read by a computed name, or used whole.
- *
- * @returns The written names in `modules`, and the refused forms in
- *     `refused`. Both are empty for a source that imports nothing. A source
- *     the compiler cannot parse is read as far as it parsed, and nothing is
- *     thrown.
+ * @param fileName Decides how the source is parsed, by its ending.
+ * @returns The names sorted, each once. Empty for a source that imports
+ *     nothing under a written name. A source the compiler cannot parse is
+ *     read as far as it parsed, and nothing is thrown.
  */
-function importsOf(source: string): Imports {
-  const file = ts.createSourceFile("source.ts", source, ts.ScriptTarget.Latest, true);
+function writtenImports(source: string, fileName = "source.ts"): string[] {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const modules = new Set<string>();
-  const refused: string[] = [];
   const visit = (node: ts.Node): void => {
-    const line = file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
-    const form = refusedForm(node);
-    if (form !== null) refused.push(`line ${line}: ${form}`);
     const module = writtenModule(node);
     if (module !== null) modules.add(module);
     ts.forEachChild(node, visit);
   };
   visit(file);
-  return { modules: [...modules].sort(), refused };
+  return [...modules].sort();
 }
 
 /**
@@ -2037,63 +2072,10 @@ function writtenModule(node: ts.Node): string | null {
     && ts.isStringLiteralLike(node.argument.literal)) {
     return node.argument.literal.text;
   }
-  if (isLoadingCall(node)) {
+  if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+    || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
     const name = node.arguments[0];
     if (node.arguments.length === 1 && name !== undefined && ts.isStringLiteralLike(name)) return name.text;
   }
   return null;
-}
-
-/**
- * The fixed words for a node that could import a module no reader can name.
- *
- * @returns The words, or null for a node that is not such a form.
- */
-function refusedForm(node: ts.Node): string | null {
-  if (isLoadingCall(node)) {
-    const name = node.arguments[0];
-    if (node.arguments.length === 1 && name !== undefined && ts.isStringLiteralLike(name)) return null;
-    const called = node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import()" : "require()";
-    return `${called} of a name that is not written out`;
-  }
-  if (ts.isIdentifier(node) && node.text === "createRequire") return "createRequire";
-  if (ts.isIdentifier(node) && node.text === "require" && !isCallee(node) && !isMemberName(node)) {
-    return "require used as a value";
-  }
-  if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
-    const parent = node.parent;
-    if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
-      const member = parent.name.text;
-      return member === "require" || member === "resolve" ? `import.meta.${member}` : null;
-    }
-    if (ts.isElementAccessExpression(parent) && parent.expression === node) {
-      return "import.meta read by a computed name";
-    }
-    return "import.meta used whole";
-  }
-  return null;
-}
-
-/** Whether a node is a call of `import` or of the bare name `require`. */
-function isLoadingCall(node: ts.Node): node is ts.CallExpression {
-  return ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
-    || (ts.isIdentifier(node.expression) && node.expression.text === "require"));
-}
-
-/** Whether an identifier is the function a call expression calls. */
-function isCallee(node: ts.Identifier): boolean {
-  return ts.isCallExpression(node.parent) && node.parent.expression === node;
-}
-
-/**
- * Whether an identifier only labels a member: the name in `something.name`,
- * the key in `{ name: value }`, or the key in `const { name: local } = value`.
- * Such a name is not the global of that name, and `import.meta.require` is
- * refused where the `import.meta` before it is met.
- */
-function isMemberName(node: ts.Identifier): boolean {
-  const parent = node.parent;
-  return (ts.isPropertyAccessExpression(parent) && parent.name === node)
-    || (ts.isPropertyAssignment(parent) && parent.name === node)
-    || (ts.isBindingElement(parent) && parent.propertyName === node);
 }
