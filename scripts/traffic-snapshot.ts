@@ -34,8 +34,10 @@ import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
  * be read, or is malformed as `MalformedTable` describes: every table is read
  * before any is written, so the history is left as it was. A missed day can be
  * fetched again, and a history written over cannot. A malformed table is for a
- * person to repair, and every run is refused until it is. Exit 1 also means a
- * file could not be written. The
+ * person to repair, and every run is refused until it is. So that the command
+ * never writes a row its next run would refuse, a payload with a day that is no
+ * date or a count that is no whole number is malformed, and a clock that gives
+ * no date stops the run. Exit 1 also means a file could not be written. The
  * files are written one after another, so those before it stay written, and
  * the reason names them. Exit 2 means no data directory was given.
  *
@@ -119,6 +121,10 @@ export async function runCli(
 
   const snapshot = parsed.snapshot;
   const date = deps.today();
+  if (!A_DATE.test(date)) {
+    writeErr("Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD");
+    return 1;
+  }
   // Every table is read before any is written. A table that is not there is a first
   // snapshot. One that is there and cannot be read stops the run: built from nothing,
   // the new table would be written over the history the old one holds.
@@ -252,11 +258,16 @@ export function textIfPresent(read: () => string): string | null {
  * - a quote never closes;
  * - its first row is not the header this command writes, cell for cell;
  * - a row has more or fewer cells than that header;
- * - a quote stands anywhere but around a whole cell, or doubled inside one.
+ * - a quote stands anywhere but around a whole cell, or doubled inside one;
+ * - a cell is not what its column holds. The first column of each table holds a
+ *   date, as four digits, two and two with a hyphen between. The referrer column
+ *   holds a name, which is any text at all. Every other column holds a whole
+ *   number, as digits and nothing else. These are the shapes this command writes.
  *
- * What a cell holds is not looked at. So a count that is not a number is kept, and
- * so is a row made of two rows by a quote on each, where its cells come to the
- * right number. Blank rows are passed over, and blank rows alone are no table.
+ * The last of these is what refuses a row made of two rows by a quote on each: its
+ * cells come to the right number, and one of them holds a line break and a comma
+ * where a count belongs. Blank rows are passed over, and blank rows alone are no
+ * table.
  */
 export class MalformedTable extends Error {
   constructor(
@@ -273,6 +284,7 @@ export interface Deps {
   readText(path: string): string | null;
   writeText(path: string, text: string): void;
   fetchSnapshot(): Promise<unknown>;
+  /** The day the snapshot is taken, as YYYY-MM-DD. */
   today(): string;
 }
 
@@ -314,6 +326,9 @@ const WINDOW_HEADER = [
   "watchers",
 ];
 const REFERRER_HEADER = ["snapshot_date", "referrer", "views", "uniques"];
+// What a cell must match, by its column. `MalformedTable` says which column holds what.
+const A_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const A_WHOLE_NUMBER = /^\d+$/;
 const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
   ["daily.csv", DAILY_HEADER],
   ["windows.csv", WINDOW_HEADER],
@@ -332,8 +347,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return isRecord ? (value as Record<string, unknown>) : null;
 }
 
+// A count: a whole number that is not negative and is small enough to be exact, so
+// that it is written as digits alone, which is what `A_WHOLE_NUMBER` reads back.
 function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function readSeries(raw: unknown, listKey: string): Series | null {
@@ -350,7 +367,7 @@ function readSeries(raw: unknown, listKey: string): Series | null {
     const stamp = typeof point.timestamp === "string" ? point.timestamp.slice(0, 10) : "";
     const dayCount = asNumber(point.count);
     const dayUniques = asNumber(point.uniques);
-    if (stamp === "" || dayCount === null || dayUniques === null) return null;
+    if (!A_DATE.test(stamp) || dayCount === null || dayUniques === null) return null;
     days.push({ timestamp: stamp, count: dayCount, uniques: dayUniques });
   }
   return { count, uniques, days };
@@ -388,7 +405,9 @@ function readRepo(raw: unknown): RepoCounts | null {
  *     returns it.
  * @returns The snapshot, with each daily timestamp cut to its date. A response
  *     that is missing or of the wrong shape gives `ok: false` and a problem
- *     naming the first such response; bad input is returned, never thrown.
+ *     naming the first such response; bad input is returned, never thrown. A
+ *     count that is not a whole number from 0 up to the largest exact one is of
+ *     the wrong shape, and so is a timestamp that does not open with a date.
  *     Empty daily lists and an empty referrer list are sound.
  */
 export function parseSnapshot(raw: unknown): ParseResult {
@@ -518,9 +537,20 @@ function readTable(existing: string | null, header: string[]): { rows: string[][
       const held = cells.length === 1 ? "1 cell" : cells.length + " cells";
       return { fault: "the row on line " + line + " has " + held + " where the header has " + header.length };
     }
+    const wrong = header.findIndex((column, at) => !holdsItsKind(column, at, cells[at] as string));
+    if (wrong !== -1) {
+      const kind = wrong === 0 ? "a date" : "a whole number";
+      return { fault: "the row on line " + line + " does not hold " + kind + " under " + header[wrong] };
+    }
     rows.push(cells);
   }
   return { rows };
+}
+
+/** Whether a cell is what its column holds: a date first, any text for a referrer, and a whole number elsewhere. */
+function holdsItsKind(column: string, at: number, cell: string): boolean {
+  if (at === 0) return A_DATE.test(cell);
+  return column === "referrer" || A_WHOLE_NUMBER.test(cell);
 }
 
 /**
