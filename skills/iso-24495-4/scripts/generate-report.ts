@@ -66,9 +66,10 @@ export function runCli(
   // one exists is kept apart from what it holds, because no value can stand for
   // "no file": a state file holding the JSON text null parses to null, and that
   // file was once taken for a first audit, never checked, and replaced.
-  const stateExists = statePath ? existsSync(statePath) : false;
+  const existingState = statePath && existsSync(statePath) ? statePath : undefined;
+  const stateExists = existingState !== undefined;
   const inputs: JsonFile[] = [
-    stateExists ? readJsonFile(statePath as string, "--state") : { ok: true, value: undefined },
+    existingState !== undefined ? readJsonFile(existingState, "--state") : { ok: true, value: undefined },
     readJsonFile(findingsPath, "<findings.json>"),
     readJsonFile(evidencePath, "<evidence.json>"),
     readJsonFile(maturityPath, "<maturity.json>"),
@@ -153,7 +154,8 @@ export interface ReportInput {
  *     nobody has read: a control character, a line break or a mark that
  *     reverses text direction becomes a space, and a pipe is escaped. An
  *     evidence path is the one exception: it is printed as `safePathCell`
- *     prints a path, with every character kept or shown as its code. Its
+ *     prints a path, a code span with every character kept or shown as its
+ *     code. Its
  *     Trend section appears only once the history holds two audits or more. `state` holds every earlier snapshot
  *     and one more, as given and not cleaned, and is what the caller must
  *     save for the next audit.

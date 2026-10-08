@@ -30,7 +30,10 @@ import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
  *
  * Exit 0 means the files were written, or printed on a dry run. Exit 1 means
  * the API or the fixture could not be read, or the payload was malformed, and
- * no file was written. Exit 1 also means a file could not be written. The
+ * no file was written. Exit 1 means the same where a table exists and cannot
+ * be read: every table is read before any is written, so the history is left
+ * as it was. A missed day can be fetched again, and a history written over
+ * cannot. Exit 1 also means a file could not be written. The
  * files are written one after another, so those before it stay written, and
  * the reason names them. Exit 2 means no data directory was given.
  *
@@ -38,7 +41,8 @@ import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
  * @param writeOut Receives the dry-run output and the closing summary line.
  * @param writeErr Receives the usage text or the reason for exit 1.
  * @param deps The network call, the file access and the clock. `readText`
- *     must return `null` for a file that does not exist. Whatever `writeText`
+ *     must return `null` for a file that does not exist, and throw for a file
+ *     that exists and cannot be read, as `textIfPresent` does. Whatever `writeText`
  *     throws is caught and reported as exit 1, in this module's own words.
  */
 export async function runCli(
@@ -78,7 +82,12 @@ export async function runCli(
       return 1;
     }
   } else {
-    const text = deps.readText(fromFile);
+    let text: string | null;
+    try {
+      text = deps.readText(fromFile);
+    } catch {
+      text = null;
+    }
     if (text === null) {
       writeErr(
         "Could not read the fixture: --from-file names a path of " +
@@ -108,13 +117,28 @@ export async function runCli(
 
   const snapshot = parsed.snapshot;
   const date = deps.today();
+  // Every table is read before any is written. A table that is not there is a first
+  // snapshot. One that is there and cannot be read stops the run: built from nothing,
+  // the new table would be written over the history the old one holds.
+  const existing: Record<string, string | null> = {};
+  for (const name of ["daily.csv", "windows.csv", "referrers.csv"]) {
+    try {
+      existing[name] = deps.readText(join(directory, name));
+    } catch (error) {
+      writeErr(
+        "Could not read " +
+          name +
+          ": " +
+          pathFailure(error, directory, "<data-directory>", "cannot be read") +
+          ". No table was written, so the history is as it was.",
+      );
+      return 1;
+    }
+  }
   const files = [
-    { name: "daily.csv", text: mergeDaily(deps.readText(join(directory, "daily.csv")), snapshot) },
-    { name: "windows.csv", text: mergeWindows(deps.readText(join(directory, "windows.csv")), date, snapshot) },
-    {
-      name: "referrers.csv",
-      text: mergeReferrers(deps.readText(join(directory, "referrers.csv")), date, snapshot),
-    },
+    { name: "daily.csv", text: mergeDaily(existing["daily.csv"] ?? null, snapshot) },
+    { name: "windows.csv", text: mergeWindows(existing["windows.csv"] ?? null, date, snapshot) },
+    { name: "referrers.csv", text: mergeReferrers(existing["referrers.csv"] ?? null, date, snapshot) },
   ];
   const written: string[] = [];
   for (const file of files) {
@@ -186,7 +210,29 @@ export interface Snapshot {
 
 export type ParseResult = { ok: true; snapshot: Snapshot } | { ok: false; problem: string };
 
+/**
+ * The text a read gives, or null where the read found no file.
+ *
+ * "There is no such file" is the one failure that means a first snapshot. Every
+ * other failure means a file is there and its history could not be read, and
+ * the command must not then write over it.
+ *
+ * @param read Reads one file and throws as the file system throws.
+ * @returns What `read` returned, or null when it threw an error whose code is
+ *     ENOENT.
+ * @throws Whatever else `read` threw, as it was thrown.
+ */
+export function textIfPresent(read: () => string): string | null {
+  try {
+    return read();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 export interface Deps {
+  /** The text of a file, null where there is no such file. Throws for a file that cannot be read. */
   readText(path: string): string | null;
   writeText(path: string, text: string): void;
   fetchSnapshot(): Promise<unknown>;

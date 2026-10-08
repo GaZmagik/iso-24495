@@ -852,7 +852,8 @@ function acronymViolations(
  * reader never sees a destination, and with the links written out its words counted as
  * words of the expansion: "[identity and access management](guide) (IAM)" spelt AMG.
  * A destination that held "(ABC)" was read as an acronym in brackets too. A link can
- * wrap, so the links are replaced across the block and not line by line.
+ * wrap, so the links are replaced across the block and not line by line. Brackets
+ * that form no link are left as text first, as `withoutBrokenLinks` describes.
  *
  * A line in no block, such as a table row, is read alone.
  *
@@ -878,7 +879,7 @@ function linesForDefinitions(
     const source = document.lines.slice(first, last + 1).join("\n");
     const linked = mayHoldLink(written, first, last - first + 1);
     // Replacing a link keeps every line ending, so there is one text for each line.
-    const texts = (linked ? inlineText(source, document.references) : source).split("\n");
+    const texts = (linked ? inlineText(withoutBrokenLinks(source), document.references) : source).split("\n");
     const marks = linked ? [] : emphasisMarkOffsets(source);
     let lineStart = 0;
     let next = 0;
@@ -896,6 +897,115 @@ function linesForDefinitions(
     first = last + 1;
   }
   return read;
+}
+
+/**
+ * Text in which brackets that form no inline link can no longer be taken for one.
+ *
+ * The scan that replaces links by their labels takes any "[label](...)" for a link, up
+ * to the first closing parenthesis. A page does not. "[management](two three)" holds a
+ * space in its destination, so it is shown as written, and "two three" are words a
+ * reader sees before "(IAM)". Replaced by its label, they were lost, and the acronym
+ * was read as defined. So the two square brackets of such a label become spaces here,
+ * and the replacing then leaves the whole of it alone.
+ *
+ * A space stands where each bracket stood, so every other character keeps its place.
+ * A link inside the label is not touched.
+ *
+ * @param text The lines of one block as `readDocument` gives them, joined by line
+ *     breaks. Two things are already gone from that text. A backslash escape is two
+ *     spaces, so a destination that held one is read as holding a space and is left
+ *     as text. A destination in angle brackets that looked like an HTML tag is one
+ *     space, which `formsInlineLink` allows for.
+ * @returns The same text where every inline link in it is well formed.
+ */
+function withoutBrokenLinks(text: string): string {
+  // Offsets count UTF-16 units, so the text is edited by unit and not by character.
+  const units = text.split("");
+  for (const link of markdownLinks(text)) {
+    if (link.kind !== "inline") continue;
+    const open = link.start + (link.image ? 1 : 0);
+    const close = open + 1 + link.label.length;
+    if (formsInlineLink(text, close + 1)) continue;
+    units[open] = " ";
+    units[close] = " ";
+  }
+  return units.join("");
+}
+
+/**
+ * Whether the text from an opening parenthesis is the second half of an inline link,
+ * as CommonMark reads one: a destination, a title after white space, or both or
+ * neither, and then the closing parenthesis.
+ *
+ * One form is allowed that CommonMark does not have: white space and then a title,
+ * with no destination. A destination written "<two three>" has been removed as an HTML
+ * tag before this text is read, and a space stands where it was.
+ *
+ * @param open The offset of the "(" that follows the label.
+ */
+function formsInlineLink(text: string, open: number): boolean {
+  const start = skipLinkSpace(text, open + 1);
+  if (start > open + 1 && closesLink(text, titleEnd(text, start))) return true;
+  const afterDestination = destinationEnd(text, start);
+  if (afterDestination === -1) return false;
+  const beforeTitle = skipLinkSpace(text, afterDestination);
+  if (text[beforeTitle] === ")") return true;
+  // A title needs white space between it and the destination.
+  return beforeTitle > afterDestination && closesLink(text, titleEnd(text, beforeTitle));
+}
+
+/** Whether a link ends here: a closing parenthesis, after white space or none. False for the offset -1. */
+function closesLink(text: string, at: number): boolean {
+  return at !== -1 && text[skipLinkSpace(text, at)] === ")";
+}
+
+/**
+ * The offset just past a link destination that starts here, or -1 where none is well
+ * formed. An empty one is.
+ *
+ * A bare destination is read as the renderer of GitHub reads it, which is not quite as
+ * CommonMark words it: a parenthesis that opens and never closes is allowed, so
+ * "two(three" is a destination where a title follows it.
+ */
+function destinationEnd(text: string, start: number): number {
+  let at = start;
+  if (text[at] === "<") {
+    // In angle brackets a destination may hold spaces, and no line break or "<".
+    for (at++; at < text.length && text[at] !== ">"; at++) {
+      if (text[at] === "\n" || text[at] === "<") return -1;
+    }
+    return at < text.length ? at + 1 : -1;
+  }
+  // Bare, it ends at white space, at a control character, or at a closing parenthesis
+  // that no opening one inside it is waiting for.
+  let depth = 0;
+  for (; at < text.length && text[at] > " " && (depth > 0 || text[at] !== ")"); at++) {
+    if (text[at] === "(") depth++;
+    else if (text[at] === ")") depth--;
+  }
+  return at;
+}
+
+/** The offset just past a link title that starts here, or -1 where no title does. */
+function titleEnd(text: string, start: number): number {
+  // A title opens with a double quote, a single quote or a parenthesis, and closes with
+  // the same quote or the other parenthesis. The quotes are given by their codes, 34
+  // and 39.
+  const opener = text[start] ?? "";
+  if (opener !== "(" && opener !== String.fromCharCode(34) && opener !== String.fromCharCode(39)) return -1;
+  const end = text.indexOf(opener === "(" ? ")" : opener, start + 1);
+  return end === -1 ? -1 : end + 1;
+}
+
+/**
+ * The offset of the first character at or after this one that is not a space or a line
+ * break. A tab is already spaces in the text this reads.
+ */
+function skipLinkSpace(text: string, start: number): number {
+  let at = start;
+  while (text[at] === " " || text[at] === "\n") at++;
+  return at;
 }
 
 /**

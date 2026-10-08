@@ -143,7 +143,7 @@ describe("formatFindings", () => {
     });
 
     expect(output).toContain(
-      "| docs/policy\\|draft.md | 2 | legalese | Replace shall \\| use must. |",
+      "| `docs/policy\\|draft.md` | 2 | legalese | Replace shall \\| use must. |",
     );
     expect(output).toContain("Finding count: 1. Files read: 1. Skipped entries: 0.");
     expect(output).toContain("The user decides whether the text suits its readers and purpose.");
@@ -295,7 +295,7 @@ describe("runCli", () => {
         output.writeOut,
         output.writeErr,
       )).toBe(0);
-      expect(output.stdout.join("\n")).toContain("| policy.md | 1 | legalese |");
+      expect(output.stdout.join("\n")).toContain("| `policy.md` | 1 | legalese |");
       expect(output.stderr).toEqual([]);
       expect(JSON.parse(readFileSync(json, "utf8")).totals).toEqual({ legalese: 1 });
     } finally {
@@ -360,7 +360,8 @@ describe("text nobody has read, in the printed findings", () => {
       // the detail are quoted wording, where it becomes a space.
       const shown = `${String.fromCharCode(92)}u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
       expect(output).toContain(
-        `| docs/a${shown}[2Jb.md | 1 | link text | link text "here" describes no destination (https://x.invalid/ [2J) |`,
+        "| " + String.fromCharCode(96) + `docs/a${shown}[2Jb.md` + String.fromCharCode(96)
+          + ' | 1 | link text | link text "here" describes no destination (https://x.invalid/ [2J) |',
       );
     }
   });
@@ -381,9 +382,9 @@ describe("text nobody has read, in the printed findings", () => {
     const rows = output.split("\n").slice(2, 5);
     expect(new Set(rows).size).toBe(3);
     expect(rows).toEqual([
-      "| a b.md | 1 | legalese | banned term |",
-      "| a  b.md | 1 | legalese | banned term |",
-      `| a${String.fromCharCode(92)}u202eb.md | 1 | legalese | banned term |`,
+      "| `a b.md` | 1 | legalese | banned term |",
+      "| `a  b.md` | 1 | legalese | banned term |",
+      "| " + String.fromCharCode(96) + `a${String.fromCharCode(92)}u202eb.md` + String.fromCharCode(96) + " | 1 | legalese | banned term |",
     ]);
     expect(output).not.toContain(override);
   });
@@ -395,7 +396,7 @@ describe("text nobody has read, in the printed findings", () => {
       totals: { legalese: 1 },
       skipped: [],
     });
-    expect(output.split("\n")[2]).toBe("| a.md | 1 | legalese | one two three four \\| five |");
+    expect(output.split("\n")[2]).toBe("| `a.md` | 1 | legalese | one two three four \\| five |");
   });
 
   test("the command prints a link destination and a file name without them, and the report keeps them", () => {
@@ -416,7 +417,8 @@ describe("text nobody has read, in the printed findings", () => {
       for (const character of UNREAD_CHARACTERS) expect(printed).not.toContain(character);
       const slash = String.fromCharCode(92);
       expect(printed).toContain(
-        `| gu${slash}u202eide${slash}u009b.md | 1 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |`,
+        "| " + String.fromCharCode(96) + `gu${slash}u202eide${slash}u009b.md` + String.fromCharCode(96)
+          + ' | 1 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |',
       );
       // The JSON report is data for another program, so it holds what was found.
       const saved = JSON.parse(readFileSync(report, "utf8")) as { files: Record<string, { violations: Array<{ detail: string }> }> };

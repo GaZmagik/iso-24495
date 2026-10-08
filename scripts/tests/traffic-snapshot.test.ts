@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   EndpointFailure,
@@ -7,6 +9,7 @@ import {
   mergeWindows,
   parseSnapshot,
   runCli,
+  textIfPresent,
   type Deps,
   type Snapshot,
 } from "../traffic-snapshot.ts";
@@ -447,4 +450,167 @@ describe("a table that cannot be written", () => {
     expect(said.trim().split("\n")).toHaveLength(1);
     for (const leaked of ["ENOENT", "hunter2", "syscall", "errno"]) expect(said).not.toContain(leaked);
   });
+});
+
+/** An error as the file system throws one, with a code and a message that quotes the path. */
+function fileSystemError(code: string): Error {
+  return Object.assign(new Error(`${code}: hunter2, open 'data/daily.csv'`), { code });
+}
+
+describe("a table that exists and cannot be read", () => {
+  const HISTORY = "date,clones,unique_cloners,views,unique_visitors\n2026-01-01,1,1,1,1\n";
+
+  // The command read every failure as "no such file" and built a fresh history from
+  // nothing. A review held daily.csv open so that nobody else could read it: the
+  // command exited 0, replaced the table, and a row from January was gone. A daily job
+  // runs this, and a missed day can be fetched again where a lost history cannot.
+  test.each(["daily.csv", "windows.csv", "referrers.csv"])("%s stops the run before anything is written", async (table) => {
+    for (const mode of [[], ["--dry-run"]]) {
+      const written: string[] = [];
+      const read: string[] = [];
+      const { deps, stdout, stderr } = harness({
+        readText: (path) => {
+          read.push(path);
+          if (path === join("data", table)) throw fileSystemError("EBUSY");
+          return HISTORY;
+        },
+        writeText: (path) => {
+          written.push(path);
+        },
+      });
+      const code = await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps);
+      expect(code).toBe(1);
+      expect(written).toEqual([]);
+      expect(stdout).toEqual([]);
+      expect(stderr).toEqual([
+        `Could not read ${table}: <data-directory> names a path of 4 characters that cannot be read: `
+          + "in use by another program. No table was written, so the history is as it was.",
+      ]);
+      expect(read.at(-1)).toBe(join("data", table));
+    }
+  });
+
+  test("a failure nothing expected is reported by its kind, and stops the run as well", async () => {
+    const written: string[] = [];
+    const { deps, stdout, stderr } = harness({
+      readText: () => {
+        throw new RangeError("hunter2");
+      },
+      writeText: (path) => {
+        written.push(path);
+      },
+    });
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(1);
+    expect(written).toEqual([]);
+    expect(stderr).toEqual([
+      "Could not read daily.csv: stopped by an unexpected RangeError. No table was written, so the history is as it was.",
+    ]);
+  });
+
+  test("a table that can be read keeps every row it held", async () => {
+    const { deps, files, stdout, stderr } = harness();
+    // One run makes the three tables, with their own headers. An old row is then put
+    // in each, and the next day's run must leave it there.
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+    const old: Record<string, string> = {
+      "daily.csv": "2026-01-01,7,7,7,7",
+      "windows.csv": rowsOf(files.get(join("data", "windows.csv")) as string)[1]?.replace("2026-08-22", "2026-01-01") as string,
+      "referrers.csv": "2026-01-01,old.example,7,7",
+    };
+    for (const [name, row] of Object.entries(old)) {
+      const path = join("data", name);
+      const [header, ...rows] = rowsOf(files.get(path) as string);
+      files.set(path, [header, row, ...rows].join("\n") + "\n");
+    }
+    deps.today = () => "2026-08-23";
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+    expect(stderr).toEqual([]);
+    for (const [name, row] of Object.entries(old)) {
+      expect(rowsOf(files.get(join("data", name)) as string), name).toContain(row);
+    }
+  });
+
+  test("a table that is not there is still a first snapshot", async () => {
+    const { deps, files, stdout, stderr } = harness();
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+    expect(stderr).toEqual([]);
+    expect([...files.keys()]).toEqual([join("data", "daily.csv"), join("data", "windows.csv"), join("data", "referrers.csv")]);
+  });
+
+  test("a fixture that cannot be read is reported as before", async () => {
+    const { deps, stdout, stderr } = harness({
+      readText: () => {
+        throw fileSystemError("EACCES");
+      },
+    });
+    expect(await runCli(["bun", "cli", "data", "--from-file", "fixture.json"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(1);
+    expect(stderr).toEqual(["Could not read the fixture: --from-file names a path of 12 characters that is missing or unreadable"]);
+  });
+});
+
+describe("textIfPresent", () => {
+  test("gives the text of a file that is there, and null for one that is not", () => {
+    expect(textIfPresent(() => "words")).toBe("words");
+    expect(textIfPresent(() => "")).toBe("");
+    expect(textIfPresent(() => {
+      throw fileSystemError("ENOENT");
+    })).toBeNull();
+  });
+
+  test("throws every other failure as it was thrown", () => {
+    for (const code of ["EBUSY", "EACCES", "EPERM", "EISDIR", "ENOTDIR", "EIO"]) {
+      const thrown = fileSystemError(code);
+      expect(() => textIfPresent(() => {
+        throw thrown;
+      }), code).toThrow(thrown);
+    }
+    const odd = new RangeError("ENOENT");
+    expect(() => textIfPresent(() => {
+      throw odd;
+    })).toThrow(odd);
+    expect(() => textIfPresent(() => {
+      throw "ENOENT";
+    })).toThrow("ENOENT");
+  });
+
+  // The review's own case, with a real lock. Windows alone can refuse a reader this way.
+  test("the shipped command leaves a table alone while another program holds it", async () => {
+    if (process.platform !== "win32") return;
+    const root = join(import.meta.dir, "..", "..");
+    const directory = mkdtempSync(join(tmpdir(), "iso-traffic-locked-"));
+    try {
+      const daily = join(directory, "daily.csv");
+      const history = "date,clones,unique_cloners,views,unique_visitors\n2026-01-01,1,1,1,1\n";
+      writeFileSync(daily, history);
+      const holder = Bun.spawn(
+        ["powershell.exe", "-NoProfile", "-Command",
+          "$ErrorActionPreference = 'Stop'; $h = [IO.File]::Open($env:LOCKED_FILE, 'Open', 'Read', 'None'); "
+            + "Write-Output locked; Start-Sleep 60"],
+        { stdout: "pipe", env: { ...process.env, LOCKED_FILE: daily } },
+      );
+      try {
+        const { value } = await holder.stdout.getReader().read();
+        expect(new TextDecoder().decode(value), "the lock must be held").toContain("locked");
+        const ran = Bun.spawnSync(
+          ["bun", join(root, "scripts", "traffic-snapshot-cli.ts"), "--from-file",
+            join(import.meta.dir, "fixtures", "traffic-sample.json"), directory],
+          { cwd: root, stdout: "pipe", stderr: "pipe" },
+        );
+        expect(ran.exitCode).toBe(1);
+        expect(ran.stdout.toString()).toBe("");
+        expect(ran.stderr.toString()).toContain(
+          `Could not read daily.csv: <data-directory> names a path of ${directory.length} characters that cannot be read: `
+            + "in use by another program. No table was written, so the history is as it was.",
+        );
+        expect(existsSync(join(directory, "windows.csv"))).toBe(false);
+        expect(existsSync(join(directory, "referrers.csv"))).toBe(false);
+      } finally {
+        holder.kill();
+        await holder.exited;
+      }
+      expect(readFileSync(daily, "utf8")).toBe(history);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -7,7 +7,7 @@ import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvide
 import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
-import { safeCell, safePath, safePathCell, safeText, skippedEntryWarning } from "../safe-text.ts";
+import { safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryWarning } from "../safe-text.ts";
 
 export const DISCLOSURE_VERSION = "0.8.0-r1";
 export const LIMITATION = "Only purpose and colour receive calibrated decisions. Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability. Correlated blocks do not extend that guarantee.";
@@ -286,13 +286,14 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
  * @returns Markdown tables joined by line breaks. The findings table lists
  *     each local finding and each result that did not pass; a pass appears in
  *     the coverage counts alone. A report with no findings and no coverage
- *     keeps both table headers and has no rows. A file name is printed as
- *     `safePathCell` prints a path. Every other cell has control characters
+ *     keeps both table headers and has no rows. A file name is a code
+ *     span: in a cell as `safePathCell` prints a path, and in a "Not sent"
+ *     line as `safePathCode` does. Every other cell has control characters
  *     removed and pipes escaped.
  */
 export function formatFindings(report: JevReport): string {
   const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`,
-    ...(report.notSent ?? []).map(document => `Not sent: ${safePath(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
+    ...(report.notSent ?? []).map(document => `Not sent: ${safePathCode(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
     ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
     "|------|------|------|-------|------|-------|---------|---------|"];

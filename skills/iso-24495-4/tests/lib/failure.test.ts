@@ -35,6 +35,7 @@ describe("fileFault", () => {
     expect(fileFault(fileSystemError("EPERM"))).toBe("permission refused");
     expect(fileFault(fileSystemError("EISDIR"))).toBe("a directory where a file was expected");
     expect(fileFault(fileSystemError("ENOTDIR"))).toBe("a file where a directory was expected");
+    expect(fileFault(fileSystemError("EBUSY"))).toBe("in use by another program");
   });
 
   test("a code it does not know is no file fault, so the code is never printed", () => {

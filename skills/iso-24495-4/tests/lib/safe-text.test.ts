@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { safeCell, safePath, safePathCell, safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
+import { safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
 
 const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
@@ -174,16 +174,118 @@ describe("a path nobody has read", () => {
     expect(safePath(path)).toBe(safePath(path, process.platform === "win32"));
   });
 
-  test("a path in a table cell has its pipes escaped as well, and keeps its spaces", () => {
-    expect(safePathCell("a|b  c.md", false)).toBe(`a${BACKSLASH}|b  c.md`);
-    expect(safePathCell(`a${RIGHT_TO_LEFT_OVERRIDE}|b.md`, false)).toBe(`a${code(0x202e)}${BACKSLASH}|b.md`);
-    expect(safePathCell(["docs", "a|b.md"].join(BACKSLASH), true)).toBe(`docs/a${BACKSLASH}|b.md`);
-    expect(safePathCell("docs/guide.md")).toBe("docs/guide.md");
-    expect(safePathCell("", false)).toBe("");
-  });
-
   test("the warning for a skipped entry prints its path this way", () => {
     expect(skippedEntryWarning(`docs/a  ${RIGHT_TO_LEFT_OVERRIDE}b.md`, false))
       .toBe(`warning: skipped unreadable entry: docs/a  ${code(0x202e)}b.md`);
   });
 });
+
+describe("a path in Markdown that is rendered", () => {
+  const TICK = String.fromCharCode(96);
+
+  /** What Bun's renderer shows in each cell of the first column, for one row to a name. */
+  function renderedCells(names: readonly string[]): string[] {
+    const table = ["| File | Line |", "|------|------|", ...names.map((name) => `| ${safePathCell(name, false)} | 1 |`)];
+    const html = Bun.markdown.html(table.join(LINE_FEED));
+    const rows = [...html.matchAll(/<tr>([^]*?)<[/]tr>/g)].map((row) => [...(row[1] as string).matchAll(/<td>([^]*?)<[/]td>/g)]);
+    // The first row is the header, whose cells are not data cells.
+    const data = rows.slice(1);
+    expect(data, "one row for each name").toHaveLength(names.length);
+    for (const cells of data) {
+      expect(cells, "the row keeps its two columns").toHaveLength(2);
+      expect((cells[1] as RegExpMatchArray)[1]).toBe("1");
+    }
+    return data.map((cells) => (cells[0] as RegExpMatchArray)[1] as string);
+  }
+
+  /** The text of a rendered cell that holds one code span and nothing else. */
+  function shown(cell: string): string {
+    const code = /^<code>([^]*)<[/]code>$/.exec(cell);
+    expect(code, cell).not.toBeNull();
+    const text = (code as RegExpExecArray)[1] as string;
+    expect(text.includes("<"), cell).toBe(false);
+    return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", String.fromCharCode(34)).replaceAll("&amp;", "&");
+  }
+
+  // A cell escaped the pipe and nothing else, so the rest of a name was read as
+  // Markdown. Nine names gave seven results: an entity became the character it
+  // names, a tag broke the line, asterisks became emphasis and brackets a link.
+  test("names that Markdown would read are shown as they are written", () => {
+    const names = [
+      "a b.md", "a&#32;b.md", "a<br>b.md", "a*b*.md", "[x](u).md", "a&b.md", "a&amp;b.md", "a_b_.md", "a|b.md",
+      `a${BACKSLASH}|b.md`, `${TICK}a.md`, `a.md${TICK}`, `a${TICK}${TICK}b${TICK}.md`, " a.md", "a.md ", " a.md ", "  a.md",
+      "<!-- a -->.md", "a~~b~~.md", "# a.md", "", " ", "  ", `a${RIGHT_TO_LEFT_OVERRIDE}b.md`, `a${BACKSLASH}u202eb.md`,
+      `${BACKSLASH}`, `a${BACKSLASH}`, `${TICK}`, `${TICK}${TICK}`, ` ${TICK} `,
+    ];
+    const cells = renderedCells(names);
+    expect(new Set(cells).size).toBe(names.length);
+    names.forEach((name, index) => {
+      const printed = safePath(name, false);
+      // A name of spaces alone keeps the space added on each side of it.
+      expect(shown(cells[index] as string), JSON.stringify(name)).toBe(printed.trim() === "" ? ` ${printed} ` : printed);
+    });
+  });
+
+  test("in generated names, distinct names give distinct cells and every row keeps its columns", () => {
+    const pieces = ["a", "b", "x", ".md", " ", " ", TICK, TICK, "|", BACKSLASH, "*", "_", "[", "]", "(u)", "<", ">", "<br>", "&", "&amp;",
+      "&#32;", "#", "~", "!", ";", "/", RIGHT_TO_LEFT_OVERRIDE, LINE_FEED, String.fromCharCode(9), String.fromCharCode(0xa0)];
+    const random = sequence(24495);
+    const names = new Set<string>();
+    while (names.size < 5_000) {
+      let name = "";
+      const length = 1 + Math.floor(random() * 8);
+      for (let made = 0; made < length; made++) name += pieces[Math.floor(random() * pieces.length)] as string;
+      names.add(name);
+    }
+    const list = [...names];
+    const cells = renderedCells(list);
+    expect(new Set(cells).size).toBe(list.length);
+    list.forEach((name, index) => {
+      const printed = safePath(name, false);
+      expect(shown(cells[index] as string), JSON.stringify(name)).toBe(printed.trim() === "" ? ` ${printed} ` : printed);
+    });
+    // The same names on Windows, where a backslash is a separator: two names may then
+    // be one path, and the cells must be as many as the paths.
+    const windows = new Set(list.map((name) => safePath(name, true)));
+    const windowsTable = ["| File |", "|------|", ...list.map((name) => `| ${safePathCell(name, true)} |`)].join(LINE_FEED);
+    const windowsCells = [...Bun.markdown.html(windowsTable).matchAll(/<td>([^]*?)<[/]td>/g)].map((cell) => cell[1]);
+    expect(windowsCells).toHaveLength(list.length);
+    expect(new Set(windowsCells).size).toBe(windows.size);
+  });
+
+  test("the code span is written with the shortest fence that holds the name", () => {
+    expect(safePathCell("docs/guide.md", false)).toBe(`${TICK}docs/guide.md${TICK}`);
+    expect(safePathCell(`a${TICK}b.md`, false)).toBe(`${TICK}${TICK}a${TICK}b.md${TICK}${TICK}`);
+    expect(safePathCell(`a${TICK}${TICK}b${TICK}.md`, false)).toBe(`${TICK}${TICK}${TICK}a${TICK}${TICK}b${TICK}.md${TICK}${TICK}${TICK}`);
+    // A space each side where the name opens or closes with a backtick or a space, or is empty.
+    expect(safePathCell(`${TICK}a.md`, false)).toBe(`${TICK}${TICK} ${TICK}a.md ${TICK}${TICK}`);
+    expect(safePathCell("a.md ", false)).toBe(`${TICK} a.md  ${TICK}`);
+    expect(safePathCell("", false)).toBe(`${TICK}  ${TICK}`);
+    // The pipe is escaped inside the span, because a table is cut into cells first.
+    expect(safePathCell("a|b.md", false)).toBe(`${TICK}a${BACKSLASH}|b.md${TICK}`);
+    expect(safePathCell(["docs", "a|b.md"].join(BACKSLASH), true)).toBe(`${TICK}docs/a${BACKSLASH}|b.md${TICK}`);
+    expect(safePathCell(`a${RIGHT_TO_LEFT_OVERRIDE}b.md`, false)).toBe(`${TICK}a${code(0x202e)}b.md${TICK}`);
+    expect(safePathCell("docs/guide.md")).toBe(`${TICK}docs/guide.md${TICK}`);
+  });
+
+  test("a path in a line of a report is a code span too, with its pipe left alone", () => {
+    expect(safePathCode("a|b*c*.md", false)).toBe(`${TICK}a|b*c*.md${TICK}`);
+    expect(safePathCode(`${TICK}a.md`, false)).toBe(`${TICK}${TICK} ${TICK}a.md ${TICK}${TICK}`);
+    expect(safePathCode(["docs", "a.md"].join(BACKSLASH), true)).toBe(`${TICK}docs/a.md${TICK}`);
+    expect(safePathCode("docs/guide.md")).toBe(`${TICK}docs/guide.md${TICK}`);
+    expect(Bun.markdown.html(`Not sent: ${safePathCode("a*b*<br>&amp;.md", false)}, because`))
+      .toBe(`<p>Not sent: <code>a*b*&lt;br&gt;&amp;amp;.md</code>, because</p>${LINE_FEED}`);
+  });
+});
+
+/** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */
+function sequence(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}

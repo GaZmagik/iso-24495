@@ -214,12 +214,12 @@ test("a leading block the calibrated guard does not recognise is refused in the 
     const report = JSON.parse(readFileSync(reportFile, "utf8"));
     expect(report.jev.notSent).toEqual([{ file: "tab.md", reason: REFUSAL }]);
     expect(report.jev.complete).toBe(true);
-    expect(out.join("\n")).toContain(`Not sent: tab.md, because its ${REFUSAL}.`);
+    expect(out.join("\n")).toContain("Not sent: `tab.md`, because its " + `${REFUSAL}.`);
 
     // The mechanical audit sends nothing, so it still reads the refused document.
     out.length = 0;
     expect(await run("text", ["--jev-preview"])).toBe(0);
-    expect(out.join("\n")).toContain("| tab.md | 8 | legalese | banned term \"shall\" |");
+    expect(out.join("\n")).toContain("| `tab.md` | 8 | legalese | banned term \"shall\" |");
     expect(bodies).toHaveLength(4);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -272,7 +272,7 @@ test("the refusal covers any closed leading block the guard rejects, and nothing
     expect(refusalFor(TAB_BLOCK, "note.txt").plan.candidates).toHaveLength(0);
 
     expect(formatFindings({ complete: true, limitation: "test", evidence: [], results: [], localFindings: [], coverage: [], notSent: [{ file: `a${String.fromCharCode(27)}[2Jb.md`, reason: REFUSAL }] }))
-      .toContain(`Not sent: a${String.fromCharCode(92)}u001b[2Jb.md, because its ${REFUSAL}.`);
+      .toContain("Not sent: " + String.fromCharCode(96) + `a${String.fromCharCode(92)}u001b[2Jb.md` + String.fromCharCode(96) + `, because its ${REFUSAL}.`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -297,7 +297,9 @@ test("the Jev audit prints a file name, a finding and an excerpt without control
     // excerpt are quoted wording, where it becomes a space.
     const slash = String.fromCharCode(92);
     const shownName = `gu${slash}u202eide${slash}u009b.md`;
-    expect(printed).toContain(`| ${shownName} | 3 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |`);
+    // In a table the name is a code span. The preview is plain text, and names it bare.
+    const tick = String.fromCharCode(96);
+    expect(printed).toContain(`| ${tick}${shownName}${tick} | 3 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |`);
     expect(printed).toContain(`- ${shownName}: 1 eligible openings, 1 eligible blocks, 2 requests.`);
     expect(printed).toContain("Excerpt: # Title [2J Use [here](https://x.invalid/ [2J ) for the guid |");
     expect(printed).toContain("Excerpt: Use here for the guide. |");
@@ -351,7 +353,9 @@ test("every line of the Jev audit that names a file prints it as a path", async 
   const override = String.fromCharCode(0x202e);
   const name = `a  ${override}b|c.md`;
   const shown = `a  ${slash}u202eb|c.md`;
-  const cell = `a  ${slash}u202eb${slash}|c.md`;
+  const tick = String.fromCharCode(96);
+  // A table cell and a line of the report are rendered, so each holds a code span.
+  const cell = `${tick}a  ${slash}u202eb${slash}|c.md${tick}`;
 
   const findings = formatFindings({
     complete: true, limitation: "test", evidence: [],
@@ -361,7 +365,7 @@ test("every line of the Jev audit that names a file prints it as a path", async 
     coverage: [{ file: name, checks: { purpose: { assessed: 1, pass: 0, fail: 1, unsure: 0, skipped: 0 } } }],
   } as never);
   expect(findings).not.toContain(override);
-  expect(findings).toContain(`Not sent: ${shown}, because its ${REFUSAL}.`);
+  expect(findings).toContain(`Not sent: ${tick}${shown}${tick}, because its ${REFUSAL}.`);
   // A detail is quoted wording, so its two spaces still become one.
   expect(findings).toContain(`| ${cell} | 1 | local | missing-title | local | | | No title. |`);
   expect(findings).toContain(`| ${cell} | 2 | block-1 | purpose | fail | 0.9 | 0.87 | Unclear. Excerpt: Words. |`);
@@ -389,6 +393,6 @@ test("every line of the Jev audit that names a file prints it as a path", async 
     expect(await runAuditCli("text", ["bun", "cli", directory, "--project-dir", directory, "--jev-preview"],
       text => out.push(text), text => warnings.push(text), recordingDependencies([]))).toBe(0);
     expect(warnings).toEqual([`warning: not sent: ta  ${slash}u202eb.md: ${REFUSAL}`]);
-    expect(out.join("\n")).toContain(`| ta  ${slash}u202eb.md | 8 | legalese | banned term "shall" |`);
+    expect(out.join("\n")).toContain(`| ${tick}ta  ${slash}u202eb.md${tick} | 8 | legalese | banned term "shall" |`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
