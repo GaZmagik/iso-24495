@@ -150,7 +150,7 @@ function runAt(text: string, start: number): Run {
   let end = start + 1;
   while (text[end] === marker) end++;
   const before = characterBefore(text, start);
-  const after = end < text.length ? String.fromCodePoint(text.codePointAt(end) as number) : " ";
+  const after = end < text.length ? asShown(String.fromCodePoint(text.codePointAt(end) as number)) : " ";
   const left = !/\s/.test(after) && (!PUNCTUATION.test(after) || /\s/.test(before) || PUNCTUATION.test(before));
   const right = !/\s/.test(before) && (!PUNCTUATION.test(before) || /\s/.test(after) || PUNCTUATION.test(after));
   // An underscore between two letters is part of a word, so only it is held to the
@@ -167,14 +167,24 @@ function runAt(text: string, start: number): Run {
 }
 
 /**
- * The character before an offset, or a space at the start of the text.
+ * The character before an offset as `asShown` gives it, or a space at the start of the text.
  *
  * Only the two units before the offset are read. Reading the text from its start for
  * every run grew with the square of the text.
  */
 function characterBefore(text: string, offset: number): string {
   if (offset === 0) return " ";
-  return [...text.slice(Math.max(0, offset - 2), offset)].at(-1) as string;
+  return asShown([...text.slice(Math.max(0, offset - 2), offset)].at(-1) as string);
+}
+
+/**
+ * One character as a page shows it. Half a surrogate pair is no character, and a
+ * renderer shows the replacement character, U+FFFD, in its place. That is a symbol,
+ * so a mark beside it opens and closes as beside any other symbol.
+ */
+function asShown(character: string): string {
+  const unit = character.charCodeAt(0);
+  return character.length === 1 && unit >= 0xd800 && unit <= 0xdfff ? String.fromCharCode(0xfffd) : character;
 }
 
 /**

@@ -50,7 +50,7 @@ const RENDERERS_MAY_DIFFER: Array<[name: string, shaped: (label: string, tail: s
 describe("what the acronym rule takes for a link is what a renderer shows as one", () => {
   test("in generated forms of a label and what follows it", () => {
     const random = generator(24495);
-    const counts = { agreeWithBun: 0, links: 0, text: 0, setAside: 0, heldByGitHub: 0, noBreakSpaceAlone: 0, withAnOddCharacter: 0 };
+    const counts = { agreeWithBun: 0, links: 0, text: 0, setAside: 0, heldByGitHub: 0, withAnOddCharacter: 0 };
     const differing: string[] = [];
     const answersUsed = new Set<string>();
     for (let made = 0; made < CASES; made++) {
@@ -60,13 +60,6 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const html = Bun.markdown.html(document);
       // A form that ends the paragraph, as a blank line would, is no single block.
       if (!html.startsWith("<p>") || html.indexOf("<p>", 1) !== -1 || !html.trimEnd().endsWith("</p>")) continue;
-      // The parser takes a line that holds only a no-break space for a blank line, and
-      // ends the paragraph there. Bun and GitHub do not. parse.ts is older than this
-      // rule and is not held here, so such a form is passed over, and counted.
-      if (document.split(BREAK).some((line) => line.includes(NO_BREAK_SPACE) && line.trim() === "")) {
-        counts.noBreakSpaceAlone++;
-        continue;
-      }
       if (/[^ -~]/.test(document.replaceAll(BREAK, ""))) counts.withAnOddCharacter++;
       const shown = lettersShown(html);
       const read = words(readingText(document));
@@ -90,7 +83,7 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
     expect(differing).toHaveLength(0);
     // Pinned, so that a change to the generator cannot quietly empty either side.
     expect(counts).toEqual({
-      agreeWithBun: 39_479, links: 27_686, text: 11_793, setAside: 275, heldByGitHub: 275, noBreakSpaceAlone: 2, withAnOddCharacter: 22_443,
+      agreeWithBun: 39_481, links: 27_687, text: 11_794, setAside: 275, heldByGitHub: 275, withAnOddCharacter: 22_445,
     });
     // The generator makes some forms twice, so the 275 are 263 documents, and the fixture
     // holds no answer that nothing asks for.

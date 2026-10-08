@@ -1053,6 +1053,95 @@ describe("a malformed table stops the run before anything is written", () => {
     expect(runs).toBe(900);
   });
 
+  // A date had only to have the shape of one, so a row that opened with 2000-13-40 was
+  // read. A date is a day of the calendar. Issue 44.
+  describe("a date is a day that exists", () => {
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    /** The last day of each month of a year, and the day after it, which does not exist. */
+    const ends = (year: string, leap: boolean): Array<[last: string, past: string]> =>
+      DAYS.map((days, month) => {
+        const last = days + (leap && month === 1 ? 1 : 0);
+        return [`${year}-${pad(month + 1)}-${pad(last)}`, `${year}-${pad(month + 1)}-${pad(last + 1)}`];
+      });
+    const YEARS: Array<[year: string, leap: boolean]> = [
+      ["2000", true], ["2024", true], ["2400", true], ["0000", true], ["0004", true],
+      ["2001", false], ["2023", false], ["1900", false], ["2100", false], ["0001", false], ["9999", false],
+    ];
+    const REAL = [...YEARS.flatMap(([year, leap]) => ends(year, leap).map(([last]) => last)), "2000-01-01", "2000-12-01", "0000-01-01"];
+    const NOT_REAL = [
+      ...YEARS.flatMap(([year, leap]) => ends(year, leap).map(([, past]) => past)),
+      "2000-13-40", "2000-00-10", "2000-13-01", "2000-01-00", "2000-00-00", "2000-99-99", "2001-02-30", "2000-02-31",
+    ];
+
+    test("the years are what the calendar says they are", () => {
+      expect(REAL).toHaveLength(11 * 12 + 3);
+      expect(NOT_REAL).toHaveLength(11 * 12 + 8);
+      expect(REAL).toContain("2000-02-29");
+      expect(REAL).toContain("2400-02-29");
+      expect(NOT_REAL).toContain("1900-02-29");
+      expect(NOT_REAL).toContain("2100-02-29");
+      expect(NOT_REAL).toContain("2001-02-29");
+      expect(NOT_REAL).toContain("2000-02-30");
+      expect(NOT_REAL).toContain("2000-04-31");
+      // The calendar of the machine agrees, for the years it can be asked about.
+      for (const date of REAL.filter((real) => real >= "1900")) {
+        expect(new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10), date).toBe(date);
+      }
+    });
+
+    test.each(TABLES)("%s is refused for a first cell that is no day, and read for one that is", async (name) => {
+      const row = ROWS[name] as (first: string) => string;
+      const column = (HEADERS[name] as string).split(",")[0];
+      for (const date of NOT_REAL) {
+        expect(await refusal(name, table(name, row("2000-01-01"), row(date))), date)
+          .toBe(`Could not read ${name}: the row on line 3 does not hold a date under ${column}. ${AS_IT_WAS}`);
+      }
+      const { deps, files, stdout, stderr } = harness();
+      files.set(join("data", name), table(name, ...REAL.map(row)));
+      expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+      expect(stderr).toEqual([]);
+      const written = rowsOf(files.get(join("data", name)) as string);
+      for (const date of REAL) {
+        expect(written, date).toContain(row(date));
+      }
+    });
+
+    // The writer and the reader ask the same question, so no run writes a day its next run refuses.
+    test("a payload and a clock are held to the same days", async () => {
+      const point = (date: string): object => ({ timestamp: `${date}T00:00:00Z`, count: 5, uniques: 3 });
+      for (const date of NOT_REAL) {
+        for (const payload of [
+          { ...RAW, clones: { count: 5, uniques: 3, clones: [point(date)] } },
+          { ...RAW, views: { count: 5, uniques: 3, views: [point("2000-01-01"), point(date)] } },
+        ]) {
+          const { deps, files, stdout, stderr } = harness({ fetchSnapshot: async () => payload });
+          expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps), date).toBe(1);
+          expect(stderr).toHaveLength(1);
+          expect(stderr[0], date).toMatch(/^Refusing to write: the (clones|views) response is missing a count, a uniques figure or its daily list$/);
+          expect([stdout, [...files.keys()]]).toEqual([[], []]);
+        }
+        const { deps, files, stdout, stderr } = harness({ today: () => date });
+        expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps), date).toBe(1);
+        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD"]);
+        expect([stdout, [...files.keys()]]).toEqual([[], []]);
+      }
+      for (const date of REAL) {
+        const { deps, files, stdout, stderr } = harness({
+          fetchSnapshot: async () => ({ ...RAW, clones: { count: 5, uniques: 3, clones: [point(date)] } }),
+          today: () => date,
+        });
+        // Twice, so that the second run reads what the first wrote.
+        for (let run = 0; run < 2; run++) {
+          expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps), date).toBe(0);
+        }
+        expect(stderr).toEqual([]);
+        expect(rowsOf(files.get(join("data", "daily.csv")) as string), date).toContain(`${date},5,3,0,0`);
+        expect((files.get(join("data", "windows.csv")) as string).startsWith(`${HEADERS["windows.csv"]}${LINE_FEED}${date},`), date).toBe(true);
+      }
+    });
+  });
+
   // Release 0.7.0 wrote a name holding a line break in quotes and then read the table
   // a line at a time. Its second run left two rows that are neither the row it wrote.
   // A table in that state is not mended. It is refused, and a person repairs it.
