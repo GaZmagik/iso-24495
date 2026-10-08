@@ -739,7 +739,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "",
     "A lint that finds nothing proves little when a rule is switched off or weakened by mistake. So `eslint.config.mjs` states the enforced rules once, and a test reads that list.",
     "",
-    "The test asks ESLint which configuration applies to each TypeScript file, and requires every enforced rule to be an error there. It also gives the linter one deliberate breach of each rule, and requires an error for each.",
+    "The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.",
     "",
     "A comment in a file cannot change a rule or switch one off, and the gate fails on a warning. Rules of the guide that no tool here checks are left to review.",
     "",

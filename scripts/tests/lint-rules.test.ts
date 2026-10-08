@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ESLint } from "eslint";
+import tseslint from "typescript-eslint";
 import { ENFORCED_RULES, type RuleSetting } from "../../eslint.config.mjs";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
@@ -16,8 +17,8 @@ const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js
 //
 // 1. Every setting in that value is an error.
 // 2. ESLint is asked for the configuration that applies to each TypeScript
-//    file, after every block and override, and each rule must be an error
-//    there.
+//    file, after every block and override. Each rule's entry there, severity
+//    and options, must equal the entry ESLint resolves from that value alone.
 // 3. The linter is given one breach of each rule and must report each as an
 //    error. That proves the rule fires, which a setting alone does not.
 //
@@ -30,7 +31,7 @@ describe("the lint rules the gate relies on", () => {
     expect(settings.filter(([, setting]) => !isError(setting)).map(([rule]) => rule)).toEqual([]);
   });
 
-  test("every enforced rule is an error in every TypeScript file, as ESLint resolves it", async () => {
+  test("every enforced rule is set as stated in every TypeScript file, as ESLint resolves it", async () => {
     expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
     const files = scriptFiles();
     const typescript = files.filter((file) => file.endsWith(".ts"));
@@ -42,8 +43,24 @@ describe("the lint rules the gate relies on", () => {
     expect(typescript).toContain("skills/iso-24495-4/scripts/audit-corpus.ts");
     expect(typescript).toContain("scripts/tests/lint-rules.test.ts");
 
+    // ESLint rewrites an entry as it resolves it: the severity becomes a
+    // number, and a rule may fill in the options it was not given. So the
+    // stated side is resolved by ESLint as well, from a configuration that
+    // holds ENFORCED_RULES and nothing else. It never reads
+    // eslint.config.mjs, so no block or override there can move both sides
+    // together, and the test above ties its severities to errors.
+    const stated: unknown = await new ESLint({
+      cwd: REPOSITORY_ROOT,
+      overrideConfigFile: true,
+      overrideConfig: [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": tseslint.plugin }, rules: ENFORCED_RULES }],
+    }).calculateConfigForFile("any-name.ts");
+    for (const rule of Object.keys(ENFORCED_RULES)) {
+      expect(resolvedSeverity(stated, rule), `${rule} as stated`).toBe(ERROR);
+    }
+
     const eslint = new ESLint({ cwd: REPOSITORY_ROOT });
     const weak: string[] = [];
+    const changed: string[] = [];
     const ignored: string[] = [];
     let checked = 0;
     for (const file of typescript) {
@@ -56,11 +73,15 @@ describe("the lint rules the gate relies on", () => {
       const resolved: unknown = await eslint.calculateConfigForFile(file);
       for (const rule of Object.keys(ENFORCED_RULES)) {
         if (resolvedSeverity(resolved, rule) !== ERROR) weak.push(`${file}: ${rule}`);
+        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(stated, rule), true)) {
+          changed.push(`${file}: ${rule}`);
+        }
       }
       checked += 1;
     }
     expect(ignored).toEqual([]);
-    expect(weak).toEqual([]);
+    expect(weak, "rules that are not an error").toEqual([]);
+    expect(changed, "rules whose options are not the ones stated").toEqual([]);
     expect(checked).toBeGreaterThan(0);
     expect(checked).toBe(typescript.length);
   });
@@ -141,7 +162,7 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
 
 /** Whether a rule setting, as written in a configuration, is an error. */
 function isError(setting: RuleSetting): boolean {
-  const severity: unknown = typeof setting === "string" || typeof setting === "number" ? setting : setting[0];
+  const severity = Array.isArray(setting) ? setting[0] : setting;
   return severity === "error" || severity === ERROR;
 }
 
@@ -156,13 +177,25 @@ function isError(setting: RuleSetting): boolean {
  *     in that form, which is the case for a rule that is not set at all.
  */
 function resolvedSeverity(resolved: unknown, rule: string): number | null {
+  const entry = resolvedEntry(resolved, rule);
+  const severity: unknown = entry === null ? null : entry[0];
+  return typeof severity === "number" ? severity : null;
+}
+
+/**
+ * The whole entry ESLint resolved for one rule in the configuration of one
+ * file: its severity, then its options with the rule's defaults filled in.
+ *
+ * @param resolved What `calculateConfigForFile` returned.
+ * @returns The entry, or null when the configuration does not hold the rule
+ *     as a list.
+ */
+function resolvedEntry(resolved: unknown, rule: string): unknown[] | null {
   if (typeof resolved !== "object" || resolved === null || !("rules" in resolved)) return null;
   const rules: unknown = resolved.rules;
   if (typeof rules !== "object" || rules === null) return null;
-  const setting: unknown = new Map(Object.entries(rules)).get(rule);
-  if (!Array.isArray(setting)) return null;
-  const severity: unknown = setting[0];
-  return typeof severity === "number" ? severity : null;
+  const entry: unknown = new Map(Object.entries(rules)).get(rule);
+  return Array.isArray(entry) ? entry : null;
 }
 
 const SCRIPT_FILE = /\.(?:[cm]?ts|[cm]?js)$/;
