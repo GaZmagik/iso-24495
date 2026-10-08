@@ -1,4 +1,4 @@
-import { codeSpanEnds, inlineText } from "./parse.ts";
+import { codeSpanEnds, inlineText, tickRun } from "./parse.ts";
 import entities from "./html-entities.json";
 
 /** A run of one mark, and the part of it that no pair has taken yet. */
@@ -49,7 +49,7 @@ export function renderInline(source: string): string {
     }
     const span = spans.get(index);
     if (span !== undefined) {
-      const ticks = /^`+/.exec(text.slice(index))[0].length;
+      const ticks = tickRun(text, index);
       let content = text.slice(index + ticks, span - ticks).replace(/\r\n|\r|\n/g, " ");
       if (content.startsWith(" ") && content.endsWith(" ") && /\S/.test(content)) content = content.slice(1, -1);
       rendered += decodeEntities(plain) + content;

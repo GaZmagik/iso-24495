@@ -17,6 +17,10 @@ const FUZZ_INPUTS = [
   "نص عربي واضح. טקסט עברי ברור.",
   "- item\n  | A | B |\n  | - | - |\n  | x | y |",
   "before\0after",
+  // A link definition whose destination is a no-break space. The definition
+  // check accepts it and the destination pattern matches nothing in it, so
+  // reading the match threw.
+  "[label]: " + String.fromCharCode(160),
 ] as const;
 
 const KNOWN_RULES = new Set([

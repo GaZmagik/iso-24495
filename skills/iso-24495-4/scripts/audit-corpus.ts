@@ -2,7 +2,7 @@
 // Emits counts and locations only. It never judges clarity and its output
 // must never be presented as ISO compliance.
 
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
@@ -1944,8 +1944,8 @@ function walk(
   out: string[],
   onSkip: ((path: string) => void) | undefined,
   isRoot: boolean,
-  readDirectory: typeof readdirSync,
-  inspectEntry: typeof lstatSync,
+  readDirectory: (path: string) => string[],
+  inspectEntry: (path: string) => Stats,
 ): void {
   let entries: string[];
   try {
@@ -2004,8 +2004,8 @@ function walk(
 export function listTextFiles(
   dir: string,
   onSkip?: (path: string) => void,
-  readDirectory: typeof readdirSync = readdirSync,
-  inspectEntry: typeof lstatSync = lstatSync,
+  readDirectory: (path: string) => string[] = readdirSync,
+  inspectEntry: (path: string) => Stats = lstatSync,
 ): string[] {
   const paths: string[] = [];
   walk(dir, paths, onSkip, true, readDirectory, inspectEntry);

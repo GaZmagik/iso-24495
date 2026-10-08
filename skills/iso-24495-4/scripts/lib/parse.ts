@@ -597,7 +597,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         const name = normaliseReference(label);
         references.add(name);
         const destination = text.slice(text.indexOf("]:") + 2).trim().match(/^(?:<([^>]*)>|([^\s]+))/);
-        if (!destinations.has(name)) destinations.set(name, destination[1] ?? destination[2]);
+        if (destination !== null && !destinations.has(name)) destinations.set(name, destination[1] ?? destination[2]);
       }
       readable[i] = "";
       markup[i] = "";
@@ -850,7 +850,13 @@ function closingMarkup(
   return { at: malformed, length: 4 };
 }
 
-function tickRun(text: string, start: number): number {
+/**
+ * How many backticks stand in a row from `start`.
+ *
+ * @returns The length of the run. 0 when the character at `start` is not a
+ *     backtick, or `start` is past the end of the text.
+ */
+export function tickRun(text: string, start: number): number {
   let end = start;
   while (text[end] === "`") end++;
   return end - start;

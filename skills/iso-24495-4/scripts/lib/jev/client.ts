@@ -134,15 +134,12 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
 
 async function transport(body: string, key: string, send: Fetch, clock: Clock, signal?: AbortSignal): Promise<{ status: number; text: string }> {
   const controller = new AbortController();
-  let cancelTimer: () => void;
-  let cancel: () => void;
-  const interrupted = new Promise<never>((resolve, reject) => {
-    cancel = () => { reject(new JevError("Jev execution was cancelled.")); controller.abort(); };
-    signal?.addEventListener("abort", cancel, { once: true });
-    cancelTimer = clock.schedule(() => { reject(new TransportError()); controller.abort(); }, TIMEOUT_MS);
-  });
+  const interrupted = Promise.withResolvers<never>();
+  const cancel = (): void => { interrupted.reject(new JevError("Jev execution was cancelled.")); controller.abort(); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  const cancelTimer = clock.schedule(() => { interrupted.reject(new TransportError()); controller.abort(); }, TIMEOUT_MS);
   try {
-    return await Promise.race([interrupted, send(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: controller.signal }).then(async response => ({ status: response.status, text: await response.text() }))]);
+    return await Promise.race([interrupted.promise, send(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: controller.signal }).then(async response => ({ status: response.status, text: await response.text() }))]);
   } finally { cancelTimer(); signal?.removeEventListener("abort", cancel); }
 }
 
