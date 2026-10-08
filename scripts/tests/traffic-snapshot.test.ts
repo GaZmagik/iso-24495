@@ -647,6 +647,16 @@ describe("a table is read back as it was written", () => {
     return rows.slice(1);
   }
 
+  /** What a merge says is wrong with the table it was given. */
+  function faultOf(merge: () => string): string {
+    try {
+      merge();
+    } catch (error) {
+      if (error instanceof MalformedTable) return error.fault;
+    }
+    return "the merge read the table";
+  }
+
   /** A snapshot holding these referrers and nothing else worth reading. */
   function snapshotWith(referrers: string[]): Snapshot {
     return { ...snapshotOf(RAW), referrers: referrers.map((referrer, index) => ({ referrer, count: index + 7, uniques: index + 2 })) };
@@ -707,26 +717,20 @@ describe("a table is read back as it was written", () => {
     expect(compared).toBeGreaterThan(3_000);
   });
 
-  test("the other two tables keep a row whose key holds a line break", () => {
+  // The key of the other two tables is a date. This test once held that a key with a
+  // line break in it was kept from run to run. A cell must now be what its column
+  // holds, so such a key is written whole, in quotes, and refused when it is read.
+  test("the other two tables write a key that holds a line break whole, and refuse it when they read it", () => {
     const odd = `2000-01-01${LINE_FEED}x, ${QUOTE}y${QUOTE}${CARRIAGE_RETURN}`;
     const base = snapshotOf(RAW);
     const first: Snapshot = { ...base, clones: { ...base.clones, days: [{ timestamp: odd, count: 5, uniques: 3 }] }, views: { ...base.views, days: [] } };
-    let daily = mergeDaily(null, first);
+    const daily = mergeDaily(null, first);
     expect(records(daily)).toEqual([[odd, "5", "3", "0", "0"]]);
-    for (let run = 0; run < 2; run++) {
-      daily = mergeDaily(daily, base);
-    }
-    expect(records(daily)).toContainEqual([odd, "5", "3", "0", "0"]);
-    expect(records(daily)).toHaveLength(3);
+    expect(faultOf(() => mergeDaily(daily, base))).toBe("the row on line 2 does not hold a date under date");
 
-    let windows = mergeWindows(null, odd, base);
-    const held = records(windows)[0] as string[];
-    expect(held[0]).toBe(odd);
-    for (const date of ["2000-01-02", "2000-01-03"]) {
-      windows = mergeWindows(windows, date, base);
-    }
-    expect(records(windows)).toContainEqual(held);
-    expect(records(windows)).toHaveLength(3);
+    const windows = mergeWindows(null, odd, base);
+    expect((records(windows)[0] as string[])[0]).toBe(odd);
+    expect(faultOf(() => mergeWindows(windows, "2000-01-02", base))).toBe("the row on line 2 does not hold a date under snapshot_date");
   });
 
   test("a value the reader would change is written in quotes", () => {
@@ -734,10 +738,11 @@ describe("a table is read back as it was written", () => {
     // White space at the end of a row is dropped when the row is read, so a first or
     // last cell that opens or closes with it is quoted.
     for (const key of ["2000-01-01 ", " 2000-01-01", `2000-01-01${CARRIAGE_RETURN}`, `${String.fromCharCode(9)}2000-01-01`]) {
-      let windows = mergeWindows(null, key, base);
+      const windows = mergeWindows(null, key, base);
       expect(windows.split(LINE_FEED)[1]).toStartWith(`${QUOTE}${key}${QUOTE},`);
-      windows = mergeWindows(windows, "2000-01-02", base);
-      expect(records(windows).map((row) => row[0])).toEqual([key, "2000-01-02"].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+      // It is read back as it was written, white space and all, and so is no date.
+      expect(records(windows).map((row) => row[0])).toEqual([key]);
+      expect(faultOf(() => mergeWindows(windows, "2000-01-02", base))).toBe("the row on line 2 does not hold a date under snapshot_date");
     }
     // A carriage return inside a name is quoted too, as other readers of these tables expect.
     const inside = `a${CARRIAGE_RETURN}b`;
@@ -911,8 +916,10 @@ describe("a malformed table stops the run before anything is written", () => {
     expect(await refusal(name, table(name, "", row("2000-01-01"), row(`${QUOTE}2000-01-03`), `2000-01-04${QUOTE}`, row("2000-01-05"))))
       .toBe(words(4, 1));
     // A row that runs over three lines is one row, and the row after it is on line 6.
-    const long = row(`${QUOTE}a${LINE_FEED}${LINE_FEED}b${QUOTE}`);
-    expect(await refusal(name, table(name, row("2000-01-01"), long, "2000-01-03"))).toBe(words(6, 1));
+    // Only a name may hold a line break, so only the table of referrers has such a row.
+    const long = `2000-01-02,${QUOTE}a${LINE_FEED}${LINE_FEED}b${QUOTE},2,2`;
+    expect(await refusal("referrers.csv", table("referrers.csv", "2000-01-01,a.example,2,2", long, "2000-01-03")))
+      .toBe(`Could not read referrers.csv: the row on line 6 has 1 cell where the header has 4. ${AS_IT_WAS}`);
   });
 
   test.each(TABLES)("%s with a first row that is not its header", async (name) => {
@@ -932,6 +939,118 @@ describe("a malformed table stops the run before anything is written", () => {
       expect(await refusal(name, table(name, row("2000-01-01"), "", row(first))), first)
         .toBe(`Could not read ${name}: the row on line 4 holds a quote that is not around a whole cell. ${AS_IT_WAS}`);
     }
+  });
+
+  // A review gave daily.csv two quotes that pair, with a line break and most of the
+  // next row between them. That is a well formed table of one row, whose second cell is
+  // no count. A snapshot of that day replaced the row, and the next day was gone.
+  test("the case a review found: a quoted cell that holds most of a second row", async () => {
+    const kept = table("daily.csv", `2000-01-01,${QUOTE}1,1,1,1`, `2000-01-02,2${QUOTE},2,2,2`);
+    const day = { timestamp: "2000-01-01T00:00:00Z", count: 5, uniques: 3 };
+    const { deps, files, stdout, stderr } = harness({
+      fetchSnapshot: async () => ({ ...RAW, clones: { count: 5, uniques: 3, clones: [day] }, views: { count: 5, uniques: 3, views: [day] } }),
+    });
+    files.set(join("data", "daily.csv"), kept);
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(1);
+    expect(stderr).toEqual([`Could not read daily.csv: the row on line 2 does not hold a whole number under clones. ${AS_IT_WAS}`]);
+    expect(stdout).toEqual([]);
+    expect([...files.entries()]).toEqual([[join("data", "daily.csv"), kept]]);
+  });
+
+  test.each(TABLES)("%s with a cell that is not what its column holds", async (name) => {
+    const columns = (HEADERS[name] as string).split(",");
+    const good = (ROWS[name] as (first: string) => string)("2000-01-01").split(",");
+    const quoted = (cell: string): string => (/^[0-9a-z.-]*$/.test(cell) ? cell : `${QUOTE}${cell}${QUOTE}`);
+    /** The table with one good row, then a row that has `cell` in one column. */
+    const withCell = (column: number, cell: string): string =>
+      table(name, good.join(","), good.map((held, at) => (at === column ? quoted(cell) : held)).join(","));
+    const dates = ["", "2000-1-01", "2000-01-1", "20000-01-01", "2000/01/01", "2000-01-01T00:00:00Z", "x", " 2000-01-01", "2000-01-01 ", `2000-01-01${LINE_FEED}2000-01-02`, "2000-01-0x"];
+    const counts = ["", "1.5", "-1", "+1", "1e3", "0x10", " 1", "1 ", "1,1", "x", `1${LINE_FEED}2`, "1_000"];
+    for (const [at, column] of columns.entries()) {
+      if (column === "referrer") continue;
+      const isDate = at === 0;
+      for (const cell of isDate ? dates : counts) {
+        expect(await refusal(name, withCell(at, cell)), `${column} ${JSON.stringify(cell)}`)
+          .toBe(`Could not read ${name}: the row on line 3 does not hold a ${isDate ? "date" : "whole number"} under ${column}. ${AS_IT_WAS}`);
+      }
+    }
+    // The first wrong cell of the row is the one named.
+    expect(await refusal(name, table(name, good.map(() => "x").join(","))))
+      .toBe(`Could not read ${name}: the row on line 2 does not hold a date under ${columns[0]}. ${AS_IT_WAS}`);
+    expect(columns.filter((column) => column !== "referrer").length).toBeGreaterThan(2);
+  });
+
+  test("a count of any length is a whole number, and a name is whatever it is", async () => {
+    const { deps, files, stdout, stderr } = harness();
+    const name = `1.5, -1 ${QUOTE}x${QUOTE}${LINE_FEED}2000-01-02`;
+    files.set(join("data", "daily.csv"), table("daily.csv", "2000-01-01,0,00,123456789012345678901234567890,7"));
+    files.set(join("data", "referrers.csv"), table("referrers.csv", `2000-01-01,${QUOTE}${name.replaceAll(QUOTE, QUOTE + QUOTE)}${QUOTE},1,1`, "2000-01-01,,1,1"));
+    expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(rowsOf(files.get(join("data", "daily.csv")) as string)).toContain("2000-01-01,0,00,123456789012345678901234567890,7");
+    expect(files.get(join("data", "referrers.csv")) as string).toContain(`2000-01-01,${QUOTE}${name.replaceAll(QUOTE, QUOTE + QUOTE)}${QUOTE},1,1${LINE_FEED}`);
+    expect(rowsOf(files.get(join("data", "referrers.csv")) as string)).toContain("2000-01-01,,1,1");
+  });
+
+  // The command must never write a row that its next run would refuse. So a payload
+  // with a day that is no date, or a count that is no whole number, is refused as
+  // malformed, and so is a clock that gives no date.
+  test("nothing is written that the next run would refuse", async () => {
+    const day = { timestamp: "2000-01-01T00:00:00Z", count: 5, uniques: 3 };
+    const series = (list: string, point: object, totals: object = {}): object => ({ count: 5, uniques: 3, [list]: [{ ...day, ...point }], ...totals });
+    const refused: Array<[payload: object, problem: string]> = [];
+    for (const wrong of [1.5, -1, 2 ** 53, Number.MAX_VALUE]) {
+      refused.push([{ ...RAW, clones: series("clones", { count: wrong }) }, "the clones response is missing a count, a uniques figure or its daily list"]);
+      refused.push([{ ...RAW, clones: series("clones", { uniques: wrong }) }, "the clones response is missing a count, a uniques figure or its daily list"]);
+      refused.push([{ ...RAW, views: series("views", {}, { count: wrong }) }, "the views response is missing a count, a uniques figure or its daily list"]);
+      refused.push([{ ...RAW, referrers: [{ referrer: "a.example", count: 1, uniques: wrong }] }, "the referrers response is not a list of name, count and uniques records"]);
+      refused.push([{ ...RAW, repo: { ...RAW.repo, forks_count: wrong } }, "the repository response is missing its star, fork or watcher counts"]);
+    }
+    for (const stamp of ["", "yesterday", "2000-1-01T00:00:00Z", "2000-01-0", " 2000-01-01", `2000-01-0${LINE_FEED}`]) {
+      refused.push([{ ...RAW, views: series("views", { timestamp: stamp }) }, "the views response is missing a count, a uniques figure or its daily list"]);
+    }
+    for (const [payload, problem] of refused) {
+      const { deps, files, stdout, stderr } = harness({ fetchSnapshot: async () => payload });
+      expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps), JSON.stringify(payload)).toBe(1);
+      expect(stderr).toEqual([`Refusing to write: ${problem}`]);
+      expect([stdout, [...files.keys()]]).toEqual([[], []]);
+    }
+    expect(refused).toHaveLength(26);
+    // The largest count that is still exact, and a day given with its time, are sound.
+    const sound = harness({ fetchSnapshot: async () => ({ ...RAW, clones: series("clones", { count: 2 ** 53 - 1, uniques: 0 }) }) });
+    expect(await runCli(["bun", "cli", "data"], (t) => sound.stdout.push(t), (t) => sound.stderr.push(t), sound.deps)).toBe(0);
+    expect(rowsOf(sound.files.get(join("data", "daily.csv")) as string)).toContain("2000-01-01,9007199254740991,0,0,0");
+
+    for (const today of ["", "today", "2000-01-1", "2000-01-01T00:00:00Z", ` 2000-01-01`, `2000-01-01${LINE_FEED}`]) {
+      for (const mode of [[], ["--dry-run"]]) {
+        const { deps, files, stdout, stderr } = harness({ today: () => today });
+        expect(await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps), JSON.stringify(today)).toBe(1);
+        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD"]);
+        expect([stdout, [...files.keys()]]).toEqual([[], []]);
+      }
+    }
+  });
+
+  // Whatever the command writes, its next run reads, whatever the names in it.
+  test("three runs of generated snapshots, each read by the next", async () => {
+    const random = sequence(808);
+    const pieces = ["a", "example.com", ",", QUOTE, LINE_FEED, " ", "1", "-", String.fromCharCode(13), String.fromCodePoint(0x1f600)];
+    let runs = 0;
+    for (let history = 0; history < 300; history++) {
+      const { deps, stdout, stderr } = harness();
+      for (const today of ["2000-01-01", "2000-01-02", "2000-01-02"]) {
+        const referrers = [...new Set(Array.from({ length: Math.floor(random() * 4) }, () =>
+          Array.from({ length: Math.floor(random() * 5) }, () => pieces[Math.floor(random() * pieces.length)]).join("")))]
+          .map((referrer) => ({ referrer, count: Math.floor(random() * 1e6), uniques: Math.floor(random() * 10) }));
+        const point = { timestamp: `${today}T00:00:00Z`, count: Math.floor(random() * 1e9), uniques: 0 };
+        deps.fetchSnapshot = async () => ({ ...RAW, clones: { count: 1, uniques: 1, clones: [point] }, referrers });
+        deps.today = () => today;
+        expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
+        runs++;
+      }
+      expect(stderr).toEqual([]);
+    }
+    expect(runs).toBe(900);
   });
 
   // Release 0.7.0 wrote a name holding a line break in quotes and then read the table
@@ -971,7 +1090,7 @@ describe("a malformed table stops the run before anything is written", () => {
 
   test("what is still read: a header alone, a blank file, quoted cells and Windows line endings", async () => {
     const good: Record<string, string[]> = {
-      "daily.csv": [`${QUOTE}date${QUOTE},clones,clone_uniques,views,view_uniques `, `2000-01-01,${QUOTE}1${QUOTE},1,1,${QUOTE}${QUOTE}`],
+      "daily.csv": [`${QUOTE}date${QUOTE},clones,clone_uniques,views,view_uniques `, `2000-01-01,${QUOTE}1${QUOTE},1,1,${QUOTE}7${QUOTE}`],
       "windows.csv": [HEADERS["windows.csv"] as string, "", ` ${ROWS["windows.csv"]?.("2000-01-01")}`],
       "referrers.csv": [HEADERS["referrers.csv"] as string, `2000-01-01,${QUOTE}a ${QUOTE}${QUOTE}b${QUOTE}${QUOTE}, c${LINE_FEED}d${QUOTE},1,1`],
     };
@@ -982,7 +1101,7 @@ describe("a malformed table stops the run before anything is written", () => {
       }
       expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
       expect(stderr).toEqual([]);
-      expect(rowsOf(files.get(join("data", "daily.csv")) as string)).toContain("2000-01-01,1,1,1,");
+      expect(rowsOf(files.get(join("data", "daily.csv")) as string)).toContain("2000-01-01,1,1,1,7");
       expect(rowsOf(files.get(join("data", "windows.csv")) as string)).toContain(ROWS["windows.csv"]?.("2000-01-01") as string);
       expect(files.get(join("data", "referrers.csv")) as string)
         .toContain(`2000-01-01,${QUOTE}a ${QUOTE}${QUOTE}b${QUOTE}${QUOTE}, c${LINE_FEED}d${QUOTE},1,1${LINE_FEED}`);
