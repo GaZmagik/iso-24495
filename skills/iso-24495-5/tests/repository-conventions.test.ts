@@ -193,7 +193,7 @@ describe("repository writing conventions", () => {
     const marketplace = JSON.parse(
       readFileSync(join(REPOSITORY_ROOT, ".claude-plugin", "marketplace.json"), "utf8"),
     ) as { plugins: Array<{ skills: string[] }> };
-    expect(marketplace.plugins[0].skills).toContain("./skills/iso-24495-text-audit");
+    expect(marketplace.plugins[0]?.skills).toContain("./skills/iso-24495-text-audit");
 
     const auditSkill = readFileSync(
       join(SKILLS_ROOT, "iso-24495-text-audit", "SKILL.md"),
@@ -336,9 +336,9 @@ describe("repository writing conventions", () => {
       const title = example.split("\n")[0];
       const code = /```text\n([\s\S]*?)```/.exec(example);
       expect(code, title).not.toBeNull();
-      const [before, after] = (code as RegExpExecArray)[1].split(/^After:/m);
-      expect(after, title).toBeDefined();
-      expect(words(after as string), title).toEqual(words(before));
+      const [before, after] = code?.[1]?.split(/^After:/m) ?? [];
+      if (before === undefined || after === undefined) throw new Error(`the example ${title} holds no After: line`);
+      expect(words(after), title).toEqual(words(before));
     }
   });
 
@@ -1080,7 +1080,9 @@ describe("repository writing conventions", () => {
         .map((line) => `${relative(REPOSITORY_ROOT, path)}: ${line.trim()}`);
     });
     expect(floors).toEqual([]);
-    const style = readFileSync(guidance[0], "utf8");
+    const [outputStyle] = guidance;
+    if (outputStyle === undefined) throw new Error("the guidance list is empty");
+    const style = readFileSync(outputStyle, "utf8");
     const average = ENGINE_THRESHOLDS.sentenceAverageLimit;
     expect(style, "the send-time check must name the average as a target").toMatch(
       new RegExp(`aim[^.]*${average}|${average}[^.]*aim`, "i"),
@@ -1138,9 +1140,9 @@ describe("repository writing conventions", () => {
       const parsed = Bun.YAML.parse(readFileSync(path, "utf8")) as {
         jobs: Record<string, { steps: Array<{ run?: string }> }>;
       };
-      const runSteps = parsed.jobs[job].steps.filter((step) => step.run !== undefined);
+      const runSteps = parsed.jobs[job]?.steps.filter((step) => step.run !== undefined) ?? [];
       expect(runSteps.length, `the ${job} job must hold exactly one run block`).toBe(1);
-      return runSteps[0].run ?? "";
+      return runSteps[0]?.run ?? "";
     };
 
     /** Runs a run block with bash, the way the runner would, and returns its exit code. */
@@ -1224,7 +1226,7 @@ describe("repository writing conventions", () => {
         // A branch filter beside the tag filter would still let tags through,
         // but a branch filter alone would not, so none is allowed here.
         expect(parsed.on.push.branches).toBeUndefined();
-        const steps = parsed.jobs.validate.steps;
+        const steps = parsed.jobs.validate?.steps ?? [];
         expect(steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(true);
         const bun = steps.find((step) => step.uses?.startsWith("oven-sh/setup-bun@"));
         expect(bun?.with?.["bun-version"]).toBe("1.4.2");
@@ -1701,7 +1703,8 @@ describe("repository writing conventions", () => {
       // test below supplies its own PR_BODY, so it cannot see what the workflow
       // binds; this is the one fact it reads rather than runs.
       test("the description reaches the shell as a variable, never as a command", () => {
-        const step = parsedWorkflow().jobs.audit.steps.find((each) => each.run !== undefined);
+        const step = parsedWorkflow().jobs.audit?.steps.find((each) => each.run !== undefined);
+        if (step === undefined) throw new Error("the audit job holds no run block");
         expect(step?.run, "the run block must hold no template expression").not.toContain("${{");
         expect(step?.env?.PR_BODY, "PR_BODY must be the description itself")
           .toMatch(/^\$\{\{\s*github\.event\.pull_request\.body\s*\}\}$/);
@@ -1789,7 +1792,7 @@ describe("repository writing conventions", () => {
         join(CODEX_SKILLS_ROOT, "iso-24495-style", "SKILL.md"),
         "utf8",
       );
-      const body = style.split("---")[2].trim();
+      const body = style.split("---")[2]?.trim() ?? "";
       expect(body.length).toBeGreaterThan(500);
       // Everything from the style's first sentence to the end must be the style's
       // body exactly. Containment let a line appended to the skill alone, such as

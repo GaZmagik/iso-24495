@@ -37,7 +37,7 @@ describe("Part 5 document templates", () => {
     for (const name of TEMPLATE_NAMES) {
       const levels = readTemplate(name)
         .split(/\r?\n/)
-        .flatMap((line) => line.match(/^(#{1,6})\s/)?.[1].length ?? []);
+        .flatMap((line) => line.match(/^(#{1,6})\s/)?.[1]?.length ?? []);
       expect(Math.max(...levels)).toBeLessThanOrEqual(4);
       if (name === "design-doc-template.md") {
         expect(levels.filter((level) => level === 4)).toHaveLength(1);
@@ -49,13 +49,13 @@ describe("Part 5 document templates", () => {
     const lines = readTemplate("design-doc-template.md").split(/\r?\n/);
     const headings = new Map(
       lines.flatMap((line) => {
-        const match = /^## (.+)$/.exec(line);
-        return match && match[1] !== "Contents" ? [[githubSlug(match[1]), match[1]]] : [];
+        const title = /^## (.+)$/.exec(line)?.[1];
+        return title !== undefined && title !== "Contents" ? [[githubSlug(title), title]] : [];
       }),
     );
     const contents = lines.flatMap((line) => {
-      const match = /^- \[(.+)\]\(#([^)]+)\)$/.exec(line);
-      return match ? [{ text: match[1], anchor: match[2] }] : [];
+      const [, text, anchor] = /^- \[(.+)\]\(#([^)]+)\)$/.exec(line) ?? [];
+      return text !== undefined && anchor !== undefined ? [{ text, anchor }] : [];
     });
 
     expect(contents).toHaveLength(6);
