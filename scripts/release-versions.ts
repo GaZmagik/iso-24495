@@ -98,50 +98,26 @@ function skillVersion(text: string): { stated: unknown } | { problem: string } {
  */
 export function checkVersionSites(root: string): VersionReport {
   const problems: string[] = [];
-  const read = (path: string): string | null => {
-    try {
-      return readFileSync(join(root, path), "utf8");
-    } catch {
-      problems.push(`${path} cannot be read.`);
-      return null;
-    }
-  };
-  const readJson = (path: string): Record<string, unknown> => {
-    const text = read(path);
-    if (text === null) return {};
-    try {
-      return JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      problems.push(`${path} is not valid JSON.`);
-      return {};
-    }
-  };
-  const requireValue = (site: string, stated: unknown, wanted: string): void => {
-    if (stated !== wanted) {
-      const expected = isVersionText(wanted) ? `"${wanted}"` : "what .claude-plugin/plugin.json declares";
-      problems.push(`${site} states ${describeStated(stated)}, not ${expected}.`);
-    }
-  };
-
-  const claude = readJson(".claude-plugin/plugin.json");
+  const claude = readJson(root, problems, ".claude-plugin/plugin.json");
   const version = typeof claude.version === "string" ? claude.version : "";
   if (!DOTTED_VERSION.test(version)) {
     problems.push(
       `.claude-plugin/plugin.json version must have the form 1.2.3; it states ${describeStated(claude.version)}.`,
     );
   }
-  requireValue(".codex-plugin/plugin.json version", readJson(".codex-plugin/plugin.json").version,
-    version);
+  requireValue(problems, ".codex-plugin/plugin.json version",
+    readJson(root, problems, ".codex-plugin/plugin.json").version, version);
 
-  const marketplace = readJson(".claude-plugin/marketplace.json") as {
+  const marketplace = readJson(root, problems, ".claude-plugin/marketplace.json") as {
     plugins?: Array<{ version?: unknown; source?: { ref?: unknown } }>;
   };
   const entry = marketplace.plugins?.[0];
-  requireValue(".claude-plugin/marketplace.json marketplace version", entry?.version, version);
+  requireValue(problems, ".claude-plugin/marketplace.json marketplace version", entry?.version,
+    version);
   // The ref is the half that gets forgotten, because it reads as a separate
   // fact rather than as the same number wearing a "v".
-  requireValue(".claude-plugin/marketplace.json marketplace source.ref", entry?.source?.ref,
-    `v${version}`);
+  requireValue(problems, ".claude-plugin/marketplace.json marketplace source.ref",
+    entry?.source?.ref, `v${version}`);
 
   const skills = SKILL_ROOTS.flatMap((skillRoot) => {
     try {
@@ -154,17 +130,17 @@ export function checkVersionSites(root: string): VersionReport {
     }
   }).sort();
   for (const skill of skills) {
-    const text = read(skill);
+    const text = read(root, problems, skill);
     if (text === null) continue;
     const found = skillVersion(text);
     if ("problem" in found) {
       problems.push(`${skill} ${found.problem}`);
       continue;
     }
-    requireValue(`${skill} metadata.version`, found.stated, version);
+    requireValue(problems, `${skill} metadata.version`, found.stated, version);
   }
 
-  const changelog = read("CHANGELOG.md");
+  const changelog = read(root, problems, "CHANGELOG.md");
   if (changelog !== null) {
     const recorded = [...changelog.matchAll(CHANGELOG_HEADING)].map((match) => match[1]);
     if (!recorded.includes(version)) {
@@ -173,6 +149,36 @@ export function checkVersionSites(root: string): VersionReport {
     }
   }
   return { version, skills, problems };
+}
+
+/** A file's text, or null with a problem recorded where it cannot be read. */
+function read(root: string, problems: string[], path: string): string | null {
+  try {
+    return readFileSync(join(root, path), "utf8");
+  } catch {
+    problems.push(`${path} cannot be read.`);
+    return null;
+  }
+}
+
+/** A file's JSON, or an empty object with a problem recorded where there is none. */
+function readJson(root: string, problems: string[], path: string): Record<string, unknown> {
+  const text = read(root, problems, path);
+  if (text === null) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    problems.push(`${path} is not valid JSON.`);
+    return {};
+  }
+}
+
+/** Records a problem where a site does not state the wanted value. */
+function requireValue(problems: string[], site: string, stated: unknown, wanted: string): void {
+  if (stated !== wanted) {
+    const expected = isVersionText(wanted) ? `"${wanted}"` : "what .claude-plugin/plugin.json declares";
+    problems.push(`${site} states ${describeStated(stated)}, not ${expected}.`);
+  }
 }
 
 /** Compares dotted versions as numbers, so 0.10.0 sorts after 0.9.0 rather than before it. */

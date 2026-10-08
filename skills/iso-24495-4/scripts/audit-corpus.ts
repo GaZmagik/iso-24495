@@ -289,17 +289,16 @@ function isUnambiguousNumeral(word: string): boolean {
 }
 
 function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): boolean {
-  const bare = (raw: string | undefined): string => (raw ?? "").replace(/[^A-Za-z]/g, "");
-  const previous = bare(tokens[index - 1]?.raw);
+  const previous = bareLetters(tokens[index - 1]?.raw);
   // "Chapters II, III and IV": the numbering word governs the whole list, not
   // just the numeral touching it, so look back a short way.
   for (let back = index - 1; back >= 0 && back >= index - 3; back--) {
-    if (NUMBERING_WORDS.has(bare(tokens[back]?.raw).toLowerCase())) return true;
+    if (NUMBERING_WORDS.has(bareLetters(tokens[back]?.raw).toLowerCase())) return true;
   }
   // "Pope Paul VI": the title sits before the given name, not before the
   // numeral, so look back a few tokens rather than one.
   for (let back = index - 1; back >= 0 && back >= index - 3; back--) {
-    if (NAMED_BY_NUMERAL.has(bare(tokens[back]?.raw))) return true;
+    if (NAMED_BY_NUMERAL.has(bareLetters(tokens[back]?.raw))) return true;
   }
   // "Sections II and IV": the neighbour is a numeral no acronym collides with.
   // A short numeral is no evidence, or "CI and CD" would excuse itself.
@@ -310,13 +309,13 @@ function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): bo
     && !NUMBERING_WORDS.has(previous.toLowerCase())) {
     return true;
   }
-  for (const neighbour of [previous, bare(tokens[index + 1]?.raw)]) {
+  for (const neighbour of [previous, bareLetters(tokens[index + 1]?.raw)]) {
     if (isUnambiguousNumeral(neighbour)) return true;
   }
   if (/^(?:and|or|to|through)$/i.test(previous)) {
     for (let back = index - 2; back >= 0 && back >= index - 4; back--) {
-      const candidate = bare(tokens[back]?.raw);
-      if (candidate && NUMBERING_WORDS.has(bare(tokens[back - 1]?.raw).toLowerCase())
+      const candidate = bareLetters(tokens[back]?.raw);
+      if (candidate && NUMBERING_WORDS.has(bareLetters(tokens[back - 1]?.raw).toLowerCase())
         && ROMAN_NUMERAL.test(candidate)) {
         return true;
       }
@@ -326,32 +325,49 @@ function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): bo
   return false;
 }
 
+/** The letters of a token, or nothing where there is no token. */
+function bareLetters(raw: string | undefined): string {
+  return (raw ?? "").replace(/[^A-Za-z]/g, "");
+}
+
 // Shouted text and a chain of initialisms have the same shape: capitals, of
 // similar length, side by side. They differ in one measurable way, which is
 // how many of the words are ordinary English. Counting tokens could not tell
 // "SAVE DATA FIRST" from "AWS IAM SSO MFA"; asking the lexicon can.
 function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   const shouted = new Set<number>();
-  const bare = (raw: string): string => raw.replace(/[^A-Za-z]/g, "").toLowerCase();
-  const markRun = (start: number, end: number): void => {
-    const length = end - start;
-    if (length < 2) return;
-    const known = tokens.slice(start, end).filter((token) => COMMON_WORDS.has(bare(token.raw))).length;
-    // A pair carries almost no evidence, so it must be entirely ordinary words
-    // to count as shouting. "ENABLE MFA" is one known word and one acronym, and
-    // half of two was enough to silence it. Longer runs can carry a minority of
-    // unknown words and still be a shout.
-    const enough = length === 2 ? known === 2 : known * 2 >= length;
-    if (!enough) return;
-    for (let j = start; j < end; j++) shouted.add(j);
-  };
   let runStart = 0;
   for (let i = 0; i <= tokens.length; i++) {
     if (i < tokens.length && isAllCaps(tokens[i].raw)) continue;
-    markRun(runStart, i);
+    markRun(tokens, shouted, runStart, i);
     runStart = i + 1;
   }
   return shouted;
+}
+
+/** Adds a run of capitalised tokens to the shouted positions where enough are ordinary words. */
+function markRun(
+  tokens: Array<{ raw: string }>,
+  shouted: Set<number>,
+  start: number,
+  end: number,
+): void {
+  const length = end - start;
+  if (length < 2) return;
+  const known = tokens.slice(start, end)
+    .filter((token) => COMMON_WORDS.has(lowerCaseLetters(token.raw))).length;
+  // A pair carries almost no evidence, so it must be entirely ordinary words
+  // to count as shouting. "ENABLE MFA" is one known word and one acronym, and
+  // half of two was enough to silence it. Longer runs can carry a minority of
+  // unknown words and still be a shout.
+  const enough = length === 2 ? known === 2 : known * 2 >= length;
+  if (!enough) return;
+  for (let j = start; j < end; j++) shouted.add(j);
+}
+
+/** The letters of a token in lower case, as the lexicon lists a word. */
+function lowerCaseLetters(raw: string): string {
+  return raw.replace(/[^A-Za-z]/g, "").toLowerCase();
 }
 
 function expansionInitials(text: string): string {
@@ -430,13 +446,6 @@ function acronymViolations(
   // they are carried forward rather than recovered by slicing the line from its start
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
   let recent: string[] = [];
-  const carry = (fragment: string): void => {
-    for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
-      if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
-      recent.push(word);
-      if (recent.length > LONGEST_ACRONYM) recent.shift();
-    }
-  };
   let previousBlock: number | undefined;
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
@@ -447,14 +456,14 @@ function acronymViolations(
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");
-      carry(sourceLine.slice(scanned, match.index));
+      carry(recent, sourceLine.slice(scanned, match.index));
       scanned = match.index;
       if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
       if (!definitionLocations.has(key)) {
         definitionLocations.set(key, { line: i + 1, column: match.index });
       }
     }
-    carry(sourceLine.slice(scanned));
+    carry(recent, sourceLine.slice(scanned));
   }
   for (const block of blocks) {
     const tokens = block.lines.flatMap((line, lineIndex) =>
@@ -519,6 +528,15 @@ function acronymViolations(
     }
   }
   return violations;
+}
+
+/** Adds the words of a fragment that carry an initial to the recent words, keeping the last few. */
+function carry(recent: string[], fragment: string): void {
+  for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
+    if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
+    recent.push(word);
+    if (recent.length > LONGEST_ACRONYM) recent.shift();
+  }
 }
 
 const NAMED_WORK = "article|book|campaign|company|film|initiative|journal|organisation|" +
