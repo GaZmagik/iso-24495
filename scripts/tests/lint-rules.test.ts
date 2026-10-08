@@ -8,7 +8,8 @@ const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js
 // The gate's lint passes when it finds nothing, and a rule that is switched
 // off, misspelt or dropped from a shared rule set also finds nothing. So this
 // gives the linter one deliberate breach of each rule and requires a report
-// for each. The breaches are text in this file, never a file of their own:
+// for each, as an error: the gate lets a warning through. The breaches are
+// text in this file, never a file of their own:
 // the gate lints and type checks every TypeScript file in the repository.
 //
 // It covers every rule eslint.config.mjs names, and the rules of the
@@ -29,6 +30,8 @@ describe("the lint rules the gate relies on", () => {
 });
 
 const UNUSED_DIRECTIVE = "(unused directive)";
+/** The severity the linter gives a report that makes it exit with a failure. */
+const ERROR = 2;
 const TRAILING_SPACE = " ";
 const NO_BREAK_SPACE = String.fromCharCode(160);
 const BACKSLASH = String.fromCharCode(92);
@@ -81,6 +84,8 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
 interface LintMessage {
   ruleId: string | null;
   line: number;
+  /** 2 for an error, which fails the gate, and 1 for a warning, which does not. */
+  severity: number;
   fatal?: boolean;
 }
 
@@ -92,7 +97,9 @@ interface LintMessage {
  * disk.
  *
  * @returns One "line: rule" entry for each line and rule reported, sorted. A
- *     report that names no rule is an unused directive.
+ *     report that names no rule is an unused directive. A report that is not
+ *     an error has its severity after the rule, so it equals no expected
+ *     entry.
  * @throws An `Error` when the linter prints anything but its JSON report, or
  *     could not parse the text, which leaves every rule unrun.
  */
@@ -112,18 +119,21 @@ function reportsFor(text: string): string[] {
   if (messages.some((message) => message.fatal === true)) {
     throw new Error("The linter could not parse the probe, so no rule ran.");
   }
-  const reports = messages
-    .map((message) => `${message.line}: ${message.ruleId ?? UNUSED_DIRECTIVE}`);
+  const reports = messages.map((message) => {
+    const weakened = message.severity === ERROR ? "" : ` (severity ${message.severity}, not an error)`;
+    return `${message.line}: ${message.ruleId ?? UNUSED_DIRECTIVE}${weakened}`;
+  });
   return [...new Set(reports)].sort();
 }
 
 /**
  * The rules eslint.config.mjs switches on by name, read from its text.
  *
- * @returns Each quoted rule name that is followed by "error" or by an options
- *     list. A rule the file switches off is not returned.
+ * @returns Each quoted rule name the file gives a setting, whatever the
+ *     setting is, unless the setting is "off" or 0. So a rule set to a warning
+ *     is returned, and so is a rule set by number or with options.
  */
 function namedRules(): string[] {
   const config = readFileSync(join(REPOSITORY_ROOT, "eslint.config.mjs"), "utf8");
-  return [...config.matchAll(/^ {6}"([^"]+)": (?:"error"|[[])/gm)].map((match) => match[1] ?? "");
+  return [...config.matchAll(/^ {6}"([^"]+)": (?!"off"|0,)/gm)].map((match) => match[1] ?? "");
 }
