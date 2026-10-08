@@ -6,8 +6,9 @@ import {
   auditCorpus,
   auditText,
   ENGINE_THRESHOLDS,
+  acronymReading,
+  linkSyntaxIn,
   projectAcronyms,
-  withLinksAsLabels,
 } from "../scripts/audit-corpus.ts";
 import { withoutEmphasis } from "../scripts/lib/inline-wording.ts";
 import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
@@ -2776,9 +2777,10 @@ describe("labels nested to great depth", () => {
     }
   }, 2 * HOSTILE_TIMEOUT_MS);
 
-  // These time the reading of links alone. The whole audit is slow on two of them for
-  // reasons older than that reading and outside it, which a budget on the audit would
-  // only hide: "<a " many times over, and a reference after every label.
+  // These time the reading of links in one block, and nothing else. The whole audit is
+  // slow on three of them for reasons older than that reading and outside it, which a
+  // budget on the audit would only hide: "<a " many times over, a reference after every
+  // label, and many code spans, which the parser itself reads slowly.
   test("the shapes beside that one are read in proportion to their length too", () => {
     const count = 16_000;
     const shapes: Array<[name: string, text: string]> = [
@@ -2790,10 +2792,20 @@ describe("labels nested to great depth", () => {
       ["nested labels whose angle brackets never close", "[".repeat(count) + "x" + "](<a ".repeat(count)],
       ["titles that never close", "[".repeat(count) + "x" + "](u 't ".repeat(count)],
       ["a reference after every label", "[".repeat(count) + "x" + "][r] ".repeat(count)],
+      ["a tag holding a bracket after every link", `[x](u) <i title="["> `.repeat(count)],
+      ["tags that never close", `<i title="[ `.repeat(count)],
+      ["comments that never close", "<!-- [ ".repeat(count)],
+      ["instructions and declarations that never close", "<? [ <!D [ <![CDATA[ ".repeat(count)],
+      ["a code span holding a bracket after every link", `[x](u) ${String.fromCharCode(96)}[${String.fromCharCode(96)} `.repeat(count)],
+      ["a code span of its own length for every label", Array.from({ length: 170 }, (_unused, length) =>
+        `[${String.fromCharCode(96).repeat(length + 1)}x${String.fromCharCode(96).repeat(length + 1)}](u) `).join("").repeat(8)],
+      ["backticks that close nothing, in every label", `[${String.fromCharCode(96)}x](u) ${String.fromCharCode(96).repeat(2)} `.repeat(count)],
+      ["autolinks that never close", "<https://e.com/[ ".repeat(count)],
       ["backticks of every length", "[".repeat(count) + Array.from({ length: 150 }, (_unused, length) => String.fromCharCode(96).repeat(length + 1)).join(" x](u) ")],
     ];
+    const none = new Set<string>();
     for (const [name, text] of shapes) {
-      expect(elapsed(() => withLinksAsLabels(text)), name).toBeLessThan(750);
+      expect(elapsed(() => linkSyntaxIn(text, none)), name).toBeLessThan(750);
     }
   }, HOSTILE_TIMEOUT_MS);
 });
@@ -2891,6 +2903,41 @@ describe("a link between an expansion and its acronym", () => {
   const undefinedAt = (acronym: string, line: number) =>
     [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
   const acronyms = (text: string) => findingsIn(text).filter((finding) => finding.startsWith("acronym"));
+
+  // A reference label holds at most 999 characters, as CommonMark has it. Of two
+  // nested pairs of brackets only one is the link, so the limit decides what is read.
+  // A review moved the limit by one and no test failed.
+  //
+  // The renderer of GitHub reads one character more: asked on 2026-10-08, it took a
+  // label of 1,000 characters for a reference and refused one of 1,001. This rule
+  // keeps the limit that CommonMark states and that Bun renders.
+  test("a reference label of 999 characters is a label, and one of 1,000 is not", () => {
+    const nested = (spaces: number): string => {
+      const label = " ".repeat(spaces) + "management";
+      expect(label).toHaveLength(spaces + 10);
+      return [`[identity and access [${label}]](guide) (IAM).`, "Use IAM.", "", `[${label}]: /u`].join(BREAK);
+    };
+    // At 999 the inner pair is a link to the reference. The outer pair is then text,
+    // and "(guide)" stands between the expansion and its acronym.
+    for (const spaces of [0, 988, 989]) {
+      expect(acronyms(nested(spaces)), `${spaces + 10}`).toEqual(undefinedAt("IAM", 2));
+      expect(Bun.markdown.html(nested(spaces)), `${spaces + 10}`).toContain('href="/u"');
+    }
+    // At 1,000 the inner pair is no label, so the outer pair is the link and its label is read.
+    for (const spaces of [990, 991]) {
+      expect(acronyms(nested(spaces)), `${spaces + 10}`).toEqual([]);
+      expect(Bun.markdown.html(nested(spaces)), `${spaces + 10}`).toContain('href="guide"');
+    }
+    // The limit alone, with the reference given, so that nothing else can set it.
+    const marked = (length: number): number[] => {
+      const label = "a".repeat(length);
+      const syntax = linkSyntaxIn(`[${label}]`, new Set([label]));
+      expect(syntax).toHaveLength(length + 2);
+      expect([...syntax.subarray(1, length + 1)].includes(1)).toBe(false);
+      return [syntax[0] as number, syntax[length + 1] as number];
+    };
+    expect([998, 999, 1_000, 1_001].map(marked)).toEqual([[1, 1], [1, 1], [0, 0], [0, 0]]);
+  });
 
   test("a word in a destination is no word of the expansion", () => {
     for (const lines of [
@@ -3020,6 +3067,72 @@ describe("a link between an expansion and its acronym", () => {
     // The mark of a quotation at the start of a line is no part of a title that wraps.
     expect(acronyms(["> identity and access [management](guide", "> 'a title') (IAM).", "", use].join(BREAK))).toEqual([]);
     expect(acronyms(["- identity and access [management](guide", "  'a title') (IAM).", "", use].join(BREAK))).toEqual([]);
+  });
+
+  // A code span, an autolink and an HTML tag bind tighter than a link, so each is found
+  // first and a bracket inside one opens and closes nothing. Each of these was put to
+  // the renderer of GitHub.
+  test("a code span, an autolink and an HTML tag are found before a link is", () => {
+    const slash = String.fromCharCode(92);
+    const tick = String.fromCharCode(96);
+    const quote = String.fromCharCode(34);
+    const use = "Use IAM.";
+    const link = (before: string): string[] => [`identity and access ${before}[management](guide) (IAM).`, use];
+    const text = (before: string): string[] => [`identity and access ${before}management](guide) (IAM).`, use];
+    // A backslash in a code span escapes nothing, so the span ends at the backtick after it
+    // and the link that follows is a link.
+    expect(acronyms([`identity and access ${tick}${slash}${tick} [management](guide) ${tick} (IAM).`, use].join(BREAK))).toEqual([]);
+    expect(acronyms(link(`${tick}${tick}${slash}${tick}${slash}${tick}${tick} `).join(BREAK))).toEqual([]);
+    // A bracket in a tag, in an autolink or in a comment opens nothing, so "](guide)" is shown.
+    for (const before of [
+      `<i title=${quote}[${quote}>`,
+      `<i title=${quote}>[${quote}>`,
+      "<i title='['>",
+      "<i data-x=[>",
+      "</i[>".replace("[", " ") + "<b title='['>",
+      "<https://e.com/[>",
+      "<!-- [ -->",
+      "<?php [ ?>",
+      "<![CDATA[ x ]]>",
+    ]) {
+      expect(acronyms(text(before).join(BREAK)), before).toEqual(undefinedAt("IAM", 2));
+    }
+    // What only looks like a tag is text, so a link after it is still a link. The text
+    // itself holds letters, so the link is looked for and not the acronym.
+    for (const before of ["<3 ", "</i ", "< i> ", `<i title=${quote} `, "<i title= > ", "<i/ > ", "<!-- ", "<? ", "<![CDATA[ ", "<!D ", "<a@b ", "<x:y z> "]) {
+      const read = acronymReading(link(before).join(BREAK)).blocks[0]?.lines[0] as string;
+      expect(read.includes("](guide)"), before).toBe(false);
+      expect(read.endsWith("management (IAM)."), before).toBe(true);
+    }
+    // A link read first keeps what is in its destination out of all this.
+    // The backtick in this destination opens no code span, so the two after it are one,
+    // and the bracket inside that span opens nothing.
+    expect(acronymReading(`[one](<u${tick}v>) ${tick}[${tick}two](three)`).blocks[0]?.lines)
+      .toEqual([`one ${tick}[${tick}two](three)`]);
+  });
+
+  // The reading once wrote U+FFFF where link syntax stood and then deleted every U+FFFF,
+  // the ones the document held as well. A document that holds one must keep it: with
+  // it gone, "(I" and "AM)" closed up into a definition that no reader was given.
+  test("a character the document holds is never taken for removed link syntax", () => {
+    const use = "Use IAM.";
+    for (const code of [0xffff, 0xfffe, 0xfffd]) {
+      const odd = String.fromCharCode(code);
+      const name = `U+${code.toString(16)}`;
+      // In an acronym, with and without a link in the block.
+      expect(acronyms([`identity and access management (I${odd}AM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      expect(acronyms([`[identity](u) and access management (I${odd}AM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      // In a word of the expansion: the two halves are two words.
+      expect(acronyms([`[identity](u) and acc${odd}ess management (IAM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      // In the label of a link, and beside the syntax that is removed.
+      expect(acronyms([`identity and access [manage${odd}ment](guide) (IAM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      expect(acronyms([`identity and access [management${odd}](guide) (${odd}IAM).`, use].join(BREAK)), name).toEqual(undefinedAt("IAM", 2));
+      // The character is still in what the rule reads, and the link syntax is not.
+      const read = acronymReading(`${odd}[one${odd}](two)${odd}`).lines[0];
+      expect(read, name).toBe(`${odd}one${odd}${odd}`);
+    }
+    // With no such character, each of those is a definition.
+    expect(acronyms(["[identity](u) and access [management](guide) (IAM).", use].join(BREAK))).toEqual([]);
   });
 
   test("what a reader does see between them still counts", () => {

@@ -32,12 +32,18 @@ const BACKSLASH = "\\";
 //   selectors, the combining grapheme joiner, the Hangul fillers, the tag
 //   characters and the places kept empty for more of the kind.
 //
+// One character is listed by its code, because no property finds it: the
+// object replacement character, U+FFFC. It stands in text for an object that
+// is not text, so a font has nothing to draw for it, and a review saw a name
+// print the same with it and without it. Unicode calls it a symbol, as it
+// calls every sign that draws, so its class cannot be read here.
+//
 // A combining mark that draws, such as an accent, is in none of these and is
 // kept, so a name written with one stays readable. Three things that can
 // still pass unseen are also in none: a symbol that is drawn blank, as the
 // braille blank is; a private use character; and a code point not yet given a
 // character.
-const UNSEEN_IN_A_PATH = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|(?! )\p{Zs}/gu;
+const UNSEEN_IN_A_PATH = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\ufffc]|(?! )\p{Zs}/gu;
 
 /**
  * The warning a command prints for an entry its audit passed over.
