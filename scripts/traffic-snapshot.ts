@@ -371,8 +371,15 @@ export function parseSnapshot(raw: unknown): ParseResult {
   return { ok: true, snapshot: { clones, views, referrers, repo } };
 }
 
+/**
+ * One value as a cell of a table, in quotes where `readRows` would otherwise read it
+ * back as something else: a value holding a comma, a quote, a line break or a
+ * carriage return, and one that opens or closes with white space, which the reader
+ * trims from the ends of an unquoted row.
+ */
 function csvCell(value: string): string {
-  const needsQuotes = value.includes(",") || value.includes('"') || value.includes("\n");
+  const needsQuotes = value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")
+    || value !== value.trim();
   return needsQuotes ? '"' + value.replace(/"/g, '""') + '"' : value;
 }
 
@@ -402,12 +409,41 @@ function splitCsvLine(line: string): string[] {
   return cells;
 }
 
+/**
+ * The rows of a table without its header, each as its cells.
+ *
+ * A row ends at a line break that stands outside quotes. The table was once cut at
+ * every line break before any quote was read. The writer puts a name holding a line
+ * break in quotes, so on the next run that one row was read as two broken ones, and
+ * the history kept them.
+ *
+ * White space at either end of a row is dropped, which takes the carriage return of
+ * a Windows line ending, and a row left blank is passed over. `csvCell` quotes any
+ * value that this would change.
+ */
 function readRows(existing: string | null): string[][] {
-  const lines = (existing ?? "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-  return lines.slice(1).map(splitCsvLine);
+  const rows = rowTexts(existing ?? "")
+    .map((row) => row.trim())
+    .filter((row) => row !== "");
+  return rows.slice(1).map(splitCsvLine);
+}
+
+/** The text of each row of a table, cut at each line break that is not inside quotes. */
+function rowTexts(table: string): string[] {
+  const rows: string[] = [];
+  let quoted = false;
+  let start = 0;
+  for (let at = 0; at < table.length; at += 1) {
+    // A quote written twice inside a quoted cell turns this off and on again.
+    if (table[at] === '"') {
+      quoted = !quoted;
+    } else if (table[at] === "\n" && !quoted) {
+      rows.push(table.slice(start, at));
+      start = at + 1;
+    }
+  }
+  rows.push(table.slice(start));
+  return rows;
 }
 
 // Writes the rows back with the newest reading for each key winning, because a

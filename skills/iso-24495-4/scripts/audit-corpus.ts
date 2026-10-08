@@ -6,10 +6,10 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
-  inlineText,
   markdownLinks,
   mergedSentences,
   normaliseReference,
+  proseBlocks,
   readerProseBlocks,
   readDocument,
   toLines,
@@ -726,9 +726,16 @@ function acronymViolations(
   const defined = new Set<string>();
   const seen = new Set<string>();
   const definitionLocations = new Map<string, { line: number; column: number }>();
-  const document = readDocument(text, reading);
+  // One reading of the document, in which each link is already its label. Both scans
+  // below take their text from this one value, so a place in one is the same place in
+  // the other. They once read two texts, and a definition was then put after the use
+  // that followed it.
+  const read = withLinksAsLabels(text, reading);
+  const document = readDocument(read, reading);
+  const lines = document.lines.map(withoutRemoved);
   const written = toLines(text);
-  const blocks = readerProseBlocks(text, reading);
+  const blocks = proseBlocks(read, reading)
+    .map((block) => ({ line: block.line, lines: block.lines.map(withoutRemoved) }));
   // The block each line sits in. The words before a parenthesis carry across a soft
   // line break, which is a space to the reader, so "identity and access" wrapped
   // before "management (IAM)" still spells the acronym. They never carry across a
@@ -741,7 +748,7 @@ function acronymViolations(
   });
   // The text of a setext heading can wrap across lines, and it is one heading, so
   // those lines are one block too, numbered after the prose blocks.
-  headings(text, reading).forEach((heading, index) => {
+  headings(read, reading).forEach((heading, index) => {
     for (let offset = 0; offset < heading.lines; offset++) {
       blockOfLine.set(heading.line - 1 + offset, blocks.length + index);
     }
@@ -751,8 +758,8 @@ function acronymViolations(
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
   let recent: string[] = [];
   let previousBlock: number | undefined;
-  const definitionLines = linesForDefinitions(document, blockOfLine, written);
-  for (let i = 0; i < document.lines.length; i++) {
+  const marksByLine = pairedMarksByLine(lines, blockOfLine, written);
+  for (let i = 0; i < lines.length; i++) {
     if (document.hidden(i)) continue;
     const block = blockOfLine.get(i);
     if (block === undefined || block !== previousBlock) recent = [];
@@ -760,9 +767,9 @@ function acronymViolations(
     // Read without paired emphasis marks, so "(**IAM**)" defines as "(IAM)" does and
     // "ident*ity*" still gives its initial. The text is one line, and its marks were
     // paired across the whole block the line sits in. A block that may hold a link has
-    // none, and is read with each link replaced by its label.
-    const { text: line, marks } = definitionLines[i] as { text: string; marks: number[] };
-    const sourceLine = withoutOffsets(line, 0, new Set(marks));
+    // none.
+    const marks = marksByLine[i] as number[];
+    const sourceLine = withoutOffsets(lines[i] as string, 0, new Set(marks));
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");
@@ -835,8 +842,7 @@ function acronymViolations(
 }
 
 /**
- * The lines the scan for acronym definitions reads, and where the paired emphasis marks
- * sit in each.
+ * For each line of a document, where its paired emphasis marks sit in that line.
  *
  * The marks are paired across the whole block a line sits in, because emphasis can open
  * on one line and close on a later one. Pairing each line alone left "identi*ty and
@@ -848,164 +854,338 @@ function acronymViolations(
  * lines. A block that may hold a link gives no marks here and none to `unmarkedTokens`,
  * for the reason `mayHoldLink` gives.
  *
- * Such a block is read with each link replaced by its label, as the uses are read. A
- * reader never sees a destination, and with the links written out its words counted as
- * words of the expansion: "[identity and access management](guide) (IAM)" spelt AMG.
- * A destination that held "(ABC)" was read as an acronym in brackets too. A link can
- * wrap, so the links are replaced across the block and not line by line. Brackets
- * that form no link are left as text first, as `withoutBrokenLinks` describes.
+ * A line in no block, such as a table row, is paired alone.
  *
- * A line in no block, such as a table row, is read alone.
- *
- * @param document The document as `readDocument` gives it.
+ * @param lines The lines the scan for definitions reads, one for each source line.
  * @param blockOfLine The block each line sits in, by the index of the line. Lines of one
  *     block share a number and follow one another.
- * @param written The same lines as `toLines` gives them, which is what `mayHoldLink`
- *     reads.
- * @returns One entry for each line of the document, in the same order. `text` is the
- *     line, and `marks` the offsets of its paired marks, ascending and counted from the
- *     start of `text`. `marks` is empty for a line with none.
+ * @param written The document as `toLines` gives it, which is what `mayHoldLink` reads.
+ * @returns One list for each line, in the same order: the offsets of its paired marks,
+ *     ascending and counted from the start of that line. Empty for a line with none.
  */
-function linesForDefinitions(
-  document: { lines: readonly string[]; references: ReadonlySet<string> },
+function pairedMarksByLine(
+  lines: readonly string[],
   blockOfLine: ReadonlyMap<number, number>,
   written: readonly string[],
-): Array<{ text: string; marks: number[] }> {
-  const read: Array<{ text: string; marks: number[] }> = [];
-  for (let first = 0; first < document.lines.length;) {
+): number[][] {
+  const marksByLine: number[][] = lines.map(() => []);
+  for (let first = 0; first < lines.length;) {
     const block = blockOfLine.get(first);
     let last = first;
     while (block !== undefined && blockOfLine.get(last + 1) === block) last++;
-    const source = document.lines.slice(first, last + 1).join("\n");
-    const linked = mayHoldLink(written, first, last - first + 1);
-    // Replacing a link keeps every line ending, so there is one text for each line.
-    const texts = (linked ? inlineText(withoutBrokenLinks(source), document.references) : source).split("\n");
-    const marks = linked ? [] : emphasisMarkOffsets(source);
+    let line = first;
     let lineStart = 0;
-    let next = 0;
-    for (let line = first; line <= last; line++) {
-      const text = texts[line - first] ?? "";
-      const inLine: number[] = [];
-      // A mark is never the line break, so each one falls inside a line.
-      while (next < marks.length && (marks[next] as number) < lineStart + text.length) {
-        inLine.push((marks[next] as number) - lineStart);
-        next++;
+    const marks = mayHoldLink(written, first, last - first + 1)
+      ? []
+      : emphasisMarkOffsets(lines.slice(first, last + 1).join("\n"));
+    for (const mark of marks) {
+      // A mark is never the line break, so this stops on the line that holds it.
+      while (mark > lineStart + (lines[line] as string).length) {
+        lineStart += (lines[line] as string).length + 1;
+        line++;
       }
-      read.push({ text, marks: inLine });
-      lineStart += text.length + 1;
+      (marksByLine[line] as number[]).push(mark - lineStart);
     }
     first = last + 1;
   }
-  return read;
+  return marksByLine;
+}
+
+// Stands where a character of link syntax stood, until the document has been read
+// into blocks. It is U+FFFF, which Unicode gives to no character.
+const REMOVED = String.fromCharCode(0xffff);
+
+/** A line without the places `withLinksAsLabels` left where link syntax stood. */
+function withoutRemoved(line: string): string {
+  return line.replaceAll(REMOVED, "");
 }
 
 /**
- * Text in which brackets that form no inline link can no longer be taken for one.
+ * A document in which each link and image is its label, for the acronym rule.
  *
- * The scan that replaces links by their labels takes any "[label](...)" for a link, up
- * to the first closing parenthesis. A page does not. "[management](two three)" holds a
- * space in its destination, so it is shown as written, and "two three" are words a
- * reader sees before "(IAM)". Replaced by its label, they were lost, and the acronym
- * was read as defined. So the two square brackets of such a label become spaces here,
- * and the replacing then leaves the whole of it alone.
+ * A reader never sees a destination or a title, so the rule must not read their words:
+ * "[identity and access management](guide) (IAM)" defines IAM. Brackets that form no
+ * link are shown as written, so their words stay.
  *
- * A space stands where each bracket stood, so every other character keeps its place.
- * A link inside the label is not touched.
+ * Which brackets form a link is decided here and nowhere later, on the source lines
+ * as written: before a backslash escape is taken for the character it escapes, and
+ * before anything in angle brackets is taken for an HTML tag. Both happened first
+ * once, and each made a link look like text.
  *
- * @param text The lines of one block as `readDocument` gives them, joined by line
- *     breaks. Two things are already gone from that text. A backslash escape is two
- *     spaces, so a destination that held one is read as holding a space and is left
- *     as text. A destination in angle brackets that looked like an HTML tag is one
- *     space, which `formsInlineLink` allows for.
- * @returns The same text where every inline link in it is well formed.
+ * The document keeps its shape. Each character of link syntax becomes U+FFFF and no
+ * character is added or dropped, so every line is as long as it was and starts as it
+ * did, and a block is where it was. A line break and a pipe inside a destination or a
+ * title are kept for the same reason. The caller reads the blocks and then drops
+ * every U+FFFF.
+ *
+ * @returns The text itself where it holds no square bracket. Otherwise its lines joined
+ *     by line breaks, with links replaced in each prose block, each heading and each
+ *     other line a rule reads, such as a table row. A reference link is replaced only
+ *     where the document defines its label. Code, front matter and the lines that
+ *     define references are left alone.
  */
-function withoutBrokenLinks(text: string): string {
-  // Offsets count UTF-16 units, so the text is edited by unit and not by character.
-  const units = text.split("");
-  for (const link of markdownLinks(text)) {
-    if (link.kind !== "inline") continue;
-    const open = link.start + (link.image ? 1 : 0);
-    const close = open + 1 + link.label.length;
-    if (formsInlineLink(text, close + 1)) continue;
-    units[open] = " ";
-    units[close] = " ";
+export function withLinksAsLabels(text: string, reading: Reading = {}): string {
+  const written = toLines(text);
+  if (!written.some((line) => line.includes("["))) return text;
+  const document = readDocument(text, reading);
+  const read = [...written];
+  const inBlock = new Set<number>();
+  const spans = [
+    ...proseBlocks(text, reading).map((block) => [block.line - 1, block.lines.length]),
+    ...headings(text, reading).map((heading) => [heading.line - 1, heading.lines]),
+  ] as Array<[first: number, count: number]>;
+  for (const [first, count] of spans) {
+    for (let line = first; line < first + count; line++) {
+      inBlock.add(line);
+    }
+  }
+  written.forEach((_line, index) => {
+    // A line in no block is read alone, where a rule reads it at all. Code, front
+    // matter and a line that defines a reference are blank to every rule.
+    if (!inBlock.has(index) && (document.lines[index] as string).trim() !== "") {
+      spans.push([index, 1]);
+    }
+  });
+  for (const [first, count] of spans) {
+    const source = written.slice(first, first + count).join("\n");
+    if (!source.includes("[")) continue;
+    read.splice(first, count, ...linksAsLabels(source, document.references).split("\n"));
+  }
+  return read.join("\n");
+}
+
+/** An opening square bracket that no closing one has met yet. */
+interface OpenBracket {
+  at: number;
+  /** Whether "!" stands before it, which makes an image. */
+  image: boolean;
+}
+
+/**
+ * The lines of one block with each link in them replaced as `withLinksAsLabels`
+ * describes.
+ *
+ * Brackets are paired as CommonMark pairs them, in one pass from left to right. A
+ * closing bracket takes the nearest opening one. Where a link follows, the two brackets
+ * and everything after the label are removed. A link then switches off every bracket
+ * that opened before it, because a link cannot sit inside the label of a link: the
+ * inner one is the link and the outer brackets are text. An image can hold a link, so
+ * it switches nothing off. A backslash escape and a code span are stepped over.
+ *
+ * Nothing here scans ahead. Each question about what follows a bracket is answered
+ * from `linkMarks`, which reads the block once.
+ *
+ * Two things a renderer reads are not read here. An HTML tag or an autolink is not
+ * stepped over, so a bracket inside one can pair with a bracket outside it. And a
+ * backslash escapes inside a code span as it does outside.
+ *
+ * @param source The source lines of one block, joined by line breaks.
+ * @param references The labels the document defines, each as `normaliseReference`
+ *     gives it.
+ */
+function linksAsLabels(source: string, references: ReadonlySet<string>): string {
+  const marks = linkMarks(source);
+  const units = source.split("");
+  const open: OpenBracket[] = [];
+  // How many of the open brackets, counted from the first, a link has switched off.
+  let switchedOff = 0;
+  for (let at = 0; at < source.length; at++) {
+    if (marks.escaped[at + 1] === 1) {
+      at++;
+    } else if (source[at] === "`") {
+      at = (marks.afterCode[at] as number) - 1;
+    } else if (source[at] === "[") {
+      open.push({ at, image: source[at - 1] === "!" && marks.escaped[at - 1] === 0 });
+    } else if (source[at] === "]" && open.length > 0) {
+      const opener = open.pop() as OpenBracket;
+      const live = opener.image || open.length >= switchedOff;
+      switchedOff = Math.min(switchedOff, open.length);
+      const end = live ? linkEnd(source, opener, at, marks, references) : -1;
+      if (end === -1) continue;
+      remove(units, opener.at - (opener.image ? 1 : 0), opener.at + 1);
+      remove(units, at, end);
+      if (!opener.image) switchedOff = open.length;
+      at = end - 1;
+    }
   }
   return units.join("");
 }
 
-/**
- * Whether the text from an opening parenthesis is the second half of an inline link,
- * as CommonMark reads one: a destination, a title after white space, or both or
- * neither, and then the closing parenthesis.
- *
- * One form is allowed that CommonMark does not have: white space and then a title,
- * with no destination. A destination written "<two three>" has been removed as an HTML
- * tag before this text is read, and a space stands where it was.
- *
- * @param open The offset of the "(" that follows the label.
- */
-function formsInlineLink(text: string, open: number): boolean {
-  const start = skipLinkSpace(text, open + 1);
-  if (start > open + 1 && closesLink(text, titleEnd(text, start))) return true;
-  const afterDestination = destinationEnd(text, start);
-  if (afterDestination === -1) return false;
-  const beforeTitle = skipLinkSpace(text, afterDestination);
-  if (text[beforeTitle] === ")") return true;
-  // A title needs white space between it and the destination.
-  return beforeTitle > afterDestination && closesLink(text, titleEnd(text, beforeTitle));
-}
-
-/** Whether a link ends here: a closing parenthesis, after white space or none. False for the offset -1. */
-function closesLink(text: string, at: number): boolean {
-  return at !== -1 && text[skipLinkSpace(text, at)] === ")";
+/** Puts `REMOVED` at each place from `from` up to `to`, but for a line break or a pipe. */
+function remove(units: string[], from: number, to: number): void {
+  for (let at = from; at < to; at++) {
+    if (units[at] !== "\n" && units[at] !== "|") units[at] = REMOVED;
+  }
 }
 
 /**
- * The offset just past a link destination that starts here, or -1 where none is well
- * formed. An empty one is.
+ * The offset just past the link that a closing bracket ends, or -1 where it ends none.
  *
- * A bare destination is read as the renderer of GitHub reads it, which is not quite as
- * CommonMark words it: a parenthesis that opens and never closes is allowed, so
- * "two(three" is a destination where a title follows it.
+ * A link is one of three things: brackets and then a destination in parentheses;
+ * brackets and then a second pair that names a reference, or is empty and takes the
+ * label for the name; or brackets alone whose label names a reference. A reference
+ * counts only where the document defines it, and a second pair that names one the
+ * document does not define leaves the first pair as text as well.
+ *
+ * @param close The offset of the closing bracket.
  */
-function destinationEnd(text: string, start: number): number {
-  let at = start;
-  if (text[at] === "<") {
+function linkEnd(
+  source: string,
+  opener: OpenBracket,
+  close: number,
+  marks: LinkMarks,
+  references: ReadonlySet<string>,
+): number {
+  if (source[close + 1] === "(") {
+    const end = inlineLinkEnd(source, close + 1, marks);
+    if (end !== -1) return end;
+  }
+  // A label that names a reference is short. Without this limit, each of many nested
+  // brackets would copy everything inside it.
+  const label = close - opener.at <= 1000 ? source.slice(opener.at + 1, close) : null;
+  const second = source[close + 1] === "[" ? (marks.nextBracket[close + 2] as number) : -1;
+  if (second !== -1 && source[second] === "]") {
+    const name = second === close + 2 ? label : source.slice(close + 2, second);
+    return name !== null && references.has(normaliseReference(name)) ? second + 1 : -1;
+  }
+  return label !== null && references.has(normaliseReference(label)) ? close + 1 : -1;
+}
+
+/**
+ * The offset just past an inline link whose parenthesis opens at `open`, or -1 where
+ * what follows the label is no destination and title.
+ *
+ * This is the CommonMark rule: a destination, then a title after white space, either
+ * of them or neither, with white space allowed around both, and the closing
+ * parenthesis. A destination is in angle brackets, or holds no white space and ends at
+ * the parenthesis that closes the opening one. A title is in double quotes, single
+ * quotes or parentheses.
+ *
+ * It departs from the wording of that rule in one place, where the renderer of GitHub
+ * does: a bare destination that stops at white space may hold a parenthesis that never
+ * closes, so "(two(three 'a title')" is a link.
+ */
+function inlineLinkEnd(source: string, open: number, marks: LinkMarks): number {
+  const start = marks.nextText[open + 1] as number;
+  let afterDestination: number;
+  if (source[start] === "<") {
     // In angle brackets a destination may hold spaces, and no line break or "<".
-    for (at++; at < text.length && text[at] !== ">"; at++) {
-      if (text[at] === "\n" || text[at] === "<") return -1;
-    }
-    return at < text.length ? at + 1 : -1;
+    const closing = marks.nextAngle[start + 1] as number;
+    if (source[closing] !== ">") return -1;
+    afterDestination = closing + 1;
+  } else {
+    const closer = marks.closer[open] as number;
+    afterDestination = marks.nextSpace[start] as number;
+    if (closer !== -1 && closer < afterDestination) return closer + 1;
   }
-  // Bare, it ends at white space, at a control character, or at a closing parenthesis
-  // that no opening one inside it is waiting for.
-  let depth = 0;
-  for (; at < text.length && text[at] > " " && (depth > 0 || text[at] !== ")"); at++) {
-    if (text[at] === "(") depth++;
-    else if (text[at] === ")") depth--;
-  }
-  return at;
-}
-
-/** The offset just past a link title that starts here, or -1 where no title does. */
-function titleEnd(text: string, start: number): number {
-  // A title opens with a double quote, a single quote or a parenthesis, and closes with
-  // the same quote or the other parenthesis. The quotes are given by their codes, 34
-  // and 39.
-  const opener = text[start] ?? "";
-  if (opener !== "(" && opener !== String.fromCharCode(34) && opener !== String.fromCharCode(39)) return -1;
-  const end = text.indexOf(opener === "(" ? ")" : opener, start + 1);
-  return end === -1 ? -1 : end + 1;
+  const next = marks.nextText[afterDestination] as number;
+  if (source[next] === ")") return next + 1;
+  // A title needs white space between it and the destination.
+  if (next === afterDestination) return -1;
+  const code = source.charCodeAt(next);
+  const titles = code === 34 ? marks.nextDouble : code === 39 ? marks.nextSingle : code === 40 ? marks.nextClose : null;
+  const titleEnd = titles === null ? -1 : (titles[next + 1] as number);
+  // A title in parentheses holds no parenthesis of its own, so the first closing one
+  // must be the one that closes it.
+  if (titleEnd === -1 || (code === 40 && marks.closer[next] !== titleEnd)) return -1;
+  const last = marks.nextText[titleEnd + 1] as number;
+  return source[last] === ")" ? last + 1 : -1;
 }
 
 /**
- * The offset of the first character at or after this one that is not a space or a line
- * break. A tab is already spaces in the text this reads.
+ * What `linksAsLabels` asks about a block, each answer an offset into it.
+ *
+ * Every list has an entry for each character and two more, so that a question about
+ * the place just past the end has an answer. "Next" means at that offset or after it.
+ * A character behind a backslash is never the answer, but for white space.
  */
-function skipLinkSpace(text: string, start: number): number {
-  let at = start;
-  while (text[at] === " " || text[at] === "\n") at++;
-  return at;
+interface LinkMarks {
+  /** 1 where the character is behind a backslash that escapes it. */
+  escaped: Uint8Array;
+  /** For "(", the ")" that closes it, or -1. */
+  closer: Int32Array;
+  /** For the first backtick of a run, the offset just past its code span, or past the run where no span opens. */
+  afterCode: Int32Array;
+  /** The next character that is not white space, or the length of the block. */
+  nextText: Int32Array;
+  /** The next white space or control character, or the length of the block. */
+  nextSpace: Int32Array;
+  /** The next "<", ">" or line break, or -1. */
+  nextAngle: Int32Array;
+  /** The next square bracket of either kind, or -1. */
+  nextBracket: Int32Array;
+  /** The next double quote, single quote and closing parenthesis, or -1. */
+  nextDouble: Int32Array;
+  nextSingle: Int32Array;
+  nextClose: Int32Array;
+}
+
+/**
+ * Reads a block once forwards and once backwards, and records what `LinkMarks` lists.
+ *
+ * This is what keeps the reading in step with the length of the block. A check that
+ * scanned forward from every "](" took 640 million steps on 16,000 nested labels.
+ *
+ * White space here is a space, a tab, a line break or any other control character.
+ * At the start of a line it is also ">", which marks a quotation and is no text.
+ */
+function linkMarks(source: string): LinkMarks {
+  const size = source.length + 2;
+  const marks: LinkMarks = {
+    escaped: new Uint8Array(size),
+    closer: new Int32Array(size).fill(-1),
+    afterCode: new Int32Array(size),
+    nextText: new Int32Array(size).fill(source.length),
+    nextSpace: new Int32Array(size).fill(source.length),
+    nextAngle: new Int32Array(size).fill(-1),
+    nextBracket: new Int32Array(size).fill(-1),
+    nextDouble: new Int32Array(size).fill(-1),
+    nextSingle: new Int32Array(size).fill(-1),
+    nextClose: new Int32Array(size).fill(-1),
+  };
+  const space = new Uint8Array(size);
+  const open: number[] = [];
+  let atLineStart = true;
+  for (let at = 0; at < source.length; at++) {
+    const code = source.charCodeAt(at);
+    if (code <= 32 || (atLineStart && code === 62)) {
+      space[at] = 1;
+      atLineStart = atLineStart || code === 10;
+      continue;
+    }
+    atLineStart = false;
+    if (code === 92 && /[!-/:-@[-`{-~]/.test(source[at + 1] ?? "")) {
+      marks.escaped[at + 1] = 1;
+      at++;
+    } else if (code === 40) {
+      open.push(at);
+    } else if (code === 41 && open.length > 0) {
+      marks.closer[open.pop() as number] = at;
+    }
+  }
+  // For each length of a run of backticks, where the nearest later run of that length starts.
+  const laterRun = new Map<number, number>();
+  let runEnd = -1;
+  for (let at = source.length - 1; at >= 0; at--) {
+    const code = marks.escaped[at] === 1 ? 0 : source.charCodeAt(at);
+    marks.nextText[at] = space[at] === 1 ? (marks.nextText[at + 1] as number) : at;
+    marks.nextSpace[at] = space[at] === 1 ? at : (marks.nextSpace[at + 1] as number);
+    marks.nextAngle[at] = code === 60 || code === 62 || source[at] === "\n" ? at : (marks.nextAngle[at + 1] as number);
+    marks.nextBracket[at] = code === 91 || code === 93 ? at : (marks.nextBracket[at + 1] as number);
+    marks.nextDouble[at] = code === 34 ? at : (marks.nextDouble[at + 1] as number);
+    marks.nextSingle[at] = code === 39 ? at : (marks.nextSingle[at + 1] as number);
+    marks.nextClose[at] = code === 41 ? at : (marks.nextClose[at + 1] as number);
+    if (code !== 96) continue;
+    if (runEnd === -1) runEnd = at + 1;
+    if (at > 0 && source[at - 1] === "`" && marks.escaped[at - 1] === 0) continue;
+    // A code span closes at the next run of the same length, and nowhere else.
+    const length = runEnd - at;
+    const closing = laterRun.get(length);
+    marks.afterCode[at] = closing === undefined ? runEnd : closing + length;
+    laterRun.set(length, at);
+    runEnd = -1;
+  }
+  return marks;
 }
 
 /**
