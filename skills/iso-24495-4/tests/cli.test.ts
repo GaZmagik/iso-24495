@@ -101,15 +101,21 @@ describe("audit-corpus runCli", () => {
         unknown.writeOut,
         unknown.writeErr,
       )).toBe(2);
-      expect(unknown.stderr[0]).toContain("unknown option");
+      // The argument has just failed the check, so the message gives its place
+      // and its length, and never the text the caller typed.
+      expect(unknown.stderr).toEqual([
+        "audit-corpus: unknown option of 9 characters at argument 2; expected --json",
+      ]);
 
       const extra = capture();
       expect(runCorpusCli(
-        ["bun", "audit-corpus-cli.ts", CORPUS, "extra.md"],
+        ["bun", "audit-corpus-cli.ts", CORPUS, "--json", "one.json", "extra.md"],
         extra.writeOut,
         extra.writeErr,
       )).toBe(2);
-      expect(extra.stderr[0]).toContain("unexpected argument");
+      expect(extra.stderr).toEqual([
+        "audit-corpus: unexpected argument of 8 characters at argument 4; expected --json",
+      ]);
 
       const duplicate = capture();
       expect(runCorpusCli(

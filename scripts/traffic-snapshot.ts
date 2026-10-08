@@ -285,7 +285,11 @@ export async function runCli(
   } else {
     const text = deps.readText(fromFile);
     if (text === null) {
-      writeErr("Could not read the fixture at " + fromFile);
+      writeErr(
+        "Could not read the fixture: --from-file names a path of " +
+          fromFile.length +
+          " characters that is missing or unreadable",
+      );
       return 1;
     }
     try {

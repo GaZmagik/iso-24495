@@ -45,6 +45,22 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Whether text is a version or a release tag. Such text is safe to quote, because the pattern decides what it holds. */
+function isVersionText(text: string): boolean {
+  return DOTTED_VERSION.test(text) || RELEASE_TAG.test(text);
+}
+
+/**
+ * What a site states, worded for a problem. A version or a release tag is
+ * quoted. Anything else has failed the check with contents nobody has read, so
+ * only its shape is given.
+ */
+function describeStated(stated: unknown): string {
+  if (stated === undefined || stated === null) return "nothing";
+  if (typeof stated !== "string") return `a value of type ${typeof stated}`;
+  return isVersionText(stated) ? `"${stated}"` : `${stated.length} characters that are not a version`;
+}
+
 /**
  * A skill's `metadata.version`, read from its front matter as YAML.
  *
@@ -95,7 +111,8 @@ export function checkVersionSites(root: string): VersionReport {
   };
   const requireValue = (site: string, stated: unknown, wanted: string): void => {
     if (stated !== wanted) {
-      problems.push(`${site} states ${JSON.stringify(stated) ?? "nothing"}, not "${wanted}".`);
+      const expected = isVersionText(wanted) ? `"${wanted}"` : "what .claude-plugin/plugin.json declares";
+      problems.push(`${site} states ${describeStated(stated)}, not ${expected}.`);
     }
   };
 
@@ -103,7 +120,7 @@ export function checkVersionSites(root: string): VersionReport {
   const version = typeof claude.version === "string" ? claude.version : "";
   if (!DOTTED_VERSION.test(version)) {
     problems.push(
-      `.claude-plugin/plugin.json states "${version}", not a version of the form 1.2.3.`,
+      `.claude-plugin/plugin.json version must have the form 1.2.3; it states ${describeStated(claude.version)}.`,
     );
   }
   requireValue(".codex-plugin/plugin.json version", readJson(".codex-plugin/plugin.json").version,
@@ -144,7 +161,8 @@ export function checkVersionSites(root: string): VersionReport {
   if (changelog !== null) {
     const recorded = [...changelog.matchAll(CHANGELOG_HEADING)].map((match) => match[1]);
     if (!recorded.includes(version)) {
-      problems.push(`CHANGELOG.md has no entry headed [${version}].`);
+      const heading = DOTTED_VERSION.test(version) ? `[${version}]` : "with the declared version";
+      problems.push(`CHANGELOG.md has no entry headed ${heading}.`);
     }
   }
   return { version, skills, problems };
@@ -188,16 +206,20 @@ export function preflightProblems(version: string, released: string[]): string[]
   }
   const latest = [...released].sort(compareVersions).at(-1);
   if (latest !== undefined && compareVersions(version, latest) <= 0) {
-    problems.push(`${version} is not later than the latest release, ${latest}.`);
+    const declared = DOTTED_VERSION.test(version) ? version : "The declared version";
+    problems.push(`${declared} is not later than the latest release, ${latest}.`);
   }
   return problems;
 }
 
 /** Why a pushed tag does not match the version the checkout declares. */
 export function tagProblems(tag: string, version: string): string[] {
-  return tag === `v${version}`
-    ? []
-    : [`The tag ${tag} does not name the declared version, which would be tagged v${version}.`];
+  if (tag === `v${version}`) return [];
+  const expected = DOTTED_VERSION.test(version) ? `v${version}` : "the tag for the declared version";
+  const arrived = RELEASE_TAG.test(tag)
+    ? `the tag ${tag}`
+    : `${tag.length} characters that are not a release tag of the form v1.2.3`;
+  return [`The pushed tag must name the declared version: expected ${expected}, got ${arrived}.`];
 }
 
 /** Lists the tags on `origin` with git. A failure is returned, never thrown. */

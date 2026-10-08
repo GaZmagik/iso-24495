@@ -267,7 +267,11 @@ describe("runCli", () => {
       deps,
     );
     expect(code).toBe(1);
-    expect(stderr.join(" ")).toContain("missing.json");
+    // The path has just failed to read, so the message names the option it
+    // came from and its length, never the path.
+    expect(stderr).toEqual([
+      "Could not read the fixture: --from-file names a path of 12 characters that is missing or unreadable",
+    ]);
   });
 
   test("fails loudly when the fixture is not JSON", async () => {

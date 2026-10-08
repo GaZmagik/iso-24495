@@ -41,7 +41,10 @@ export function checkReport(reportText: string, description: string, projectDir:
   }
   const [path] = named as [string];
   if (resolve(projectDir, path) !== resolve(description)) {
-    return { ok: false, reason: `the report names ${path}, not the description` };
+    return {
+      ok: false,
+      reason: `the report must name the description alone; it names another path, ${path.length} characters long`,
+    };
   }
   const entry = files[path];
   const violations = isObject(entry) ? entry.violations : undefined;

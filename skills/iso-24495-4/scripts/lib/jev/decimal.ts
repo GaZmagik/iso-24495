@@ -26,7 +26,9 @@ function rescale(value: Decimal, scale: number): bigint {
 /** A JSON number token, exactly as written. */
 export function parseDecimal(token: string): Decimal {
   const match = JSON_NUMBER.exec(token);
-  if (match === null) throw new Error(`${JSON.stringify(token)} is not a JSON number.`);
+  if (match === null) {
+    throw new Error(`Expected a JSON number such as 0.25 or -1e3; got ${token.length} characters that are not one.`);
+  }
   const [, sign, whole, fraction = "", exponent = "0"] = match as unknown as [string, string, string, string?, string?];
   const units = BigInt(`${sign}${whole}${fraction}`);
   const scale = fraction.length - Number(exponent);
