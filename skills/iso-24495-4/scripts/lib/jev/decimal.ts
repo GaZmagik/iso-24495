@@ -14,6 +14,23 @@ export interface Decimal {
 /** A number as JSON writes it. */
 const JSON_NUMBER = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
 
+// The bound on a number token, which is what keeps every later sum cheap.
+//
+// An exponent is applied in full, so its size decides how many digits a value
+// holds: 1e10000000 is ten characters and ten million digits. A small value
+// costs the same, because comparing 1e-10000000 with zero first writes zero at
+// that scale. A token of ten characters took about 600 ms either way.
+//
+// A score is a double the service wrote out, in about 25 characters at most.
+// Written in full, the longest double has 1,074 digits after the point and
+// the largest has 309 before it, and no double needs an exponent beyond 324.
+// Both limits sit well clear of that. A calibration cut-off has two places.
+//
+// Within the limits no value has more than 4,000 digits or a scale above
+// 4,000, and a sum or a comparison at that size takes under a millisecond.
+const MAX_TOKEN_LENGTH = 2_000;
+const MAX_EXPONENT = 2_000;
+
 function power(exponent: number): bigint {
   return 10n ** BigInt(exponent);
 }
@@ -31,14 +48,26 @@ function rescale(value: Decimal, scale: number): bigint {
  * @returns The value with every digit kept and a scale of zero or more.
  * @throws An `Error` giving the length of the token when it is not a JSON
  *     number. That covers empty text, a leading plus sign, and words such as
- *     NaN. Nothing is returned for bad input.
+ *     NaN. A JSON number is refused too when it is longer than 2,000
+ *     characters, with an `Error` giving its length, or when its exponent
+ *     lies outside -2000 to 2000, with an `Error` giving the count of digits
+ *     in that exponent. Both are refused before any arithmetic. Nothing is
+ *     returned for bad input.
  */
 export function parseDecimal(token: string): Decimal {
   const match = JSON_NUMBER.exec(token);
   if (match === null) {
     throw new Error(`Expected a JSON number such as 0.25 or -1e3; got ${token.length} characters that are not one.`);
   }
+  if (token.length > MAX_TOKEN_LENGTH) {
+    throw new Error(`Expected a JSON number of at most ${MAX_TOKEN_LENGTH} characters; got ${token.length}.`);
+  }
   const [, sign, whole, fraction = "", exponent = "0"] = match as unknown as [string, string, string, string?, string?];
+  // A run of digits too long for a double reads as Infinity, which is refused here as well.
+  if (Math.abs(Number(exponent)) > MAX_EXPONENT) {
+    const digits = exponent.replace(/^[+-]/, "").length;
+    throw new Error(`Expected a JSON number with an exponent from -${MAX_EXPONENT} to ${MAX_EXPONENT}; got an exponent of ${digits} digits.`);
+  }
   const units = BigInt(`${sign}${whole}${fraction}`);
   const scale = fraction.length - Number(exponent);
   return scale >= 0 ? { units, scale } : { units: units * power(-scale), scale: 0 };

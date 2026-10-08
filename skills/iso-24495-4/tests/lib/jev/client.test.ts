@@ -29,6 +29,42 @@ describe("exact response validation", () => {
     expect(() => readAnswers(JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.84999999999999999'), OPENING.questions)).toThrow();
     expect(readAnswers(JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.855'), OPENING.questions).purpose).toBeDefined();
   });
+  test("refuses a probability with a huge exponent as malformed, without building it", () => {
+    // JSON.parse reads 1e-10000000 as 0, which is a probability, so the plain
+    // checks pass. The exact comparison then built ten million digits to place
+    // it against zero, which took about 600 ms, and accepted it. One call per
+    // size against a fixed budget.
+    for (const number of ["1e-10000000", "0e10000000", "1e10000000"]) {
+      let message = "";
+      const started = performance.now();
+      try {
+        readAnswers(JSON.stringify(VALID).replace('"noul":0.5', `"noul":${number}`), OPENING.questions);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      const took = performance.now() - started;
+      expect(message, number).toBe("Jev returned malformed JSON.");
+      expect(took, number).toBeLessThan(100);
+    }
+  }, 60_000);
+  test("reads no answer, model or probability through a prototype the reply names", () => {
+    const reader = '{"type":"noul","noul":0.5}';
+    const purpose = JSON.stringify(VALID.answers.purpose);
+    const crafted = [
+      `{"model":"${MODEL}","answers":{"purpose":${purpose},"__proto__":{"reader":${reader}}}}`,
+      `{"model":"${MODEL}","__proto__":{"answers":{"purpose":${purpose},"reader":${reader}}}}`,
+      `{"__proto__":{"model":"${MODEL}"},"answers":{"purpose":${purpose},"reader":${reader}}}`,
+      `{"model":"${MODEL}","answers":{"purpose":${purpose},"reader":{"type":"noul","__proto__":{"noul":0.5}}}}`,
+      `{"model":"${MODEL}","answers":{"purpose":${purpose},"reader":{"type":"noul","noul":{"__proto__":0.5}}}}`,
+      `{"model":"${MODEL}","answers":{"reader":${reader},"purpose":${purpose.replace(/"probabilities":\{[^}]*\}/, match => `"probabilities":{"__proto__":${match.slice(16)}}`)}}}`,
+    ];
+    for (const text of crafted) {
+      expect(() => readAnswers(text, OPENING.questions), text).toThrow();
+    }
+    // A stray __proto__ beside valid fields is an extra key the checks never read.
+    const beside = `{"model":"${MODEL}","__proto__":{"model":"other"},"answers":{"__proto__":{"reader":{"type":"noul","noul":0.9}},"purpose":${purpose},"reader":{"type":"noul","noul":0.5,"__proto__":{"noul":0.9}}}}`;
+    expect(readAnswers(beside, OPENING.questions).reader).toEqual({ units: 5n, scale: 1 });
+  });
 });
 
 describe("transport controls", () => {
