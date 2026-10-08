@@ -1,4 +1,4 @@
-import { codeSpanEnds, inlineText, type LabelRange } from "./parse.ts";
+import { codeSpanEnds, inlineText, type LabelledLink } from "./parse.ts";
 import entities from "./html-entities.json";
 
 /** A run of one mark, and the part of it that no pair has taken yet. */
@@ -20,12 +20,17 @@ interface Run {
   scope: number;
 }
 
-/** From this offset to the next stretch, the innermost link label is `scope`. */
+/**
+ * From this offset to the next stretch, the text is in the label of link `scope`. It
+ * is `OUTSIDE` for text in no label, and `SYNTAX` for the characters of a link that are
+ * not its label: its brackets and its destination.
+ */
 interface Stretch {
   from: number;
   scope: number;
 }
 const OUTSIDE = -1;
+const SYNTAX = -2;
 const NO_LABELS: readonly Stretch[] = [{ from: 0, scope: OUTSIDE }];
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const PUNCTUATION = /[\p{P}\p{S}]/u;
@@ -83,29 +88,32 @@ export function renderInline(source: string): string {
 }
 
 /**
- * Markdown source with the marks of paired emphasis and strikethrough removed,
- * so a rule about words can read "in **order** to" as the phrase a reader sees.
+ * Text with the marks of paired emphasis and strikethrough removed, so a rule
+ * about words can read "in **order** to" as the phrase a reader sees.
  *
- * Nothing else changes. A link, a code span, a backslash escape and a
- * character reference stay as written, and no line ending is added or
- * removed, so a line of the result is the same line of the source.
+ * Nothing else changes. A code span, a backslash escape and a character
+ * reference stay as written, and no line ending is added or removed, so a
+ * line of the result is the same line of the text.
  *
- * @param source Inline Markdown, which may run over several lines. Pass a
+ * @param text Inline Markdown, which may run over several lines. Pass a
  *     whole paragraph, because emphasis can open on one line and close on a
  *     later one.
- * @param labels Where link labels sit in the source, as `emphasisMarkOffsets`
- *     takes them.
- * @returns The source without the marks `emphasisMarkOffsets` names. The
- *     source itself where it holds no paired mark, as for empty source.
+ * @param marks The offset of each mark to remove, ascending. Left out, the
+ *     marks are paired in `text` as it stands, which is right for text that
+ *     holds no link. Where links were replaced by their labels, the marks
+ *     must be paired before that, with `emphasisMarkOffsets`, and their
+ *     places in `text` passed here.
+ * @returns The text without those characters. The text itself where there is
+ *     none to remove, as for empty text.
  */
-export function withoutEmphasis(source: string, labels: readonly LabelRange[] = []): string {
+export function withoutEmphasis(text: string, marks: readonly number[] = emphasisMarkOffsets(text)): string {
   const kept: string[] = [];
   let from = 0;
-  for (const mark of emphasisMarkOffsets(source, labels)) {
-    kept.push(source.slice(from, mark));
+  for (const mark of marks) {
+    kept.push(text.slice(from, mark));
     from = mark + 1;
   }
-  kept.push(source.slice(from));
+  kept.push(text.slice(from));
   return kept.join("");
 }
 
@@ -118,60 +126,75 @@ export function withoutEmphasis(source: string, labels: readonly LabelRange[] = 
  * same way. It is counted because the struck words are still on the page: a
  * reader sees them, and a screen reader says them with no sign of the strike.
  *
- * A link is a boundary. Where links were replaced by their labels, pass where
- * the labels sit: a mark inside a label then pairs only with another in the
- * same label, and a mark outside every label only with another outside. So
+ * The marks are paired in the source with its links as written, and a link is
+ * a boundary. A mark inside a label pairs only with another in the same
+ * label, and a mark outside every label only with another outside. So
  * emphasis can still wrap a whole link, and can sit inside a label, and the
  * two asterisks of "*or[der*](u)" are left alone, as a browser leaves them.
- * A run of marks that crosses the edge of a label is read as two runs. This
- * keeps the boundary and nothing more: whether a mark may open or close is
- * still judged from the characters beside it once the link syntax is gone.
  *
- * @param source Inline Markdown, which may run over several lines.
- * @param labels Each link label in the source, by its offsets, as
- *     `labelledProseBlocks` gives them. Labels may sit inside one another and
- *     must not otherwise overlap. With none, the whole source is one text.
- * @returns The offset of every `*`, `_` and `~` that belongs to a pair, in
- *     ascending order, one entry for each character. A mark with no partner,
- *     an escaped mark and a mark inside a code span are not listed. Empty
- *     when nothing is paired, as for empty source.
+ * Whether a mark may open or close is judged from the characters beside it in
+ * that source, a bracket of the link included. The mark in "or*[der](u)" stands
+ * before a bracket, so it cannot open, though it would between the letters of
+ * "or*der". A mark in a destination or a title is part of the link and is
+ * never paired.
+ *
+ * @param source Inline Markdown with its links as written, which may run over
+ *     several lines.
+ * @param links Each link in the source that a reader sees as its label, as a
+ *     `LabelledBlock` gives them: in the order they start, one inside the
+ *     label of another or wholly apart. With none, every bracket is read as
+ *     an ordinary character and the whole source is one text.
+ * @returns The offset in `source` of every `*`, `_` and `~` that belongs to a
+ *     pair, in ascending order, one entry for each character. A mark with no
+ *     partner, an escaped mark and a mark inside a code span are not listed.
+ *     Empty when nothing is paired, as for empty source.
  */
-export function emphasisMarkOffsets(source: string, labels: readonly LabelRange[] = []): number[] {
-  return pairedMarks(delimiterRuns(source, EMPHASIS + STRIKE, labelStretches(labels))).sort((a, b) => a - b);
+export function emphasisMarkOffsets(source: string, links: readonly LabelledLink[] = []): number[] {
+  return pairedMarks(delimiterRuns(source, EMPHASIS + STRIKE, linkStretches(links))).sort((a, b) => a - b);
 }
 
 /**
- * The text cut into stretches at every edge of a label, each with the innermost label
- * it lies in. The first stretch starts at offset 0.
+ * The text cut into stretches at the start of each link, at each end of its label and
+ * at its end. The first stretch starts at offset 0, and no two start at one offset.
  */
-function labelStretches(labels: readonly LabelRange[]): readonly Stretch[] {
-  if (labels.length === 0) return NO_LABELS;
-  const edges: Array<{ at: number; opens: boolean; id: number; end: number }> = [];
-  labels.forEach((label, id) => {
-    // An empty label holds no character, so it bounds nothing.
-    if (label.start >= label.end) return;
-    edges.push({ at: label.start, opens: true, id, end: label.end });
-    edges.push({ at: label.end, opens: false, id, end: label.end });
-  });
-  // At one offset the labels that end there close first. Of those that start there,
-  // the one that reaches furthest is the outer one, so it opens first.
-  edges.sort((a, b) => a.at - b.at || Number(a.opens) - Number(b.opens) || b.end - a.end);
+function linkStretches(links: readonly LabelledLink[]): readonly Stretch[] {
+  if (links.length === 0) return NO_LABELS;
   const stretches: Stretch[] = [{ from: 0, scope: OUTSIDE }];
+  // The links whose label holds the place reached, outermost first, each by its index.
   const open: number[] = [];
-  for (let index = 0; index < edges.length; index++) {
-    const edge = edges[index] as { at: number; opens: boolean; id: number };
-    if (edge.opens) open.push(edge.id);
-    else open.pop();
-    if (edges[index + 1]?.at === edge.at) continue;
-    stretches.push({ from: edge.at, scope: open.at(-1) ?? OUTSIDE });
+  for (let id = 0; id <= links.length; id++) {
+    // Every link that ends before this one starts is closed first, innermost first.
+    // After the last link, all that are still open are closed.
+    const reached = links[id]?.start ?? Infinity;
+    while (open.length > 0 && (links[open.at(-1) as number] as LabelledLink).labelEnd <= reached) {
+      const closed = links[open.pop() as number] as LabelledLink;
+      startStretch(stretches, closed.labelEnd, SYNTAX);
+      startStretch(stretches, closed.end, open.at(-1) ?? OUTSIDE);
+    }
+    const link = links[id];
+    if (link === undefined) break;
+    startStretch(stretches, link.start, SYNTAX);
+    startStretch(stretches, link.labelStart, id);
+    open.push(id);
   }
   return stretches;
 }
 
 /**
+ * Starts a stretch at an offset. One that would hold no character is replaced: an empty
+ * label, or the text between two links that touch.
+ */
+function startStretch(stretches: Stretch[], from: number, scope: number): void {
+  const last = stretches.at(-1) as Stretch;
+  if (last.from === from) last.scope = scope;
+  else stretches.push({ from, scope });
+}
+
+/**
  * Every run of the given marks that stands outside a code span and is not escaped.
  *
- * @param stretches Where the link labels sit. A run ends at the edge of a stretch.
+ * @param stretches Where the links sit. A run ends at the edge of a stretch, and a
+ *     mark in the syntax of a link is not a run.
  */
 function delimiterRuns(text: string, markers: string, stretches: readonly Stretch[] = NO_LABELS): Run[] {
   const spans = codeSpanEnds(text);
@@ -193,7 +216,12 @@ function delimiterRuns(text: string, markers: string, stretches: readonly Stretc
     }
     while (((stretches[stretch + 1] as Stretch | undefined)?.from ?? Infinity) <= index) stretch++;
     const limit = (stretches[stretch + 1] as Stretch | undefined)?.from ?? text.length;
-    const run = runAt(text, index, limit, (stretches[stretch] as Stretch).scope);
+    const scope = (stretches[stretch] as Stretch).scope;
+    if (scope === SYNTAX) {
+      index = limit;
+      continue;
+    }
+    const run = runAt(text, index, limit, scope);
     // One tilde is a subscript to some renderers and three open a code fence.
     if (run.marker !== STRIKE || run.original === 2) runs.push(run);
     index = run.end;

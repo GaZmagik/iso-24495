@@ -5,8 +5,10 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
+  flattenedOffsets,
   headings,
   labelledHeadings,
+  labelledLinks,
   labelledProseBlocks,
   type LabelledBlock,
   markdownLinks,
@@ -751,7 +753,7 @@ function acronymViolations(
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
   let recent: string[] = [];
   let previousBlock: number | undefined;
-  const marksByLine = pairedMarksByLine(document.lines, blockOfLine);
+  const marksByLine = pairedMarksByLine(document.lines, blockOfLine, document.references);
   for (let i = 0; i < document.lines.length; i++) {
     if (document.hidden(i)) continue;
     const block = blockOfLine.get(i);
@@ -842,17 +844,26 @@ function acronymViolations(
  * gave two initials and the expansion did not spell the acronym. The uses of an acronym
  * were already read a block at a time, and the two readings now agree.
  *
+ * They agree about links as well. The links are still written out in these lines, and
+ * the marks are paired as `readerMarks` pairs them: inside one label, or outside every
+ * label, and never with a mark in a destination. Pairing them with no regard to a link
+ * took the two asterisks of "identi*ty and access" above "management [*(IAM)](u)" for a
+ * pair. That read a definition which the scan for uses, like a browser, did not see.
+ *
  * A line in no block, such as a table row, is paired alone.
  *
  * @param lines The document as `readDocument` gives it, one entry for each source line.
  * @param blockOfLine The block each line sits in, by the index of the line. Lines of one
  *     block share a number and follow one another.
+ * @param references The labels the document defines, which decide whether a reference
+ *     is a link.
  * @returns One list for each line, in the same order: the offsets of its paired marks,
  *     ascending and counted from the start of that line. Empty for a line with none.
  */
 function pairedMarksByLine(
   lines: readonly string[],
   blockOfLine: ReadonlyMap<number, number>,
+  references: ReadonlySet<string>,
 ): number[][] {
   const marksByLine: number[][] = lines.map(() => []);
   for (let first = 0; first < lines.length;) {
@@ -861,7 +872,8 @@ function pairedMarksByLine(
     while (block !== undefined && blockOfLine.get(last + 1) === block) last++;
     let line = first;
     let lineStart = 0;
-    for (const mark of emphasisMarkOffsets(lines.slice(first, last + 1).join("\n"))) {
+    const source = lines.slice(first, last + 1).join("\n");
+    for (const mark of emphasisMarkOffsets(source, labelledLinks(source, references))) {
       // A mark is never the line break, so this stops on the line that holds it.
       while (mark > lineStart + (lines[line] as string).length) {
         lineStart += (lines[line] as string).length + 1;
@@ -878,15 +890,13 @@ function pairedMarksByLine(
  * The words of a block as a reader sees them, each at its place in the source.
  *
  * Paired emphasis marks are taken out of each word, so "**IAM**" is the acronym and
- * "**(identity" opens an expansion. The marks are paired across the whole block, because
- * emphasis can open on one line and close on the next, and never across the edge of a
- * link label. The column is where the first
+ * "**(identity" opens an expansion. The marks are the ones `readerMarks` gives. The column is where the first
  * character left of the word sits in the source line, marks before it counted. It is
  * compared with where a definition sits in that line, so "**(IAM)**" must not appear to
  * start before its own bracket.
  */
 function unmarkedTokens(block: LabelledBlock): Array<{ raw: string; line: number; column: number }> {
-  const marks = new Set(emphasisMarkOffsets(block.lines.join("\n"), block.labels));
+  const marks = new Set(readerMarks(block));
   const tokens: Array<{ raw: string; line: number; column: number }> = [];
   let lineStart = 0;
   for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex++) {
@@ -969,15 +979,13 @@ const PROPER_NAME_CONTEXT = new RegExp(
  * reported where the whole phrase was struck. Code spans and escaped marks stay as
  * written, so a term in backticks is still named and not used.
  *
- * A link is read as its label, and the edge of the label still counts. A mark outside
- * a link is not paired with a mark inside it, because a browser does not pair them:
- * "in *or[der*](u) to" shows both asterisks, and the reader does not see the phrase.
+ * A link is read as its label, and the link still counts when the marks are paired,
+ * as `readerMarks` describes.
  */
 function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
   const blocks = [
     ...labelledProseBlocks(text, reading).map(withoutEmphasisMarks),
-    ...labelledHeadings(text, reading)
-      .map((heading) => ({ line: heading.line, lines: [withoutEmphasis(heading.lines[0] as string, heading.labels)] })),
+    ...labelledHeadings(text, reading).map(withoutEmphasisMarks),
   ];
   return blocks.sort((a, b) => a.line - b.line);
 }
@@ -985,12 +993,28 @@ function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
 /**
  * The block with its paired emphasis marks removed, on the same lines.
  *
- * The marks are paired across the whole block, because emphasis can open on one line
- * and close on the next, and never across the edge of a link label. No line ending is
- * removed, so each line keeps its number.
+ * No line ending is removed, so each line keeps its number.
  */
 function withoutEmphasisMarks(block: LabelledBlock): ProseBlock {
-  return { line: block.line, lines: withoutEmphasis(block.lines.join("\n"), block.labels).split("\n") };
+  return { line: block.line, lines: withoutEmphasis(block.lines.join("\n"), readerMarks(block)).split("\n") };
+}
+
+/**
+ * Where the paired emphasis marks of a block sit in its lines joined by line breaks.
+ *
+ * The marks are paired in the text the block was read from, where each link is still
+ * written out, and across the whole block, because emphasis can open on one line and
+ * close on the next. A browser pairs them there, and two things follow that the
+ * reader text alone cannot show. A mark outside a link is not paired with a mark
+ * inside it: "in *or[der*](u) to" shows both asterisks. And a mark beside a bracket is
+ * judged beside that bracket: "in or*[der](u)* to" shows both asterisks too, though the
+ * reader text has the first between two letters. Each mark is then found again in the
+ * reader text, where the rules about words look for it.
+ *
+ * @returns The offsets, ascending. Empty for a block with no paired mark.
+ */
+function readerMarks(block: LabelledBlock): number[] {
+  return flattenedOffsets(emphasisMarkOffsets(block.source, block.links), block.source, block.links);
 }
 
 function legaleseViolations(text: string, reading: Reading): Violation[] {
@@ -1347,8 +1371,8 @@ function proseEnumerationViolations(text: string, reading: Reading): Violation[]
   const violations: Violation[] = [];
   for (const block of labelledProseBlocks(text, reading)) {
     // Read without emphasis marks, which hid "_First_" and "**(1)**" from the patterns.
-    // A space is as long as the line break it stands for, so the labels stay in place.
-    const paragraph = withoutEmphasis(block.lines.join(" "), block.labels);
+    // A space is as long as the line break it stands for, so each mark keeps its place.
+    const paragraph = withoutEmphasis(block.lines.join(" "), readerMarks(block));
     const ranks = new Set<number>();
     // A hyphenated compound is one word, not a rank: "third-party service" is
     // not a third item, and counting it turned ordinary prose into a finding.

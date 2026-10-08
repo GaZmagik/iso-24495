@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditCorpus, runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
@@ -669,13 +669,12 @@ describe("a command never passes on what the runtime said about a failure", () =
         (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", broken], out, err),
         "score-maturity: <answers.json> names a file of 23 characters that is not valid JSON",
       );
-      // Valid JSON of the wrong shape: the scoring itself throws.
+      // Valid JSON of the wrong shape is refused before anything is scored.
       const shapeless = join(workspace, "null.json");
       writeFileSync(shapeless, "null");
       expectFixedFailure(
         (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", shapeless], out, err),
-        "score-maturity: stopped by an unexpected TypeError; "
-          + "check that <answers.json> holds the documented shape",
+        "score-maturity: <answers.json> must be an object; got null",
       );
       const report = join(workspace, MARKER, "maturity.json");
       expectFixedFailure(
@@ -721,13 +720,12 @@ describe("a command never passes on what the runtime said about a failure", () =
         "generate-report: --state names a file of 9 characters that is not valid JSON",
       );
 
-      // Valid JSON of the wrong shape: building the report itself throws.
+      // Valid JSON of the wrong shape is refused before the report is built.
       const shapeless = join(workspace, "empty.json");
       writeFileSync(shapeless, "{}");
       expectFixedFailure(
         report(shapeless, shapeless, shapeless),
-        "generate-report: stopped by an unexpected TypeError; "
-          + "check that each input file holds what its command wrote",
+        'generate-report: <findings.json>, "configHash" must be a string; got nothing',
       );
 
       const lost = join(workspace, MARKER, "out");
@@ -741,6 +739,125 @@ describe("a command never passes on what the runtime said about a failure", () =
         `generate-report: --out names a path of ${lost.length} characters that cannot be written: `
           + "no such file or directory",
       );
+    });
+  });
+
+  // A value of the wrong shape does not always throw. The number 42 has no
+  // "dimensions", so it scored as an organisation that had answered nothing,
+  // and the command reported success.
+  test("score-maturity refuses answers of the wrong shape, and scores nothing", () => {
+    withWorkspace((workspace) => {
+      const answers = join(workspace, "answers.json");
+      const scores = join(workspace, "scores.json");
+      const refused: Array<[text: string, problem: string]> = [
+        ["42", "<answers.json> must be an object; got a number"],
+        [`"${MARKER}"`, "<answers.json> must be an object; got a string"],
+        ["[]", "<answers.json> must be an object; got an array"],
+        ["{}", '<answers.json>, "dimensions" must be an object; got nothing'],
+        [`{"dimensions": ["${MARKER}"]}`, '<answers.json>, "dimensions" must be an object; got an array'],
+        [`{"dimensions": {"governance": {}, "${MARKER}": 1}}`,
+          '<answers.json>, "dimensions", entry 2 must be an object; got a number'],
+        [`{"dimensions": {"governance": {"policy-documented": "${MARKER}"}}}`,
+          '<answers.json>, "dimensions", entry 1, entry 1 must be true or false; got a string'],
+        ['{"organisation": 7, "dimensions": {}}', '<answers.json>, "organisation" must be a string; got a number'],
+      ];
+      for (const [text, problem] of refused) {
+        writeFileSync(answers, text);
+        expectFixedFailure(
+          (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", answers, "--json", scores], out, err),
+          `score-maturity: ${problem}`,
+        );
+        expect(existsSync(scores), text).toBe(false);
+      }
+      // A dimension left out, or one the catalogue does not list, is still scored.
+      writeFileSync(answers, '{"dimensions": {"governance": {"policy-documented": true}, "other": {}}}');
+      const output = capture();
+      expect(runMaturityCli(["bun", "score-maturity-cli.ts", answers], output.writeOut, output.writeErr)).toBe(0);
+      expect(output.stdout).toContain("| governance | 1 | owner-accountable |");
+    });
+  });
+
+  // The reviewer gave it {"totals":{}}, {"artefacts":{}} and
+  // {"dimensions":{},"overall":99}. It printed an overall maturity of 99 and
+  // added "overall: 99" to the audit history.
+  test("generate-report refuses an input of the wrong shape, and leaves the history alone", () => {
+    withWorkspace((workspace) => {
+      const write = (name: string, value: unknown): string => {
+        const path = join(workspace, name);
+        writeFileSync(path, JSON.stringify(value));
+        return path;
+      };
+      const levels = (level: unknown) => Object.fromEntries(
+        ["governance", "capability", "process", "measurement", "culture"]
+          .map((dimension) => [dimension, { level, missing: [] }]),
+      );
+      const findings = write("findings.json", { configHash: "abcd1234", files: {}, totals: { legalese: 2 } });
+      const evidence = write("evidence.json", { artefacts: { policy: { found: true, paths: ["policy.md"] } } });
+      const maturity = write("maturity.json", { dimensions: levels(2), overall: 2 });
+      const state = join(workspace, "state.json");
+      const run = (...inputs: string[]) =>
+        (out: (text: string) => number, err: (text: string) => number) => runReportCli(
+          ["bun", "generate-report-cli.ts", ...inputs, "--state", state], out, err, () => "2026-10-06T12:00:00.000Z");
+      const bad = (value: unknown): string => write("bad.json", value);
+
+      // The three files the reviewer used, together and then one at a time.
+      expectFixedFailure(
+        run(write("f.json", { totals: {} }), write("e.json", { artefacts: {} }), write("m.json", { dimensions: {}, overall: 99 })),
+        'generate-report: <findings.json>, "configHash" must be a string; got nothing',
+      );
+      expect(existsSync(state), "a refused audit must not start a history").toBe(false);
+      const refused: Array<[which: number, value: unknown, problem: string]> = [
+        [0, 42, "<findings.json> must be an object; got a number"],
+        [0, { configHash: "c", files: {}, totals: { legalese: MARKER } },
+          '<findings.json>, "totals", entry 1 must be a whole number of 0 or more; got a string'],
+        [0, { configHash: "c", files: { [MARKER]: { violations: [{ rule: "r", line: 1 }] } }, totals: {} },
+          '<findings.json>, "files", entry 1, "violations", entry 1, "detail" must be a string; got nothing'],
+        [1, {}, '<evidence.json>, "artefacts" must be an object; got nothing'],
+        [1, { artefacts: { policy: { found: "yes", paths: [] } } },
+          '<evidence.json>, "artefacts", entry 1, "found" must be true or false; got a string'],
+        [1, { artefacts: { policy: { found: true, paths: [7] } } },
+          '<evidence.json>, "artefacts", entry 1, "paths", entry 1 must be a string; got a number'],
+        [2, { dimensions: {}, overall: 99 }, '<maturity.json>, "dimensions", "governance" must be an object; got nothing'],
+        [2, { dimensions: levels(2), overall: 99 },
+          '<maturity.json>, "overall" must be a whole number from 0 to 4; got a whole number outside that range'],
+        [2, { dimensions: levels(5), overall: 4 },
+          '<maturity.json>, "dimensions", "governance", "level" must be a whole number from 0 to 4; got a whole number outside that range'],
+        [2, { dimensions: levels(2.5), overall: 2 },
+          '<maturity.json>, "dimensions", "governance", "level" must be a whole number from 0 to 4; got a number that is not whole'],
+        [2, { dimensions: { ...levels(2), [MARKER]: { level: 1, missing: [] } }, overall: 2 },
+          '<maturity.json>, "dimensions" must hold no member but those its shape names; got 1 more'],
+        [2, { dimensions: levels(2), overall: 3 },
+          '<maturity.json>, "overall" must be the lowest level of any dimension; got another whole number'],
+      ];
+      for (const [which, value, problem] of refused) {
+        const inputs = [findings, evidence, maturity];
+        inputs[which] = bad(value);
+        expectFixedFailure(run(...inputs), `generate-report: ${problem}`);
+        expect(existsSync(state), problem).toBe(false);
+      }
+
+      // A sound audit starts the history, and a refused one after it adds nothing.
+      const sound = capture();
+      expect(run(findings, evidence, maturity)(sound.writeOut, sound.writeErr)).toBe(0);
+      const history = readFileSync(state, "utf8");
+      expect(JSON.parse(history).snapshots).toHaveLength(1);
+      expectFixedFailure(
+        run(findings, evidence, bad({ dimensions: {}, overall: 99 })),
+        'generate-report: <maturity.json>, "dimensions", "governance" must be an object; got nothing',
+      );
+      expect(readFileSync(state, "utf8")).toBe(history);
+
+      // The history is an input too, and is refused the same way without being replaced.
+      for (const [value, problem] of [
+        [{ snapshots: MARKER }, '--state, "snapshots" must be an array; got a string'],
+        [{ snapshots: [{ timestamp: "t", totals: {}, overall: 99 }] },
+          '--state, "snapshots", entry 1, "overall" must be a whole number from 0 to 4; got a whole number outside that range'],
+      ] as Array<[unknown, string]>) {
+        const written = JSON.stringify(value);
+        writeFileSync(state, written);
+        expectFixedFailure(run(findings, evidence, maturity), `generate-report: ${problem}`);
+        expect(readFileSync(state, "utf8")).toBe(written);
+      }
     });
   });
 

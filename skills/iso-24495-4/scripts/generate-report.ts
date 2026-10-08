@@ -2,8 +2,10 @@
 // append a snapshot to the audit state. State is append-only: history is
 // never rewritten, so successive audits prove (or disprove) progress.
 
+import { EVIDENCE_SHAPE, FINDINGS_SHAPE, MATURITY_SHAPE, STATE_SHAPE } from "./lib/types.ts";
 import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
-import { readJsonFile, unexpectedKind, writeTextFile, type JsonFile } from "./lib/failure.ts";
+import { readJsonFile, writeTextFile, type JsonFile } from "./lib/failure.ts";
+import { shapeProblem } from "./lib/json-shape.ts";
 import { safeCell } from "./lib/safe-text.ts";
 import { existsSync } from "node:fs";
 
@@ -21,6 +23,11 @@ import { existsSync } from "node:fs";
  * Exit 0 means the report was produced. Exit 1 means a file could not be read
  * or written, or an input did not hold the shape its command writes. Exit 2
  * means the arguments were wrong.
+ *
+ * Every input is checked against its shape in `lib/types.ts` before the
+ * report is built, the state file included when it exists. A maturity file
+ * must also give the lowest level of its dimensions as `overall`. An input
+ * that is refused leaves the state file as it was, and no report is written.
  *
  * The state is written before the report. So exit 1 from a failed `--out`
  * leaves this audit recorded, and a second run records it twice.
@@ -71,39 +78,54 @@ export function runCli(
     values.push(input.value);
   }
   const [priorState, findings, evidence, maturity] = values;
-  try {
-    const { report, state } = generateReport({
-      findings: findings as Findings,
-      evidence: evidence as Evidence,
-      maturity: maturity as Maturity,
-      state: priorState as AuditState | null,
-      now: now(),
-    });
-    const stateProblem = statePath ? writeTextFile(statePath, JSON.stringify(state, null, 2), "--state") : null;
-    if (stateProblem !== null) {
-      stderr(`generate-report: ${stateProblem}`);
-      return 1;
-    }
-    if (outFlag === -1) {
-      stdout(report);
-      return 0;
-    }
-    const reportProblem = writeTextFile(argv[outFlag + 1], report, "--out");
-    if (reportProblem !== null) {
-      stderr(`generate-report: ${reportProblem}`);
-      return 1;
-    }
-    return 0;
-  } catch (error) {
-    // Every file was read and parsed above, and both files are written without
-    // throwing. So what remains is an input of a shape the report cannot be
-    // built from.
-    stderr(
-      `generate-report: stopped by ${unexpectedKind(error)}; `
-        + "check that each input file holds what its command wrote",
-    );
+  const shape = shapeProblem(findings, FINDINGS_SHAPE, "<findings.json>")
+    ?? shapeProblem(evidence, EVIDENCE_SHAPE, "<evidence.json>")
+    ?? maturityProblem(maturity)
+    ?? (priorState === null ? null : shapeProblem(priorState, STATE_SHAPE, "--state"));
+  if (shape !== null) {
+    stderr(`generate-report: ${shape}`);
     return 1;
   }
+  // Each value was checked against the shape of its type just above.
+  const { report, state } = generateReport({
+    findings: findings as Findings,
+    evidence: evidence as Evidence,
+    maturity: maturity as Maturity,
+    state: priorState as AuditState | null,
+    now: now(),
+  });
+  const stateProblem = statePath ? writeTextFile(statePath, JSON.stringify(state, null, 2), "--state") : null;
+  if (stateProblem !== null) {
+    stderr(`generate-report: ${stateProblem}`);
+    return 1;
+  }
+  if (outFlag === -1) {
+    stdout(report);
+    return 0;
+  }
+  const reportProblem = writeTextFile(argv[outFlag + 1], report, "--out");
+  if (reportProblem !== null) {
+    stderr(`generate-report: ${reportProblem}`);
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * What is wrong with a parsed maturity file, or null when it is sound.
+ *
+ * The shape alone lets through a file whose `overall` is not the lowest level
+ * of its dimensions, which the report would print and the history would keep.
+ */
+function maturityProblem(maturity: unknown): string | null {
+  const shape = shapeProblem(maturity, MATURITY_SHAPE, "<maturity.json>");
+  if (shape !== null) return shape;
+  // The value was checked against the shape of the type on the line above.
+  const { dimensions, overall } = maturity as Maturity;
+  const lowest = Math.min(...Object.values(dimensions).map((dimension) => dimension.level));
+  return overall === lowest
+    ? null
+    : '<maturity.json>, "overall" must be the lowest level of any dimension; got another whole number';
 }
 
 export interface ReportInput {

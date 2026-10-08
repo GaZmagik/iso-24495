@@ -1704,6 +1704,46 @@ describe("repository writing conventions", () => {
         }
       }, 60_000);
 
+      // The argument is text nobody has read. Printed back, an escape character in
+      // it drives the terminal that shows the message, and a right-to-left override
+      // reorders the line. So each message gives the argument by its length alone.
+      test("a path the script refuses is never printed back", () => {
+        const escape = String.fromCharCode(27);
+        const override = String.fromCharCode(0x202e);
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-refused-"));
+        try {
+          const refused: Array<[fault: string, path: string, message: RegExp]> = [
+            ["no directory", `${forBash(directory)}/gone${escape}[2J${override}dir/description.md`,
+              /^There is no directory holding the path given as the first argument, which is \d+ characters long, so nothing can be read.\n$/],
+            ["no file", `${forBash(directory)}/gone${escape}[2J${override}.md`,
+              /^The path given as the first argument, \d+ characters long, names no file to read.\n$/],
+          ];
+          for (const [fault, path, message] of refused) {
+            const result = runCheck(auditScript, path);
+            expect(result.status, fault).toBe(2);
+            expect(result.output, fault).toMatch(message);
+            for (const part of [escape, override, "[2J", "gone"]) {
+              expect(result.output.includes(part), `${fault}: part of the path was printed`).toBe(false);
+            }
+          }
+          // The length is that of the argument as it was given, not as it was resolved.
+          const plain = `${forBash(directory)}/gone${escape}[2J.md`;
+          expect(runCheck(auditScript, plain).output)
+            .toBe(`The path given as the first argument, ${plain.length} characters long, names no file to read.\n`);
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+        // Two of the four messages need a file that exists and cannot be read, which
+        // the tests below can build on one platform each. So the script itself is read:
+        // no line that prints may name the variable that holds the path.
+        const printing = readFileSync(auditScript, "utf8").split("\n")
+          .filter((line) => /^\s*(?:echo|printf|report)\b/.test(line));
+        expect(printing.length).toBeGreaterThan(10);
+        for (const line of printing) {
+          expect(/\$\{?(?:TEXT|GIVEN|DIRECTORY)\b/.test(line), line).toBe(false);
+        }
+      });
+
       // The script promises exit 2 for a file it cannot read, but a permission
       // error from grep fell through to "no text" with exit 1.
       test("an unreadable file exits 2, not 1", () => {
