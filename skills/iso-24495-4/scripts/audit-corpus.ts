@@ -939,16 +939,25 @@ function whereAlike(one: string, two: string): string {
   return alike;
 }
 
-/** The source lines of a document, and for each line a 1 at every place where link syntax stands. */
+/**
+ * The source lines of a document, and for each line a 1 at every place where link
+ * syntax stands. A place is one UTF-16 unit, which is what an index into a string
+ * counts, so a character outside the basic plane is two places.
+ */
 interface LinkSyntax {
   written: string[];
   removed: Uint8Array[];
 }
 
-/** The document with `mark` at every place where link syntax stands, and nothing else changed. */
+/**
+ * The document with `mark` at every place where link syntax stands, and nothing else changed.
+ *
+ * A line is walked by UTF-16 unit, as the mask counts it. It was once spread into code
+ * points, so one character outside the basic plane moved every later mark on its line.
+ */
 function marked(syntax: LinkSyntax, mark: string): string {
   return syntax.written
-    .map((line, index) => [...line].map((unit, at) => ((syntax.removed[index] as Uint8Array)[at] === 1 ? mark : unit)).join(""))
+    .map((line, index) => line.split("").map((unit, at) => ((syntax.removed[index] as Uint8Array)[at] === 1 ? mark : unit)).join(""))
     .join("\n");
 }
 
@@ -1024,8 +1033,8 @@ interface OpenBracket {
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
  *     gives it.
- * @returns One entry for each character of the block: 1 where it is link syntax, and 0
- *     elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
+ * @returns One entry for each UTF-16 unit of the block, which is each place an index
+ *     into `source` counts: 1 where it is link syntax, and 0 elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
  *     cells. The entry for a line break means nothing: the caller takes the lines one
  *     at a time. All 0 where the block holds no link, and empty for empty text.
  */

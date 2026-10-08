@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { acronymReading } from "../scripts/audit-corpus.ts";
+import { acronymReading, auditText, linkSyntaxIn } from "../scripts/audit-corpus.ts";
 import { proseBlocks } from "../scripts/lib/parse.ts";
 import { GITHUB_LINK_FORMS } from "./fixtures/github-link-forms.ts";
 
@@ -43,13 +43,14 @@ const RENDERERS_MAY_DIFFER: Array<[name: string, shaped: (label: string, tail: s
   ["a closing bracket and a parenthesis inside a destination", (_label, tail) => tail.includes("](")],
   // "[[[c](d)]](zed)": a link cannot hold a link, so GitHub shows the outer brackets as
   // text. Bun does the same one bracket deep, and makes a link of the outer pair at two.
-  ["a link two brackets deep in a label", (label) => label.includes("[[c](d)]")],
+  // Anything may stand between the two brackets, as a code span does in "[[`]`[c](d)]](zed)".
+  ["a link two brackets deep in a label", (label) => /\[[^]*\[c\]\(d\)\]/.test(label)],
 ];
 
 describe("what the acronym rule takes for a link is what a renderer shows as one", () => {
   test("in generated forms of a label and what follows it", () => {
     const random = generator(24495);
-    const counts = { agreeWithBun: 0, links: 0, text: 0, setAside: 0, heldByGitHub: 0 };
+    const counts = { agreeWithBun: 0, links: 0, text: 0, setAside: 0, heldByGitHub: 0, noBreakSpaceAlone: 0, withAnOddCharacter: 0 };
     const differing: string[] = [];
     const answersUsed = new Set<string>();
     for (let made = 0; made < CASES; made++) {
@@ -59,6 +60,14 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const html = Bun.markdown.html(document);
       // A form that ends the paragraph, as a blank line would, is no single block.
       if (!html.startsWith("<p>") || html.indexOf("<p>", 1) !== -1 || !html.trimEnd().endsWith("</p>")) continue;
+      // The parser takes a line that holds only a no-break space for a blank line, and
+      // ends the paragraph there. Bun and GitHub do not. parse.ts is older than this
+      // rule and is not held here, so such a form is passed over, and counted.
+      if (document.split(BREAK).some((line) => line.includes(NO_BREAK_SPACE) && line.trim() === "")) {
+        counts.noBreakSpaceAlone++;
+        continue;
+      }
+      if (/[^ -~]/.test(document.replaceAll(BREAK, ""))) counts.withAnOddCharacter++;
       const shown = lettersShown(html);
       const read = words(readingText(document));
       if (read === shown) {
@@ -80,8 +89,10 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
     expect(differing.slice(0, 5)).toEqual([]);
     expect(differing).toHaveLength(0);
     // Pinned, so that a change to the generator cannot quietly empty either side.
-    expect(counts).toEqual({ agreeWithBun: 39_267, links: 26_812, text: 12_455, setAside: 374, heldByGitHub: 374 });
-    // The generator makes some forms twice, so the 374 are 355 documents, and the fixture
+    expect(counts).toEqual({
+      agreeWithBun: 39_479, links: 27_686, text: 11_793, setAside: 275, heldByGitHub: 275, noBreakSpaceAlone: 2, withAnOddCharacter: 22_443,
+    });
+    // The generator makes some forms twice, so the 275 are 263 documents, and the fixture
     // holds no answer that nothing asks for.
     expect(answersUsed.size).toBe(GITHUB_SHOWS.size);
     expect(GITHUB_SHOWS.size).toBe(GITHUB_LINK_FORMS.length);
@@ -129,7 +140,145 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
         .toEqual(proseBlocks(document).map((block) => [block.line, block.lines.length]));
     }
   });
+  // The reading once marked a line by its UTF-16 units and dropped the marks by code
+  // points, so one character outside the basic plane moved every later place on its
+  // line. No form above could show it: the generator made no such character.
+  test("every place the reading drops is a place the mask marks, and every place the mask marks is dropped", () => {
+    const random = generator(8008);
+    const counts = { held: 0, heldWithATag: 0, notOneBlock: 0, notFollowedBack: 0, aLinkTookPartOfATag: 0, marked: 0, oddBeforeAMark: 0 };
+    for (let made = 0; made < 20_000; made++) {
+      const document = `${pieces(random, ODD, 3)}identity ${pieces(random, ODD, 2)}[${pieces(random, LABEL, 4)}](${pieces(random, TAIL, 5)}) and${pieces(random, ODD, 2)} [x](u) here.`;
+      // The parser changes a line in two ways, and `placesOf` follows both back to the
+      // line as written: it takes the white space off the start, and it makes a tag or
+      // a comment into one space. A form is set aside, and counted, where the parser
+      // makes more than one block of it, as at a blank line; where a line cannot be
+      // followed back; and where a link takes part of what the parser read as a tag.
+      const written = document.split(BREAK);
+      const blocks = proseBlocks(document);
+      const parsed = blocks.length === 1 ? (blocks[0]?.lines ?? []) : [];
+      if (parsed.length !== written.length) {
+        counts.notOneBlock++;
+        continue;
+      }
+      const mask = linkSyntaxIn(document, new Set());
+      expect(mask).toHaveLength(document.length);
+      const kept: string[] = [];
+      let start = 0;
+      let setAside = "";
+      let marked = 0;
+      let tagged = false;
+      written.forEach((line, index) => {
+        const cut = line.length - line.trimStart().length;
+        const places = placesOf(parsed[index] as string, line.slice(cut));
+        if (places === null) {
+          setAside ||= "notFollowedBack";
+          return;
+        }
+        let text = "";
+        places.forEach(([from, to], at) => {
+          const inSyntax = mask.subarray(start + cut + from, start + cut + to).reduce((sum, entry) => sum + entry, 0);
+          if (inSyntax === 0) {
+            text += (parsed[index] as string)[at];
+          } else if (inSyntax < to - from) {
+            setAside ||= "aLinkTookPartOfATag";
+          }
+        });
+        if (places.length < line.length - cut) tagged = true;
+        marked += mask.subarray(start, start + line.length).reduce((sum, entry) => sum + entry, 0);
+        kept.push(text);
+        start += line.length + 1;
+      });
+      if (setAside !== "") {
+        counts[setAside as "notFollowedBack" | "aLinkTookPartOfATag"]++;
+        continue;
+      }
+      const read = acronymReading(document);
+      if (JSON.stringify(read.blocks) !== JSON.stringify([{ line: 1, lines: kept }])) {
+        expect(read.blocks, JSON.stringify(document)).toEqual([{ line: 1, lines: kept }]);
+      }
+      counts.marked += marked;
+      if (tagged) counts.heldWithATag++;
+      const firstMark = mask.indexOf(1);
+      if (firstMark !== -1 && /[^ -~]/.test(document.slice(0, firstMark).replaceAll(BREAK, ""))) counts.oddBeforeAMark++;
+      counts.held++;
+    }
+    expect(counts).toEqual({ held: 19_873, heldWithATag: 5_897, notOneBlock: 127, notFollowedBack: 0, aLinkTookPartOfATag: 0, marked: 190_972, oddBeforeAMark: 18_783 });
+  }, 120_000);
+
+  // The case a review found, made general: an emoji before a link is an ordinary line.
+  test("characters that are no word, put before a line with a link and an acronym, leave its findings as they were", () => {
+    const random = generator(9009);
+    const findings = (text: string): string[] => auditText(text).map((found) => `${found.rule} at line ${found.line}: ${found.detail}`);
+    const counts = { lines: 0, withAFinding: 0, withAnAcronymFinding: 0 };
+    for (let made = 0; made < 3_000; made++) {
+      const line = `${pick(random, ["identity and access", "Identity and access", "The"])} [${pieces(random, LABEL, 3)}](${pieces(random, TAIL, 4)}) `
+        + `${pick(random, ["(IAM).", "management (IAM).", "IAM.", "[management](guide) (IAM)."])} Use IAM in order to see [x](u).`;
+      const prefix = pieces(random, ODD, 8) + pick(random, ODD);
+      const plain = findings(line);
+      const prefixed = findings(prefix + line);
+      if (JSON.stringify(prefixed) !== JSON.stringify(plain)) {
+        expect(prefixed, JSON.stringify(prefix + line)).toEqual(plain);
+      }
+      counts.lines++;
+      if (plain.length > 0) counts.withAFinding++;
+      if (plain.some((found) => found.startsWith("acronym"))) counts.withAnAcronymFinding++;
+    }
+    expect(counts).toEqual({ lines: 3_000, withAFinding: 3_000, withAnAcronymFinding: 2_442 });
+  }, 120_000);
+
+  // The pairing of emphasis marks walks a block by position as well. It is not this
+  // file's to change, so it is only asked the same question.
+  test("the same characters before a line with emphasis marks and no link leave its findings as they were", () => {
+    const random = generator(1010);
+    const findings = (text: string): string[] => auditText(text).map((found) => `${found.rule} at line ${found.line}: ${found.detail}`);
+    const counts = { lines: 0, withAFinding: 0, withAnAcronymFinding: 0 };
+    const marks = ["*", "**", "_", "__", "~~", ""];
+    for (let made = 0; made < 3_000; made++) {
+      const words = ["identity", "and", "access", "management", "(IAM).", "Use", "IAM", "in", "order", "to", "utilize", "it."];
+      // A pair of marks around a run of words, and sometimes one inside a word.
+      const mark = pick(random, marks);
+      const from = Math.floor(random() * words.length);
+      const to = from + Math.floor(random() * (words.length - from));
+      words[from] = pick(random, [mark + words[from], (words[from] as string).slice(0, 3) + mark + (words[from] as string).slice(3)]);
+      words[to] = pick(random, [words[to] + mark, words[to] + mark, (words[to] as string).slice(0, -1) + mark + (words[to] as string).slice(-1)]);
+      const line = words.join(pick(random, [" ", " ", BREAK]));
+      expect(/[[<]|:\/\/|www\./.test(line)).toBe(false);
+      // A mark that opens a line can open emphasis. With a character straight before it
+      // that is no space and no punctuation, CommonMark says it cannot, so the findings
+      // would differ by that rule and not by any count of places. A space keeps them apart.
+      const gap = /^[A-Za-z(]/.test(line) ? pick(random, ["", " "]) : " ";
+      const prefix = pieces(random, ODD, 8) + pick(random, ODD) + gap;
+      const plain = findings(line);
+      const prefixed = findings(prefix + line);
+      if (JSON.stringify(prefixed) !== JSON.stringify(plain)) {
+        expect(prefixed, JSON.stringify(prefix + line)).toEqual(plain);
+      }
+      counts.lines++;
+      if (plain.length > 0) counts.withAFinding++;
+      if (plain.some((found) => found.startsWith("acronym"))) counts.withAnAcronymFinding++;
+    }
+    expect(counts).toEqual({ lines: 3_000, withAFinding: 2_982, withAnAcronymFinding: 181 });
+  }, 120_000);
 });
+
+/**
+ * For each place of a line the parser gave back, the places of the line as written
+ * that it stands for: one place, or the whole of a tag or a comment that the parser
+ * made into one space. Null where the line cannot be followed back in that way.
+ */
+function placesOf(parsed: string, written: string, at = 0, from = 0): Array<[from: number, to: number]> | null {
+  if (at === parsed.length) return from === written.length ? [] : null;
+  if (parsed[at] === written[from]) {
+    const rest = placesOf(parsed, written, at + 1, from + 1);
+    if (rest !== null) return [[from, from + 1], ...rest];
+  }
+  if (parsed[at] !== " " || written[from] !== "<") return null;
+  for (let end = written.indexOf(">", from); end !== -1; end = written.indexOf(">", end + 1)) {
+    const rest = placesOf(parsed, written, at + 1, end + 1);
+    if (rest !== null) return [[from, end + 1], ...rest];
+  }
+  return null;
+}
 
 /** The words the acronym rule reads in a document of one block. */
 function readingText(document: string): string {
@@ -147,11 +296,21 @@ function words(text: string): string {
   return text.replace(/[^A-Za-z]/g, "");
 }
 
+/**
+ * Characters that are no word and that a count of places can go wrong on: one outside
+ * the basic plane, which is two UTF-16 units and one code point; a combining mark; the
+ * euro sign, which is three bytes in UTF-8; a no-break space; and each half of a
+ * surrogate pair alone, which side by side make a whole character.
+ */
+const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
+const ODD = [String.fromCodePoint(0x1f600), String.fromCodePoint(0x301), String.fromCodePoint(0x20ac), NO_BREAK_SPACE,
+  String.fromCharCode(0xd83d), String.fromCharCode(0xde00)];
 const LABEL = ["management", "one", " ", " ", "[b]", "[", "]", `${SLASH}[`, `${SLASH}]`, BREAK, "[c](d)", "![e](f)", "*", `${TICK}g${TICK}`,
   // A bracket inside a code span, a tag, an autolink and a comment, and a code span that ends in a backslash.
-  `${TICK}[${TICK}`, `${TICK}]${TICK}`, `${TICK}${SLASH}${TICK}`, '<i title="[">', '<i title="]">', "<https://e.com/[>", "<https://e.com/]>", "<!-- ] -->"];
+  `${TICK}[${TICK}`, `${TICK}]${TICK}`, `${TICK}${SLASH}${TICK}`, '<i title="[">', '<i title="]">', "<https://e.com/[>", "<https://e.com/]>", "<!-- ] -->",
+  ...ODD];
 const TAIL = ["two", "three", "x", " ", " ", BREAK, "<", ">", "<two three>", "<four>", '"a title"', "'a title'", "(a title)", "(", ")", "()",
-  `${SLASH}(`, `${SLASH})`, `${SLASH}_`, `${SLASH}<`, `${SLASH}>`, `${SLASH}"`, `${SLASH} `, '"', "'", "", "", "[", "]", TICK];
+  `${SLASH}(`, `${SLASH})`, `${SLASH}_`, `${SLASH}<`, `${SLASH}>`, `${SLASH}"`, `${SLASH} `, '"', "'", "", "", "[", "]", TICK, ...ODD];
 
 /** A few pieces of generated text, joined with nothing between them. */
 function pieces(random: () => number, from: readonly string[], most: number): string {

@@ -2904,13 +2904,32 @@ describe("a link between an expansion and its acronym", () => {
     [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
   const acronyms = (text: string) => findingsIn(text).filter((finding) => finding.startsWith("acronym"));
 
+  // A review put one emoji before a link. The places of the link were counted in
+  // UTF-16 units and dropped by code points, so each place after the emoji was one out:
+  // the rule read "[anagement](IAM)" and reported an acronym that was defined.
+  test("a character outside the basic plane before a link moves no place after it", () => {
+    const face = String.fromCodePoint(0x1f600);
+    const defined = [`${face} identity and access [management](guide) (IAM).`, "Use IAM."].join(BREAK);
+    expect(acronymReading(defined).blocks[0]?.lines).toEqual([`${face} identity and access management (IAM).`, "Use IAM."]);
+    expect(acronyms(defined)).toEqual([]);
+    for (const faces of [1, 6, 12, 40]) {
+      const line = `${face.repeat(faces)} [x](u) Use IAM.`;
+      expect(acronymReading(line).lines, `${faces}`).toEqual([`${face.repeat(faces)} x Use IAM.`]);
+      expect(acronyms(line), `${faces}`).toEqual(undefinedAt("IAM", 1));
+    }
+    // After the link as well, and on the second line of a block.
+    const later = [`[identity](one) ${face} and access`, `${face}${face} [management](guide) (IAM). Use IAM.`].join(BREAK);
+    expect(acronyms(later)).toEqual([]);
+    expect(acronymReading(later).lines).toEqual([`identity ${face} and access`, `${face}${face} management (IAM). Use IAM.`]);
+  });
+
   // A reference label holds at most 999 characters, as CommonMark has it. Of two
   // nested pairs of brackets only one is the link, so the limit decides what is read.
   // A review moved the limit by one and no test failed.
   //
-  // The renderer of GitHub reads one character more: asked on 2026-10-08, it took a
-  // label of 1,000 characters for a reference and refused one of 1,001. This rule
-  // keeps the limit that CommonMark states and that Bun renders.
+  // The code keeps the limit of CommonMark, 999, which Bun renders as well. The
+  // renderer of GitHub accepts one more: asked on 2026-10-08, it took a label of 1,000
+  // characters for a reference and refused one of 1,001. That is known and left so.
   test("a reference label of 999 characters is a label, and one of 1,000 is not", () => {
     const nested = (spaces: number): string => {
       const label = " ".repeat(spaces) + "management";
