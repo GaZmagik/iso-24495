@@ -272,7 +272,7 @@ test("the refusal covers any closed leading block the guard rejects, and nothing
     expect(refusalFor(TAB_BLOCK, "note.txt").plan.candidates).toHaveLength(0);
 
     expect(formatFindings({ complete: true, limitation: "test", evidence: [], results: [], localFindings: [], coverage: [], notSent: [{ file: `a${String.fromCharCode(27)}[2Jb.md`, reason: REFUSAL }] }))
-      .toContain(`Not sent: a [2Jb.md, because its ${REFUSAL}.`);
+      .toContain(`Not sent: a${String.fromCharCode(92)}u001b[2Jb.md, because its ${REFUSAL}.`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -293,8 +293,12 @@ test("the Jev audit prints a file name, a finding and an excerpt without control
     expect(await run("design", ["--send", "--yes"])).toBe(0);
     const printed = out.join("\n");
     for (const character of [escape, control, override]) expect(printed).not.toContain(character);
-    expect(printed).toContain("| gu ide .md | 3 | link-text | link text \"here\" describes no destination (https://x.invalid/ [2J ) |");
-    expect(printed).toContain("- gu ide .md: 1 eligible openings, 1 eligible blocks, 2 requests.");
+    // The file name is a path, so each character is shown as its code. A finding and an
+    // excerpt are quoted wording, where it becomes a space.
+    const slash = String.fromCharCode(92);
+    const shownName = `gu${slash}u202eide${slash}u009b.md`;
+    expect(printed).toContain(`| ${shownName} | 3 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |`);
+    expect(printed).toContain(`- ${shownName}: 1 eligible openings, 1 eligible blocks, 2 requests.`);
     expect(printed).toContain("Excerpt: # Title [2J Use [here](https://x.invalid/ [2J ) for the guid |");
     expect(printed).toContain("Excerpt: Use here for the guide. |");
     expect(bodies.length).toBeGreaterThan(0);
@@ -336,5 +340,55 @@ test("once a reply fails, no request that is still queued is sent", async () => 
     const bodies: string[] = [];
     expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], () => {}, () => {}, recordingDependencies(bodies))).toBe(0);
     expect(bodies).toHaveLength(21);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+// A file name was cleaned like quoted wording: a control character became a space and
+// each run of spaces became one, so two files could share one printed name. Every line
+// below names a file, and each now prints it as a path.
+test("every line of the Jev audit that names a file prints it as a path", async () => {
+  const slash = String.fromCharCode(92);
+  const override = String.fromCharCode(0x202e);
+  const name = `a  ${override}b|c.md`;
+  const shown = `a  ${slash}u202eb|c.md`;
+  const cell = `a  ${slash}u202eb${slash}|c.md`;
+
+  const findings = formatFindings({
+    complete: true, limitation: "test", evidence: [],
+    notSent: [{ file: name, reason: REFUSAL }],
+    localFindings: [{ file: name, line: 1, rule: "missing-title", detail: "No  title." }],
+    results: [{ file: name, line: 2, id: "block-1", rule: "purpose", band: "fail", score: "0.9", cutOff: "0.87", detail: "Unclear.", excerpt: "Words.", stateHash: "h" }],
+    coverage: [{ file: name, checks: { purpose: { assessed: 1, pass: 0, fail: 1, unsure: 0, skipped: 0 } } }],
+  } as never);
+  expect(findings).not.toContain(override);
+  expect(findings).toContain(`Not sent: ${shown}, because its ${REFUSAL}.`);
+  // A detail is quoted wording, so its two spaces still become one.
+  expect(findings).toContain(`| ${cell} | 1 | local | missing-title | local | | | No title. |`);
+  expect(findings).toContain(`| ${cell} | 2 | block-1 | purpose | fail | 0.9 | 0.87 | Unclear. Excerpt: Words. |`);
+  expect(findings).toContain(`| ${cell} | purpose | 1 | 0 | 1 | 0 | 0 |`);
+
+  const empty = { candidates: [], findings: [] };
+  const plan = formatPlan({
+    documents: [{ file: name, path: "p", plan: empty, refusal: REFUSAL }, { file: `${name}2`, path: "q", plan: empty }],
+    mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [`docs/${name}`],
+  } as never, true, `out  ${override}.json`);
+  expect(plan).not.toContain(override);
+  expect(plan).toContain(`Selected: docs/${shown}`);
+  expect(plan).toContain(`- ${shown}: not sent, because its ${REFUSAL}.`);
+  expect(plan).toContain(`- ${shown}2: 0 eligible openings, 0 eligible blocks, 0 requests.`);
+  expect(plan).toContain(`- ${shown}2: 0 bytes.`);
+  expect(plan).toContain(`locally to out  ${slash}u202e.json.`);
+
+  // The warning for a refused document, and the table of mechanical findings, through the command.
+  const directory = mkdtempSync(join(tmpdir(), "jev-path-"));
+  try {
+    const refused = `ta  ${override}b.md`;
+    writeFileSync(join(directory, refused), TAB_BLOCK);
+    const out: string[] = [];
+    const warnings: string[] = [];
+    expect(await runAuditCli("text", ["bun", "cli", directory, "--project-dir", directory, "--jev-preview"],
+      text => out.push(text), text => warnings.push(text), recordingDependencies([]))).toBe(0);
+    expect(warnings).toEqual([`warning: not sent: ta  ${slash}u202eb.md: ${REFUSAL}`]);
+    expect(out.join("\n")).toContain(`| ta  ${slash}u202eb.md | 8 | legalese | banned term "shall" |`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

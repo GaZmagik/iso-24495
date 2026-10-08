@@ -13,10 +13,7 @@ import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
 import { REFERENCE_SHAPES } from "./fixtures/reference-blocks.ts";
 import {
   classifyBoundary,
-  flattenedOffsets,
   headings,
-  type LabelledBlock,
-  labelledProseBlocks,
   mergedSentences,
   proseBlocks,
   readDocument,
@@ -2461,6 +2458,16 @@ describe("emphasis marks inside or beside a word", () => {
     expect(elapsed(() => auditText(nested))).toBeLessThan(15_000);
   }, HOSTILE_TIMEOUT_MS);
 
+  test("a search that failed for one closer does not stop a search for another", () => {
+    const wordy = ['wordy-phrase at line 1: "in order to" says what "to" says'];
+    // A closer with no opener is remembered, so a later one like it does not search the
+    // same marks again. That record is kept for each length of closer. Two marks may not
+    // close one inside a word, and one mark after them may.
+    expect(findingsIn("x*y a**b in or*der to go.")).toEqual(wordy);
+    // Three marks may close three, though their lengths add up to a multiple of three.
+    expect(findingsIn("a***b in or***der to go.")).toEqual(wordy);
+  });
+
   test("a document without marks is read as before", () => {
     const text = [
       "# The tenant shall vacate",
@@ -2511,16 +2518,20 @@ describe("a filler opening and the marks around it", () => {
   });
 });
 
-describe("emphasis marks either side of a link boundary", () => {
-  // A link is replaced by its label before the marks are paired, so a mark
-  // outside a link sat beside one inside it and the two were taken for a pair.
-  // A browser pairs the marks of a label on their own: "in *or[der*](u) to"
-  // shows both asterisks, and the reader does not see the phrase.
-  const wordy = ['wordy-phrase at line 1: "in order to" says what "to" says'];
+describe("a block that may hold a link keeps its emphasis marks", () => {
+  // Emphasis marks were paired around links in three ways, and each way reported words
+  // that a browser does not show. So a block whose source lines hold "[", "<", "://" or
+  // "www." is now read as it was before emphasis was paired at all. No mark is removed there, and a
+  // phrase that emphasis splits in such a block is not found. Every expectation in
+  // this group is what the code before the pairing gave for the same text.
+  const TICK = String.fromCharCode(96);
+  const SLASH = String.fromCharCode(92);
+  const wordy = (line: number) => [`wordy-phrase at line ${line}: "in order to" says what "to" says`];
   const legal = ['legalese at line 1: banned term "shall"'];
 
-  test("a mark outside a link does not pair with a mark inside it", () => {
+  test("every case the reviews raised is read as written", () => {
     for (const text of [
+      // A mark outside a link and a mark in its label. A browser shows both.
       "in *or[der*](u) to go.",
       "We did this in *or[der*](u) to finish the work.",
       "We did this in [*or](u)der* to finish the work.",
@@ -2531,27 +2542,11 @@ describe("emphasis marks either side of a link boundary", () => {
       "The tenant sh*a[ll*](u) vacate the premises.",
       "# We did this in *or[der*](u) to finish",
       "- We did this in *or[der*](u) to finish the work.",
-      // A reference link with a definition is a link, so its label is a boundary too.
       ["We did this in *or[der*][r] to finish the work.", "", "[r]: https://example.com"].join(BREAK),
       ["We did this in *or[der*] to finish the work.", "", "[der*]: https://example.com"].join(BREAK),
-      // A run of marks that straddles the boundary is split there.
       "We did this in or*[*der](u) to finish the work.",
-      // One label inside another: each is read on its own.
       "We did this in [or*[der*](u)](v) to finish the work.",
-    ]) {
-      expect(findingsIn(text), text).toEqual([]);
-    }
-  });
-
-  test("a closer passes over an opener in another label to reach its own", () => {
-    // A closer searches back no further than the first mark of its own text, so it
-    // meets a mark of another label only when one of its own stands before that label.
-    // Every case above lacks that earlier mark, and so none of them reached the check
-    // that the two marks share a label: it could be removed with every test passing.
-    // Here the closer outside must pass over the opener in the label and take the
-    // first mark. A browser shows "x in or*der to go." with the first three words
-    // emphasised, and the reader does not see the phrase.
-    for (const text of [
+      // A closer outside the link with an opener of its own before the link.
       "*x in [or*](u)der* to go.",
       "**x in [or**](u)der** to go.",
       "_x in [_or](u)der_ to go.",
@@ -2559,125 +2554,178 @@ describe("emphasis marks either side of a link boundary", () => {
       "*x in ![or*](chart.png)der* to go.",
       "# *x in [or*](u)der* to go",
       ["*x in [or*][r]der* to go.", "", "[r]: https://example.com"].join(BREAK),
-      // The same from inside: a closer in an image label passes over a link label in it.
       "![*x in [or*](u)der* to go](chart.png).",
-    ]) {
-      expect(findingsIn(text), text).toEqual([]);
-    }
-    // The mark passed over stays on the page, and the pair around it is removed.
-    expect(findingsIn("*The tenant [sh*](u)all* vacate.")).toEqual([]);
-    expect(findingsIn("*The tenant [a*](u) shall* vacate.")).toEqual(legal);
-  });
-
-  test("a search that failed in one text does not stop a search in another", () => {
-    // A closer with no opener is remembered, so a later one like it does not search the
-    // same marks again. That record is kept for each label apart. The closer in the
-    // label finds nothing, and the closer after it, outside, must still reach the first
-    // mark: a browser shows "x y*z in order to go." with all but the last word emphasised.
-    expect(findingsIn("*x [y*z](u) in or*der to go.")).toEqual(wordy);
-    // It is kept for each length of closer too. Two marks may not close one inside a
-    // word, and one mark after them may.
-    expect(findingsIn("x*y a**b in or*der to go.")).toEqual(wordy);
-    // Three marks may close three, though their lengths add up to a multiple of three.
-    expect(findingsIn("a***b in or***der to go.")).toEqual(wordy);
-  });
-
-  test("a mark beside a link is judged by the bracket beside it", () => {
-    // Whether a mark may open or close emphasis depends on the characters either side
-    // of it. Those were read once the link was replaced by its label, so the mark in
-    // "or*[der](u)*" appeared to stand between two letters, where it stands between a
-    // letter and a bracket. A browser shows both asterisks there: the first cannot
-    // open before a bracket, and the second cannot close what never opened.
-    for (const text of [
+      "*The tenant [sh*](u)all* vacate.",
+      // A mark that stands beside the bracket of a link.
       "in or*[der](u)* to go.",
       "We did this in or*[der](u)* to finish the work.",
       "We did this in or**[der](u)** to finish the work.",
       "We did this in or~~[der](u)~~ to finish the work.",
       "We did this in or*![der](chart.png)* to finish the work.",
-      // The second mark follows a bracket and stands before a letter, so it cannot close.
       "We did this in *[or](u)*der to finish the work.",
       "# We did this in or*[der](u)* to finish",
       "- We did this in or*[der](u)* to finish the work.",
       ["We did this in or*[der][r]* to finish the work.", "", "[r]: https://example.com"].join(BREAK),
       ["We did this in or*[der]* to finish the work.", "", "[der]: https://example.com"].join(BREAK),
-      // The same from inside: the first mark follows the bracket, so it can only open,
-      // and the mark after it stands before a bracket, so it can only close. Their
-      // lengths then never forbid the pair, and one mark of the second stays.
       "The tenant sh**a*[*ll**](u) vacate.",
+      // A backtick in a destination, which closed a code span further on. A browser
+      // shows the phrase here, and it is missed: the block holds a link.
+      `in **[order](u${TICK}x)** to go. ${TICK}tail${TICK}`,
+      // A mark in an autolink. A browser shows "in or*der to" after the address.
+      "<https://e.com/*> in or*der to go.",
     ]) {
       expect(findingsIn(text), text).toEqual([]);
     }
-    // A mark with white space on its other side opens or closes as it always did.
+    expect(findingsIn("*The tenant [a*](u) shall* vacate.")).toEqual(legal);
+  });
+
+  test("a phrase that emphasis splits beside a link is not found, which is the cost", () => {
+    expect(findingsIn("We did this in order to finish the work.")).toEqual(wordy(1));
     for (const text of [
       "We did this in *[order](u)* to finish the work.",
       "We did this in **[order](u)** to finish the work.",
       "We did this *in [order](u)* to finish the work.",
       "We did this in [*or*der](u) to finish the work.",
       "We did this in [or*der*](u) to finish the work.",
-      // A mark in a destination is part of the link. It is never emphasis, and it
-      // is not in the text a reader sees, so nothing is removed on its account.
-      "We did this [the guide](a*b*c) in order to finish the work.",
-    ]) {
-      expect(findingsIn(text), text).toEqual(wordy);
-    }
-  });
-
-  test("marks that pair on one side of the boundary are removed as before", () => {
-    expect(findingsIn("We did this in order to finish the work.")).toEqual(wordy);
-    for (const text of [
-      // Bold around a link: both marks are outside it.
-      "We did this **in [order](u) to** finish the work.",
-      "**We did this in [order](u) to finish the work.**",
-      // Bold inside a label: both marks are inside it.
       "We did this [**in** order](u) to finish the work.",
       "We did this in [**order**](u) to finish the work.",
       "We did this in [or*de*r](u) to finish the work.",
-      // A pair outside and a pair inside, each on its own side.
       "We did this *in [or*de*r](u) to* finish the work.",
       "We did this ~~in [_order_](u) to~~ finish the work.",
       "We did this in [or*de*r](u) to finish the ![*work*](chart.png).",
-      "# We did this **in [order](u) to** finish",
       "# We did this in [or*de*r](u) to finish",
+      "*x [y*z](u) in or*der to go.",
+      "The tenant *sh[*a*ll](u) vacate.",
     ]) {
-      expect(findingsIn(text), text).toEqual(wordy);
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // Marks that stand outside the phrase split nothing, so it was always found.
+    for (const text of [
+      "We did this **in [order](u) to** finish the work.",
+      "**We did this in [order](u) to finish the work.**",
+      "# We did this **in [order](u) to** finish",
+      "We did this [the guide](a*b*c) in order to finish the work.",
+    ]) {
+      expect(findingsIn(text), text).toEqual(wordy(1));
     }
     expect(findingsIn("**The tenant [shall](u) vacate.**")).toEqual(legal);
     expect(findingsIn("[**The tenant** shall](u) vacate.")).toEqual(legal);
-    // The label holds a pair of its own, and the mark left over outside it has no partner.
-    expect(findingsIn("The tenant *sh[*a*ll](u) vacate.")).toEqual(legal);
   });
 
-  test("brackets that are not a link are no boundary", () => {
-    // A reference with no definition is text, brackets and all, so its marks pair with
-    // the marks around it as they would in any other text.
-    expect(findingsIn("The tenant [sh*all] vac*ate.")).toEqual(legal);
-    expect(findingsIn("The tenant [sh*all][nowhere] vac*ate.")).toEqual(legal);
-    const defined = ["The tenant [sh*all] vac*ate.", "", "[sh*all]: https://example.com"].join(BREAK);
-    expect(findingsIn(defined)).toEqual([]);
+  test("a bracket that is no link counts as one, and so does an angle bracket", () => {
+    // The test for a link reads two characters and nothing else, so it cannot miss a
+    // link. Each of these blocks holds no link, and loses its finding all the same.
+    for (const text of [
+      "The tenant [sh*all] vac*ate.",
+      "The tenant [sh*all][nowhere] vac*ate.",
+      ["The tenant [sh*all] vac*ate.", "", "[sh*all]: https://example.com"].join(BREAK),
+      "- [ ] We did this in **order** to finish.",
+      `We did this in **order** to finish ${TICK}list[0]${TICK}.`,
+      `We did this in **order** to finish ${SLASH}[sic${SLASH}].`,
+      "We did this in **order** to finish when a < b.",
+      "We did this in **order** to finish<br>the work.",
+      "We did this in **order** to finish, see <https://example.com>.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
   });
 
-  test("the acronym, enumeration and filler rules read the same boundary", () => {
+  test("a bare address is a link too, with neither bracket", () => {
+    // GitHub links an address written with no bracket at all. A mark inside the address
+    // is part of the link there, so "or*der" after it keeps its asterisk and the reader
+    // does not see the phrase. Each of these was put to GitHub's own renderer.
+    for (const text of [
+      "https://e.com/*x in or*der to go.",
+      "www.e.com/*x in or*der to go.",
+      "http://e.com/_x in or_der to go, as a_b says_.",
+      // GitHub strips this one of its link and still shows both asterisks.
+      "ftp://e.com/*x in or*der to go.",
+      // The mark that ends an address is not part of it, and has no partner here.
+      "https://e.com/a*b* in or*der to go.",
+      "# www.e.com/*x in or*der to go",
+      "- www.e.com/*x in or*der to go.",
+      // The address and the phrase on two lines of one paragraph.
+      ["See https://e.com/*x for more.", "We did this in or*der to finish."].join(BREAK),
+      ["We did this in or*der to finish.", "See https://e.com/x* for more."].join(BREAK),
+      // An address alone in its block.
+      "https://e.com/in*order*to",
+      "www.e.com/sh*all*",
+      // Not an address on GitHub, which reads "www." in small letters only. It is
+      // read as one all the same: the test for an address asks as little as it can.
+      "WWW.e.com/*x in or*der to go.",
+    ]) {
+      expect(findingsIn(text), text).toEqual([]);
+    }
+    // The block beside the address is read as before.
+    expect(findingsIn(["https://e.com/*x", "", "We did this in **order** to finish."].join(BREAK))).toEqual(wordy(3));
+    // Both scans for an acronym keep the marks in such a block.
+    expect(findingsIn(["identi*ty and access", "management* (IAM), as www.e.com says. Use IAM."].join(BREAK)))
+      .toEqual(['acronym-undefined at line 2: define acronym "IAM" on first use']);
+  });
+
+  test("an email address shields no mark, so its block keeps the emphasis fix", () => {
+    // GitHub finds an email address in text it has already read for emphasis. So the
+    // marks pair across the address, the reader sees the phrase, and it is reported.
+    // Each of these was put to GitHub's renderer, which shows "in order to" for all.
+    for (const text of [
+      "mail a*b@e.com in or*der to go.",
+      "mailto:a@e.com/*x in or*der to go.",
+      "xmpp:a@e.com/x*y in or*der to go.",
+      "Write to a@e.com in **order** to go.",
+      // A colon, a slash or a full stop alone makes no address.
+      "Note: it ran w.w.w and a/b in **order** to go.",
+      "The crowd said awww in **order** to go.",
+    ]) {
+      expect(findingsIn(text), text).toEqual(wordy(1));
+    }
+  });
+
+  test("each block is judged alone, by every line it was read from", () => {
+    // A link in one block leaves the block beside it as it was.
+    expect(findingsIn(["We did this in **order** to finish.", "", "See [the guide](u)."].join(BREAK)))
+      .toEqual(wordy(1));
+    expect(findingsIn(["See [the guide](u).", "", "We did this in **order** to finish."].join(BREAK)))
+      .toEqual(wordy(3));
+    expect(findingsIn(["- See [the guide](u).", "- We did this in **order** to finish."].join(BREAK)))
+      .toEqual(wordy(2));
+    expect(findingsIn(["# We did this in **order** to finish", "", "See [the guide](u)."].join(BREAK)))
+      .toEqual(wordy(1));
+    expect(findingsIn(["# The guide [there](u)", "", "We did this in **order** to finish."].join(BREAK))
+      .filter((finding) => finding.startsWith("wordy"))).toEqual(wordy(3));
+    // A link on any line of a block decides for the whole block.
+    expect(findingsIn(["We did this in **order**", "to finish, see [the guide](u)."].join(BREAK))).toEqual([]);
+    const linked = ["See [the", "guide](https://example.com", "'title') first.",
+      "We did this in *or[der*](u) to finish.", "We did this in **order** to finish."];
+    expect(findingsIn(linked.join(BREAK))).toEqual([]);
+    // A heading over several lines is one line of text, read from all of them.
+    expect(findingsIn(["We did this in **order** to", "finish the work", "===="].join(BREAK))).toEqual(wordy(1));
+    expect(findingsIn(["We did this in **order** to", "finish [the", "work](u)", "===="].join(BREAK))).toEqual([]);
+  });
+
+  test("the acronym, enumeration and filler rules keep the marks as well", () => {
     const undefinedAcronym = ['acronym-undefined at line 1: define acronym "QZX" on first use'];
     expect(findingsIn("Ask the QZX team.")).toEqual(undefinedAcronym);
-    expect(findingsIn("Ask the [**QZX**](u) team.")).toEqual(undefinedAcronym);
     expect(findingsIn("**Ask the [QZX](u) team.**")).toEqual(undefinedAcronym);
+    expect(findingsIn("Ask the [**QZX**](u) team.")).toEqual([]);
     expect(findingsIn("Ask the Q*Z[X*](u) team.")).toEqual([]);
 
     const ranked = ["prose-enumeration at line 1: enumeration ranks 1, 2, 3 in prose; consider a list"];
     expect(findingsIn("First we plan. Second we build. Third we test.")).toEqual(ranked);
-    expect(findingsIn("[Fi*rs*t](u) we plan. Second we build. Third we test.")).toEqual(ranked);
+    expect(findingsIn("First we plan, see [the plan](u). Second we build. Third we test.")).toEqual(ranked);
+    expect(findingsIn("[Fi*rs*t](u) we plan. Second we build. Third we test.")).toEqual([]);
     expect(findingsIn("Fi*r[st*](u) we plan. Second we build. Third we test.")).toEqual([]);
+    expect(findingsIn("_First_ we plan, see [the plan](u). _Second_ we build. _Third_ we test.")).toEqual([]);
 
+    // The filler rule removed every asterisk, underscore and backtick before emphasis
+    // was paired, and does so again in a block that may hold a link. So a term in a
+    // code span is reported as the opening there, which a block with no link is spared.
     const filler = ['filler-opening at line 1: opens with "certainly" instead of the answer'];
     expect(findingsIn("Certainly, here it is.")).toEqual(filler);
     expect(findingsIn("[**Certainly**](u), here it is.")).toEqual(filler);
-    expect(findingsIn("*Cert[ainly*](u), here it is.")).toEqual([]);
-  });
-
-  test("a line keeps its number when a link ahead of the marks spans lines", () => {
-    const text = ["See [the", "guide](https://example.com", "'title') first.", "We did this in *or[der*](u) to finish.",
-      "We did this in **order** to finish."].join(BREAK);
-    expect(findingsIn(text)).toEqual(['wordy-phrase at line 5: "in order to" says what "to" says']);
+    expect(findingsIn("**Certainly!** The answer is in [the guide](u).")).toEqual(filler);
+    expect(findingsIn("*Cert[ainly*](u), here it is.")).toEqual(filler);
+    expect(findingsIn(`${TICK}Certainly${TICK} is a word we avoid, as [the guide](u) says.`)).toEqual(filler);
+    expect(findingsIn(`${TICK}Certainly${TICK} is a word we avoid, as the guide says.`)).toEqual([]);
   });
 
   test("marks and labels in great number still take time in proportion to the text", () => {
@@ -2695,11 +2743,10 @@ describe("emphasis marks either side of a link boundary", () => {
 });
 
 describe("labels nested to great depth", () => {
-  // Each label that closed copied the place of every label inside it up to its parent,
-  // so the work grew with the square of the depth: 8,000 levels took a second to
-  // flatten and nine to audit, and 16,000 took three seconds and thirty. One call at
-  // each size against a fixed budget. A caller that asks for no label is given the
-  // lower budget, because nothing about labels is then worked out at all.
+  // One call at each size against a fixed budget. A flattener that recorded where each
+  // label sat once copied those places up through every level, so the work grew with
+  // the square of the depth: 8,000 levels took a second to flatten and nine to audit.
+  // Nothing records them now, and these hold the cost where it was before.
   const nested = (depth: number): string => "![".repeat(depth) + "Words" + "](u)".repeat(depth);
 
   test("the text is flattened in proportion to its length", () => {
@@ -2715,38 +2762,6 @@ describe("labels nested to great depth", () => {
       expect(elapsed(() => auditText(text)), `${depth} levels`).toBeLessThan(4_000);
     }
   }, 2 * HOSTILE_TIMEOUT_MS);
-
-  test("each link is still found once, where it sits", () => {
-    /** Each link of the first block as the text it spans and the label inside that. */
-    const linksIn = (text: string): Array<[whole: string, label: string]> => {
-      const block = labelledProseBlocks(text)[0] as LabelledBlock;
-      return block.links.map((link) =>
-        [block.source.slice(link.start, link.end), block.source.slice(link.labelStart, link.labelEnd)]);
-    };
-    expect(linksIn("a [b ![c [d](u) e](v) f](w) g [h](x)")).toEqual([
-      ["[b ![c [d](u) e](v) f](w)", "b ![c [d](u) e](v) f"],
-      ["![c [d](u) e](v)", "c [d](u) e"],
-      ["[d](u)", "d"],
-      ["[h](x)", "h"],
-    ]);
-    // A reference with no definition stays as written, and so do the links inside it.
-    expect(linksIn("a [b [c](u) d] e [f](v)")).toEqual([["[f](v)", "f"]]);
-    expect(linksIn("a [b [c](u) d][nowhere] e")).toEqual([]);
-    expect(linksIn("no link here")).toEqual([]);
-  });
-
-  test("a mark keeps its place when the links before it are replaced by their labels", () => {
-    const text = ["*a* [b", "c](https://example.com", "'title') *d* ![*e*](f.png)[](g)*h*"].join(BREAK);
-    const block = labelledProseBlocks(text)[0] as LabelledBlock;
-    const reader = block.lines.join(BREAK);
-    expect(reader).toBe(["*a* b", "c", " *d* *e**h*"].join(BREAK));
-    const marks = [...block.source.matchAll(/[*]/g)].map((match) => match.index);
-    const placed = flattenedOffsets(marks, block.source, block.links);
-    expect(placed.map((offset) => reader[offset])).toEqual(marks.map(() => "*"));
-    expect(placed).toEqual([...reader.matchAll(/[*]/g)].map((match) => match.index));
-    expect(flattenedOffsets([], block.source, block.links)).toEqual([]);
-    expect(flattenedOffsets([0, 2], "*a*", [])).toEqual([0, 2]);
-  });
 });
 
 describe("an acronym definition whose emphasis runs over a line break", () => {
@@ -2773,42 +2788,37 @@ describe("an acronym definition whose emphasis runs over a line break", () => {
     }
   });
 
-  test("the scan for a definition pairs marks where the scan for a use pairs them", () => {
-    // The scan for definitions reads source lines, where a link is still written out,
-    // and paired its marks with no regard to the link. The scan for uses pairs them
-    // inside one label or outside every label. So a mark outside a link and a mark in
-    // its label were a pair to one scan and not to the other: the first took them out
-    // and read a definition, and the second, like a browser, left both on the page.
+  test("the scan for a definition and the scan for a use read a link block alike", () => {
+    // The scan for definitions reads source lines and the scan for uses reads blocks.
+    // They once paired marks differently around a link, so a definition one of them
+    // read was no definition to the other. Both now leave every mark in a block that
+    // may hold a link, so "identi*ty" gives two initials to both and defines nothing.
     for (const lines of [
-      // The reviewer's case. Both asterisks stay, so "identi*ty" gives two initials.
       ["identi*ty and access", "management [*(IAM)](u). Use IAM."],
       ["identi*ty and access", "[management* (IAM)](u). Use IAM."],
       ["identi**ty and access", "management ![**(IAM)](chart.png). Use IAM."],
       ["identi*ty and access", "management [*(IAM)][r]. Use IAM.", "", "[r]: https://example.com"],
+      // Marks that a browser pairs, on one side of the link. They stay as well, and
+      // the definition is missed: that is the cost of reading the block as written.
+      ["identi*ty and access", "management* [(IAM)](u). Use IAM."],
+      ["[identi*ty and access", "manage*ment](#) (IAM). Use IAM."],
+      ["![identi*ty and access", "management*](#) (IAM). Use IAM."],
+      ["identi*ty and access", "[management* (IAM)]. Use IAM."],
     ]) {
       expect(findingsIn(lines.join(BREAK)), lines.join(" / ")).toEqual(undefinedAt(2));
     }
-    // A mark in a destination is part of the link, so it pairs with nothing in the text.
     expect(findingsIn("identi*ty and access management (IAM) [the guide](a*b). Use IAM.")).toEqual(undefinedAt(1));
+    // A table row is in no block, so it is judged alone: with a link it keeps its marks.
     expect(findingsIn("| identi*ty and access management (IAM) | [the guide](a*b) |" + BREAK + "|---|---|"
       + BREAK + "| one | two |" + BREAK + BREAK + "Use IAM.")).toEqual(undefinedAt(5));
-  });
-
-  test("marks on one side of a link still pair across a line break", () => {
-    for (const lines of [
-      ["identi*ty and access", "management* [(IAM)](u). Use IAM."],
-      ["*identity and access", "management [(IAM)](u)*. Use IAM."],
-      ["[identi*ty and access", "manage*ment](#) (IAM). Use IAM."],
-      ["identity and access management [*(IAM)*](u). Use IAM."],
-      // The destinations here hold no letter. The scan reads a source line, so a word
-      // in a destination between the expansion and its acronym would count as one of its
-      // words. That is a limit of the scan and older than this test.
-      ["![identi*ty and access", "management*](#) (IAM). Use IAM."],
-      // A reference with no definition is text, so its brackets bound nothing.
-      ["identi*ty and access", "[management* (IAM)]. Use IAM."],
-    ]) {
-      expect(findingsIn(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
-    }
+    const row = (meaning: string) => ["| Term | Meaning |", "|---|---|",
+      `| identi*ty* and access management (IAM) | ${meaning} |`, "", "Use IAM."].join(BREAK);
+    expect(findingsIn(row("a service"))).toEqual([]);
+    expect(findingsIn(row("[a service](u)"))).toEqual(undefinedAt(5));
+    // Marks that sit in no word of the expansion change no initial, so the definition
+    // is read with them left in.
+    expect(findingsIn(["*identity and access", "management [(IAM)](u)*. Use IAM."].join(BREAK))).toEqual([]);
+    expect(findingsIn("identity and access management [*(IAM)*](u). Use IAM.")).toEqual([]);
   });
 
   test("a use is still reported on its own line when the definition comes later", () => {
@@ -2836,5 +2846,61 @@ describe("an acronym definition whose emphasis runs over a line break", () => {
   test("a heading that wraps is one block too", () => {
     const heading = ["identi*ty and access", "management* (IAM)", "=================", "", "Use IAM."];
     expect(findingsIn(heading.join(BREAK)).filter((finding) => finding.startsWith("acronym"))).toEqual([]);
+  });
+});
+
+describe("a link between an expansion and its acronym", () => {
+  // The scan for definitions read source lines, where a link is still written out, so
+  // the words of its destination counted as words of the expansion. A reader never
+  // sees a destination. "[identity and access management](guide) (IAM)" gave the
+  // initials AMG, and IAM was reported as undefined on its next use.
+  const undefinedAt = (acronym: string, line: number) =>
+    [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
+  const acronyms = (text: string) => findingsIn(text).filter((finding) => finding.startsWith("acronym"));
+
+  test("a word in a destination is no word of the expansion", () => {
+    for (const lines of [
+      ["[identity and access management](guide) (IAM).", "Use IAM."],
+      ["[identity and access management](#) (IAM).", "Use IAM."],
+      ["identity and access [management](the-guide.md) (IAM). Use IAM."],
+      ["identity [and](one) access [management](two three) (IAM). Use IAM."],
+      // A destination and a title that wrap, with the link over three lines.
+      ["[identity and", "access management](the", "guide 'a title') (IAM). Use IAM."],
+      // A reference that the document defines is a link, and its label is not read.
+      ["identity and access [management][guide] (IAM). Use IAM.", "", "[guide]: https://example.com"],
+      // A table row and a heading are read by the same scan.
+      ["| Term | Meaning |", "|---|---|", "| [identity and access management](guide) (IAM) | a service |", "", "Use IAM."],
+      ["# [identity and access management](guide) (IAM)", "", "Use IAM."],
+    ]) {
+      expect(acronyms(lines.join(BREAK)), lines.join(" / ")).toEqual([]);
+    }
+  });
+
+  test("what a reader does see between them still counts", () => {
+    // A reference with no definition is text, brackets and all, so its second half is
+    // a word on the page.
+    expect(acronyms("identity and access [management][guide] (IAM). Use IAM.")).toEqual(undefinedAt("IAM", 1));
+    // The alternative text of an image is read out where the image stands.
+    expect(acronyms("identity and access management ![chart](guide.png) (IAM). Use IAM."))
+      .toEqual(undefinedAt("IAM", 1));
+    expect(acronyms("identity and access management guide (IAM). Use IAM.")).toEqual(undefinedAt("IAM", 1));
+  });
+
+  test("an acronym in a destination defines nothing", () => {
+    // "(ABC)" here is the destination of the link. It was read as an acronym in
+    // brackets after the words that spell it, so the use below went unreported.
+    expect(acronyms(["Use the [alpha beta cat](ABC) now.", "", "ABC is used."].join(BREAK)))
+      .toEqual(undefinedAt("ABC", 3));
+    expect(acronyms(["Use the alpha beta cat (ABC) now.", "", "ABC is used."].join(BREAK))).toEqual([]);
+  });
+
+  test("a definition after a link on its line is placed where the reader meets it", () => {
+    // The place of a definition was counted in the source line and the place of a use
+    // in the text without its links. A long destination ahead of both put the
+    // definition after its own use, and the use was reported.
+    expect(acronyms("[See](https://example.com/a/long/address) identity and access management (IAM). Use IAM."))
+      .toEqual([]);
+    expect(acronyms("[See](https://example.com/a/long/address) the IAM, identity and access management (IAM)."))
+      .toEqual(undefinedAt("IAM", 1));
   });
 });

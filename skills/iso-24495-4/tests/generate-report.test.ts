@@ -138,7 +138,11 @@ describe("a report built from files nobody has read", () => {
       expect(report).not.toContain(character);
       expect(report).toContain(`| ${clean} | ${clean} | ${clean}, owner-accountable |`);
       expect(report).toContain(`Overall maturity (weakest dimension): **${clean}**.`);
-      expect(report).toContain(`| ${clean} | yes | ${clean}<br>docs/policy.md |`);
+      // An evidence path is printed as a path: each character kept or shown as its
+      // code, the line break included, and the pipe escaped.
+      const slash = String.fromCharCode(92);
+      const shown = `${slash}u${code.toString(16).padStart(4, "0")}`;
+      expect(report).toContain(`| ${clean} | yes | x${shown}[2J${slash}|y${slash}u000az<br>docs/policy.md |`);
       expect(report).toContain(`| ${clean} | ${clean} |`);
       expect(report).toContain(`| ${clean} | ${clean} | 0${clean} |`);
       // Each row is still one line of the table.

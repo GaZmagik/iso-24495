@@ -7,7 +7,7 @@ import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvide
 import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
 import { classify, planDocument, type Candidate, type Decision, type DocumentPlan } from "./engine.ts";
 import { controllingTerminal, type Terminal } from "./terminal.ts";
-import { safeCell, safeText, skippedEntryWarning } from "../safe-text.ts";
+import { safeCell, safePath, safePathCell, safeText, skippedEntryWarning } from "../safe-text.ts";
 
 export const DISCLOSURE_VERSION = "0.8.0-r1";
 export const LIMITATION = "Only purpose and colour receive calibrated decisions. Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability. Correlated blocks do not extend that guarantee.";
@@ -100,7 +100,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   try { selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter); } catch { stderr("The selected path could not be read or is not a supported document."); return 1; }
   for (const path of selection.skipped) stderr(skippedEntryWarning(path));
   for (const document of selection.documents) {
-    if (document.refusal !== undefined) stderr(`warning: not sent: ${safeText(document.file)}: ${document.refusal}`);
+    if (document.refusal !== undefined) stderr(`warning: not sent: ${safePath(document.file)}: ${document.refusal}`);
   }
   if (mode === "text") stdout(formatMechanical(selection.mechanical));
   stdout(formatPlan(selection, args.includeText, args.json));
@@ -263,15 +263,15 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
     `Transmission preview: TypeSafe, model ${MODEL}, disclosure ${DISCLOSURE_VERSION}.`,
     "Document text leaves this machine when you agree to send. Charges may apply. Pricing and retention have not been checked.",
     "Privacy terms: https://typesafe.ai/legal/privacy-policy and https://typesafe.ai/legal/data-processing.",
-    ...selection.paths.map(path => `Selected: ${safeText(path)}`),
-    ...selection.documents.map(document => document.refusal !== undefined ? `- ${safeText(document.file)}: not sent, because its ${document.refusal}.`
-      : `- ${safeText(document.file)}: ${document.plan.candidates.filter(candidate => candidate.kind === "opening").length} eligible openings, ${document.plan.candidates.filter(candidate => candidate.kind === "block").length} eligible blocks, ${document.plan.candidates.length} requests.`),
+    ...selection.paths.map(path => `Selected: ${safePath(path)}`),
+    ...selection.documents.map(document => document.refusal !== undefined ? `- ${safePath(document.file)}: not sent, because its ${document.refusal}.`
+      : `- ${safePath(document.file)}: ${document.plan.candidates.filter(candidate => candidate.kind === "opening").length} eligible openings, ${document.plan.candidates.filter(candidate => candidate.kind === "block").length} eligible blocks, ${document.plan.candidates.length} requests.`),
     ...(refused.length === 0 ? [] : [`Documents not sent: ${refused.length} of ${selection.documents.length}. A leading "---" block that is closed but lacks the shape of front matter may hold metadata, so nothing from such a document is sent. Correct the block or remove it to have the document assessed.`]),
     `Total: ${candidates.length} requests, ${candidates.length * 2} questions.`,
     "Purpose travels with the reader companion question; colour travels with the position companion question. Reader and position judgements are discarded.",
     "Five largest payload totals (UTF-8 bytes, including questions):",
-    ...largest.map(document => `- ${safeText(document.file)}: ${payloadBytes(document.plan)} bytes.`),
-    ...(includeText ? [`This export saves full judged document text locally to ${safeText(json as string)}.`] : ["JSON exports contain excerpts and state hashes by default."]),
+    ...largest.map(document => `- ${safePath(document.file)}: ${payloadBytes(document.plan)} bytes.`),
+    ...(includeText ? [`This export saves full judged document text locally to ${safePath(json as string)}.`] : ["JSON exports contain excerpts and state hashes by default."]),
     "A local send log records the payload digest, selected paths and timestamp. It records transmission; it does not prove agreement.",
     LIMITATION,
     ...formatEvidence(calibrationEvidence()),
@@ -286,23 +286,24 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
  * @returns Markdown tables joined by line breaks. The findings table lists
  *     each local finding and each result that did not pass; a pass appears in
  *     the coverage counts alone. A report with no findings and no coverage
- *     keeps both table headers and has no rows. Cells have control characters
+ *     keeps both table headers and has no rows. A file name is printed as
+ *     `safePathCell` prints a path. Every other cell has control characters
  *     removed and pipes escaped.
  */
 export function formatFindings(report: JevReport): string {
   const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`,
-    ...(report.notSent ?? []).map(document => `Not sent: ${safeText(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
+    ...(report.notSent ?? []).map(document => `Not sent: ${safePath(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
     ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
     "|------|------|------|-------|------|-------|---------|---------|"];
-  for (const finding of report.localFindings) lines.push(`| ${safeCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
+  for (const finding of report.localFindings) lines.push(`| ${safePathCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
   for (const result of report.results.filter(result => result.band !== "pass")) {
     const diagnosis = result.diagnosisGate;
     const refinement = diagnosis === undefined ? "" : ` neither score ${diagnosis.score}, cut-off ${diagnosis.cutOff}, prerequisite ${diagnosis.prerequisite}.`;
-    lines.push(`| ${safeCell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${safeCell(result.detail)}${refinement} Excerpt: ${safeCell(result.excerpt)} |`);
+    lines.push(`| ${safePathCell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${safeCell(result.detail)}${refinement} Excerpt: ${safeCell(result.excerpt)} |`);
   }
   lines.push("| File | Check | Assessed | Pass | Fail | Unsure | Skipped |", "|------|-------|----------|------|------|--------|---------|");
-  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${safeCell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
+  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${safePathCell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
   lines.push("Colour passes appear only in counts and never approve a document. Unsure asserts no fault. Findings are proxies, not an ISO judgement.");
   return lines.join("\n");
 }
@@ -346,7 +347,7 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
   return result;
 }
 function formatMechanical(findings: Findings): string {
-  return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${safeCell(file)} | ${finding.line} | ${finding.rule} | ${safeCell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
+  return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${safePathCell(file)} | ${finding.line} | ${finding.rule} | ${safeCell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
 }
 function readArguments(mode: "text" | "design", argv: string[]): Arguments {
   if (!argv[2] || argv[2].startsWith("--")) throw new Error();

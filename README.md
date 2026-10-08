@@ -146,6 +146,8 @@ Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-ph
 
 Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
 
+Those five rules, `acronym-undefined` and `prose-enumeration` read through paired emphasis marks, so `in **order** to` is the phrase `in order to`. A block whose lines hold `[`, `<`, `://` or `www.` is the exception: its marks stay, because pairing them around a link reported words no reader sees. A phrase split by emphasis is therefore missed in a block that holds a link, a bare web address, a task marker, an HTML tag or a bracket in code.
+
 The `sentence-length` and `sentence-average` rules count words separated by whitespace, including spaces and line breaks, and use English benchmarks. The `paragraph-length` rule counts sentences, with a limit of five.
 
 The `prose-enumeration` rule flags three or more distinct ranks in a prose block, including rank one. It recognises English ordinal words and numbered markers from one to six.

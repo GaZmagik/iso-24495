@@ -356,10 +356,36 @@ describe("text nobody has read, in the printed findings", () => {
         skipped: [],
       });
       expect(output).not.toContain(character);
+      // The file name is a path, so the character is shown as its code. The rule and
+      // the detail are quoted wording, where it becomes a space.
+      const shown = `${String.fromCharCode(92)}u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
       expect(output).toContain(
-        "| docs/a [2Jb.md | 1 | link text | link text \"here\" describes no destination (https://x.invalid/ [2J) |",
+        `| docs/a${shown}[2Jb.md | 1 | link text | link text "here" describes no destination (https://x.invalid/ [2J) |`,
       );
     }
+  });
+
+  // A file name was cleaned like a quoted detail: a control character became a space
+  // and each run of spaces became one. Three files then shared one printed name, and
+  // nobody could tell which of them a finding was in.
+  test("three file names that printed alike are told apart", () => {
+    const override = String.fromCharCode(0x202e);
+    const names = ["a b.md", "a  b.md", `a${override}b.md`];
+    const output = formatFindings({
+      configHash: "abcd1234",
+      files: Object.fromEntries(names.map((name) =>
+        [name, { violations: [{ rule: "legalese", line: 1, detail: "banned  term" }] }])),
+      totals: { legalese: 3 },
+      skipped: [],
+    });
+    const rows = output.split("\n").slice(2, 5);
+    expect(new Set(rows).size).toBe(3);
+    expect(rows).toEqual([
+      "| a b.md | 1 | legalese | banned term |",
+      "| a  b.md | 1 | legalese | banned term |",
+      `| a${String.fromCharCode(92)}u202eb.md | 1 | legalese | banned term |`,
+    ]);
+    expect(output).not.toContain(override);
   });
 
   test("a finding stays on one line whatever line ending it holds", () => {
@@ -388,8 +414,9 @@ describe("text nobody has read, in the printed findings", () => {
       )).toBe(0);
       const printed = output.stdout.join("\n");
       for (const character of UNREAD_CHARACTERS) expect(printed).not.toContain(character);
+      const slash = String.fromCharCode(92);
       expect(printed).toContain(
-        "| gu ide .md | 1 | link-text | link text \"here\" describes no destination (https://x.invalid/ [2J ) |",
+        `| gu${slash}u202eide${slash}u009b.md | 1 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |`,
       );
       // The JSON report is data for another program, so it holds what was found.
       const saved = JSON.parse(readFileSync(report, "utf8")) as { files: Record<string, { violations: Array<{ detail: string }> }> };

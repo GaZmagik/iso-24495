@@ -41,31 +41,6 @@ export interface ProseBlock {
   lines: string[];
 }
 
-/**
- * A link or image that a reader sees as its label, by where its parts sit in
- * the text that holds it. Each offset counts from the start of that text.
- */
-export interface LabelledLink {
-  /** The first character of the link: its "[", or the "!" of an image. */
-  start: number;
-  /** The first character of the label, and the offset just past its last. */
-  labelStart: number;
-  labelEnd: number;
-  /** The offset just past the last character of the link. */
-  end: number;
-}
-
-/** A block of reader text, with the text it was read from. */
-export interface LabelledBlock extends ProseBlock {
-  /** The block with its links as written: what `lines` held before, joined by line breaks. */
-  source: string;
-  /**
-   * Every link in `source` that `lines` shows as its label, in the order they
-   * start. A link inside the label of another is listed too.
-   */
-  links: LabelledLink[];
-}
-
 export interface Heading {
   level: number;
   line: number;
@@ -322,8 +297,6 @@ interface Container {
 interface Parsed {
   paragraphs: ProseBlock[];
   headings: Heading[];
-  /** The text of each heading with its links as written, in the order of `headings`. */
-  headingSources: string[];
   /** Front matter and fenced code: lines no rule reads. */
   hidden: Set<number>;
   /** Table lines: structure, but rules about tables still read them. */
@@ -736,13 +709,11 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     }
     block.lines = visibleInline(source).split("\n");
   }
-  const headingSources: string[] = [];
   for (const heading of found) {
-    headingSources.push(heading.text);
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, headingSources, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
 }
 
 /**
@@ -1161,19 +1132,19 @@ function labelStart(link: MarkdownLink): number {
   return link.start + (link.image ? 2 : 1);
 }
 
-/**
- * Whether a reader sees the label in place of this link.
- *
- * An inline link always reads as its label. An empty label is still a link, and a
- * reader sees nothing where it stands. Leaving it as written counted its destination
- * and title as prose. The rule that reports a link with no text reads the source lines,
- * so it is unaffected. A reference reads as its label only where the document defines
- * it; otherwise its brackets are text and it stays as written.
- */
-function readsAsLabel(link: MarkdownLink, references?: ReadonlySet<string>): boolean {
-  if (link.kind === "inline") return true;
+/** The label a reader sees in place of a link, or the link untouched where it stays. */
+function flattenedLink(
+  link: MarkdownLink,
+  whole: string,
+  label: string,
+  references?: ReadonlySet<string>,
+): string {
+  // An empty label is still a link, and a reader sees nothing where it stands. Leaving it
+  // as written counted its destination and title as prose. The rule that reports a link
+  // with no text reads the source lines, so it is unaffected.
+  if (link.kind === "inline") return keepLines(whole, label);
   const named = link.kind === "reference" ? link.target || link.label : link.label;
-  return references?.has(normaliseReference(named)) ?? false;
+  return references?.has(normaliseReference(named)) ? keepLines(whole, label) : whole;
 }
 
 /**
@@ -1182,31 +1153,18 @@ function readsAsLabel(link: MarkdownLink, references?: ReadonlySet<string>): boo
  * A label may hold a link or an image of its own, so the labels are closed with a stack
  * rather than by reading each one again from the start. Every character is then read
  * once, however deeply the text nests.
- *
- * @param links Receives each link that is replaced, by where it sits in `text`, in the
- *     order they start. This is for a caller that must know where a link was once it
- *     is gone. The result is the same without it, and nothing is then recorded.
  */
-function flattenLinks(text: string, references?: ReadonlySet<string>, links?: LabelledLink[]): string {
-  const flattening: Flattening = { open: [], flattened: "", at: 0, links };
+function flattenLinks(text: string, references?: ReadonlySet<string>): string {
+  const flattening: Flattening = { open: [], flattened: "", at: 0 };
   for (const link of markdownLinks(text)) {
     while (flattening.open.length > 0) {
-      const inner = flattening.open.at(-1) as OpenLabel;
+      const inner = flattening.open.at(-1) as { link: MarkdownLink; label: string };
       if (link.start < labelStart(inner.link) + inner.link.label.length) break;
       closeLabel(flattening, text, references);
     }
     writeFragment(flattening, text.slice(flattening.at, link.start));
     flattening.at = labelStart(link);
-    flattening.open.push({ link, label: "", found: links?.length ?? 0 });
-    // A link is recorded once, as it opens, so the list is in the order the links
-    // start. Whether it reads as its label is known only when it closes, and one
-    // that does not is taken off again there.
-    links?.push({
-      start: link.start,
-      labelStart: labelStart(link),
-      labelEnd: labelStart(link) + link.label.length,
-      end: link.end,
-    });
+    flattening.open.push({ link, label: "" });
   }
   while (flattening.open.length > 0) {
     closeLabel(flattening, text, references);
@@ -1214,20 +1172,10 @@ function flattenLinks(text: string, references?: ReadonlySet<string>, links?: La
   return flattening.flattened + text.slice(flattening.at);
 }
 
-/** A label still being read. */
-interface OpenLabel {
-  link: MarkdownLink;
-  label: string;
-  /** How many links had been recorded when this one opened. It and those inside it follow. */
-  found: number;
-}
-
 interface Flattening {
-  open: OpenLabel[];
+  open: Array<{ link: MarkdownLink; label: string }>;
   flattened: string;
   at: number;
-  /** Each link replaced by its label so far. Absent when the caller wants none. */
-  links?: LabelledLink[];
 }
 
 /** Adds text to the innermost open label, or to the result where no label is open. */
@@ -1239,18 +1187,11 @@ function writeFragment(flattening: Flattening, fragment: string): void {
 
 /** Ends the innermost open label and writes what a reader sees in its place. */
 function closeLabel(flattening: Flattening, text: string, references?: ReadonlySet<string>): void {
-  const inner = flattening.open.pop() as OpenLabel;
+  const inner = flattening.open.pop() as { link: MarkdownLink; label: string };
   inner.label += text.slice(flattening.at, labelStart(inner.link) + inner.link.label.length);
   flattening.at = inner.link.end;
-  const whole = text.slice(inner.link.start, flattening.at);
-  if (!readsAsLabel(inner.link, references)) {
-    // The link stays as written, and so do the links inside it. They were recorded
-    // after this one opened, so it and they are the end of the list.
-    if (flattening.links !== undefined) flattening.links.length = inner.found;
-    writeFragment(flattening, whole);
-    return;
-  }
-  writeFragment(flattening, keepLines(whole, inner.label));
+  writeFragment(flattening,
+    flattenedLink(inner.link, text.slice(inner.link.start, flattening.at), inner.label, references));
 }
 
 
@@ -1285,105 +1226,6 @@ export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlo
     line: block.line,
     lines: visibleText(block.lines.join("\n"), parsed.references).split("\n"),
   }));
-}
-
-/**
- * The blocks `readerProseBlocks` returns, each with the text it was read from
- * and where the links sat in that text.
- *
- * Once a link is replaced by its label, nothing says where the link was or
- * what stood beside each character. A rule that pairs emphasis marks needs
- * both: a mark outside a link never pairs with one inside it, and whether a
- * mark may open or close depends on the bracket beside it.
- *
- * @returns The same blocks, lines and line numbers as `readerProseBlocks`.
- *     `links` is empty for a block with no link that reads as its label, and
- *     `source` is then its lines joined. Empty when the text holds no prose.
- */
-export function labelledProseBlocks(text: string, reading: Reading = {}): LabelledBlock[] {
-  const parsed = parse(toLines(text), reading);
-  return parsed.paragraphs.map((block) => labelledBlock(block.line, block.lines.join("\n"), parsed.references));
-}
-
-/**
- * Every heading as a block, with the text it was read from and where the links
- * sat in that text.
- *
- * @returns One block for each heading `headings` returns, in the same order.
- *     Its one line is that heading's `text`, and `line` is where the heading
- *     starts. Empty when the text has no heading.
- */
-export function labelledHeadings(text: string, reading: Reading = {}): LabelledBlock[] {
-  const parsed = parse(toLines(text), reading);
-  return parsed.headings.map((heading, index) =>
-    labelledBlock(heading.line, parsed.headingSources[index] as string, parsed.references));
-}
-
-/**
- * Every link in a piece of inline Markdown that a reader sees as its label.
- *
- * This is for a rule that reads source lines, where the links are still
- * written out, and must treat them as the rules that read a `LabelledBlock`
- * do. Both lists come from the one scan that replaces links by their labels.
- *
- * @param text One line, or the lines of one block joined by line breaks.
- * @param references The labels the document defines, each as
- *     `normaliseReference` gives it. A reference link is listed only when its
- *     label is among them.
- * @returns The links as a `LabelledBlock` lists them, by their offsets in
- *     `text`. A link inside a reference that has no definition is left out,
- *     because that reference stays as written. Empty when there is none.
- */
-export function labelledLinks(text: string, references: ReadonlySet<string>): LabelledLink[] {
-  const links: LabelledLink[] = [];
-  flattenLinks(text, references, links);
-  return links;
-}
-
-/** One block of reader text that starts on `line`, read from inline Markdown with its links as written. */
-function labelledBlock(line: number, written: string, references: ReadonlySet<string>): LabelledBlock {
-  const source = visibleInline(written);
-  const links: LabelledLink[] = [];
-  return { line, lines: flattenLinks(source, references, links).split("\n"), source, links };
-}
-
-/**
- * Where characters of a text sit once its links are replaced by their labels.
- *
- * @param offsets Offsets into `source`, ascending. Each must be a character
- *     that is kept: one outside every link, or inside a label.
- * @param source The text a `LabelledBlock` was read from.
- * @param links The links of that block, as the block gives them.
- * @returns One offset for each given, in the same order, into the lines of
- *     the block joined by line breaks. A copy of `offsets` when there is no
- *     link, and empty when no offset is given.
- */
-export function flattenedOffsets(
-  offsets: readonly number[],
-  source: string,
-  links: readonly LabelledLink[],
-): number[] {
-  // What replacing a link takes out, by where each piece ends: the opening of the
-  // link, and everything from the end of its label to the end of the link. The line
-  // endings of the second are put back, as `keepLines` describes.
-  const cuts: Array<{ end: number; lost: number }> = [];
-  for (const link of links) {
-    cuts.push({ end: link.labelStart, lost: link.labelStart - link.start });
-    const closing = source.slice(link.labelEnd, link.end);
-    cuts.push({ end: link.end, lost: closing.length - (countLines(closing) - 1) });
-  }
-  cuts.sort((a, b) => a.end - b.end);
-  const flattened: number[] = [];
-  let lost = 0;
-  let next = 0;
-  for (const offset of offsets) {
-    while (next < cuts.length && (cuts[next] as { end: number }).end <= offset) {
-      lost += (cuts[next] as { lost: number }).lost;
-      next++;
-    }
-    flattened.push(offset - lost);
-  }
-  return flattened;
 }
 
 /**

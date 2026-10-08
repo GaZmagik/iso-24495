@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
-import { safeCell } from "./lib/safe-text.ts";
+import { safePathCell } from "./lib/safe-text.ts";
 import type { Evidence } from "./lib/types.ts";
 
 /**
@@ -14,9 +14,10 @@ import type { Evidence } from "./lib/types.ts";
  *   bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]
  *
  * `--json` also writes the evidence to that file, replacing it. The file holds
- * each path as the walk gave it. The table shows each path with control
- * characters and marks that reverse text direction made spaces, and pipes
- * escaped, because a file name is text nobody has read.
+ * each path as the walk gave it. The table shows each path as `safePathCell`
+ * prints it, with a control character or a mark that reverses text direction
+ * shown as its code and a pipe escaped, because a file name is text nobody
+ * has read.
  *
  * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
  * could not be read in full or the evidence file could not be written. Exit 2
@@ -54,7 +55,7 @@ export function runCli(
     stdout("|-------------------|-------|-------|");
     for (const category of CATEGORIES) {
       const { found, paths } = evidence.artefacts[category];
-      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.map(safeCell).join("<br>") || "-"} |`);
+      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.map((path) => safePathCell(path)).join("<br>") || "-"} |`);
     }
     return 0;
   } catch (error) {

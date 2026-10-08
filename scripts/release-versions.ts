@@ -26,7 +26,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
+import { safePath } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 
 /**
  * Whether every version site in a checkout agrees, and the changelog records the
@@ -81,10 +81,10 @@ export function checkVersionSites(root: string): VersionReport {
     if (text === null) continue;
     const found = skillVersion(text);
     if ("problem" in found) {
-      problems.push(`${safeText(skill)} ${found.problem}`);
+      problems.push(`${safePath(skill)} ${found.problem}`);
       continue;
     }
-    requireValue(problems, `${safeText(skill)} metadata.version`, found.stated, version);
+    requireValue(problems, `${safePath(skill)} metadata.version`, found.stated, version);
   }
 
   const changelog = read(root, problems, "CHANGELOG.md");
@@ -158,13 +158,13 @@ function skillVersion(text: string): { stated: unknown } | { problem: string } {
 /**
  * A file's text, or null with a problem recorded where it cannot be read. A
  * skill's path holds a name from a directory listing, so the problem shows the
- * path cleaned.
+ * path as `safePath` prints it.
  */
 function read(root: string, problems: string[], path: string): string | null {
   try {
     return readFileSync(join(root, path), "utf8");
   } catch {
-    problems.push(`${safeText(path)} cannot be read.`);
+    problems.push(`${safePath(path)} cannot be read.`);
     return null;
   }
 }

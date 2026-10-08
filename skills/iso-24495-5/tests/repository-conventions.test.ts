@@ -1822,6 +1822,44 @@ describe("repository writing conventions", () => {
         }
       }, 30_000);
 
+      // The script reads its file more than once, and a review made the file
+      // vanish after the first read. The step that tests for an empty
+      // description then threw. Bun printed its own diagnostic, with the path
+      // and a stack trace, and exited 1, which is the code for an empty
+      // description. Each later step that reads the file is made to lose it
+      // here, by a shell function that stands in for the command before it.
+      test("a file that vanishes after the first read exits 2, in fixed words", () => {
+        const vanishing: Array<[step: string, hook: string]> = [
+          ["before the test for an empty description",
+            "cat() { command cat \"$@\"; result=$?; command rm -- \"$2\"; return \"$result\"; }; export -f cat"],
+          ["before the audit",
+            "bun() { if [ \"$1\" != \"-e\" ]; then command rm -f -- \"$VANISHING\"; fi; command bun \"$@\"; }; export -f bun"],
+        ];
+        for (const [step, hook] of vanishing) {
+          const directory = mkdtempSync(join(tmpdir(), "iso-24495-PRIVATE-"));
+          try {
+            const file = join(directory, "race.md");
+            writeFileSync(file, "Words.\n", "utf8");
+            const run = Bun.spawnSync(
+              ["bash", "-c", `${hook}; bash "$1" "$2"`, "_", forBash(auditScript), forBash(file)],
+              { env: checkEnvironment({ VANISHING: forBash(file) }) },
+            );
+            const decoder = new TextDecoder();
+            const printed = `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`;
+            expect(run.exitCode, `${step}: ${printed}`).toBe(2);
+            expect(existsSync(file), `${step}: the file must have vanished`).toBe(false);
+            expect(printed, step).toContain(
+              `The path given as the first argument, ${forBash(file).length} characters long, names a file that was read once and cannot be read again.\n`,
+            );
+            for (const part of ["PRIVATE", "race.md", "ENOENT", "Bun v", "[eval]", "empty or holds only whitespace"]) {
+              expect(printed.includes(part), `${step}: printed ${JSON.stringify(part)} in: ${printed}`).toBe(false);
+            }
+          } finally {
+            rmSync(directory, { recursive: true, force: true });
+          }
+        }
+      }, 60_000);
+
       // A name beginning with a dash reached `dirname` as an option, and the
       // failure was swallowed. A file that did not exist then resolved to the
       // current directory, where the script audited a neighbour and passed.

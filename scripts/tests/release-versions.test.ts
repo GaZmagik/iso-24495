@@ -177,17 +177,21 @@ describe("a skill directory nobody has read", () => {
       const control = String.fromCharCode(0x9b);
       const override = String.fromCharCode(0x202e);
       const name = `iso-24495-x${override}[2J${control}y`;
+      // Each of the two characters is printed as its code, so the name can be told from
+      // one that holds a space there.
+      const slash = String.fromCharCode(92);
+      const printed = `skills/iso-24495-x${slash}u202e[2J${slash}u009by/SKILL.md`;
       mkdirSync(join(root, "skills", name));
       const report = checkVersionSites(root);
-      expect(report.problems).toEqual(["skills/iso-24495-x [2J y/SKILL.md cannot be read."]);
+      expect(report.problems).toEqual([`${printed} cannot be read.`]);
       expect(report.skills).toContain(`skills/${name}/SKILL.md`);
 
       writeFileSync(join(root, "skills", name, "SKILL.md"), "no front matter\n");
-      expect(checkVersionSites(root).problems).toEqual(["skills/iso-24495-x [2J y/SKILL.md has no front matter."]);
+      expect(checkVersionSites(root).problems).toEqual([`${printed} has no front matter.`]);
 
       writeFileSync(join(root, "skills", name, "SKILL.md"), "---\nmetadata:\n  version: \"0.6.0\"\n---\n");
       expect(checkVersionSites(root).problems)
-        .toEqual(["skills/iso-24495-x [2J y/SKILL.md metadata.version states \"0.6.0\", not \"0.7.0\"."]);
+        .toEqual([`${printed} metadata.version states "0.6.0", not "0.7.0".`]);
     });
   });
 });

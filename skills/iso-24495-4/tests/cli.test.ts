@@ -140,7 +140,9 @@ describe("audit-corpus runCli", () => {
       rmSync(target, { recursive: true, force: true });
       const output = capture();
       expect(runCorpusCli(["bun", "audit-corpus-cli.ts", temp], output.writeOut, output.writeErr)).toBe(0);
-      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(temp, "dangling")}`]);
+      // A path is printed with forward slashes on every platform.
+      const printed = join(temp, "dangling").split(String.fromCharCode(92)).join("/");
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printed}`]);
       expect(output.stdout.at(-1)).toBe("\nTotal: 0 across 1 files.");
       expect(output.stdout.join("\n")).not.toContain("opening-version-date");
     } finally {
@@ -861,6 +863,54 @@ describe("a command never passes on what the runtime said about a failure", () =
     });
   });
 
+  // The command held "no state file" as null, which is also what a state file
+  // holding the JSON text null parses to. Such a file skipped the shape check,
+  // and the command replaced it and the report beside it and exited 0.
+  test("generate-report refuses a state file that holds null, and leaves it and the report alone", () => {
+    withWorkspace((workspace) => {
+      const write = (name: string, value: unknown): string => {
+        const path = join(workspace, name);
+        writeFileSync(path, JSON.stringify(value));
+        return path;
+      };
+      const level = { level: 2, missing: [] };
+      const inputs = [
+        write("findings.json", { configHash: "abcd1234", files: {}, totals: { legalese: 2 } }),
+        write("evidence.json", { artefacts: { policy: { found: true, paths: ["policy.md"] } } }),
+        write("maturity.json", {
+          dimensions: { governance: level, capability: level, process: level, measurement: level, culture: level },
+          overall: 2,
+        }),
+      ];
+      const state = join(workspace, "state.json");
+      const report = join(workspace, "report.md");
+      const run = (out: (text: string) => number, err: (text: string) => number) => runReportCli(
+        ["bun", "generate-report-cli.ts", ...inputs, "--state", state, "--out", report], out, err,
+        () => "2026-10-07T12:00:00.000Z");
+      for (const [written, found] of [
+        ["null", "null"],
+        ["  null\n", "null"],
+        ["0", "a number"],
+        ["false", "a true or false value"],
+        ['""', "a string"],
+        ["[]", "an array"],
+      ] as Array<[string, string]>) {
+        writeFileSync(state, written);
+        writeFileSync(report, "KEEP");
+        expectFixedFailure(run, `generate-report: --state must be an object; got ${found}`);
+        expect(readFileSync(state, "utf8"), written).toBe(written);
+        expect(readFileSync(report, "utf8"), written).toBe("KEEP");
+      }
+
+      // No state file is still a first audit, and it starts the history.
+      rmSync(state);
+      const first = capture();
+      expect(run(first.writeOut, first.writeErr), first.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(state, "utf8")).snapshots).toHaveLength(1);
+      expect(readFileSync(report, "utf8")).toStartWith("# Plain Language Gap Analysis");
+    });
+  });
+
   test("audit-text", () => {
     withWorkspace((workspace) => {
       const absent = join(workspace, `${MARKER}.md`);
@@ -895,6 +945,9 @@ describe("a command never passes on what the runtime said about a failure", () =
 // shows here that each command cleans the path it prints.
 describe("a skipped entry is printed with its path cleaned", () => {
   const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
+  /** The link as a command prints it: forward slashes, and the mark as its code. */
+  const printedLink = (directory: string): string =>
+    `${join(directory, "report").split(String.fromCharCode(92)).join("/")}${String.fromCharCode(92)}u202edm.exe`;
 
   /** A directory holding one link that an audit skips, whose name reverses text direction. */
   function withReversingLink(run: (directory: string) => void): void {
@@ -914,7 +967,7 @@ describe("a skipped entry is printed with its path cleaned", () => {
     withReversingLink((directory) => {
       const output = capture();
       expect(runCorpusCli(["bun", "audit-corpus-cli.ts", directory], output.writeOut, output.writeErr)).toBe(0);
-      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(directory, "report dm.exe")}`]);
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printedLink(directory)}`]);
     });
   });
 
@@ -926,7 +979,7 @@ describe("a skipped entry is printed with its path cleaned", () => {
         output.writeOut,
         output.writeErr,
       )).toBe(0);
-      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${join(directory, "report dm.exe")}`]);
+      expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printedLink(directory)}`]);
     });
   });
 });
@@ -935,7 +988,7 @@ describe("audit-evidence prints a path nobody has read", () => {
   // The paths come from a directory walk. A C1 control and a right-to-left
   // override are allowed in a file name on every platform, and an escape
   // character on Linux and macOS.
-  test("a control character or a direction mark in a file name becomes a space, and the JSON keeps it", () => {
+  test("a control character or a direction mark in a file name is printed as its code, and the JSON keeps it", () => {
     const workspace = mkdtempSync(join(tmpdir(), "iso-evidence-unread-"));
     const temp = mkdtempSync(join(tmpdir(), "iso-evidence-unread-out-"));
     try {
@@ -950,7 +1003,8 @@ describe("audit-evidence prints a path nobody has read", () => {
       const printed = output.stdout.join("\n");
       expect(printed).not.toContain(control);
       expect(printed).not.toContain(override);
-      expect(output.stdout[2]).toBe("| policy | yes | style-guide [2J x.md |");
+      const slash = String.fromCharCode(92);
+      expect(output.stdout[2]).toBe(`| policy | yes | style-guide${slash}u202e[2J${slash}u009bx.md |`);
       expect(output.stdout[6]).toBe("| glossary | yes | glossary.md |");
       expect(JSON.parse(readFileSync(jsonPath, "utf8")).artefacts.policy.paths).toEqual([name]);
     } finally {
