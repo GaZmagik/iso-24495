@@ -64,6 +64,8 @@ export function runCli(
   const seenOptions = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
+    // The loop bound keeps the index inside the list; the compiler cannot see that.
+    if (option === undefined) break;
     if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
       stderr(
@@ -203,7 +205,7 @@ export function auditTarget(
       skipped.push(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter: reading.frontMatter, markdown: /\.(?:md|markdown)$/i.test(path) });
+    const violations = auditText(text, { ...reading, knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
     findings.files[displayPath(path, absoluteProject)] = { violations };
     for (const violation of violations) {
       findings.totals[violation.rule] = (findings.totals[violation.rule] ?? 0) + 1;
