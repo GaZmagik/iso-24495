@@ -181,3 +181,15 @@ export function safeText(text: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * Whether text holds nothing a reader can see: no character but the plain space
+ * and those that `safePath` shows as their codes, which are the ones that draw
+ * nothing. It is the one definition of such a character, read here for a whole
+ * text where `safePath` reads it for a name.
+ *
+ * @returns True for empty text as well.
+ */
+export function drawsNothing(text: string): boolean {
+  return text.replace(UNSEEN_IN_A_PATH, "").trim() === "";
+}

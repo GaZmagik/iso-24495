@@ -250,7 +250,7 @@ bash scripts/audit-pull-request-text.sh <file>
 
 Findings are advice, and never fail the check. The script lists them in its log, and on the job's summary page when it runs on GitHub. No explanation of why a text suits its readers could satisfy a check that failed on findings.
 
-The check fails in two cases only. It fails a description that is empty or holds only whitespace, because there is nothing to audit. It also fails when the audit does not run.
+The check fails in two cases only. It fails a description that is empty or holds nothing a reader can see, because there is nothing to audit. It also fails when the audit does not run.
 
 A pass means only that the audit ran on a description that is not empty. It does not mean the description is clear.
 
@@ -258,7 +258,7 @@ A description has no front matter, so the check tells the audit there is none. A
 
 A file the script cannot read stops it with a different code, rather than any verdict about text. A review found the reason for that: a mistyped name beginning with a dash reached `dirname` as an option, and the script audited a neighbouring file and passed. A check that passes for the wrong target is worse than one that fails.
 
-The script only starts one program, `scripts/audit-pull-request-text.ts`, which reads the file once. The text it tests for whitespace is therefore the text it audits. A directory or a symbolic link is refused like a file that cannot be read.
+The script only starts one program, `scripts/audit-pull-request-text.ts`, which reads the file once. The text it tests for emptiness is therefore the text it audits. A directory or a symbolic link is refused like a file that cannot be read.
 
 Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
 

@@ -15,6 +15,7 @@
 import { appendFileSync, lstatSync, readFileSync } from "node:fs";
 import { auditText, configHash, isAuditedDocument, projectAcronyms } from "../skills/iso-24495-4/scripts/audit-corpus.ts";
 import { unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
+import { drawsNothing } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 import type { Violation } from "../skills/iso-24495-4/scripts/lib/types.ts";
 import { formatFindings } from "../skills/iso-24495-text-audit/scripts/audit-text.ts";
 
@@ -43,7 +44,7 @@ export interface Dependencies {
  *
  * - Exit 0: the audit ran on a description that is not empty. Any findings are
  *   listed, as advice. A pass does not mean the description is clear.
- * - Exit 1: the description is empty, or holds only whitespace.
+ * - Exit 1: the description is empty, or holds nothing a reader can see.
  * - Exit 2: the arguments were wrong. That includes a path that names nothing,
  *   a directory, a symbolic link, anything else that is not a regular file,
  *   and a file that cannot be read.
@@ -51,7 +52,7 @@ export interface Dependencies {
  *   read, or the audit stopped on a failure nothing expected.
  *
  * The file is read once. A pass therefore means that the text which was read
- * is the text which was tested for whitespace and then audited.
+ * is the text which was tested for emptiness and then audited.
  *
  * The argument is text nobody has read, so no message prints it. A message
  * names the argument and gives its length. The table names the file as the
@@ -146,15 +147,15 @@ function unreadableKind(path: string, dependencies: Dependencies): string | null
  * An audit of nothing finds nothing, so an empty description would pass having
  * been read by nobody. Emptiness is a test of the Markdown source, not of what
  * a page would show: a description holding a comment or an image is not empty,
- * and the audit reads it. Whitespace is whatever `\s` matches, which includes
- * the no-break space, the other Unicode space characters and the byte order
- * mark.
+ * and the audit reads it. A description is empty when it holds nothing a reader
+ * can see, as `drawsNothing` decides: white space of every kind, and every
+ * character that draws nothing, such as a zero width space or a word joiner.
  *
  * A description has no front matter. GitHub shows a leading "---" block as a
  * rule and a heading, so the audit reads the block as that text.
  */
 function verdict(path: string, text: string, dependencies: Dependencies): { exit: number; parts: string[] } {
-  if (!/\S/.test(text)) {
+  if (drawsNothing(text)) {
     return {
       exit: 1,
       parts: ["The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why."],

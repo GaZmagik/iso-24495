@@ -97,6 +97,40 @@ describe("the file is read once, and that reading is what is judged", () => {
   });
 });
 
+// A description of one zero width space passed as not empty: the test for emptiness
+// asked for white space, and that character is none. A description is empty when it
+// holds nothing a reader can see. Issue 47.
+describe("a description that holds nothing a reader can see is empty", () => {
+  const EMPTY = "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.";
+  const unseen: Array<[name: string, text: string]> = [
+    ["a zero width space", String.fromCodePoint(0x200b)],
+    ["a word joiner", String.fromCodePoint(0x2060)],
+    ["a byte order mark", String.fromCodePoint(0xfeff)],
+    ["a no-break space", String.fromCodePoint(0xa0)],
+    ["one space", " "],
+    ["nothing", ""],
+    ["a zero width joiner, a soft hyphen and a mark that changes direction", String.fromCodePoint(0x200d, 0xad, 0x202e)],
+    ["a variation selector and a tag character", String.fromCodePoint(0xfe0f, 0xe0041)],
+    ["several of them among spaces, tabs and line breaks", ` ${String.fromCodePoint(0x200b)}${String.fromCharCode(9, 10)} ${String.fromCodePoint(0x2060, 0xfeff)}${String.fromCharCode(13, 10)}${String.fromCodePoint(0xa0, 0x200b)} `],
+  ];
+
+  test.each(unseen)("%s", (_name, text) => {
+    const result = run("description.md", [text]);
+    expect(result.exit).toBe(1);
+    expect(result.stdout).toEqual([EMPTY]);
+    expect(result.stderr).toEqual([]);
+  });
+
+  test("one letter among them is a description, and the audit reads it", () => {
+    const [, several] = unseen.at(-1) as [string, string];
+    for (const text of [`${several}a${several}`, `${String.fromCodePoint(0x200b)}a`, `a${String.fromCodePoint(0x2060)}`, "-", String.fromCodePoint(0x1f600), String.fromCodePoint(0x301)]) {
+      const result = run("description.md", [text]);
+      expect(result.exit, JSON.stringify(text)).toBe(0);
+      expect(result.stdout.join(" ")).toContain(PASS_MEANING);
+    }
+  });
+});
+
 describe("a path that is not a file to read is a wrong argument", () => {
   const kinds: Array<[name: string, kind: Partial<typeof FILE>, words: string]> = [
     ["a directory", { isFile: () => false, isDirectory: () => true }, "names a directory, where a file is needed."],
