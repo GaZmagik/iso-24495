@@ -1028,7 +1028,7 @@ interface OpenBracket {
  * link, and only this pass knows where a link has just ended.
  *
  * Nothing here scans ahead for a bracket. Each question about what follows one is
- * answered from `linkMarks`, which reads the block once.
+ * answered from `linkMarks`, which reads the block once forwards and once backwards.
  *
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
