@@ -9,11 +9,12 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
     "verbatimModuleSyntax": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
-    // The next pull request turns on noUncheckedIndexedAccess,
-    // exactOptionalPropertyTypes and noImplicitOverride, which are off here.
   },
   "include": ["scripts/**/*.ts", "skills/**/*.ts"]
 }
