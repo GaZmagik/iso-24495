@@ -64,9 +64,12 @@ export type RunCommand = (
 /**
  * Lists the tags on `origin` with git. A failure is returned, never thrown.
  *
- * When git runs and fails, the reason is what git printed. When git cannot be
- * started, the reason is in fixed words: the runtime's message quotes the
- * directory it was given.
+ * The reason is always in fixed words. When git runs and fails, it gives git's
+ * exit code and the command to run to see what git says, and never what git
+ * printed: that text is written from the remote address in the checkout's
+ * configuration, which can hold a password. When git cannot be started, it
+ * names the kind of fault: the runtime's message quotes the directory it was
+ * given.
  *
  * @param root The checkout whose `origin` is asked. Asking needs the network.
  * @param runCommand Replaces the real process runner.
@@ -77,9 +80,12 @@ export type RunCommand = (
 export function remoteTags(root: string, runCommand: RunCommand = runToEnd): RemoteTags {
   try {
     const run = runCommand(["git", "ls-remote", "--tags", "origin"], { cwd: root });
-    const decoder = new TextDecoder();
-    if (run.exitCode === 0) return { ok: true, output: decoder.decode(run.stdout) };
-    return { ok: false, reason: decoder.decode(run.stderr).trim() || `git exited ${run.exitCode}` };
+    if (run.exitCode === 0) return { ok: true, output: new TextDecoder().decode(run.stdout) };
+    return {
+      ok: false,
+      reason: `git exited with code ${run.exitCode} when asked for the tags on origin. `
+        + "Run \"git ls-remote --tags origin\" in the checkout to see its reason.",
+    };
   } catch (error) {
     return { ok: false, reason: `git could not be started: ${fileFault(error) ?? unexpectedKind(error)}` };
   }

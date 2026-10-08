@@ -8,6 +8,7 @@ import {
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { pathFailure, writeTextFile } from "../../iso-24495-4/scripts/lib/failure.ts";
+import { skippedEntryWarning } from "../../iso-24495-4/scripts/lib/safe-text.ts";
 import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
 import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 import { runAuditCli, type AuditDependencies } from "../../iso-24495-4/scripts/lib/jev/audit.ts";
@@ -97,7 +98,7 @@ export function runCli(
   try {
     const findings = auditTarget(target, projectDir, readFileSync, { frontMatter });
     for (const path of findings.skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
+      stderr(skippedEntryWarning(path));
     }
     if (jsonPath !== undefined) {
       const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");

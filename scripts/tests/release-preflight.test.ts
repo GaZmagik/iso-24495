@@ -146,7 +146,9 @@ describe("the release preflight", () => {
 
       const noRemote = remoteTags(workspace);
       expect(noRemote.ok).toBe(false);
-      expect(noRemote.ok ? "" : noRemote.reason).not.toBe("");
+      expect(noRemote.ok ? "" : noRemote.reason).toMatch(
+        /^git exited with code [1-9]\d* when asked for the tags on origin\. Run "git ls-remote --tags origin" in the checkout to see its reason\.$/,
+      );
 
       const noDirectory = remoteTags(join(workspace, "missing"));
       expect(noDirectory.ok).toBe(false);
@@ -167,5 +169,33 @@ describe("the release preflight", () => {
       throw new TypeError("The property 'options.cwd' must be a string. Received \"hunter2\"");
     });
     expect(refused).toEqual({ ok: false, reason: "git could not be started: an unexpected TypeError" });
+  });
+
+  // Git writes its complaint from the remote address in the checkout's
+  // configuration, which can hold a user name and a password. One version of
+  // git removing them is no promise about the next, so none of it is passed on.
+  test("git that runs and fails is described in fixed words, never in its own", () => {
+    const marker = "https://user:hunter2@host.invalid/owner/repo.git";
+    const encoder = new TextEncoder();
+    const failing = (): { exitCode: number; stdout: Uint8Array; stderr: Uint8Array } => ({
+      exitCode: 128,
+      stdout: encoder.encode(`listing for ${marker}`),
+      stderr: encoder.encode(`fatal: unable to access '${marker}/': Could not resolve host: host.invalid`),
+    });
+    const reason = "git exited with code 128 when asked for the tags on origin. "
+      + "Run \"git ls-remote --tags origin\" in the checkout to see its reason.";
+    expect(remoteTags("checkout", failing)).toEqual({ ok: false, reason });
+
+    const run = capture();
+    expect(runPreflight("checkout", run.stdout, run.stderr, (root) => remoteTags(root, failing))).toBe(2);
+    expect(run.err).toEqual([`release preflight: the release tags on origin could not be listed: ${reason}`]);
+    expect(run.out).toEqual([]);
+    for (const leaked of ["hunter2", "host.invalid", "fatal", "resolve"]) {
+      expect(run.err.join(" ")).not.toContain(leaked);
+    }
+
+    // Empty stderr used to be the only case given in fixed words.
+    const silent = remoteTags("checkout", () => ({ exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() }));
+    expect(silent.ok ? "" : silent.reason).toStartWith("git exited with code 1 when asked");
   });
 });
