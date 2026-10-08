@@ -15,6 +15,7 @@ import { COMPLEX_WORDS } from "../scripts/lib/lexicon.ts";
 import { REFERENCE_SHAPES } from "./fixtures/reference-blocks.ts";
 import {
   classifyBoundary,
+  frontMatterRange,
   headings,
   mergedSentences,
   proseBlocks,
@@ -3180,5 +3181,125 @@ describe("a link between an expansion and its acronym", () => {
       .toEqual([]);
     expect(acronyms("[See](https://example.com/a/long/address) the IAM, identity and access management (IAM)."))
       .toEqual(undefinedAt("IAM", 1));
+  });
+});
+
+// A blank line is a line holding nothing, or only spaces and tabs, as CommonMark has
+// it. The parser asked whether a line trimmed to nothing, and trimming takes every
+// Unicode space: so a line holding one no-break space ended the paragraph, where Bun
+// and GitHub carry it on. Issue 42.
+describe("a line that holds only a space Markdown does not count as white space", () => {
+  /** Spaces that are text to Markdown, each by its name. */
+  const SPACES: Array<[name: string, space: string]> = [
+    ["a no-break space", String.fromCodePoint(0xa0)],
+    ["three no-break spaces", String.fromCodePoint(0xa0).repeat(3)],
+    ["a no-break space between ordinary spaces", ` ${String.fromCodePoint(0xa0)} `],
+    ["an en space", String.fromCodePoint(0x2002)],
+    ["an ideographic space", String.fromCodePoint(0x3000)],
+    ["a form feed", String.fromCodePoint(0xc)],
+    ["a line tabulation", String.fromCodePoint(0xb)],
+    ["a zero width no-break space", String.fromCodePoint(0xfeff)],
+    // This one was never trimmed, and is here to show the others now read as it does.
+    ["a zero width space", String.fromCodePoint(0x200b)],
+  ];
+  const fence = String.fromCharCode(96).repeat(3);
+  /** A document of each kind, with a place for one line or one end of a line. */
+  const SHAPES: Array<[name: string, made: (held: string) => string[]]> = [
+    ["a paragraph", (held) => ["one", held, "two"]],
+    ["a list item, indented", (held) => ["- one", `  ${held}`, "  two"]],
+    ["a list item, not indented", (held) => ["- one", held, "two"]],
+    ["a list item, after a blank line", (held) => ["- one", "", held, "two"]],
+    ["a quotation", (held) => ["> one", `> ${held}`, "> two"]],
+    ["a table", (held) => ["| a |", "|---|", "| one |", held, "| two |"]],
+    ["a list marker with nothing else on its line", (held) => ["one", `- ${held}`, "two"]],
+    ["a line that would close a code fence", (held) => [fence, "one", `${fence}${held}`, "two", fence, "three"]],
+  ];
+  /**
+   * Where each block is and which lines are hidden as code, which is the shape of a
+   * document. What a line of spaces leaves to read is not compared: it leaves nothing,
+   * whichever space it is, because the start of every line of a paragraph is trimmed.
+   */
+  const shapeOf = (lines: string[]): unknown => {
+    const document = lines.join(BREAK);
+    const read = readDocument(document);
+    return {
+      blocks: proseBlocks(document).map((block) => [block.line, block.lines.length]),
+      hidden: lines.map((_line, index) => read.hidden(index)),
+    };
+  };
+
+  test("the case that was reported, and what a page shows for it", () => {
+    const document = ["identity and access", String.fromCodePoint(0xa0), "management (IAM).", "Use IAM."].join(BREAK);
+    expect(findingsIn(document).filter((finding) => finding.startsWith("acronym"))).toEqual([]);
+    expect(proseBlocks(document).map((block) => [block.line, block.lines.length])).toEqual([[1, 4]]);
+    expect(Bun.markdown.html(document).match(/<p>/g)).toHaveLength(1);
+  });
+
+  test.each(SHAPES)("in %s, such a line is read as a line that holds a letter is read", (_name, made) => {
+    const letter = shapeOf(made("x"));
+    for (const [name, space] of SPACES) {
+      expect(shapeOf(made(space)), name).toEqual(letter);
+    }
+    // And not as a blank line is read, or the test would hold nothing.
+    expect(shapeOf(made(""))).not.toEqual(letter);
+  });
+
+  test("a paragraph, a list item and a quotation stay one block, as Bun shows them", () => {
+    for (const [name, space] of SPACES) {
+      for (const lines of [["one", space, "two"], ["- one", `  ${space}`, "  two"], ["- one", space, "two"], ["> one", `> ${space}`, "> two"]]) {
+        const document = lines.join(BREAK);
+        expect(proseBlocks(document).map((block) => [block.line, block.lines.length]), `${name} ${lines[0]}`).toEqual([[1, 3]]);
+        expect((Bun.markdown.html(document).match(/<p>|<li>/g) ?? []), `${name} ${lines[0]}`).toHaveLength(1);
+      }
+    }
+  });
+
+  test("a line that holds nothing, or only spaces and tabs, still ends a paragraph", () => {
+    const tab = String.fromCharCode(9);
+    for (const blank of ["", " ", "    ", tab, ` ${tab} `, `${tab}${tab}`]) {
+      for (const lines of [["one", blank, "two"], ["- one", blank, "two"], ["> one", blank, "> two"]]) {
+        const document = lines.join(BREAK);
+        expect(proseBlocks(document).map((block) => [block.line, block.lines.length]), JSON.stringify(lines)).toEqual([[1, 1], [3, 1]]);
+      }
+      // A blank line does not end a list item, where the next line is indented under it.
+      expect(proseBlocks(["- one", blank, "  two", "", "three"].join(BREAK)).map((block) => block.line)).toEqual([1, 3, 5]);
+      expect(Bun.markdown.html(["one", blank, "two"].join(BREAK)).match(/<p>/g)).toHaveLength(2);
+    }
+    // Windows line endings leave nothing on the line either.
+    const windows = ["one", "", "two"].join(String.fromCharCode(13, 10));
+    expect(proseBlocks(windows).map((block) => block.line)).toEqual([1, 3]);
+  });
+
+  test("after a blank line, such a line is outside the list item, so a heading under it is a heading", () => {
+    // A blank line keeps a list item open. This line is not blank and is not indented,
+    // so the item has ended and the paragraph that the underline makes a heading of
+    // is at the root, as Bun and GitHub show it.
+    for (const [name, space] of SPACES) {
+      const document = ["- one", "", space, "two", "==="].join(BREAK);
+      expect(headings(document).map((heading) => [heading.level, heading.line, heading.text.endsWith("two")]), name).toEqual([[1, 3, true]]);
+      expect(Bun.markdown.html(document), name).toContain("<h1>");
+    }
+    expect(headings(["- one", "", "", "two", "==="].join(BREAK)).map((heading) => [heading.line, heading.text])).toEqual([[4, "two"]]);
+  });
+
+  test("a code fence closes with only spaces and tabs after it", () => {
+    const tab = String.fromCharCode(9);
+    for (const after of ["", " ", `  ${tab}`]) {
+      expect(proseBlocks([fence, "one", `${fence}${after}`, "two"].join(BREAK)).map((block) => block.lines)).toEqual([["two"]]);
+    }
+    // With a no-break space after it, it is a line of the code, and the code runs on.
+    const open = [fence, "one", `${fence}${String.fromCodePoint(0xa0)}`, "two", fence, "three"].join(BREAK);
+    expect(proseBlocks(open).map((block) => block.lines)).toEqual([["three"]]);
+    expect(Bun.markdown.html(open)).toContain("<p>three</p>");
+    expect(Bun.markdown.html(open)).not.toContain("<p>two</p>");
+  });
+
+  test("what is left as it was: the end of hidden markup, and front matter", () => {
+    const space = String.fromCodePoint(0xa0);
+    // A comment is a block of its own, so what follows it on its line ends with it.
+    expect(proseBlocks(["one", `<!-- c -->${space}`, "two"].join(BREAK)).map((block) => block.lines)).toEqual([["one"], ["two"]]);
+    expect(Bun.markdown.html(["one", `<!-- c -->${space}`, "two"].join(BREAK)).match(/<p>/g)).toHaveLength(2);
+    // A line of front matter that holds only such a space is still a line of it.
+    expect(frontMatterRange(["---", "title: a", space, "---", "text"])).toEqual({ start: 0, end: 3 });
   });
 });

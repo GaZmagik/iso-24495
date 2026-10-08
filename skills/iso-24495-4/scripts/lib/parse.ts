@@ -230,6 +230,15 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
   return yaml ? { start: 0, end: closing } : null;
 }
 
+/**
+ * Whether a line is blank as CommonMark has it: it holds nothing, or only spaces and
+ * tabs. A no-break space, and every other space of Unicode, is text: a renderer
+ * carries a paragraph on over a line that holds one.
+ */
+function isBlank(line: string): boolean {
+  return /^[ \t]*$/.test(line);
+}
+
 function indentOf(line: string): number {
   return (/^ */.exec(line)?.[0] ?? "").length;
 }
@@ -350,7 +359,7 @@ function matchOpen(line: string, stack: Container[]): { rest: string; matched: n
       matched++;
       continue;
     }
-    if (rest.trim() === "") {
+    if (isBlank(rest)) {
       // A blank line does not end a list item.
       matched++;
       continue;
@@ -378,7 +387,7 @@ function listMarkerAt(line: string, midParagraph: boolean): { length: number; co
   if (marker === null) return null;
   // A marker with no content cannot interrupt a paragraph: CommonMark
   // requires a non-blank first line for a list to do that.
-  if (midParagraph && line.slice(marker[0].length).trim() === "") return null;
+  if (midParagraph && isBlank(line.slice(marker[0].length))) return null;
   const ordered = /^\d/.test(marker[2]);
   if (midParagraph && (!ordered || marker[2].slice(0, -1) !== "1")) {
     // A bullet may interrupt a paragraph; an ordered marker may not unless it
@@ -487,7 +496,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         if (closing !== null
           && closing[2][0] === fence.char
           && closing[2].length >= fence.length
-          && closing[3].trim() === "") {
+          && isBlank(closing[3])) {
           fence = null;
         }
         continue;
@@ -497,7 +506,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       stack.length = matched;
     }
 
-    if (rest.trim() === "") {
+    if (isBlank(rest)) {
       paragraph = null;
       if (!allMatched) stack.length = matched;
       continue;
