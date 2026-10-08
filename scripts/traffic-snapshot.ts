@@ -39,7 +39,8 @@ import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
  * date or a count that is no whole number is malformed, and a clock that gives
  * no date stops the run. Exit 1 also means a file could not be written. The
  * files are written one after another, so those before it stay written, and
- * the reason names them. Exit 2 means no data directory was given.
+ * the reason names them. Exit 2 means no data directory was given, or
+ * `--from-file` has no file after it; nothing is asked of the network then.
  *
  * @param argv The whole command line, so the arguments start at index 2.
  * @param writeOut Receives the dry-run output and the closing summary line.
@@ -66,7 +67,14 @@ export async function runCli(
       continue;
     }
     if (arg === "--from-file") {
-      fromFile = args[index + 1] ?? "";
+      // With no file after it the option once meant "no fixture", so the network was
+      // asked, which is what the option is given to prevent.
+      const value = args[index + 1] ?? "";
+      if (value === "" || value.startsWith("--")) {
+        writeErr(USAGE);
+        return 2;
+      }
+      fromFile = value;
       index += 1;
       continue;
     }
