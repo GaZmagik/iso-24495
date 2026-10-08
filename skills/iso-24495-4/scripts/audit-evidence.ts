@@ -2,8 +2,9 @@
 // of organisational plain language systems. It records presence and paths
 // only. Evaluating artefact quality is the agent's job, with the human.
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathFailure, writeTextFile } from "./lib/failure.ts";
 import type { Evidence } from "./lib/types.ts";
 
 export const CATEGORIES = [
@@ -78,7 +79,11 @@ export function runCli(
   try {
     const evidence = auditEvidence(dir);
     if (jsonFlag !== -1) {
-      writeFileSync(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2));
+      const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-evidence: ${problem}`);
+        return 1;
+      }
     }
     stdout("| Artefact category | Found | Paths |");
     stdout("|-------------------|-------|-------|");
@@ -88,7 +93,9 @@ export function runCli(
     }
     return 0;
   } catch (error) {
-    stderr(`audit-evidence: ${error instanceof Error ? error.message : String(error)}`);
+    // The report is written without throwing, so the sweep is the only work
+    // here that touches a file, and every file it touches is under `dir`.
+    stderr(`audit-evidence: ${pathFailure(error, dir, "<workspace-dir>", "cannot be read in full")}`);
     return 1;
   }
 }

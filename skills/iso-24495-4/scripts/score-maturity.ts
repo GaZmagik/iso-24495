@@ -4,7 +4,7 @@
 
 import { MATURITY_MODEL } from "./lib/types.ts";
 import type { Maturity } from "./lib/types.ts";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readJsonFile, unexpectedKind, writeTextFile } from "./lib/failure.ts";
 
 export interface Answers {
   organisation?: string;
@@ -45,10 +45,19 @@ export function runCli(
     stderr("score-maturity: --json requires an output file");
     return 2;
   }
+  const answers = readJsonFile(path, "<answers.json>");
+  if (!answers.ok) {
+    stderr(`score-maturity: ${answers.problem}`);
+    return 1;
+  }
   try {
-    const maturity = scoreMaturity(JSON.parse(readFileSync(path, "utf8")));
+    const maturity = scoreMaturity(answers.value as Answers);
     if (jsonFlag !== -1) {
-      writeFileSync(argv[jsonFlag + 1], JSON.stringify(maturity, null, 2));
+      const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(maturity, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`score-maturity: ${problem}`);
+        return 1;
+      }
     }
     stdout("| Dimension | Level | Blocking criteria |");
     stdout("|-----------|-------|-------------------|");
@@ -58,7 +67,12 @@ export function runCli(
     stdout(`\nOverall (weakest dimension): ${maturity.overall}`);
     return 0;
   } catch (error) {
-    stderr(`score-maturity: ${error instanceof Error ? error.message : String(error)}`);
+    // The file was read and parsed above, so what remains is answers of a
+    // shape the scoring cannot use.
+    stderr(
+      `score-maturity: stopped by ${unexpectedKind(error)}; `
+        + "check that <answers.json> holds the documented shape",
+    );
     return 1;
   }
 }

@@ -2,7 +2,7 @@
 // Emits counts and locations only. It never judges clarity and its output
 // must never be presented as ISO compliance.
 
-import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
@@ -24,6 +24,7 @@ import {
 } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 import { layoutViolations } from "./lib/layout.ts";
+import { pathFailure, writeTextFile } from "./lib/failure.ts";
 
 // Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
 // English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
@@ -1213,7 +1214,11 @@ export function runCli(
       stderr(`warning: skipped unreadable entry: ${path}`);
     }
     if (jsonPath !== undefined) {
-      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
+      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-corpus: ${problem}`);
+        return 1;
+      }
     }
     stdout("| Rule | Violations |");
     stdout("|------|------------|");
@@ -1224,7 +1229,10 @@ export function runCli(
     stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
     return 0;
   } catch (error) {
-    stderr(`audit-corpus: ${error instanceof Error ? error.message : String(error)}`);
+    // The report is written without throwing, and an unreadable entry below
+    // the corpus directory is skipped. So a file fault here is the directory
+    // itself refusing to be listed.
+    stderr(`audit-corpus: ${pathFailure(error, dir, "<corpus-dir>", "cannot be listed")}`);
     return 1;
   }
 }

@@ -13,6 +13,7 @@
 // this file holds the network call and nothing else.
 
 import { join } from "node:path";
+import { unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
 
 export interface DailyPoint {
   timestamp: string;
@@ -53,6 +54,31 @@ export interface Deps {
   fetchSnapshot(): Promise<unknown>;
   today(): string;
 }
+
+/**
+ * A traffic endpoint answered with a failing HTTP status. The CLI shim throws
+ * it and `runCli` words it, so the wording is where the tests reach it.
+ *
+ * It carries the status as a number and never the status text, because the
+ * text is whatever the server chose to send.
+ */
+export class EndpointFailure extends Error {
+  constructor(
+    /** The path requested, below the repository's API address. */
+    readonly endpoint: string,
+    readonly status: number,
+  ) {
+    super("A traffic endpoint returned a failing HTTP status");
+    this.name = "EndpointFailure";
+  }
+}
+
+const ENDPOINT_NAMES: ReadonlyMap<string, string> = new Map([
+  ["/traffic/clones", "the clones endpoint"],
+  ["/traffic/views", "the views endpoint"],
+  ["/traffic/popular/referrers", "the referrers endpoint"],
+  ["", "the repository endpoint"],
+]);
 
 const DAILY_HEADER = ["date", "clones", "clone_uniques", "views", "view_uniques"];
 const WINDOW_HEADER = [
@@ -242,8 +268,14 @@ export function mergeReferrers(existing: string | null, date: string, snapshot: 
   return writeRows(REFERRER_HEADER, [...readRows(existing), ...rows], 2);
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+// Why the traffic API could not be read, in fixed words. An endpoint is named
+// from the list above, so a path this file does not know is never repeated.
+function describeApiFailure(thrown: unknown): string {
+  if (thrown instanceof EndpointFailure) {
+    const endpoint = ENDPOINT_NAMES.get(thrown.endpoint) ?? "an endpoint";
+    return endpoint + " returned HTTP " + thrown.status;
+  }
+  return "the request was stopped by " + unexpectedKind(thrown);
 }
 
 export async function runCli(
@@ -279,7 +311,7 @@ export async function runCli(
     try {
       raw = await deps.fetchSnapshot();
     } catch (error) {
-      writeErr("Could not read the traffic API: " + describe(error));
+      writeErr("Could not read the traffic API: " + describeApiFailure(error));
       return 1;
     }
   } else {
@@ -294,8 +326,13 @@ export async function runCli(
     }
     try {
       raw = JSON.parse(text);
-    } catch (error) {
-      writeErr("The fixture is not valid JSON: " + describe(error));
+    } catch {
+      // JSON.parse throws for one reason only, and its message quotes the text.
+      writeErr(
+        "The fixture is not valid JSON: --from-file names a file of " +
+          text.length +
+          " characters that does not parse",
+      );
       return 1;
     }
   }

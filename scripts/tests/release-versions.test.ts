@@ -366,6 +366,20 @@ describe("the release preflight", () => {
       rmSync(workspace, { recursive: true, force: true });
     }
   }, 60_000);
+
+  // The runtime's message for a command it cannot start quotes the directory
+  // it was given, so the reason names the kind of failure and nothing more.
+  test("git that cannot be started is described in fixed words", () => {
+    const missing = remoteTags("checkout", () => {
+      throw Object.assign(new Error("ENOENT: no such file or directory, uv_spawn 'hunter2'"), { code: "ENOENT" });
+    });
+    expect(missing).toEqual({ ok: false, reason: "git could not be started: no such file or directory" });
+
+    const refused = remoteTags("checkout", () => {
+      throw new TypeError("The property 'options.cwd' must be a string. Received \"hunter2\"");
+    });
+    expect(refused).toEqual({ ok: false, reason: "git could not be started: an unexpected TypeError" });
+  });
 });
 
 describe("the pushed tag check", () => {

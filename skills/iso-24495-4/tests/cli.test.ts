@@ -584,3 +584,190 @@ describe("command line entry files", () => {
     }
   });
 });
+
+// A runtime error's own message quotes what it choked on: Bun's JSON parser
+// names the offending token, and a missing file's error names its whole path.
+// Every failing input here carries one word, and no command may repeat it.
+describe("a command never passes on what the runtime said about a failure", () => {
+  const MARKER = "hunter2";
+  const NUL = String.fromCharCode(0);
+
+  /** Runs `check` with a fresh directory, and removes it afterwards. */
+  function withWorkspace(check: (workspace: string) => void): void {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-relay-"));
+    try {
+      check(workspace);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+
+  /** Requires one command to fail with exactly `message`, and with the marker nowhere in its output. */
+  function expectFixedFailure(
+    run: (stdout: (text: string) => number, stderr: (text: string) => number) => number,
+    message: string,
+  ): void {
+    const output = capture();
+    expect(run(output.writeOut, output.writeErr)).toBe(1);
+    expect(output.stderr).toEqual([message]);
+    expect([...output.stdout, ...output.stderr].join("\n")).not.toContain(MARKER);
+  }
+
+  test("audit-corpus", () => {
+    withWorkspace((workspace) => {
+      const absent = join(workspace, MARKER);
+      expectFixedFailure(
+        (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", absent], out, err),
+        `audit-corpus: <corpus-dir> names a path of ${absent.length} characters that cannot be listed: `
+          + "no such file or directory",
+      );
+      const report = join(workspace, MARKER, "findings.json");
+      expectFixedFailure(
+        (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", report], out, err),
+        `audit-corpus: --json names a path of ${report.length} characters that cannot be written: `
+          + "no such file or directory",
+      );
+      expectFixedFailure(
+        (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", `${MARKER}${NUL}`], out, err),
+        "audit-corpus: stopped by an unexpected TypeError",
+      );
+    });
+  });
+
+  test("audit-evidence", () => {
+    withWorkspace((workspace) => {
+      const absent = join(workspace, MARKER);
+      expectFixedFailure(
+        (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", absent], out, err),
+        `audit-evidence: <workspace-dir> names a path of ${absent.length} characters that cannot be read in full: `
+          + "no such file or directory",
+      );
+      const report = join(workspace, MARKER, "evidence.json");
+      expectFixedFailure(
+        (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", report], out, err),
+        `audit-evidence: --json names a path of ${report.length} characters that cannot be written: `
+          + "no such file or directory",
+      );
+      expectFixedFailure(
+        (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", `${MARKER}${NUL}`], out, err),
+        "audit-evidence: stopped by an unexpected TypeError",
+      );
+    });
+  });
+
+  test("score-maturity", () => {
+    withWorkspace((workspace) => {
+      const absent = join(workspace, `${MARKER}.json`);
+      expectFixedFailure(
+        (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", absent], out, err),
+        `score-maturity: <answers.json> names a path of ${absent.length} characters that cannot be read: `
+          + "no such file or directory",
+      );
+      const broken = join(workspace, "broken.json");
+      writeFileSync(broken, `{"dimensions": ${MARKER}}`);
+      expectFixedFailure(
+        (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", broken], out, err),
+        "score-maturity: <answers.json> names a file of 23 characters that is not valid JSON",
+      );
+      // Valid JSON of the wrong shape: the scoring itself throws.
+      const shapeless = join(workspace, "null.json");
+      writeFileSync(shapeless, "null");
+      expectFixedFailure(
+        (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", shapeless], out, err),
+        "score-maturity: stopped by an unexpected TypeError; "
+          + "check that <answers.json> holds the documented shape",
+      );
+      const report = join(workspace, MARKER, "maturity.json");
+      expectFixedFailure(
+        (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", report], out, err),
+        `score-maturity: --json names a path of ${report.length} characters that cannot be written: `
+          + "no such file or directory",
+      );
+    });
+  });
+
+  test("generate-report", () => {
+    withWorkspace((workspace) => {
+      const findings = join(workspace, "findings.json");
+      const evidence = join(workspace, "evidence.json");
+      const maturity = join(workspace, "maturity.json");
+      runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findings], () => {}, () => {});
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidence], () => {}, () => {});
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", maturity], () => {}, () => {});
+      const report = (...rest: string[]) =>
+        (out: (text: string) => number, err: (text: string) => number) =>
+          runReportCli(["bun", "generate-report-cli.ts", ...rest], out, err, () => "2026-10-06T12:00:00.000Z");
+
+      // Each input is named by its own argument, so the user knows which to fix.
+      const absent = join(workspace, `${MARKER}.json`);
+      expectFixedFailure(
+        report(absent, evidence, maturity),
+        `generate-report: <findings.json> names a path of ${absent.length} characters that cannot be read: `
+          + "no such file or directory",
+      );
+      const broken = join(workspace, "broken.json");
+      writeFileSync(broken, `[${MARKER}]`);
+      expectFixedFailure(
+        report(findings, broken, maturity),
+        "generate-report: <evidence.json> names a file of 9 characters that is not valid JSON",
+      );
+      expectFixedFailure(
+        report(findings, evidence, workspace),
+        `generate-report: <maturity.json> names a path of ${workspace.length} characters that cannot be read: `
+          + "a directory where a file was expected",
+      );
+      expectFixedFailure(
+        report(findings, evidence, maturity, "--state", broken),
+        "generate-report: --state names a file of 9 characters that is not valid JSON",
+      );
+
+      // Valid JSON of the wrong shape: building the report itself throws.
+      const shapeless = join(workspace, "empty.json");
+      writeFileSync(shapeless, "{}");
+      expectFixedFailure(
+        report(shapeless, shapeless, shapeless),
+        "generate-report: stopped by an unexpected TypeError; "
+          + "check that each input file holds what its command wrote",
+      );
+
+      const lost = join(workspace, MARKER, "out");
+      expectFixedFailure(
+        report(findings, evidence, maturity, "--state", lost),
+        `generate-report: --state names a path of ${lost.length} characters that cannot be written: `
+          + "no such file or directory",
+      );
+      expectFixedFailure(
+        report(findings, evidence, maturity, "--out", lost),
+        `generate-report: --out names a path of ${lost.length} characters that cannot be written: `
+          + "no such file or directory",
+      );
+    });
+  });
+
+  test("audit-text", () => {
+    withWorkspace((workspace) => {
+      const absent = join(workspace, `${MARKER}.md`);
+      expectFixedFailure(
+        (out, err) => runTextAuditCli(["bun", "audit-text-cli.ts", absent], out, err) as number,
+        `audit-text: <file-or-directory> names a path of ${absent.length} characters that cannot be read: `
+          + "no such file or directory",
+      );
+      const document = join(workspace, "plain.md");
+      writeFileSync(document, "# Plain\n\nA short sentence.\n");
+      const report = join(workspace, MARKER, "findings.json");
+      expectFixedFailure(
+        (out, err) => runTextAuditCli(
+          ["bun", "audit-text-cli.ts", document, "--project-dir", workspace, "--json", report],
+          out,
+          err,
+        ) as number,
+        `audit-text: --json names a path of ${report.length} characters that cannot be written: `
+          + "no such file or directory",
+      );
+      expectFixedFailure(
+        (out, err) => runTextAuditCli(["bun", "audit-text-cli.ts", `${MARKER}${NUL}.md`], out, err) as number,
+        "audit-text: stopped by an unexpected TypeError",
+      );
+    });
+  });
+});
