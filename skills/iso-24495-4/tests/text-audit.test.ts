@@ -36,7 +36,7 @@ describe("auditTarget", () => {
       const result = auditTarget(file, project);
 
       expect(Object.keys(result.files)).toEqual(["docs/policy.txt"]);
-      expect(result.files["docs/policy.txt"].violations.map((item) => item.rule)).toEqual([
+      expect(result.files["docs/policy.txt"]?.violations.map((item) => item.rule)).toEqual([
         "legalese",
       ]);
       expect(result.skipped).toEqual([]);

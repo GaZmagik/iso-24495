@@ -120,7 +120,7 @@ test("argument conflicts and local failures are classified without transmission"
     expect(await runAuditCli("design", ["bun", "cli", join(directory, "missing.md")], () => {}, () => {}, dependencies)).toBe(1);
     const textFile = join(directory, "note.txt");
     writeFileSync(textFile, "The supplier shall act.");
-    expect(selectDocuments(textFile, directory, "text").documents[0].plan.candidates).toHaveLength(0);
+    expect(selectDocuments(textFile, directory, "text").documents[0]?.plan.candidates).toHaveLength(0);
     expect(() => selectDocuments(textFile, directory)).toThrow("Unsupported");
     expect(safeText("ab\u001b\u202ecd\n")).toBe("ab cd");
     expect(formatPlan(selectDocuments(directory, directory, "text"))).toContain("Selected");
@@ -202,8 +202,8 @@ test("a leading block the calibrated guard does not recognise is refused in the 
     const selection = selectDocuments(directory, directory);
     expect(selection.documents.map(document => [document.file, document.refusal, document.plan.candidates.length]))
       .toEqual([["plain.md", undefined, 2], ["space.md", undefined, 2], ["tab.md", REFUSAL, 0]]);
-    expect(selection.documents[0].plan).toEqual(planDocument(NO_BLOCK));
-    expect(selection.documents[1].plan).toEqual(planDocument(SPACE_BLOCK));
+    expect(selection.documents[0]?.plan).toEqual(planDocument(NO_BLOCK));
+    expect(selection.documents[1]?.plan).toEqual(planDocument(SPACE_BLOCK));
     expect(selection.paths).toHaveLength(3);
 
     const reportFile = join(directory, "report.json");
@@ -250,7 +250,9 @@ test("the refusal covers any closed leading block the guard rejects, and nothing
   try {
     const refusalFor = (text: string, name = "doc.md") => {
       writeFileSync(join(directory, name), text);
-      return selectDocuments(join(directory, name), directory, "text").documents[0];
+      const [document] = selectDocuments(join(directory, name), directory, "text").documents;
+      if (document === undefined) throw new Error("the selection holds no document");
+      return document;
     };
     // Not YAML at all, and still refused: a block someone meant as metadata can be
     // malformed, and a test that needed valid YAML would send exactly that block.
@@ -320,7 +322,7 @@ test("once a reply fails, no request that is still queued is sent", async () => 
     const file = join(directory, "doc.md");
     const paragraphs = Array.from({ length: 20 }, (_, index) => `Paragraph number ${index + 1} of the guide.`);
     writeFileSync(file, `# Title\n\n${paragraphs.join("\n\n")}\n`);
-    expect(selectDocuments(file, directory).documents[0].plan.candidates).toHaveLength(21);
+    expect(selectDocuments(file, directory).documents[0]?.plan.candidates).toHaveLength(21);
     let sent = 0;
     let logged: { complete: boolean; digest: string } | undefined;
     const out: string[] = [];

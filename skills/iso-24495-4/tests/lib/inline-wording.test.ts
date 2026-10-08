@@ -16,7 +16,7 @@ test("rendered wording respects delimiter runs, literal escapes and code spans",
     ["**&ast;literal&ast;**", "*literal*"],
     ["foo**bar*baz", "foo**bar*baz"],
     ["*foo _bar* baz_", "foo _bar baz_"],
-  ]) expect(renderInline(source), source).toBe(expected);
+  ] satisfies Array<[string, string]>) expect(renderInline(source), source).toBe(expected);
 });
 
 test("paired emphasis marks are removed and every other character stays", () => {
@@ -43,7 +43,7 @@ test("paired emphasis marks are removed and every other character stays", () => 
     ["**a ~~b** c~~ and ~~**shall**~~", "a ~~b c~~ and shall"],
     ["\u{1F600}*a*\u{1F600} \u00e9_b_\u00e9 \u3002*c*", "\u{1F600}a\u{1F600} \u00e9_b_\u00e9 \u3002c"],
     ["", ""],
-  ]) expect(withoutEmphasis(source), source).toBe(expected);
+  ] satisfies Array<[string, string]>) expect(withoutEmphasis(source), source).toBe(expected);
 });
 
 test("the offsets name each removed mark, in order", () => {

@@ -113,7 +113,7 @@ describe("layout rules", () => {
         }
         const findings = route === "corpus" ? auditCorpus(directory) : route === "text" ? auditTarget(directory, directory) : selectDocuments(directory, directory, "text").mechanical;
         expect(findings.totals["opening-version-date"]).toBe(1);
-        expect(Object.keys(findings.files).filter(name => findings.files[name].violations.some(finding => finding.rule === "opening-version-date"))).toEqual(["policy.md"]);
+        expect(Object.entries(findings.files).filter(([, file]) => file.violations.some(finding => finding.rule === "opening-version-date")).map(([name]) => name)).toEqual(["policy.md"]);
       } finally { rmSync(directory, { recursive: true, force: true }); }
     });
   }

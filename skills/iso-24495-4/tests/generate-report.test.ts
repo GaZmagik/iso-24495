@@ -105,8 +105,8 @@ describe("generateReport", () => {
 
     const { state } = generateReport({ findings, evidence, maturity, state: null, now: NOW });
     expect(state.snapshots).toHaveLength(1);
-    expect(state.snapshots[0].timestamp).toBe(NOW);
-    expect(state.snapshots[0].totals["legalese"]).toBe(5);
+    expect(state.snapshots[0]?.timestamp).toBe(NOW);
+    expect(state.snapshots[0]?.totals["legalese"]).toBe(5);
   });
 
   test("a later run appends a snapshot without rewriting history", () => {
@@ -115,7 +115,7 @@ describe("generateReport", () => {
     const { state, report } = generateReport({ findings, evidence, maturity, state: first, now: LATER });
     expect(state.snapshots).toHaveLength(2);
     expect(state.snapshots[0]).toEqual(first.snapshots[0]);
-    expect(state.snapshots[1].timestamp).toBe(LATER);
+    expect(state.snapshots[1]?.timestamp).toBe(LATER);
     expect(report).toContain("## Trend");
   });
 });
