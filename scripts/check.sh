@@ -17,8 +17,10 @@ bun install --frozen-lockfile
 echo "==> Type check"
 node_modules/.bin/tsc --noEmit
 
+# A warning fails too. A rule weakened to a warning for some files would
+# otherwise report its breach and still let it through.
 echo "==> Lint"
-node_modules/.bin/eslint .
+node_modules/.bin/eslint . --max-warnings 0
 
 echo "==> Test suite with coverage thresholds"
 # Tests that start a shell script, or read the whole repository, overran the
@@ -36,5 +38,11 @@ bun skills/iso-24495-4/scripts/audit-corpus-cli.ts .
 # entry file. The fixture keeps the gate offline and free of a token.
 echo "==> Traffic snapshot entry point against a fixture"
 bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json --dry-run data
+
+# Every stage above runs where node_modules exists, so a shipped command that
+# imports a package passes them all and then fails for every user. This runs
+# each shipped command in a copy of the working tree with nothing installed.
+echo "==> Every shipped command, in a copy with nothing installed"
+bash scripts/check-without-packages.sh
 
 echo "==> All gates passed"

@@ -601,9 +601,14 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       if (label !== undefined) {
         const name = normaliseReference(label);
         references.add(name);
-        const destination = text.slice(text.indexOf("]:") + 2).trim().match(/^(?:<([^>]*)>|([^\s]+))/);
-        const target = destination?.[1] ?? destination?.[2];
-        if (target !== undefined && !destinations.has(name)) destinations.set(name, target);
+        // Read the way isLinkDefinition read it: spaces lead up to the
+        // destination, and a space or a tab ends it. Any other character is
+        // part of it, a no-break space and U+FEFF among them, as CommonMark
+        // has it. Trimming and matching on white space took those for space,
+        // found no destination, and left the name free for a later duplicate.
+        // The first definition of a name is the one that counts.
+        const destination = /^ *(?:<([^>]*)>|([^ \t]+))/.exec(text.slice(text.indexOf("]:") + 2));
+        if (!destinations.has(name)) destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
       }
       readable[i] = "";
       markup[i] = "";

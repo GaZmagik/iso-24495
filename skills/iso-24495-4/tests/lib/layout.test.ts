@@ -198,6 +198,29 @@ describe("layout rules", () => {
     expect(parsed.headings.map(heading => heading.text)).toEqual(["T", "Root"]);
     expect(parsed.items.map(item => item.depth)).toEqual([1, 2, 3]);
   });
+  // The definition check takes any character but a space or a tab as part of
+  // a destination. Reading the destination back by trimming took a no-break
+  // space, U+FEFF and a form feed for space and found none. That first threw,
+  // and once guarded it left the name free, so a later duplicate replaced the
+  // first definition. Each character is built from its code, so that none
+  // sits unseen in this file.
+  test("the first definition of a name keeps it, whatever character its destination is", () => {
+    for (const code of [0xa0, 0xfeff, 0x0c, 0x2028, 0x3000]) {
+      const character = String.fromCharCode(code);
+      const label = `U+${code.toString(16)}`;
+      expect(structure(`[a]: ${character}\n[a]: #later\n`).destinations.get("a"), label).toBe(character);
+      expect(structure(`[a]: <${character}>\n[a]: #later\n`).destinations.get("a"), label).toBe(character);
+    }
+    expect(structure("[a]: <>\n[a]: #later\n").destinations.get("a")).toBe("");
+
+    // With the name left free, "[a]" resolved to "#a", the line of links read
+    // as a contents list, and the missing contents went unreported.
+    const document = "# Title\n\nVersion 1.0\n\n[A][a] | [B][b]\n\n"
+      + `[a]: ${String.fromCharCode(0xa0)}\n[a]: #a\n[b]: #b\n\n`
+      + ["A", "B", "C", "D", "E", "F"].map(name => `## ${name}\n\nWords.`).join("\n\n");
+    expect(auditText(document, { markdown: true }).map(finding => finding.rule))
+      .toEqual(["contents-list", "overview-label"]);
+  });
 });
 
 describe("what a heading identifier keeps", () => {

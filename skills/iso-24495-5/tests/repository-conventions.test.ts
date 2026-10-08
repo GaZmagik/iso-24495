@@ -12,7 +12,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, posix, relative } from "node:path";
+import ts from "typescript";
 import {
   auditText,
   ENGINE_THRESHOLDS,
@@ -1128,6 +1129,12 @@ describe("repository writing conventions", () => {
       expect(script, "the script must audit the repository's own documents").toMatch(
         /audit-corpus-cli\.ts/,
       );
+      expect(script, "the lint must fail on a warning as well as on an error").toMatch(
+        /^node_modules\/\.bin\/eslint \. --max-warnings 0$/m,
+      );
+      expect(script, "the script must run every shipped command with nothing installed").toMatch(
+        /^bash scripts\/check-without-packages\.sh$/m,
+      );
     });
 
     // Windows separators reach bash as escape characters rather than as path
@@ -1189,6 +1196,32 @@ describe("repository writing conventions", () => {
     // The gate's linter starts on Node, where everything else runs on Bun. A
     // runner's own Node moves without notice, so each workflow that runs the
     // gate names one exact version, and both name the same one.
+    // The stage that runs every shipped command with nothing installed makes
+    // its copy under the temporary directory, whose name is the contributor's
+    // and not ours. A review gave it a name holding an apostrophe: the stage
+    // had pasted the path into the text of its clean-up, so the clean-up was
+    // a syntax error and the copy stayed. One name here holds an apostrophe,
+    // a space and a dollar sign.
+    test("the run with nothing installed works, and cleans up, under an awkward temporary path", () => {
+      // Beside the repository, which is where the stage itself falls back to,
+      // because no node_modules may sit above the copy.
+      const holder = mkdtempSync(join(REPOSITORY_ROOT, "..", "iso-24495-odd-"));
+      try {
+        const awkward = join(holder, "owner's $tmp dir");
+        mkdirSync(awkward);
+        const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh"], {
+          cwd: REPOSITORY_ROOT,
+          env: { ...process.env, TMPDIR: forBash(awkward) },
+        });
+        expect(run.exitCode, run.stderr.toString()).toBe(0);
+        // It must have used that directory, not passed it over for another.
+        expect(run.stdout.toString()).toContain("owner's $tmp dir/iso-24495-bare.");
+        expect(readdirSync(awkward), "the copy must be gone").toEqual([]);
+      } finally {
+        rmSync(holder, { recursive: true, force: true });
+      }
+    });
+
     test("each workflow that runs the gate sets up the same exact Node", () => {
       const versions = ["tests.yml", "release-tag.yml"].map((name) => {
         const parsed = Bun.YAML.parse(
@@ -1872,31 +1905,36 @@ describe("repository writing conventions", () => {
   // The type check and the linter are packages, installed for the gate alone.
   // A user installs the plugin and nothing else, so no shipped script may
   // import a package: it would run here, where node_modules exists, and fail
-  // for every user. Tests are not shipped to run, and may import what the
-  // gate installs.
-  describe("shipped code needs no installed package", () => {
-    test("every import outside the tests is a relative file or a node: built-in", () => {
-      const shipped = [join(REPOSITORY_ROOT, "skills"), join(REPOSITORY_ROOT, "scripts")]
-        .flatMap((root) => repositoryTextFiles(root))
-        .filter((path) => path.endsWith(".ts"))
-        .map((path) => relative(REPOSITORY_ROOT, path).replaceAll("\\", "/"))
-        .filter((path) => !path.includes("/tests/"));
-      expect(shipped.length).toBeGreaterThanOrEqual(30);
-      expect(shipped).toContain("skills/iso-24495-4/scripts/audit-corpus-cli.ts");
-      expect(shipped).toContain("scripts/traffic-snapshot-cli.ts");
+  // for every user.
+  //
+  // What proves that is not here. scripts/check-without-packages.sh copies the
+  // repository to a place with nothing installed and runs every shipped
+  // command there. Two reviews defeated a rule about how an import is spelt,
+  // with a computed name and then with a file the rule did not read, and no
+  // list of spellings can be complete.
+  //
+  // This rule is only the early, readable warning for the honest mistake: a
+  // package named outright. It reads names that are written out, and makes no
+  // claim about a name worked out while the code runs.
+  describe("shipped code names no package in an import", () => {
+    test("every written import outside the tests is a node: built-in or a shipped file", () => {
+      const shipped = shippedSources();
+      expect(shipped.size).toBeGreaterThanOrEqual(30);
+      expect([...shipped.keys()]).toContain("skills/iso-24495-4/scripts/audit-corpus-cli.ts");
+      expect([...shipped.keys()]).toContain("scripts/traffic-snapshot-cli.ts");
 
-      const imports = shipped.flatMap((path) =>
-        importedModules(readFileSync(join(REPOSITORY_ROOT, path), "utf8")).map((module) => ({ path, module })));
-      expect(imports.length).toBeGreaterThanOrEqual(shipped.length);
-      expect(imports.filter(({ module }) => !/^\.{1,2}\/|^node:/.test(module))).toEqual([]);
+      const imports = [...shipped.values()].flatMap((source) => writtenImports(source));
+      expect(imports.length).toBeGreaterThanOrEqual(shipped.size);
+      expect(importProblems(shipped, (path) => existsSync(join(REPOSITORY_ROOT, path)))).toEqual([]);
     });
 
-    test("the check sees every form an import takes", () => {
+    test("the rule sees every form a written import takes", () => {
       const source = [
         "import type { A } from \"type-only\";",
         "import { b } from \"named\";",
         "import \"side-effect\";",
         "export { c } from \"re-exported\";",
+        "export * from \"re-exported-whole\";",
         "export type { D } from \"type-re-exported\";",
         "const e = await import(\"dynamic\");",
         "const f = require(\"required\");",
@@ -1905,30 +1943,198 @@ describe("repository writing conventions", () => {
         "import {",
         "  i,",
         "} from \"across-lines\";",
-        "console.log(b, e, f, g, h, i);",
+        "const j = await import(`plain-template`);",
+        "import l = require(\"import-equals\");",
+        "let m: import(\"type-query\").M;",
+        "// import n from \"in-a-comment\";",
+        "const o = \"import p from 'in-a-string'\";",
+        "const q = await import(\"with-options\", {});",
+        "const r = await import(\"with-attributes\", { with: { type: \"json\" } });",
+        "const s = require(\"required-with-more\", 1);",
+        "const t = require(`required-template`);",
+        "console.log(b, e, f, g, h, i, j, l, m, o, q, r, s, t);",
       ].join("\n");
-      expect(importedModules(source)).toEqual([
-        "./relative.ts", "across-lines", "dynamic", "named", "node:fs", "re-exported", "required",
-        "side-effect", "type-only", "type-re-exported",
+      expect(writtenImports(source)).toEqual([
+        "./relative.ts", "across-lines", "dynamic", "import-equals", "named", "node:fs",
+        "plain-template", "re-exported", "re-exported-whole", "required", "required-template",
+        "required-with-more", "side-effect", "type-only", "type-query", "type-re-exported",
+        "with-attributes", "with-options",
       ]);
+      // A JavaScript file is read by both readings too.
+      expect(writtenImports("await import(\"with-options\", {}); require(\"required\");", "source.mjs"))
+        .toEqual(["required", "with-options"]);
+    });
+
+    test("the rule refuses a package, a bare built-in and a file it does not read", () => {
+      const problems = (files: Record<string, string>, onDisk: string[] = []): string[] =>
+        importProblems(new Map(Object.entries(files)), (path) => onDisk.includes(path));
+
+      expect(problems({ "scripts/a.ts": "import \"typescript\";" }))
+        .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.ts": "import { sep } from \"path\"; console.log(sep);" }))
+        .toEqual(["scripts/a.ts imports \"path\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.mjs": "await import(\"typescript\");" }))
+        .toEqual(["scripts/a.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.cjs": "require(\"typescript\");" }))
+        .toEqual(["scripts/a.cjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      // A review wrote this one inside a branch that only one flag reaches.
+      expect(problems({ "scripts/a.ts": "export async function late(): Promise<void> { await import(\"typescript\", {}); }" }))
+        .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
+
+      // A relative import must land on a file this rule also reads, so that no
+      // file sits outside it. A review hid a package behind a .mjs file.
+      expect(problems({ "scripts/a.ts": "import \"./loader.mjs\";", "scripts/loader.mjs": "import \"node:fs\";" }))
+        .toEqual([]);
+      expect(problems({ "scripts/a.ts": "import \"./loader.mjs\";", "scripts/loader.mjs": "import \"typescript\";" }))
+        .toEqual(["scripts/loader.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      expect(problems({ "scripts/a.ts": "import \"./loader.wasm\";" }, ["scripts/loader.wasm"]))
+        .toEqual(["scripts/a.ts imports \"./loader.wasm\", which is not a file this rule reads"]);
+      expect(problems({ "skills/x/scripts/a.ts": "import \"../tests/helper.ts\";" }, ["skills/x/tests/helper.ts"]))
+        .toEqual(["skills/x/scripts/a.ts imports \"../tests/helper.ts\", which is not a file this rule reads"]);
+      expect(problems({ "scripts/a.ts": "import \"./missing.ts\";" }))
+        .toEqual(["scripts/a.ts imports \"./missing.ts\", which is not a file this rule reads"]);
+      expect(problems({ "scripts/a.ts": "import \"./b\";", "scripts/b.ts": "" }))
+        .toEqual(["scripts/a.ts imports \"./b\", which is not a file this rule reads"]);
+      expect(problems({ "scripts/lib/a.ts": "import \"../b.ts\";", "scripts/b.ts": "" })).toEqual([]);
+
+      // A JSON file is data and imports nothing, so it need only exist.
+      expect(problems({ "scripts/a.ts": "import data from \"./data.json\"; console.log(data);" }, ["scripts/data.json"]))
+        .toEqual([]);
+      expect(problems({ "scripts/a.ts": "import data from \"./data.json\"; console.log(data);" }))
+        .toEqual(["scripts/a.ts imports \"./data.json\", which is not a file this rule reads"]);
+
+      // No claim is made about a computed name. The run with nothing
+      // installed is what catches these two, which reviews wrote.
+      expect(problems({ "scripts/a.ts": "const name = \"typescript\"; await import(name);" })).toEqual([]);
+      expect(problems({
+        "scripts/a.ts": "import * as loader from \"node:module\"; loader[\"createRequire\"](import.meta.url)(\"typescript\");",
+      })).toEqual([]);
+      // A member that happens to be called require loads nothing. An earlier
+      // form of this rule refused it.
+      expect(problems({ "scripts/a.ts": "export interface ReviewPolicy { require: boolean; }" })).toEqual([]);
     });
   });
 });
 
+const SOURCE_FILE = /\.(?:ts|js|mjs|cjs)$/;
+
 /**
- * Every module a TypeScript source imports, by the name it is imported under.
+ * Every source file under `skills/` and `scripts/` outside the tests: each
+ * `.ts`, `.js`, `.mjs` and `.cjs` file, with its text.
  *
- * Two readings are joined. Bun's own scanner finds what runs: static and
- * dynamic imports, re-exports and `require` calls. It leaves out an import of
- * types alone, which is erased before the code runs, so a pattern over the
- * text finds those.
- *
- * @returns The names sorted, each once. Empty for a source that imports
- *     nothing.
+ * @returns The text of each file, keyed by its path from the repository root
+ *     with forward slashes.
+ * @throws The file system error when a directory cannot be listed or a file
+ *     cannot be read.
  */
-function importedModules(source: string): string[] {
-  const running = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((found) => found.path);
-  const written = [...source.matchAll(/^(?:import|export)\b[^"';]*?\bfrom\s*"([^"]+)"/gm)]
-    .map((match) => match[1] ?? "");
-  return [...new Set([...running, ...written])].sort();
+function shippedSources(): Map<string, string> {
+  const sources = new Map<string, string>();
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(join(REPOSITORY_ROOT, directory))) {
+      if (SKIPPED_DIRECTORIES.has(entry) || entry === "tests") continue;
+      const path = `${directory}/${entry}`;
+      if (statSync(join(REPOSITORY_ROOT, path)).isDirectory()) walk(path);
+      else if (SOURCE_FILE.test(entry)) sources.set(path, readFileSync(join(REPOSITORY_ROOT, path), "utf8"));
+    }
+  };
+  walk("skills");
+  walk("scripts");
+  return sources;
+}
+
+/**
+ * What is wrong with the written imports of a set of source files.
+ *
+ * A written import must be a `node:` built-in or a relative path. A relative
+ * path must name, exactly as written, another file in the set, so that every
+ * file reached is itself read. A relative path to a `.json` file need only
+ * exist, because JSON imports nothing.
+ *
+ * @param sources The text of each file, keyed by its path from the
+ *     repository root with forward slashes.
+ * @param exists Whether a path from the repository root is a file on disk.
+ * @returns One sentence for each import at fault, naming the file and the
+ *     import. Empty when every written import is allowed. Nothing is said
+ *     about an import whose name is not written out.
+ */
+function importProblems(sources: ReadonlyMap<string, string>, exists: (path: string) => boolean): string[] {
+  const problems: string[] = [];
+  for (const [path, source] of sources) {
+    for (const module of writtenImports(source, path)) {
+      if (module.startsWith("node:")) continue;
+      if (!/^\.{1,2}\//.test(module)) {
+        problems.push(`${path} imports "${module}", which is neither relative nor a node: built-in`);
+        continue;
+      }
+      const target = posix.normalize(posix.join(posix.dirname(path), module));
+      const read = sources.has(target) || (target.endsWith(".json") && exists(target));
+      if (!read) problems.push(`${path} imports "${module}", which is not a file this rule reads`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Every module a source imports under a name written in the source.
+ *
+ * Two readings are joined, and a name either one finds is returned.
+ *
+ * The first parses the source with the TypeScript compiler, so a comment or
+ * a string that looks like an import is not one. A name counts as written
+ * when it is a string, or a template with nothing substituted into it. It
+ * reads `import` and `export ... from` declarations, an import of types
+ * alone, and `import()` or `require()` whose first argument is a written
+ * name, whatever arguments follow.
+ *
+ * The second is Bun's own scanner. Bun is what loads these files, so this
+ * rule must not read fewer written names than Bun does. Bun leaves out an
+ * import of types alone, which the first reading supplies.
+ *
+ * @param fileName Decides how the source is parsed, by its ending: as
+ *     TypeScript for `.ts`, and as JavaScript otherwise.
+ * @returns The names sorted, each once. Empty for a source that imports
+ *     nothing under a written name.
+ * @throws What Bun's scanner throws for a source it cannot parse.
+ */
+function writtenImports(source: string, fileName = "source.ts"): string[] {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const modules = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    const module = writtenModule(node);
+    if (module !== null) modules.add(module);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  const loader = fileName.endsWith(".ts") ? "ts" : "js";
+  for (const found of new Bun.Transpiler({ loader }).scanImports(source)) modules.add(found.path);
+  return [...modules].sort();
+}
+
+/**
+ * The module one node imports under a written name.
+ *
+ * @returns The name, or null when the node is not an import or its name is
+ *     not written out.
+ */
+function writtenModule(node: ts.Node): string | null {
+  if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+    && node.moduleSpecifier !== undefined && ts.isStringLiteralLike(node.moduleSpecifier)) {
+    return node.moduleSpecifier.text;
+  }
+  if (ts.isExternalModuleReference(node) && ts.isStringLiteralLike(node.expression)) {
+    return node.expression.text;
+  }
+  if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+    && ts.isStringLiteralLike(node.argument.literal)) {
+    return node.argument.literal.text;
+  }
+  if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+    || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+    // The first argument is the name, whatever follows it. A review wrote
+    // import("typescript", {}), and a rule that wanted one argument alone
+    // read nothing there.
+    const name = node.arguments[0];
+    if (name !== undefined && ts.isStringLiteralLike(name)) return name.text;
+  }
+  return null;
 }
