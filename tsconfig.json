@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+    // The next pull request turns on noUncheckedIndexedAccess,
+    // exactOptionalPropertyTypes and noImplicitOverride, which are off here.
+  },
+  "include": ["scripts/**/*.ts", "skills/**/*.ts"]
+}
