@@ -60,6 +60,8 @@ export function runCli(
   const seenOptions = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
+    // The loop bound keeps the index inside the list; the compiler cannot see that.
+    if (option === undefined) break;
     if (option !== "--json") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
       stderr(`audit-corpus: ${kind} of ${option.length} characters at argument ${index - 1}; expected --json`);
@@ -184,7 +186,7 @@ export interface AuditOptions extends Reading {
  */
 export function auditText(text: string, options: AuditOptions = {}): Violation[] {
   // Every rule re-reads the text, so each is told the same thing about front matter.
-  const reading: Reading = { frontMatter: options.frontMatter };
+  const reading: Reading = options.frontMatter === undefined ? {} : { frontMatter: options.frontMatter };
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
   const mergedLengths: number[] = [];
@@ -227,12 +229,9 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   // full stop lift a document over the ten-sentence sample floor and produce a
   // finding the joined-up reading could not, which is the opposite of what
   // abstention is for.
-  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
-    count: lengths.length,
-    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
-  }));
+  const reported = sentenceAverage(sentenceLengths);
+  const readings = [reported, sentenceAverage(mergedLengths)];
   if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
-    const reported = readings[0];
     violations.push({
       rule: "sentence-average",
       line: 1,
@@ -240,8 +239,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
     });
   }
   const documentHeadings = headings(text, reading);
-  for (let i = 0; i < documentHeadings.length; i++) {
-    const heading = documentHeadings[i];
+  for (const [i, heading] of documentHeadings.entries()) {
     if (heading.level > MAX_HEADING_LEVEL) {
       violations.push({
         rule: "heading-depth",
@@ -307,8 +305,18 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
-  if (options.markdown) violations.push(...layoutViolations(text, { ...reading, fileName: options.fileName }));
+  if (options.markdown) {
+    violations.push(...layoutViolations(text, options.fileName === undefined ? reading : { ...reading, fileName: options.fileName }));
+  }
   return violations;
+}
+
+/** How many sentences one reading found, and their mean length in words: 0 where it found none. */
+function sentenceAverage(lengths: number[]): { count: number; average: number } {
+  return {
+    count: lengths.length,
+    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
+  };
 }
 
 /**
@@ -641,7 +649,8 @@ function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   const shouted = new Set<number>();
   let runStart = 0;
   for (let i = 0; i <= tokens.length; i++) {
-    if (i < tokens.length && isAllCaps(tokens[i].raw)) continue;
+    const token = tokens[i];
+    if (token !== undefined && isAllCaps(token.raw)) continue;
     markRun(tokens, shouted, runStart, i);
     runStart = i + 1;
   }
@@ -676,7 +685,7 @@ function lowerCaseLetters(raw: string): string {
 function expansionInitials(text: string): string {
   return (text.match(/[A-Za-z]+/g) ?? [])
     .filter((word) => !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word))
-    .map((word) => word[0].toUpperCase())
+    .map((word) => word.charAt(0).toUpperCase())
     .join("");
 }
 
@@ -767,10 +776,10 @@ function acronymViolations(
     const sourceLine = withoutOffsets(lines[i] as string, 0, new Set(marks));
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
-      const key = match[1].replaceAll(".", "");
+      const key = match[1]?.replaceAll(".", "");
       carry(recent, sourceLine.slice(scanned, match.index));
       scanned = match.index;
-      if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
+      if (key === undefined || expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
       if (!definitionLocations.has(key)) {
         definitionLocations.set(key, { line: i + 1, column: sourceColumn(match.index, marks) });
       }
@@ -797,8 +806,8 @@ function acronymViolations(
       nextClose[at] = closing;
     }
     const shouted = shoutedPositions(tokens);
-    for (let i = 0; i < tokens.length; i++) {
-      const acronym = acronymFromToken(tokens[i].raw);
+    for (const [i, token] of tokens.entries()) {
+      const acronym = acronymFromToken(token.raw);
       if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key) || known.has(acronym.key)) continue;
       if (ROMAN_NUMERAL.test(acronym.key)
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
@@ -821,14 +830,14 @@ function acronymViolations(
       if (COMMON_WORDS.has(acronym.key.toLowerCase())) continue;
       const definition = definitionLocations.get(acronym.key);
       const definitionPrecedes = definition !== undefined
-        && (definition.line < tokens[i].line
-          || (definition.line === tokens[i].line && definition.column <= tokens[i].column));
+        && (definition.line < token.line
+          || (definition.line === token.line && definition.column <= token.column));
       if (definitionPrecedes
         || defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);
       violations.push({
         rule: "acronym-undefined",
-        line: tokens[i].line,
+        line: token.line,
         detail: `define acronym "${acronym.display}" on first use`,
       });
     }
@@ -1523,8 +1532,7 @@ function mayHoldLink(written: readonly string[], first: number, count: number): 
 function legaleseViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   for (const block of readerTextBlocks(text, reading)) {
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
+    for (const [i, line] of block.lines.entries()) {
       for (const term of LEGALESE) {
         const matches = withoutNamedTerms(line, term)
           .match(new RegExp(`\\b${term}\\b`, "gi"));
@@ -1664,10 +1672,11 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     });
   }
   for (const match of markup.matchAll(HTML_ANCHOR)) {
-    if (/\n[ \t]*\n/.test(match[0])) continue;
-    const target = htmlAttribute(match[1], "href");
+    const [whole, attributes, label] = match;
+    if (attributes === undefined || label === undefined || /\n[ \t]*\n/.test(whole)) continue;
+    const target = htmlAttribute(attributes, "href");
     if (target === null) continue;
-    const spoken = spokenText(match[2]);
+    const spoken = spokenText(label);
     const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
@@ -1709,8 +1718,8 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
   }
   const markup = markupLines.join("\n");
   for (const match of markup.matchAll(HTML_IMAGE)) {
-    if (/\n[ \t]*\n/.test(match[0])) continue;
-    const attributes = match[1];
+    const [whole, attributes] = match;
+    if (attributes === undefined || /\n[ \t]*\n/.test(whole)) continue;
     if (htmlAttribute(attributes, "alt") !== null) continue;
     const target = (htmlAttribute(attributes, "src") ?? "image").slice(0, 40);
     violations.push({
@@ -1742,8 +1751,7 @@ function withoutNamedTerms(line: string, term: string): string {
 function complexWordViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   for (const block of readerTextBlocks(text, reading)) {
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
+    for (const [i, line] of block.lines.entries()) {
       for (const match of line.matchAll(/[A-Za-z']+/g)) {
         const plain = COMPLEX_WORDS.get(match[0].toLowerCase());
         if (!plain) continue;
@@ -1816,7 +1824,7 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
     if (/^not\b/.test(remainder)) continue;
     return [{
       rule: "filler-opening",
-      line: blocks[0].line,
+      line: first.line,
       detail: `opens with "${filler}" instead of the answer`,
     }];
   }
@@ -1830,10 +1838,11 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
 function tableHeaderViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   const { lines, hidden } = readDocument(text, reading);
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (hidden(i)) continue;
-    const row = lines[i].trim();
-    const divider = lines[i + 1].trim();
+  for (const [i, header] of lines.entries()) {
+    const below = lines[i + 1];
+    if (below === undefined || hidden(i)) continue;
+    const row = header.trim();
+    const divider = below.trim();
     // Outer pipes are optional in GitHub markdown, and the divider may carry
     // alignment colons and padding. Requiring the tidiest form meant a table
     // written the common way was never checked at all.
@@ -1890,7 +1899,8 @@ function proseEnumerationViolations(text: string, reading: Reading): Violation[]
     // A hyphenated compound is one word, not a rank: "third-party service" is
     // not a third item, and counting it turned ordinary prose into a finding.
     for (const match of paragraph.matchAll(/\b(first|firstly|second|secondly|third|thirdly|fourth|fourthly|fifth|fifthly|sixth|sixthly)\b(?!-)/gi)) {
-      ranks.add(ORDINAL_RANKS.get(match[1].toLowerCase())!);
+      const rank = ORDINAL_RANKS.get(match[0].toLowerCase());
+      if (rank !== undefined) ranks.add(rank);
     }
     for (const match of paragraph.matchAll(/(?:^|\s)(?:\(([1-6])\)|([1-6])[.)])(?=\s|$)/g)) {
       ranks.add(Number(match[1] ?? match[2]));
