@@ -24,6 +24,7 @@ import {
 } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
 import { layoutViolations } from "./lib/layout.ts";
+import { emphasisMarkOffsets, withoutEmphasis } from "./lib/inline-wording.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 
 /**
@@ -751,7 +752,11 @@ function acronymViolations(
     const block = blockOfLine.get(i);
     if (block === undefined || block !== previousBlock) recent = [];
     previousBlock = block;
-    const sourceLine = document.lines[i] as string;
+    // Read without paired emphasis marks, so "(**IAM**)" defines as "(IAM)" does and
+    // "ident*ity*" still gives its initial. This text is a source line, not a block, so
+    // marks are paired within the line.
+    const marks = emphasisMarkOffsets(document.lines[i] as string);
+    const sourceLine = withoutOffsets(document.lines[i] as string, 0, new Set(marks));
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1].replaceAll(".", "");
@@ -759,19 +764,13 @@ function acronymViolations(
       scanned = match.index;
       if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
       if (!definitionLocations.has(key)) {
-        definitionLocations.set(key, { line: i + 1, column: match.index });
+        definitionLocations.set(key, { line: i + 1, column: sourceColumn(match.index, marks) });
       }
     }
     carry(recent, sourceLine.slice(scanned));
   }
   for (const block of blocks) {
-    const tokens = block.lines.flatMap((line, lineIndex) =>
-      [...line.matchAll(/\S+/g)].map((match) => ({
-        raw: match[0],
-        line: block.line + lineIndex,
-        column: match.index,
-      })),
-    );
+    const tokens = unmarkedTokens(block);
     // The words that carry an initial, in order, and how many precede each token. An
     // expansion is judged against these rather than against the text it came from.
     const carried: number[] = new Array(tokens.length + 1);
@@ -829,6 +828,63 @@ function acronymViolations(
   return violations;
 }
 
+/**
+ * The words of a block as a reader sees them, each at its place in the source.
+ *
+ * Paired emphasis marks are taken out of each word, so "**IAM**" is the acronym and
+ * "**(identity" opens an expansion. The marks are paired across the whole block, because
+ * emphasis can open on one line and close on the next. The column is where the first
+ * character left of the word sits in the source line, marks before it counted. It is
+ * compared with where a definition sits in that line, so "**(IAM)**" must not appear to
+ * start before its own bracket.
+ */
+function unmarkedTokens(block: ProseBlock): Array<{ raw: string; line: number; column: number }> {
+  const marks = new Set(emphasisMarkOffsets(block.lines.join("\n")));
+  const tokens: Array<{ raw: string; line: number; column: number }> = [];
+  let lineStart = 0;
+  for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex++) {
+    const line = block.lines[lineIndex] as string;
+    for (const match of line.matchAll(/\S+/g)) {
+      const start = lineStart + match.index;
+      // White space ends the word and is never a mark, so this stops inside the word.
+      let leading = 0;
+      while (marks.has(start + leading)) leading++;
+      const raw = withoutOffsets(match[0], start, marks);
+      tokens.push({ raw, line: block.line + lineIndex, column: match.index + leading });
+    }
+    lineStart += line.length + 1;
+  }
+  return tokens;
+}
+
+/**
+ * Where a character sits in a source line, given its place in that line without marks.
+ *
+ * \param marks The offset in the source line of each mark that was removed, ascending.
+ */
+function sourceColumn(unmarked: number, marks: readonly number[]): number {
+  // Mark k lay before this character when it sat at or before it once the k marks
+  // ahead of it had gone. That holds for a first run of the marks, found by halving.
+  let low = 0;
+  let high = marks.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((marks[middle] as number) - middle <= unmarked) low = middle + 1;
+    else high = middle;
+  }
+  return unmarked + low;
+}
+
+/** A piece of a text without the characters at the given offsets of that text. */
+function withoutOffsets(piece: string, start: number, offsets: ReadonlySet<number>): string {
+  if (offsets.size === 0) return piece;
+  let kept = "";
+  for (let at = 0; at < piece.length; at++) {
+    if (!offsets.has(start + at)) kept += piece[at];
+  }
+  return kept;
+}
+
 /** Adds the words of a fragment that carry an initial to the recent words, keeping the last few. */
 function carry(recent: string[], fragment: string): void {
   for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
@@ -858,13 +914,31 @@ const PROPER_NAME_CONTEXT = new RegExp(
  *
  * A Setext heading over several lines arrives as one line of text, so a finding in
  * it reports the line where the heading starts.
+ *
+ * Paired emphasis marks are removed, because a reader sees "in **order** to" and
+ * "_shall_" as the words alone. With the marks left in, a mark inside a phrase broke
+ * the match, and an underscore beside a word hid the word boundary. A strike is
+ * removed the same way: the struck words are still on the page, and were already
+ * reported where the whole phrase was struck. Code spans and escaped marks stay as
+ * written, so a term in backticks is still named and not used.
  */
 function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
   const blocks = [
-    ...readerProseBlocks(text, reading),
-    ...headings(text, reading).map((heading) => ({ line: heading.line, lines: [heading.text] })),
+    ...readerProseBlocks(text, reading).map(withoutEmphasisMarks),
+    ...headings(text, reading)
+      .map((heading) => ({ line: heading.line, lines: [withoutEmphasis(heading.text)] })),
   ];
   return blocks.sort((a, b) => a.line - b.line);
+}
+
+/**
+ * The block with its paired emphasis marks removed, on the same lines.
+ *
+ * The marks are paired across the whole block, because emphasis can open on one line
+ * and close on the next. No line ending is removed, so each line keeps its number.
+ */
+function withoutEmphasisMarks(block: ProseBlock): ProseBlock {
+  return { line: block.line, lines: withoutEmphasis(block.lines.join("\n")).split("\n") };
 }
 
 function legaleseViolations(text: string, reading: Reading): Violation[] {
@@ -1219,7 +1293,8 @@ function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
 function proseEnumerationViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   for (const block of readerProseBlocks(text, reading)) {
-    const paragraph = block.lines.join(" ");
+    // Read without emphasis marks, which hid "_First_" and "**(1)**" from the patterns.
+    const paragraph = withoutEmphasis(block.lines.join(" "));
     const ranks = new Set<number>();
     // A hyphenated compound is one word, not a rank: "third-party service" is
     // not a third item, and counting it turned ordinary prose into a finding.
