@@ -172,6 +172,9 @@ export function readRegularFile(path: string, files: FileCalls = REAL_FILES): st
     handle = files.open(path);
   } catch (error) {
     // The code a system gives when it is told not to follow a link and meets one.
+    // No cause is attached: the system's error names the path, and whatever
+    // prints an error prints its cause, so fixed words would stop being fixed.
+    // eslint-disable-next-line preserve-caught-error -- see the comment above
     if (error instanceof Error && "code" in error && error.code === "ELOOP") throw new Error(NOT_THE_FILE);
     throw error;
   }

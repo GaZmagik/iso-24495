@@ -550,7 +550,7 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
 const LONGEST_ACRONYM = 6;
 
 function acronymFromToken(raw: string): { display: string; key: string } | null {
-  let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’\)\]}>,:;!?]+$/, "");
+  let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’)\]}>,:;!?]+$/, "");
   if (!ACRONYM_SHAPE.test(token) && token.endsWith(".")) token = token.slice(0, -1);
   if (!ACRONYM_SHAPE.test(token)) return null;
   const key = token.replaceAll(".", "");

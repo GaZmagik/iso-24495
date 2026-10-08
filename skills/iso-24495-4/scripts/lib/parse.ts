@@ -182,7 +182,7 @@ function isLinkDefinition(line: string): boolean {
  *     empty text gives a single empty line.
  */
 export function toLines(text: string): string[] {
-  return text.replace(/^﻿/, "").split(/\r\n|\n|\r/);
+  return text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
 }
 
 /** Expand tabs to four-column stops, as CommonMark measures indentation. */

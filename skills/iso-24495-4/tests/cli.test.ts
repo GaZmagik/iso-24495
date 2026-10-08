@@ -529,14 +529,16 @@ describe("command line entry files", () => {
       writeFileSync(auditTarget, "The party shall comply with the terms herein.\n");
       const auditJson = join(workspace, "audit.json");
       const printedAudit = capture();
-      runTextAuditCli(
+      // Without a Jev option the command answers at once, with a number. A
+      // promise here would mean the files below were read before it finished.
+      expect(runTextAuditCli(
         ["bun", "audit-text-cli.ts", auditTarget, "--json", auditJson],
         () => {}, () => {},
-      );
-      runTextAuditCli(
+      )).toBe(0);
+      expect(runTextAuditCli(
         ["bun", "audit-text-cli.ts", auditTarget],
         printedAudit.writeOut, () => {},
-      );
+      )).toBe(0);
       // Every finding, with the file it belongs to, compared as the table.
       // A review renamed the saved file key and kept only the first finding
       // of each, and a check that walked the saved side saw neither.

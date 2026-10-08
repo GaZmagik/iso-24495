@@ -133,10 +133,10 @@ function validDate(text: string): boolean {
   if (monthYear !== null) return Number(monthYear[1]) >= 1 && Number(monthYear[1]) <= 12;
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (iso !== null) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
-  const numeric = /^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/.exec(text);
+  const numeric = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(text);
   if (numeric !== null) return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
     || calendarDate(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
-  const parts = text.toLowerCase().replace(/[,\-]/g, " ").split(/\s+/);
+  const parts = text.toLowerCase().replace(/[,-]/g, " ").split(/\s+/);
   const month = MONTHS.findIndex(name => parts.includes(name) || parts.includes(name.slice(0, 3)));
   if (month < 0) return false;
   if (parts.length === 2 && /^\d{4}$/.test(parts[1])) return true;

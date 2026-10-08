@@ -33,6 +33,10 @@ export default defineConfig([
     rules: {
       // Group 1: what gts 7.0.0 switches on, less "prettier/prettier" and
       // "quotes". The two whitespace rules are deprecated in ESLint itself.
+      // Off, where gts has it on. It reports a control character in a pattern,
+      // and the patterns here that hold one exist to find control characters:
+      // they refuse them in JSON and strip them from text before it is printed.
+      "no-control-regex": "off",
       "block-scoped-var": "error",
       "eqeqeq": ["error", "always", { null: "ignore" }],
       "no-var": "error",

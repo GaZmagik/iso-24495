@@ -19,7 +19,6 @@ import {
   isAuditedDocument,
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
-import { readDocument } from "../../iso-24495-4/scripts/lib/parse.ts";
 import { checkVersionSites } from "../../../scripts/release-versions.ts";
 import { PINNED_DOCUMENT_TEXT } from "./fixtures/pinned-documents.ts";
 import { SHIPPED_DOCUMENTS } from "./reference/shipped-documents.ts";
@@ -695,7 +694,7 @@ describe("repository writing conventions", () => {
     const sourceClause = example.slice(sourceStart, sourceEnd)
       .map((line) => line.trim()).join(" ");
     const operativeClause = example.slice(operativeStart, operativeEnd)
-      .map((line) => line.replace(/^  >\s*/, "").trim()).join(" ");
+      .map((line) => line.replace(/^ {2}>\s*/, "").trim()).join(" ");
     expect(operativeClause, "the operative text must preserve its governing source")
       .toBe(sourceClause);
     const checklist = legal.slice(legal.indexOf("- [ ] **No legalese:**"));

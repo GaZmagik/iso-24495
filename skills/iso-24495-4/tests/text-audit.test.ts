@@ -221,7 +221,7 @@ describe("runCli", () => {
       )).toBe(2);
       expect(twice.stderr[0]).toContain("--no-front-matter appears more than once");
       const usage = capture();
-      runCli(["bun", "audit-text-cli.ts"], usage.writeOut, usage.writeErr);
+      expect(runCli(["bun", "audit-text-cli.ts"], usage.writeOut, usage.writeErr)).toBe(2);
       expect(usage.stderr[0]).toContain("[--no-front-matter]");
     } finally {
       rmSync(project, { recursive: true, force: true });
