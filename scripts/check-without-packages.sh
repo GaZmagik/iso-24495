@@ -16,13 +16,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Where the copy is, once it is made. Clean-up reads it from here. Pasting the
+# path into the text of a trap broke on a path that held an apostrophe, and
+# the copy was left behind.
+COPY_ROOT=""
+
 main() {
-  local root
-  root="$(clean_directory)"
-  # The one line that removes the copy, on every way out of this script.
-  trap "rm -rf '$root'" EXIT
-  local tree="$root/tree"
-  local out="$root/out"
+  # Set before the directory exists, so that no way out can miss it.
+  trap remove_copy EXIT
+  COPY_ROOT="$(clean_directory)"
+  local tree="$COPY_ROOT/tree"
+  local out="$COPY_ROOT/out"
+  echo "    the copy is in $COPY_ROOT"
   mkdir "$tree" "$out"
 
   # The working tree, not the last commit: what git tracks as it stands on
@@ -68,8 +73,19 @@ main() {
   echo "    every shipped command ran with nothing installed"
 }
 
+# Removes the copy, on every way out of this script. Does nothing before the
+# copy is made.
+remove_copy() {
+  if [ -n "$COPY_ROOT" ]; then
+    rm -rf "$COPY_ROOT"
+  fi
+}
+
 # Makes a new directory with no node_modules in it or in any directory above
-# it, and prints its path. The system's temporary directory is tried first,
+# it, and prints its path. The path is the one the system knows, so that a
+# command given it needs no translation: Git Bash translates its own names for
+# a Windows path as it starts a program, and gave up on a name that held an
+# apostrophe. The system's temporary directory is tried first,
 # then the directory that holds this repository. Stops the script when neither
 # is clean, because a package found above the copy would be found by the copy.
 clean_directory() {
@@ -79,7 +95,7 @@ clean_directory() {
     if packages_above "$candidate"; then
       rm -rf "$candidate"
     else
-      echo "$candidate"
+      system_path "$candidate"
       return 0
     fi
   done
@@ -93,7 +109,7 @@ clean_directory() {
 # path Windows knows, where the shell can give it.
 packages_above() {
   local at above
-  at="$(cd "$1" && { pwd -W 2>/dev/null || pwd -P; })"
+  at="$(system_path "$1")"
   while true; do
     if [ -e "$at/node_modules" ]; then
       return 0
@@ -104,6 +120,12 @@ packages_above() {
     fi
     at="$above"
   done
+}
+
+# Prints the path of a directory as the system knows it. Git Bash can give
+# the Windows form. Any other shell gives the path with links resolved.
+system_path() {
+  (cd "$1" && { pwd -W 2>/dev/null || pwd -P; })
 }
 
 # Passes on the names, read from standard input, of files that exist. A

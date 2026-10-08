@@ -1194,6 +1194,32 @@ describe("repository writing conventions", () => {
     // The gate's linter starts on Node, where everything else runs on Bun. A
     // runner's own Node moves without notice, so each workflow that runs the
     // gate names one exact version, and both name the same one.
+    // The stage that runs every shipped command with nothing installed makes
+    // its copy under the temporary directory, whose name is the contributor's
+    // and not ours. A review gave it a name holding an apostrophe: the stage
+    // had pasted the path into the text of its clean-up, so the clean-up was
+    // a syntax error and the copy stayed. One name here holds an apostrophe,
+    // a space and a dollar sign.
+    test("the run with nothing installed works, and cleans up, under an awkward temporary path", () => {
+      // Beside the repository, which is where the stage itself falls back to,
+      // because no node_modules may sit above the copy.
+      const holder = mkdtempSync(join(REPOSITORY_ROOT, "..", "iso-24495-odd-"));
+      try {
+        const awkward = join(holder, "owner's $tmp dir");
+        mkdirSync(awkward);
+        const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh"], {
+          cwd: REPOSITORY_ROOT,
+          env: { ...process.env, TMPDIR: forBash(awkward) },
+        });
+        expect(run.exitCode, run.stderr.toString()).toBe(0);
+        // It must have used that directory, not passed it over for another.
+        expect(run.stdout.toString()).toContain("owner's $tmp dir/iso-24495-bare.");
+        expect(readdirSync(awkward), "the copy must be gone").toEqual([]);
+      } finally {
+        rmSync(holder, { recursive: true, force: true });
+      }
+    });
+
     test("each workflow that runs the gate sets up the same exact Node", () => {
       const versions = ["tests.yml", "release-tag.yml"].map((name) => {
         const parsed = Bun.YAML.parse(
