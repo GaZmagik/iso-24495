@@ -121,7 +121,7 @@ export async function runCli(
 
   const snapshot = parsed.snapshot;
   const date = deps.today();
-  if (!A_DATE.test(date)) {
+  if (!isDate(date)) {
     writeErr("Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD");
     return 1;
   }
@@ -260,7 +260,8 @@ export function textIfPresent(read: () => string): string | null {
  * - a row has more or fewer cells than that header;
  * - a quote stands anywhere but around a whole cell, or doubled inside one;
  * - a cell is not what its column holds. The first column of each table holds a
- *   date, as four digits, two and two with a hyphen between. The referrer column
+ *   date, as four digits, two and two with a hyphen between, for a day that the
+ *   calendar has. The referrer column
  *   holds a name, which is any text at all. Every other column holds a whole
  *   number, as digits and nothing else. These are the shapes this command writes.
  *
@@ -367,7 +368,7 @@ function readSeries(raw: unknown, listKey: string): Series | null {
     const stamp = typeof point.timestamp === "string" ? point.timestamp.slice(0, 10) : "";
     const dayCount = asNumber(point.count);
     const dayUniques = asNumber(point.uniques);
-    if (!A_DATE.test(stamp) || dayCount === null || dayUniques === null) return null;
+    if (!isDate(stamp) || dayCount === null || dayUniques === null) return null;
     days.push({ timestamp: stamp, count: dayCount, uniques: dayUniques });
   }
   return { count, uniques, days };
@@ -549,8 +550,22 @@ function readTable(existing: string | null, header: string[]): { rows: string[][
 
 /** Whether a cell is what its column holds: a date first, any text for a referrer, and a whole number elsewhere. */
 function holdsItsKind(column: string, at: number, cell: string): boolean {
-  if (at === 0) return A_DATE.test(cell);
+  if (at === 0) return isDate(cell);
   return column === "referrer" || A_WHOLE_NUMBER.test(cell);
+}
+
+/**
+ * Whether text is a date: four digits, two and two with a hyphen between, that name a
+ * day of the calendar. So 2000-02-29 is a date, and 2001-02-29 and 2000-13-40 are not.
+ * The reader, the payload check and the clock check all ask this, so no run writes a
+ * day that the next run refuses.
+ */
+function isDate(text: string): boolean {
+  if (!A_DATE.test(text)) return false;
+  const [year, month, day] = text.split("-").map(Number) as [number, number, number];
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0;
+  return day >= 1 && day <= days;
 }
 
 /**
