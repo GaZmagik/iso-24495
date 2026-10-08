@@ -130,7 +130,7 @@ export async function runCli(
   const snapshot = parsed.snapshot;
   const date = deps.today();
   if (!isDate(date)) {
-    writeErr("Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD");
+    writeErr("Refusing to write: the clock gave a day that is not a real calendar date, written as YYYY-MM-DD");
     return 1;
   }
   // Every table is read before any is written. A table that is not there is a first

@@ -1070,7 +1070,7 @@ describe("a malformed table stops the run before anything is written", () => {
       for (const mode of [[], ["--dry-run"]]) {
         const { deps, files, stdout, stderr } = harness({ today: () => today });
         expect(await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps), JSON.stringify(today)).toBe(1);
-        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD"]);
+        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a real calendar date, written as YYYY-MM-DD"]);
         expect([stdout, [...files.keys()]]).toEqual([[], []]);
       }
     }
@@ -1168,7 +1168,7 @@ describe("a malformed table stops the run before anything is written", () => {
         }
         const { deps, files, stdout, stderr } = harness({ today: () => date });
         expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps), date).toBe(1);
-        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a date in the form YYYY-MM-DD"]);
+        expect(stderr).toEqual(["Refusing to write: the clock gave a day that is not a real calendar date, written as YYYY-MM-DD"]);
         expect([stdout, [...files.keys()]]).toEqual([[], []]);
       }
       for (const date of REAL) {
