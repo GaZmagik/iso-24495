@@ -57,7 +57,7 @@ export function renderInline(source: string): string {
       index = span;
       continue;
     }
-    if (EMPHASIS.includes(text[index])) {
+    if (EMPHASIS.includes(text.charAt(index))) {
       rendered += decodeEntities(plain) + (paired.has(index) ? "" : text[index]);
       plain = "";
       index++;
@@ -132,7 +132,7 @@ function delimiterRuns(text: string, markers: string): Run[] {
       index = span;
       continue;
     }
-    if (!markers.includes(text[index])) {
+    if (!markers.includes(text.charAt(index))) {
       index++;
       continue;
     }
@@ -146,7 +146,7 @@ function delimiterRuns(text: string, markers: string): Run[] {
 
 /** The run of one mark that starts here, and whether CommonMark lets it open or close. */
 function runAt(text: string, start: number): Run {
-  const marker = text[start];
+  const marker = text.charAt(start);
   let end = start + 1;
   while (text[end] === marker) end++;
   const before = characterBefore(text, start);
@@ -254,7 +254,7 @@ function canPair(opener: Run, closer: Run): boolean {
 function decodeEntities(text: string): string {
   return text.replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z][a-z0-9]+);/gi, (whole, name: string) => {
     if (!name.startsWith("#")) return (entities as Record<string, string>)[`${name};`] ?? whole;
-    const point = name[1].toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+    const point = name.charAt(1).toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
     return point === 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) ? "\ufffd" : String.fromCodePoint(point);
   });
 }
