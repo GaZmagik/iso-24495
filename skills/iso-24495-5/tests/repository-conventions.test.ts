@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix, relative } from "node:path";
+import { delimiter, join, posix, relative } from "node:path";
 import ts from "typescript";
 import {
   auditText,
@@ -1191,19 +1191,27 @@ describe("repository writing conventions", () => {
       }
     });
 
-    // The gate's linter starts on Node, where everything else runs on Bun. A
-    // runner's own Node moves without notice, so each workflow that runs the
-    // gate names one exact version, and both name the same one.
     // The stage that runs every shipped command with nothing installed makes
-    // its copy under the temporary directory, whose name is the contributor's
-    // and not ours. A review gave it a name holding an apostrophe: the stage
-    // had pasted the path into the text of its clean-up, so the clean-up was
-    // a syntax error and the copy stayed. One name here holds an apostrophe,
-    // a space and a dollar sign.
+    // its copy under a directory whose name is the contributor's and not ours.
+    // A review gave it a name holding an apostrophe: the stage had pasted the
+    // path into the text of its clean-up, so the clean-up was a syntax error
+    // and the copy stayed. One name here holds an apostrophe, a space and a
+    // dollar sign.
+    //
+    // Where that directory may go is the stage's question, not this test's. A
+    // later review ran the gate in a checkout whose parent held node_modules,
+    // with a clean TMPDIR. The stage passed, and this test failed, because it
+    // had its own idea of a clean place: beside the repository. It now asks
+    // the stage's one search.
     test("the run with nothing installed works, and cleans up, under an awkward temporary path", () => {
-      // Beside the repository, which is where the stage itself falls back to,
-      // because no node_modules may sit above the copy.
-      const holder = mkdtempSync(join(REPOSITORY_ROOT, "..", "iso-24495-odd-"));
+      const search = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", "--clean-parent"], {
+        cwd: REPOSITORY_ROOT,
+        env: process.env,
+      });
+      // With no clean place anywhere, this fails with the stage's own words,
+      // which say to set TMPDIR. It must not pass by doing nothing.
+      expect(search.exitCode, search.stderr.toString()).toBe(0);
+      const holder = mkdtempSync(join(search.stdout.toString().trim(), "iso-24495-odd-"));
       try {
         const awkward = join(holder, "owner's $tmp dir");
         mkdirSync(awkward);
@@ -1220,6 +1228,34 @@ describe("repository writing conventions", () => {
       }
     });
 
+    // A place that cannot be written to is passed over, and when every place
+    // is, the stage must say what to do. Here no directory can be made at all,
+    // because the program that makes one is replaced by one that fails.
+    test("with no clean place for its copy, the run says to set TMPDIR", () => {
+      const stubs = mkdtempSync(join(tmpdir(), "iso-24495-stub-"));
+      try {
+        writeFileSync(join(stubs, "mktemp"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+        const environment = { ...process.env, PATH: `${forBash(stubs)}${delimiter}${process.env.PATH ?? ""}` };
+        for (const mode of [["--clean-parent"], []]) {
+          const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", ...mode], {
+            cwd: REPOSITORY_ROOT,
+            env: environment,
+          });
+          expect(run.exitCode).toBe(1);
+          expect(run.stderr.toString()).toBe(
+            "No temporary directory is free of a node_modules directory above it.\n"
+            + "Set TMPDIR to a directory with none above it, then run the gate again.\n",
+          );
+          expect(run.stdout.toString()).toBe("");
+        }
+      } finally {
+        rmSync(stubs, { recursive: true, force: true });
+      }
+    });
+
+    // The gate's linter starts on Node, where everything else runs on Bun. A
+    // runner's own Node moves without notice, so each workflow that runs the
+    // gate names one exact version, and both name the same one.
     test("each workflow that runs the gate sets up the same exact Node", () => {
       const versions = ["tests.yml", "release-tag.yml"].map((name) => {
         const parsed = Bun.YAML.parse(

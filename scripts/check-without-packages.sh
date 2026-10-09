@@ -6,7 +6,9 @@
 # node_modules exists, so a command that imports a package passes every other
 # stage and then fails for every user. So this asks the question itself. It
 # copies the working tree to a place with no packages, runs each command
-# there, and reads its exit code.
+# there, and reads its exit code. The copy goes under TMPDIR when that is set
+# and clean, and otherwise under the first clean place of a short list, which
+# clean_parent gives below. No contributor has to configure anything.
 #
 # What it establishes: each command listed below loads and runs with nothing
 # installed, in each documented mode that can run offline. What it does not:
@@ -41,7 +43,11 @@ RUNS=0
 main() {
   # Set before the directory exists, so that no way out can miss it.
   trap remove_copy EXIT
-  COPY_ROOT="$(clean_directory)"
+  local parent
+  parent="$(clean_parent)"
+  # Always a new directory of this script's own. Clean-up removes that and
+  # nothing else, and never the place it was made in.
+  COPY_ROOT="$(mktemp -d "${parent%/}/iso-24495-bare.XXXXXX")"
   local tree="$COPY_ROOT/tree"
   local out="$COPY_ROOT/out"
   echo "    the copy is in $COPY_ROOT"
@@ -174,27 +180,71 @@ remove_copy() {
   fi
 }
 
-# Makes a new directory with no node_modules in it or in any directory above
-# it, and prints its path. The path is the one the system knows, so that a
-# command given it needs no translation: Git Bash translates its own names for
-# a Windows path as it starts a program, and gave up on a name that held an
-# apostrophe. The system's temporary directory is tried first,
-# then the directory that holds this repository. Stops the script when neither
-# is clean, because a package found above the copy would be found by the copy.
-clean_directory() {
-  local parent candidate
-  for parent in "${TMPDIR:-/tmp}" "$(cd .. && pwd)"; do
-    candidate="$(mktemp -d "$parent/iso-24495-bare.XXXXXX")" || continue
-    if packages_above "$candidate"; then
-      rm -rf "$candidate"
+# Prints a directory under which the copy can be made: one that can be written
+# to and has no node_modules in it or in any directory above it. This is the
+# one search for such a place. The stage uses it, and so does the test that
+# runs the stage, through "--clean-parent".
+#
+# The candidates, in order, each passed over without a word when it cannot be
+# written to or is not clean:
+#
+# 1. TMPDIR, when it is set.
+# 2. The system's temporary directory.
+# 3. The directory that holds this repository.
+# 4. The root of the drive or file system this repository is on.
+# 5. On Windows, the root of the system drive.
+# 6. Elsewhere, /var/tmp and /dev/shm, where they exist.
+#
+# The list is long because the ordinary places fail on an ordinary machine. A
+# checkout under a home directory that holds node_modules has it above the
+# first three, and a contributor should not have to configure anything.
+#
+# The path printed is the one the system knows, so that a command given it
+# needs no translation: Git Bash translates its own names for a Windows path
+# as it starts a program, and gave up on a name that held an apostrophe.
+# Stops the script when no candidate is clean, because a package found above
+# the copy would be found by the copy.
+clean_parent() {
+  local parent probe
+  while IFS= read -r parent; do
+    # Making a directory there is the test of whether it can be written to.
+    probe="$(mktemp -d "${parent%/}/iso-24495-bare.XXXXXX" 2>/dev/null)" || continue
+    if packages_above "$probe"; then
+      rmdir "$probe"
     else
-      system_path "$candidate"
+      rmdir "$probe"
+      system_path "$parent"
       return 0
     fi
-  done
+  done < <(candidate_parents)
   echo "No temporary directory is free of a node_modules directory above it." >&2
   echo "Set TMPDIR to a directory with none above it, then run the gate again." >&2
   return 1
+}
+
+# Prints each place the copy might go, one to a line, in the order they are
+# tried. A place is listed whether or not it exists.
+candidate_parents() {
+  local here root
+  if [ -n "${TMPDIR:-}" ]; then
+    echo "$TMPDIR"
+  fi
+  echo "/tmp"
+  (cd .. && pwd)
+  # The root is where going up stops. On Windows that is the drive, such as
+  # "D:", which needs its slash to name the root and not a place on the drive.
+  here="$(system_path .)"
+  root="$here"
+  while [ "$(dirname "$root")" != "$root" ]; do
+    root="$(dirname "$root")"
+  done
+  echo "${root%/}/"
+  if [ -n "${SYSTEMDRIVE:-}" ]; then
+    echo "${SYSTEMDRIVE%/}/"
+  else
+    echo "/var/tmp"
+    echo "/dev/shm"
+  fi
 }
 
 # Succeeds when a directory, or any directory above it, holds node_modules.
@@ -271,5 +321,12 @@ run() {
   fi
   RUNS=$((RUNS + 1))
 }
+
+# The test that runs this stage asks where a clean place is, so that the
+# search exists once.
+if [ "${1:-}" = "--clean-parent" ]; then
+  clean_parent
+  exit 0
+fi
 
 main
