@@ -19,6 +19,7 @@ import {
   ENGINE_THRESHOLDS,
   isAuditedDocument,
   listTextFiles,
+  runCli,
 } from "../scripts/audit-corpus.ts";
 import { classifyBoundary, mergedSentences, splitSentences } from "../scripts/lib/parse.ts";
 
@@ -484,5 +485,24 @@ describe("audit configuration identity", () => {
       ...ENGINE_THRESHOLDS,
       sentenceWordLimit: ENGINE_THRESHOLDS.sentenceWordLimit + 1,
     })).not.toBe(current);
+  });
+});
+
+describe("an argument list with a hole", () => {
+  // Stopping at a hole ended the options early, so the command ran and exited 0
+  // with an option it would have refused still unread.
+  test("is refused, and so is what follows the hole", () => {
+    const holed: string[] = ["bun", "audit-corpus-cli.ts", CORPUS];
+    holed.length = 4;
+    const trailing = [...holed];
+    trailing.length = 4;
+    holed.push("--unknown");
+    for (const argv of [holed, trailing]) {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      expect(runCli(argv, (text) => stdout.push(text), (text) => stderr.push(text))).toBe(2);
+      expect(stderr).toEqual(["audit-corpus: argument 2 is missing; expected --json"]);
+      expect(stdout).toEqual([]);
+    }
   });
 });

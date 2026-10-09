@@ -359,8 +359,8 @@ function readArguments(mode: "text" | "design", argv: string[]): Arguments {
   const seen = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
-    // The loop bound keeps the index inside the list; the compiler cannot see that.
-    if (option === undefined) break;
+    // A list with a hole holds no argument here, and is refused as any unknown option is.
+    if (option === undefined) throw new Error();
     if (seen.has(option)) throw new Error();
     seen.add(option);
     if (option === "--send") args.send = true;

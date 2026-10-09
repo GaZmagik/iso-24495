@@ -64,8 +64,11 @@ export function runCli(
   const seenOptions = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
-    // The loop bound keeps the index inside the list; the compiler cannot see that.
-    if (option === undefined) break;
+    // A list with a hole holds no argument here. It is refused, so nothing after it goes unread.
+    if (option === undefined) {
+      stderr(`audit-text: argument ${index - 1} is missing; expected --json, --project-dir or --no-front-matter`);
+      return 2;
+    }
     if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
       stderr(

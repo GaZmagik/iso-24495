@@ -453,4 +453,27 @@ describe("options and arguments that are not plain", () => {
       rmSync(project, { recursive: true, force: true });
     }
   });
+
+  // Stopping at a hole ended the options early, so the command ran and exited 0
+  // with an option it would have refused still unread.
+  test("a hole in the argument list is refused, and so is what follows it", () => {
+    const project = makeProject();
+    try {
+      const file = join(project, "note.md");
+      writeFileSync(file, "Plain words.\n");
+      const holed: string[] = ["bun", "audit-text-cli.ts", file];
+      holed.length = 4;
+      const trailing = [...holed];
+      trailing.length = 4;
+      holed.push("--unknown");
+      for (const argv of [holed, trailing]) {
+        const output = capture();
+        expect(runCli(argv, output.writeOut, output.writeErr)).toBe(2);
+        expect(output.stderr).toEqual(["audit-text: argument 2 is missing; expected --json, --project-dir or --no-front-matter"]);
+        expect(output.stdout).toEqual([]);
+      }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
 });

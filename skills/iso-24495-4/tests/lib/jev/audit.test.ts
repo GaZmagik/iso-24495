@@ -401,3 +401,26 @@ test("every line of the Jev audit that names a file prints it as a path", async 
     expect(out.join("\n")).toContain(`| ${tick}ta  ${slash}u202eb.md${tick} | 8 | legalese | banned term "shall" |`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+// Stopping at a hole ended the options early, so the command ran and exited 0
+// with an option it would have refused still unread.
+test("a hole in the argument list is refused, and so is what follows it", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-argument-hole-"));
+  try {
+    const file = join(directory, "guide.md");
+    writeFileSync(file, NO_BLOCK);
+    const holed: string[] = ["bun", "design-audit-cli.ts", file];
+    holed.length = 4;
+    const trailing = [...holed];
+    trailing.length = 4;
+    holed.push("--unknown");
+    for (const argv of [holed, trailing]) {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      expect(await runAuditCli("design", argv, (text) => stdout.push(text), (text) => stderr.push(text))).toBe(2);
+      expect(stderr).toHaveLength(1);
+      expect(stderr[0]).toStartWith("Invalid audit arguments.");
+      expect(stdout).toEqual([]);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
