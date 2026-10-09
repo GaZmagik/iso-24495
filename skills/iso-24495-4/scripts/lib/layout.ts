@@ -38,8 +38,8 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   const titleSuffix = title === undefined ? undefined : /\(([^()]*)\)\s*$/.exec(normaliseWording(title.text))?.[1];
   const fields = opening.flatMap((line, offset) => {
     const normal = normaliseWording(line);
-    const cells = parsed.tableRows.get(start - 1 + offset)?.map(normaliseWording) ?? [];
-    return [normal, ...(cells.length >= 2 ? [`${cells[0].replace(/:$/, "")} ${cells[1]}`] : []), ...markdownLinks(line).filter(link => link.image).map(link => normaliseWording(link.label))];
+    const [field, value] = parsed.tableRows.get(start - 1 + offset)?.map(normaliseWording) ?? [];
+    return [normal, ...(field !== undefined && value !== undefined ? [`${field.replace(/:$/, "")} ${value}`] : []), ...markdownLinks(line).filter(link => link.image).map(link => normaliseWording(link.label))];
   });
   const fileName = reading.fileName?.split(/[\\/]/).at(-1) ?? "";
   const exempt = /^(?:README|CONTRIBUTING|SECURITY|PULL_REQUEST_TEMPLATE)(?:\..*)?$/i.test(fileName);
@@ -123,8 +123,8 @@ function declaredEditionFields(metadata: unknown): boolean {
 }
 function isDocumentField(text: string): boolean {
   if (VERSION.test(text)) return true;
-  const date = DATE_FIELD.exec(text);
-  return date !== null && validDate(date[1]);
+  const [, date] = DATE_FIELD.exec(text) ?? [];
+  return date !== undefined && validDate(date);
 }
 function validDate(text: string): boolean {
   const quarter = /^Q([1-4])\s+\d{4}$/i.exec(text);
@@ -139,10 +139,12 @@ function validDate(text: string): boolean {
   const parts = text.toLowerCase().replace(/[,-]/g, " ").split(/\s+/);
   const month = MONTHS.findIndex(name => parts.includes(name) || parts.includes(name.slice(0, 3)));
   if (month < 0) return false;
-  if (parts.length === 2 && /^\d{4}$/.test(parts[1])) return true;
-  if (parts.length !== 3 || !/^\d{4}$/.test(parts[2])) return false;
-  const day = /^\d{1,2}$/.test(parts[0]) ? parts[0] : parts[1];
-  return /^\d{1,2}$/.test(day) && calendarDate(Number(parts[2]), month + 1, Number(day));
+  const [first, second, third] = parts;
+  if (first === undefined || second === undefined) return false;
+  if (third === undefined) return /^\d{4}$/.test(second);
+  if (parts.length !== 3 || !/^\d{4}$/.test(third)) return false;
+  const day = /^\d{1,2}$/.test(first) ? first : second;
+  return /^\d{1,2}$/.test(day) && calendarDate(Number(third), month + 1, Number(day));
 }
 function calendarDate(year: number, month: number, day: number): boolean {
   const date = new Date(0);
@@ -160,10 +162,11 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
   }
   const findings: Violation[] = [];
   let labelledEntries = false;
-  const openingLinks: Array<{ line: number; label: string; heading?: Heading; block: number }> = [];
+  const openingLinks: Array<{ line: number; label: string; heading: Heading | undefined; block: number }> = [];
   const navigationParagraphs = new Map<number, boolean>();
-  for (const [index, block] of parsed.blocks) if (block.kind === "paragraph") {
-    const source = parsed.markupLines[index];
+  for (const [index, source] of parsed.markupLines.entries()) {
+    const block = parsed.blocks.get(index);
+    if (block?.kind !== "paragraph") continue;
     const links = markdownLinks(source).filter(link => !link.image && link.rendered);
     let residual = source;
     for (const link of [...links].reverse()) {
@@ -172,8 +175,7 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
     const navigation = /^[\s,;|/]*$/.test(residual);
     navigationParagraphs.set(block.id, (navigationParagraphs.get(block.id) ?? true) && navigation);
   }
-  for (let index = 0; index < parsed.markupLines.length; index++) {
-    const line = parsed.markupLines[index];
+  for (const [index, line] of parsed.markupLines.entries()) {
     const block = parsed.blocks.get(index);
     if (block === undefined || !block.data || !parsed.navigationLines.has(index)) continue;
     if (block.kind === "paragraph" && !navigationParagraphs.get(block.id)) continue;

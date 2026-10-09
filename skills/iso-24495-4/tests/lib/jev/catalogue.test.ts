@@ -9,7 +9,7 @@ test("the three-gate catalogue and both templates are pinned", () => {
   for (const name of ["lock", "bounds", "requests", "extraction"]) {
     expect(sha256(readFileSync(join(import.meta.dir, "../../fixtures/jev", `${name}.json`)))).toBe(provenance.hashes[name]);
   }
-  expect(buildRequest("opening", { opening: "Title" }).questions.purpose.type).toBe("choice");
+  expect(buildRequest("opening", { opening: "Title" }).questions.purpose?.type).toBe("choice");
   expect(() => validateCalibration(path => path.endsWith("results-r11.json") ? Buffer.from("{}") : readFileSync(path))).toThrow("catalogue");
   expect(() => validateCalibration(path => path.endsWith("opening-A.json") ? Buffer.from("{}") : readFileSync(path))).toThrow("template");
   expect(() => validateCalibration(path => path.endsWith("block-A.json") ? Buffer.from("{}") : readFileSync(path))).toThrow("template");

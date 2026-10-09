@@ -36,7 +36,7 @@ describe("auditTarget", () => {
       const result = auditTarget(file, project);
 
       expect(Object.keys(result.files)).toEqual(["docs/policy.txt"]);
-      expect(result.files["docs/policy.txt"].violations.map((item) => item.rule)).toEqual([
+      expect(result.files["docs/policy.txt"]?.violations.map((item) => item.rule)).toEqual([
         "legalese",
       ]);
       expect(result.skipped).toEqual([]);
@@ -424,6 +424,54 @@ describe("text nobody has read, in the printed findings", () => {
       const saved = JSON.parse(readFileSync(report, "utf8")) as { files: Record<string, { violations: Array<{ detail: string }> }> };
       expect(Object.keys(saved.files)).toEqual([name]);
       expect(saved.files[name]?.violations[0]?.detail).toContain(`${escape}[2J${control}`);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("options and arguments that are not plain", () => {
+  // A spread copies only an object's own enumerable properties, so reading the
+  // option that way lost one that was inherited or not enumerable.
+  test("frontMatter set to false is read however the object carries it", () => {
+    class ReadingOptions { get frontMatter(): boolean { return false; } }
+    const hidden = Object.defineProperty({}, "frontMatter", { value: false, enumerable: false });
+    const project = makeProject();
+    try {
+      const file = join(project, "policy.md");
+      writeFileSync(file, "");
+      const read = (): string => "---\npolicy: We shall comply.\n---\n";
+      const findings = (reading: object): string[] => Object.values(auditTarget(file, project, read, reading).files)
+        .flatMap((result) => result.violations.map((violation) => `${violation.rule} at line ${violation.line}`)).sort();
+      const asText = ["heading-style at line 2", "legalese at line 2"];
+      expect(findings({ frontMatter: false })).toEqual(asText);
+      expect(findings(new ReadingOptions()), "a getter on a class").toEqual(asText);
+      expect(findings(Object.create({ frontMatter: false })), "an inherited property").toEqual(asText);
+      expect(findings(hidden), "a property that is not enumerable").toEqual(asText);
+      expect(findings({})).toEqual([]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  // Stopping at a hole ended the options early, so the command ran and exited 0
+  // with an option it would have refused still unread.
+  test("a hole in the argument list is refused, and so is what follows it", () => {
+    const project = makeProject();
+    try {
+      const file = join(project, "note.md");
+      writeFileSync(file, "Plain words.\n");
+      const holed: string[] = ["bun", "audit-text-cli.ts", file];
+      holed.length = 4;
+      const trailing = [...holed];
+      trailing.length = 4;
+      holed.push("--unknown");
+      for (const argv of [holed, trailing]) {
+        const output = capture();
+        expect(runCli(argv, output.writeOut, output.writeErr)).toBe(2);
+        expect(output.stderr).toEqual(["audit-text: argument 2 is missing; expected --json, --project-dir or --no-front-matter"]);
+        expect(output.stdout).toEqual([]);
+      }
     } finally {
       rmSync(project, { recursive: true, force: true });
     }

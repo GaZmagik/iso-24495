@@ -147,9 +147,12 @@ interface Queue { items: Array<{ document: SelectedDocument; candidate: Candidat
 
 /** Asks about one queued candidate after another, until none is left or one fails. */
 async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevReport): Promise<void> {
-  while (!queue.failed && queue.next < queue.items.length) {
-    const index = queue.next++;
-    const { document, candidate } = queue.items[index];
+  while (!queue.failed) {
+    const index = queue.next;
+    const item = queue.items[index];
+    if (item === undefined) break;
+    queue.next++;
+    const { document, candidate } = item;
     queue.sent.add(index);
     try {
       const decision = classify(candidate.kind, await ask(candidate.body));
@@ -356,6 +359,8 @@ function readArguments(mode: "text" | "design", argv: string[]): Arguments {
   const seen = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
+    // A list with a hole holds no argument here, and is refused as any unknown option is.
+    if (option === undefined) throw new Error();
     if (seen.has(option)) throw new Error();
     seen.add(option);
     if (option === "--send") args.send = true;

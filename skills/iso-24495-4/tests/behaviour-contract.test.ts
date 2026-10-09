@@ -1399,7 +1399,7 @@ ${sentence}`)
     expect(rulesFor(`[p]: /url "shall hereby'`)).toContain("legalese");
     // A comment holds a sentence on the same line, and the sentence stays.
     expect(proseBlocks("<!-- hidden --> The supplier shall comply.")
-      .map((b) => b.lines[0].trim())).toEqual(["The supplier shall comply."]);
+      .map((b) => b.lines[0]?.trim())).toEqual(["The supplier shall comply."]);
     // An indented comment and a processing instruction are invisible too.
     expect(rulesFor(["  <!--", legalese, "  -->"].join(BREAK))).toEqual([]);
     expect(rulesFor(["<?php", legalese, "?>"].join(BREAK))).toEqual([]);
@@ -1441,7 +1441,7 @@ ${sentence}`)
     // CommonMark does not treat a colon as part of an HTML tag name. The
     // source is therefore text a reader sees rather than markup to remove.
     const namespaced = '<svg:path d="M0 0"/> hello there';
-    expect(proseBlocks(namespaced).map((b) => b.lines[0].trim())).toEqual([namespaced]);
+    expect(proseBlocks(namespaced).map((b) => b.lines[0]?.trim())).toEqual([namespaced]);
 
     // Front matter keys may be quoted, and may be written in any language.
     for (const key of ['"title": Metadata here', "résumé: Metadata here"]) {
@@ -1493,7 +1493,7 @@ ${sentence}`)
       ["Text <?hidden?> after.", "Text   after."],
       ["Text <!DOCTYPE hidden> after.", "Text   after."],
       ["Text <!-- unclosed markup.", "Text <!-- unclosed markup."],
-    ]) {
+    ] satisfies Array<[string, string]>) {
       expect(proseBlocks(source)[0]?.lines[0], source).toBe(visible);
     }
   });
@@ -1970,8 +1970,8 @@ ${sentence}`)
     const longSetext = `${long}\n${"-".repeat(80)}`;
     const violations = auditText(longSetext);
     expect(violations).toHaveLength(1);
-    expect(violations[0].rule).toBe("heading-style");
-    expect(violations[0].line).toBe(1);
+    expect(violations[0]?.rule).toBe("heading-style");
+    expect(violations[0]?.line).toBe(1);
     expect(proseBlocks(longSetext)).toEqual([]);
 
     const linked = "[Install the service](https://example.com/install)\n==================================================";
@@ -2123,7 +2123,7 @@ ${sentence}`)
     for (const pair of [
       ["CHECK COLOR FIRST", "CHECK COLOUR FIRST"],
       ["AUTHORIZE ACCESS NOW", "AUTHORISE ACCESS NOW"],
-    ]) {
+    ] satisfies Array<[string, string]>) {
       expect(auditText(pair[0])).toEqual([]);
       expect(auditText(pair[1])).toEqual(auditText(pair[0]));
     }
@@ -2191,6 +2191,7 @@ ${sentence}`)
       ],
     };
     const empty = positiveAndNegative["link-text-empty"];
+    if (empty === undefined) throw new Error("the table holds no link-text-empty pair");
     expect(rulesFor(empty[0]), "an empty link label reports link-text").toContain("link-text");
     expect(rulesFor(empty[1]), "a described link stays clean").not.toContain("link-text");
     delete positiveAndNegative["link-text-empty"];
@@ -2209,7 +2210,9 @@ ${sentence}`)
 
     expect(Object.keys(positiveAndNegative).sort()).toEqual([...RULES].sort());
     for (const rule of RULES) {
-      const [positive, negative] = positiveAndNegative[rule];
+      const pair = positiveAndNegative[rule];
+      if (pair === undefined) throw new Error(`the table holds no pair for ${rule}`);
+      const [positive, negative] = pair;
       expect(rulesFor(positive), `${rule} positive`).toContain(rule);
       expect(rulesFor(negative), `${rule} negative`).not.toContain(rule);
     }

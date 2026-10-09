@@ -37,7 +37,8 @@ export function runCli(
     return 2;
   }
   const jsonFlag = argv.indexOf("--json");
-  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
+  const jsonPath = jsonFlag === -1 ? undefined : argv[jsonFlag + 1];
+  if (jsonFlag !== -1 && !jsonPath) {
     stderr("score-maturity: --json requires an output file");
     return 2;
   }
@@ -53,8 +54,8 @@ export function runCli(
   }
   // The value was checked against the shape of the type on the line above.
   const maturity = scoreMaturity(answers.value as Answers);
-  if (jsonFlag !== -1) {
-    const problem = writeTextFile(argv[jsonFlag + 1], JSON.stringify(maturity, null, 2), "--json");
+  if (jsonPath !== undefined) {
+    const problem = writeTextFile(jsonPath, JSON.stringify(maturity, null, 2), "--json");
     if (problem !== null) {
       stderr(`score-maturity: ${problem}`);
       return 1;
@@ -108,13 +109,15 @@ export function scoreMaturity(answers: Answers): Maturity {
   let overall = Number.POSITIVE_INFINITY;
   for (const [dimension, levels] of Object.entries(MATURITY_MODEL)) {
     const given = answers.dimensions?.[dimension] ?? {};
-    let level = 0;
-    while (level < levels.length && levels[level].every((c) => given[c] === true)) {
-      level++;
+    // The first level with a criterion unmet is the level reached, and names what blocks the next.
+    let level = levels.length;
+    let missing: string[] = [];
+    for (const [index, criteria] of levels.entries()) {
+      if (criteria.every((c) => given[c] === true)) continue;
+      level = index;
+      missing = criteria.filter((c) => given[c] !== true);
+      break;
     }
-    const missing = level < levels.length
-      ? levels[level].filter((c) => given[c] !== true)
-      : [];
     maturity.dimensions[dimension] = { level, missing };
     overall = Math.min(overall, level);
   }

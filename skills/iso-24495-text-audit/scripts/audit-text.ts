@@ -64,6 +64,11 @@ export function runCli(
   const seenOptions = new Set<string>();
   for (let index = 3; index < argv.length; index++) {
     const option = argv[index];
+    // A list with a hole holds no argument here. It is refused, so nothing after it goes unread.
+    if (option === undefined) {
+      stderr(`audit-text: argument ${index - 1} is missing; expected --json, --project-dir or --no-front-matter`);
+      return 2;
+    }
     if (option !== "--json" && option !== "--project-dir" && option !== "--no-front-matter") {
       const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
       stderr(
@@ -203,7 +208,9 @@ export function auditTarget(
       skipped.push(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter: reading.frontMatter, markdown: /\.(?:md|markdown)$/i.test(path) });
+    // Read by name: a spread would miss a property that is inherited or not enumerable.
+    const frontMatter = reading.frontMatter;
+    const violations = auditText(text, { ...(frontMatter === undefined ? {} : { frontMatter }), knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
     findings.files[displayPath(path, absoluteProject)] = { violations };
     for (const violation of violations) {
       findings.totals[violation.rule] = (findings.totals[violation.rule] ?? 0) + 1;

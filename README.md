@@ -298,7 +298,7 @@ Every new test receives a mutation check. The implementation is deliberately bro
 
 This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem.
 
-Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and a few more.
+Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. It also has `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and a few more.
 
 A lint that finds nothing proves little when a rule is switched off or weakened by mistake. So `eslint.config.mjs` states the enforced rules once, and a test reads that list.
 

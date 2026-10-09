@@ -125,7 +125,7 @@ function isLinkDefinition(line: string): boolean {
     index++;
     let closed = false;
     while (index < line.length) {
-      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line[index + 1])) {
+      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line.charAt(index + 1))) {
         index += 2;
         continue;
       }
@@ -142,7 +142,7 @@ function isLinkDefinition(line: string): boolean {
     const destinationStart = index;
     let depth = 0;
     while (index < line.length && line[index] !== " " && line[index] !== "\t") {
-      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line[index + 1])) {
+      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line.charAt(index + 1))) {
         index += 2;
         continue;
       }
@@ -269,8 +269,8 @@ export function tableCells(row: string): string[] {
     cell += row[i];
   }
   cells.push(cell);
-  if (cells[0].trim() === "") cells.shift();
-  if (cells.length > 0 && cells[cells.length - 1].trim() === "") cells.pop();
+  if (cells.at(0)?.trim() === "") cells.shift();
+  if (cells.at(-1)?.trim() === "") cells.pop();
   return cells;
 }
 
@@ -294,12 +294,17 @@ function startsBlock(line: string): boolean {
     || THEMATIC_BREAK.test(line);
 }
 
-interface Container {
-  kind: "quote" | "item";
-  unordered?: boolean;
-  listId?: number;
-  marker?: string;
-  /** For an item, the column its content starts at. */
+type Container = QuoteContainer | ItemContainer;
+interface QuoteContainer {
+  kind: "quote";
+  column: number;
+}
+interface ItemContainer {
+  kind: "item";
+  unordered: boolean;
+  listId: number;
+  marker: string;
+  /** The column the item's content starts at. */
   column: number;
 }
 
@@ -383,22 +388,22 @@ function matchOpen(line: string, stack: Container[]): { rest: string; matched: n
  * the content column is the marker plus one space.
  */
 function listMarkerAt(line: string, midParagraph: boolean): { length: number; column: number } | null {
-  const marker = LIST_MARKER.exec(line);
-  if (marker === null) return null;
+  const [whole, indent, bullet, gap] = LIST_MARKER.exec(line) ?? [];
+  if (whole === undefined || indent === undefined || bullet === undefined || gap === undefined) return null;
   // A marker with no content cannot interrupt a paragraph: CommonMark
   // requires a non-blank first line for a list to do that.
-  if (midParagraph && isBlank(line.slice(marker[0].length))) return null;
-  const ordered = /^\d/.test(marker[2]);
-  if (midParagraph && (!ordered || marker[2].slice(0, -1) !== "1")) {
+  if (midParagraph && isBlank(line.slice(whole.length))) return null;
+  const ordered = /^\d/.test(bullet);
+  if (midParagraph && (!ordered || bullet.slice(0, -1) !== "1")) {
     // A bullet may interrupt a paragraph; an ordered marker may not unless it
     // is 1. Both rules protect wrapped lines from being read as lists.
     if (ordered) return null;
   }
-  const spaces = marker[3].length;
+  const spaces = gap.length;
   // Five or more spaces after a marker begin indented code inside the item, so
   // only one of them belongs to the marker and the rest stay as indentation.
-  const consumed = spaces > 4 ? marker[1].length + marker[2].length + 1 : marker[0].length;
-  const column = marker[1].length + marker[2].length + (spaces > 4 ? 1 : spaces);
+  const consumed = spaces > 4 ? indent.length + bullet.length + 1 : whole.length;
+  const column = indent.length + bullet.length + (spaces > 4 ? 1 : spaces);
   return { length: consumed, column };
 }
 
@@ -436,7 +441,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   let invisible: { until: string; depth: number } | null = null;
   let rawCode: { closing: RegExp; depth: number } | null = null;
 
-  for (let i = 0; i < lines.length; i++) {
+  for (const [i, source] of lines.entries()) {
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
@@ -446,7 +451,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     }
     if (i <= tableUntil) continue;
 
-    const line = expandTabs(lines[i]);
+    const line = expandTabs(source);
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
     let text = rest;
@@ -492,11 +497,11 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         hidden.add(i);
         readable[i] = "";
         markup[i] = "";
-        const closing = FENCE_OPEN.exec(rest);
-        if (closing !== null
-          && closing[2][0] === fence.char
-          && closing[2].length >= fence.length
-          && isBlank(closing[3])) {
+        const [, , run, after] = FENCE_OPEN.exec(rest) ?? [];
+        if (run !== undefined && after !== undefined
+          && run[0] === fence.char
+          && run.length >= fence.length
+          && isBlank(after)) {
           fence = null;
         }
         continue;
@@ -548,7 +553,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
           const family = consumed.trim().replace(/\d+/g, "");
           const listId = stack.length === matched && previousItem?.kind === "item" && previousItem.marker === family ? previousItem.listId : i;
           stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered, listId, marker: family });
-          if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.unordered).length });
+          if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.kind === "item" && container.unordered).length });
           continue;
         }
         break;
@@ -591,7 +596,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
-    if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
+    if (paragraph === null && !source.includes("\t") && isLinkDefinition(text)) {
       const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
       if (label !== undefined) {
         const name = normaliseReference(label);
@@ -610,37 +615,37 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       continue;
     }
 
-    const fenceOpen = FENCE_OPEN.exec(text);
-    if (fenceOpen !== null
-      && !(fenceOpen[2][0] === "`" && fenceOpen[3].includes("`"))) {
+    const [, , opener, info] = FENCE_OPEN.exec(text) ?? [];
+    if (opener !== undefined && info !== undefined
+      && !(opener.charAt(0) === "`" && info.includes("`"))) {
       paragraph = null;
-      fence = { char: fenceOpen[2][0], length: fenceOpen[2].length };
+      fence = { char: opener.charAt(0), length: opener.length };
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
       continue;
     }
 
-    const atx = ATX_HEADING.exec(text);
-    if (atx !== null) {
+    const [, hashes, wording] = ATX_HEADING.exec(text) ?? [];
+    if (hashes !== undefined) {
       paragraph = null;
       if (stack.length === 0) rootHeadingLines.add(i + 1);
       found.push({
-        level: atx[1].length,
+        level: hashes.length,
         line: i + 1,
-        text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
+        text: (wording ?? "").replace(/\s+#+\s*$/, "").trim(),
         lines: 1,
         setext: false,
       });
       continue;
     }
 
-    const underline = SETEXT_UNDERLINE.exec(text);
-    if (underline !== null && !lazy && paragraph !== null && paragraphDepth === stack.length) {
+    const [, underline] = SETEXT_UNDERLINE.exec(text) ?? [];
+    if (underline !== undefined && !lazy && paragraph !== null && paragraphDepth === stack.length) {
       if (stack.length === 0) rootHeadingLines.add(paragraph.line);
       // The paragraph above becomes the heading's text, all of its lines.
       found.push({
-        level: underline[1][0] === "=" ? 1 : 2,
+        level: underline.startsWith("=") ? 1 : 2,
         line: paragraph.line,
         text: paragraph.lines.join(" ").trim(),
         lines: paragraph.lines.length,
@@ -718,10 +723,9 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     const source = block.lines.join("\n");
     const forLineRules = visibleInline(source, false).split("\n");
     const withTags = visibleInline(source, false, true).split("\n");
-    for (let offset = 0; offset < forLineRules.length; offset++) {
-      readable[block.line - 1 + offset] = forLineRules[offset];
-      markup[block.line - 1 + offset] = withTags[offset];
-    }
+    // Both readings keep every line ending of the source, so they hold the same lines.
+    for (const [offset, shown] of forLineRules.entries()) readable[block.line - 1 + offset] = shown;
+    for (const [offset, shown] of withTags.entries()) markup[block.line - 1 + offset] = shown;
     block.lines = visibleInline(source).split("\n");
   }
   for (const heading of found) {
@@ -873,7 +877,7 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
   let visible = "";
   let index = 0;
   while (index < text.length) {
-    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1])) {
+    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text.charAt(index + 1))) {
       visible += keepLiteralSyntax ? text.slice(index, index + 2) : "  ";
       index += 2;
       continue;

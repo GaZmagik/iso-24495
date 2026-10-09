@@ -56,19 +56,20 @@ export function runCli(
   }
   const stateFlag = argv.indexOf("--state");
   const outFlag = argv.indexOf("--out");
-  if (stateFlag !== -1 && !argv[stateFlag + 1]) {
+  const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
+  const outPath = outFlag !== -1 ? argv[outFlag + 1] : null;
+  if (stateFlag !== -1 && !statePath) {
     stderr("generate-report: --state requires a state file");
     return 2;
   }
-  if (outFlag !== -1 && !argv[outFlag + 1]) {
+  if (outFlag !== -1 && !outPath) {
     stderr("generate-report: --out requires a report file");
     return 2;
   }
-  if (stateFlag !== -1 && outFlag !== -1 && asOneFile(argv[stateFlag + 1]) === asOneFile(argv[outFlag + 1])) {
+  if (statePath && outPath && asOneFile(statePath) === asOneFile(outPath)) {
     stderr("generate-report: --state and --out name one file; give each a file of its own");
     return 2;
   }
-  const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
   // A state file that does not exist yet is a first audit, not a failure. Whether
   // one exists is kept apart from what it holds, because no value can stand for
   // "no file": a state file holding the JSON text null parses to null, and that
@@ -111,11 +112,11 @@ export function runCli(
     stderr(`generate-report: ${stateProblem}`);
     return 1;
   }
-  if (outFlag === -1) {
+  if (!outPath) {
     stdout(report);
     return 0;
   }
-  const reportProblem = writeTextFile(argv[outFlag + 1], report, "--out");
+  const reportProblem = writeTextFile(outPath, report, "--out");
   if (reportProblem !== null) {
     stderr(`generate-report: ${reportProblem}`);
     return 1;
@@ -138,15 +139,19 @@ export function runCli(
  */
 function asOneFile(path: string): string {
   const absolute = resolve(path);
-  const named = [absolute, dirname(absolute)].map((there) => {
-    try {
-      return realpathSync.native(there);
-    } catch {
-      return null;
-    }
-  });
-  const one = named[0] ?? (named[1] === null ? absolute : join(named[1], basename(absolute)));
+  const file = nameOnDisk(absolute);
+  const directory = nameOnDisk(dirname(absolute));
+  const one = file ?? (directory === null ? absolute : join(directory, basename(absolute)));
   return process.platform === "win32" ? one.toLowerCase() : one;
+}
+
+/** The path as the file system names it, or null where nothing is there. */
+function nameOnDisk(path: string): string | null {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return null;
+  }
 }
 
 /**

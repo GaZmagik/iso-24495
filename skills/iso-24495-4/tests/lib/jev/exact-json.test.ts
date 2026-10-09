@@ -103,6 +103,7 @@ describe("every key reads as JSON.parse reads it", () => {
   test("a duplicated key keeps its first place and its last value", () => {
     const parsed = parseExactJson('{"a": 1, "b": 2, "a": 3}') as Record<string, Decimal>;
     expect(Object.keys(parsed)).toEqual(["a", "b"]);
+    if (parsed.a === undefined) throw new Error("the key a is missing");
     expect(decimalText(parsed.a)).toBe("3");
   });
 });

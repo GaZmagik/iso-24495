@@ -148,7 +148,9 @@ describe("transport controls", () => {
     let calls = 0;
     const pending = createAsk("key", { fetch: async () => { calls++; if (calls === 1) return new Promise(resolve => { late = resolve; }); return valid(); }, clock, sleep: noWait })(OPENING);
     await Promise.resolve();
-    callbacks[0]();
+    const [expire] = callbacks;
+    if (expire === undefined) throw new Error("no timeout was scheduled");
+    expire();
     const accepted = await pending;
     late(new Response("wrong late answer"));
     expect(accepted.purpose).toBeDefined();

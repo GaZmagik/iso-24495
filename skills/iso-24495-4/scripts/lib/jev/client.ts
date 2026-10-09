@@ -105,7 +105,7 @@ export function readAnswers(text: string, questions: RequestBody["questions"]): 
     const options = Object.keys(question.criteria).sort();
     const given = typeof answer?.probabilities === "object" && answer.probabilities !== null && !Array.isArray(answer.probabilities) ? answer.probabilities as Record<string, unknown> : {};
     const values = Object.values(given);
-    if (!(answer?.type === "choice" && typeof answer.choice === "string" && options.includes(answer.choice)
+    if (!(precise !== undefined && answer?.type === "choice" && typeof answer.choice === "string" && options.includes(answer.choice)
       && isProbability(answer.confidence) && Object.keys(given).sort().join("\n") === options.join("\n")
       && values.every(isProbability) && Math.abs((values as number[]).reduce((sum, value) => sum + value, 0) - 1) <= 0.01)) throw new JevError("Jev returned an invalid Choice distribution.");
     const probabilities = precise.probabilities as Record<string, Decimal>;

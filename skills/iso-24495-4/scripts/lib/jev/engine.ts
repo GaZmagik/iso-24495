@@ -47,12 +47,13 @@ export function planDocument(text: string): DocumentPlan {
   const titleIndex = found.findIndex(heading => heading.level === 1);
   const candidates: Candidate[] = [];
   const findings: LocalFinding[] = [];
-  if (titleIndex < 0) {
+  const title = found[titleIndex];
+  if (title === undefined) {
     findings.push({ line: 1, rule: "opening-title", detail: "Add a level-1 document title. Purpose assessment is skipped without one." });
   } else {
-    const title = found[titleIndex];
     const from = title.line - 1 + title.lines + (title.setext ? 1 : 0);
-    const to = found[titleIndex + 1]?.line === undefined ? document.lines.length : found[titleIndex + 1].line - 1;
+    const next = found[titleIndex + 1];
+    const to = next === undefined ? document.lines.length : next.line - 1;
     const body = document.lines.slice(from, to).filter((line, offset) => !document.hidden(from + offset)
       && !/^\s*>[\s>]*$/.test(line) && !/^[\s>]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)).join("\n").trim();
     candidates.push({ id: `${title.line}:opening`, line: title.line, kind: "opening", body: buildRequest("opening", { opening: `# ${title.text}\n\n${body}`.trim() }) });
@@ -90,15 +91,27 @@ export function classify(kind: RequestKind, answers: ExactAnswers): Decision {
     return { rule: "colour-only", band: compare(score, parseDecimal("0.83")) >= 0 ? "pass" : "unsure", score: decimalText(score), cutOff: "0.83" };
   }
   const probabilities = answers.purpose as Record<string, Decimal>;
-  const score = subtract(ONE, probabilities.both);
+  const score = subtract(ONE, probabilityOf(probabilities, "both"));
   const decision: Decision = { rule: "opening-purpose", band: compare(score, parseDecimal("0.87")) >= 0 ? "fail" : "unsure", score: decimalText(score), cutOff: "0.87" };
   let best = "task_only";
   for (const option of ["task_only", "scope_only", "neither"]) {
-    if (compare(probabilities[option], probabilities[best]) > 0) best = option;
+    if (compare(probabilityOf(probabilities, option), probabilityOf(probabilities, best)) > 0) best = option;
   }
-  if (decision.band === "fail" && best === "neither" && compare(probabilities.neither, parseDecimal("0.83")) >= 0) {
+  const neither = probabilityOf(probabilities, "neither");
+  if (decision.band === "fail" && best === "neither" && compare(neither, parseDecimal("0.83")) >= 0) {
     decision.diagnosis = "neither";
-    decision.diagnosisGate = { id: "purpose:diagnosis:neither", score: decimalText(probabilities.neither), cutOff: "0.83", prerequisite: "purpose:fail" };
+    decision.diagnosisGate = { id: "purpose:diagnosis:neither", score: decimalText(neither), cutOff: "0.83", prerequisite: "purpose:fail" };
   }
   return decision;
+}
+
+/**
+ * The exact probability the purpose answer gives one of its options.
+ *
+ * @throws A `TypeError` when the answer holds no probability for the option.
+ */
+function probabilityOf(probabilities: Record<string, Decimal>, option: string): Decimal {
+  const probability = probabilities[option];
+  if (probability === undefined) throw new TypeError(`The purpose answer holds no probability for ${option}.`);
+  return probability;
 }
