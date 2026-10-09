@@ -248,6 +248,12 @@ A user of the plugin installs none of this. So the gate copies the working tree 
 
 That run proves each command loads and runs in those modes with nothing installed. It does not prove that every path through a command does. A send and a live fetch are not run. A test also refuses a package named outright in a shipped import, which catches the plain mistake early.
 
+These guards catch accidents. The gate catches a package import written by name in shipped code. It also catches any shipped command that fails to load or run with nothing installed, in its documented offline modes.
+
+It does not defend against a deliberate evasion, of which there are three kinds. A name can be computed while the code runs. A failure can be caught and hidden by the code. An edit to the lint configuration can change what a rule does without changing its entry, through inline configuration or a processor.
+
+The person who reviews the diff covers those, because each is visible in the change that introduces it.
+
 A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
 
 ```bash
@@ -290,7 +296,7 @@ A lint that finds nothing proves little when a rule is switched off or weakened 
 
 The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.
 
-A comment in a file cannot change a rule or switch one off, and the gate fails on a warning. Rules of the guide that no tool here checks are left to review.
+As configured, a comment in a file cannot change a rule or switch one off, and the gate fails on a warning. The testing policy above says what these guards do not defend against. Rules of the guide that no tool here checks are left to review.
 
 ## Why this project holds itself to these rules
 

@@ -4,15 +4,29 @@
 #
 # A user installs the plugin and nothing else. The gate itself runs where
 # node_modules exists, so a command that imports a package passes every other
-# stage and then fails for every user. A rule about how an import is spelt
-# cannot close that: a name can be computed, or reached through a file the rule
-# does not read. So this asks the question itself. It copies the working tree
-# to a place with no packages, runs each command there, and reads its exit code.
+# stage and then fails for every user. So this asks the question itself. It
+# copies the working tree to a place with no packages, runs each command
+# there, and reads its exit code.
 #
 # What it establishes: each command listed below loads and runs with nothing
 # installed, in each documented mode that can run offline. What it does not:
 # that every path through a command does. An import reached only by an input
 # not given here, or by a mode that needs the network, is not seen.
+#
+# The scope, in the words the README uses:
+#
+# These guards catch accidents. The gate catches a package import written by
+# name in shipped code. It also catches any shipped command that fails to load
+# or run with nothing installed, in its documented offline modes.
+#
+# It does not defend against a deliberate evasion, of which there are three
+# kinds. A name can be computed while the code runs. A failure can be caught
+# and hidden by the code. An edit to the lint configuration can change what a
+# rule does without changing its entry, through inline configuration or a
+# processor.
+#
+# The person who reviews the diff covers those, because each is visible in the
+# change that introduces it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

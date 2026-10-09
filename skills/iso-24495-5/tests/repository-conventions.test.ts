@@ -1904,15 +1904,25 @@ describe("repository writing conventions", () => {
   // import a package: it would run here, where node_modules exists, and fail
   // for every user.
   //
-  // What proves that is not here. scripts/check-without-packages.sh copies the
+  // Two checks answer that. scripts/check-without-packages.sh copies the
   // repository to a place with nothing installed and runs every shipped
-  // command there. Two reviews defeated a rule about how an import is spelt,
-  // with a computed name and then with a file the rule did not read, and no
-  // list of spellings can be complete.
+  // command there. This rule is the early, readable warning for the honest
+  // mistake: a package named outright. It reads names that are written out.
   //
-  // This rule is only the early, readable warning for the honest mistake: a
-  // package named outright. It reads names that are written out, and makes no
-  // claim about a name worked out while the code runs.
+  // The scope, in the words the README uses:
+  //
+  // These guards catch accidents. The gate catches a package import written by
+  // name in shipped code. It also catches any shipped command that fails to
+  // load or run with nothing installed, in its documented offline modes.
+  //
+  // It does not defend against a deliberate evasion, of which there are three
+  // kinds. A name can be computed while the code runs. A failure can be caught
+  // and hidden by the code. An edit to the lint configuration can change what
+  // a rule does without changing its entry, through inline configuration or a
+  // processor.
+  //
+  // The person who reviews the diff covers those, because each is visible in
+  // the change that introduces it.
   describe("shipped code names no package in an import", () => {
     test("every written import outside the tests is a node: built-in or a shipped file", () => {
       const shipped = shippedSources();
