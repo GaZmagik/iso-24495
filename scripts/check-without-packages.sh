@@ -30,6 +30,12 @@
 # The person who reviews the diff covers those, because each is visible in the
 # change that introduces it.
 set -euo pipefail
+# "set -e" stops at a command that fails, but not inside "$(...)": there the
+# failure passed unseen, and a search that could not remove its own directory
+# still gave an answer. This carries the setting into "$(...)" where bash has
+# the option. The removals below also report their own failure, so that
+# neither rests on the other.
+shopt -s inherit_errexit 2>/dev/null || true
 
 cd "$(dirname "$0")/.."
 
@@ -173,11 +179,20 @@ main() {
 }
 
 # Removes the copy, on every way out of this script. Does nothing before the
-# copy is made.
+# copy is made. Where the copy cannot be removed, says so and makes the script
+# fail, whatever it was about to exit with: a copy left behind is never silent.
 remove_copy() {
-  if [ -n "$COPY_ROOT" ]; then
-    rm -rf "$COPY_ROOT"
+  if [ -n "$COPY_ROOT" ] && ! rm -rf "$COPY_ROOT"; then
+    could_not_remove "$COPY_ROOT"
+    exit 1
   fi
+}
+
+# Says that a directory this stage made could not be removed. It gives the
+# directory's own name and not where it is, because the place is the
+# contributor's and the name is this stage's.
+could_not_remove() {
+  echo "Could not remove the directory ${1##*/}, which this stage made." >&2
 }
 
 # Prints a directory under which the copy can be made: one that can be written
@@ -210,9 +225,9 @@ clean_parent() {
     # Making a directory there is the test of whether it can be written to.
     probe="$(mktemp -d "${parent%/}/iso-24495-bare.XXXXXX" 2>/dev/null)" || continue
     if packages_above "$probe"; then
-      rmdir "$probe"
+      remove_probe "$probe" || return 1
     else
-      rmdir "$probe"
+      remove_probe "$probe" || return 1
       system_path "$parent"
       return 0
     fi
@@ -220,6 +235,15 @@ clean_parent() {
   echo "No temporary directory is free of a node_modules directory above it." >&2
   echo "Set TMPDIR to a directory with none above it, then run the gate again." >&2
   return 1
+}
+
+# Removes the empty directory the search made to try a place. Fails, with a
+# message, where it cannot: the search must not answer and leave it behind.
+remove_probe() {
+  if ! rmdir "$1"; then
+    could_not_remove "$1"
+    return 1
+  fi
 }
 
 # Prints each place the copy might go, one to a line, in the order they are
@@ -293,7 +317,14 @@ prove_packages_are_absent() {
   local name probe="scripts/gate-probe.ts"
   printf 'import { sep } from "node:path";\nconsole.log(sep.length);\n' > "$probe"
   run 0 "$out" bun "$probe"
-  for name in $(bun -e 'console.log(Object.keys(JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies).join(" "))'); do
+  local names
+  names="$(bun -e 'console.log(Object.keys(JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies).join(" "))')"
+  # With no name to try, the loop below would prove nothing and say it had.
+  if [ -z "$names" ]; then
+    echo "package.json names no development dependency, so none could be shown to be absent." >&2
+    return 1
+  fi
+  for name in $names; do
     printf 'import "%s";\n' "$name" > "$probe"
     run 1 "$out" bun "$probe"
     if ! grep -Eq "Cannot find (package|module)" "$out/stderr"; then

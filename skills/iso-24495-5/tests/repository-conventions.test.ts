@@ -1259,6 +1259,49 @@ describe("repository writing conventions", () => {
       }
     });
 
+    // The search tries a place by making a directory there, then removes it. A
+    // review made that removal fail. Asked for the clean place alone, the
+    // script stopped. The stage asked through "$(...)", where the failure
+    // passed unseen: it ran its commands, exited 0, and left the directory
+    // behind. Here the program that removes an empty directory is replaced by
+    // one that fails.
+    test("when the run cannot remove a directory it made, it stops and names it", () => {
+      const search = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", "--clean-parent"], {
+        cwd: REPOSITORY_ROOT,
+        env: process.env,
+      });
+      expect(search.exitCode, search.stderr.toString()).toBe(0);
+      // A holder of this test's own, because the directory will be left in it.
+      const holder = mkdtempSync(join(search.stdout.toString().replace(LINE_ENDING, ""), "iso-24495-kept-"));
+      try {
+        const stubs = join(holder, "stubs");
+        const place = join(holder, "place");
+        mkdirSync(stubs);
+        mkdirSync(place);
+        writeFileSync(join(stubs, "rmdir"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+        const environment = {
+          ...process.env,
+          TMPDIR: forBash(place),
+          PATH: `${forBash(stubs)}${delimiter}${process.env.PATH ?? ""}`,
+        };
+        for (const mode of [["--clean-parent"], []]) {
+          const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", ...mode], {
+            cwd: REPOSITORY_ROOT,
+            env: environment,
+          });
+          expect(run.exitCode).toBe(1);
+          const left = readdirSync(place);
+          expect(left.length, "the directory the search made is still there").toBe(1);
+          // The message gives the directory's own name, and not where it is.
+          expect(run.stderr.toString()).toBe(`Could not remove the directory ${left[0]}, which this stage made.\n`);
+          expect(run.stdout.toString(), "no command may run after that").toBe("");
+          rmSync(join(place, left[0] ?? ""), { recursive: true });
+        }
+      } finally {
+        rmSync(holder, { recursive: true, force: true });
+      }
+    });
+
     // The gate's linter starts on Node, where everything else runs on Bun. A
     // runner's own Node moves without notice, so each workflow that runs the
     // gate names one exact version, and both name the same one.
