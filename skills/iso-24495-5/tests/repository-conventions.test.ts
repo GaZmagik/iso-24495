@@ -1196,13 +1196,17 @@ describe("repository writing conventions", () => {
     // A review gave it a name holding an apostrophe: the stage had pasted the
     // path into the text of its clean-up, so the clean-up was a syntax error
     // and the copy stayed. One name here holds an apostrophe, a space and a
-    // dollar sign.
+    // dollar sign, and ends in a space.
     //
     // Where that directory may go is the stage's question, not this test's. A
     // later review ran the gate in a checkout whose parent held node_modules,
     // with a clean TMPDIR. The stage passed, and this test failed, because it
     // had its own idea of a clean place: beside the repository. It now asks
     // the stage's one search.
+    const AWKWARD_NAME = "owner's $tmp dir ";
+    /** The one line ending a script puts after a path it prints. */
+    const LINE_ENDING = /\r?\n$/;
+
     test("the run with nothing installed works, and cleans up, under an awkward temporary path", () => {
       const search = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", "--clean-parent"], {
         cwd: REPOSITORY_ROOT,
@@ -1211,9 +1215,11 @@ describe("repository writing conventions", () => {
       // With no clean place anywhere, this fails with the stage's own words,
       // which say to set TMPDIR. It must not pass by doing nothing.
       expect(search.exitCode, search.stderr.toString()).toBe(0);
-      const holder = mkdtempSync(join(search.stdout.toString().trim(), "iso-24495-odd-"));
+      // The path is kept exactly as printed, less the one line ending. A name
+      // may end in a space, and trimming the output once lost that space.
+      const holder = mkdtempSync(join(search.stdout.toString().replace(LINE_ENDING, ""), "iso-24495-odd-"));
       try {
-        const awkward = join(holder, "owner's $tmp dir");
+        const awkward = join(holder, AWKWARD_NAME);
         mkdirSync(awkward);
         const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh"], {
           cwd: REPOSITORY_ROOT,
@@ -1221,7 +1227,7 @@ describe("repository writing conventions", () => {
         });
         expect(run.exitCode, run.stderr.toString()).toBe(0);
         // It must have used that directory, not passed it over for another.
-        expect(run.stdout.toString()).toContain("owner's $tmp dir/iso-24495-bare.");
+        expect(run.stdout.toString()).toContain(`${AWKWARD_NAME}/iso-24495-bare.`);
         expect(readdirSync(awkward), "the copy must be gone").toEqual([]);
       } finally {
         rmSync(holder, { recursive: true, force: true });
