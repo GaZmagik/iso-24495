@@ -79,7 +79,9 @@ export const ENFORCED_RULES = {
 };
 
 export default defineConfig([
-  // A comment in a file cannot change a rule or switch one off. Without this,
+  // With this setting, a comment in a file cannot change a rule or switch one
+  // off. A later block could set it back for some files, and no test here
+  // would notice: that is an edit for review of the diff to catch. Without this,
   // one comment weakens a rule for its file and nothing in this configuration
   // shows it. ESLint reports such a comment as a warning, and the gate fails
   // on a warning.

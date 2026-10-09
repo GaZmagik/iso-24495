@@ -24,6 +24,25 @@ const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js
 //
 // The breaches are text in this file, never a file of their own: the gate
 // lints and type checks every TypeScript file in the repository.
+//
+// The scope, in the words the README uses:
+//
+// These guards catch accidents. The gate catches a package import written by
+// name in shipped code. It also catches any shipped command that fails to load
+// or run with nothing installed, in its documented offline modes.
+//
+// It does not defend against a deliberate evasion, of which there are three
+// kinds. A name can be computed while the code runs. A failure can be caught
+// and hidden by the code. An edit to the lint configuration can change what a
+// rule does without changing its entry, through inline configuration or a
+// processor.
+//
+// The person who reviews the diff covers those, because each is visible in the
+// change that introduces it.
+//
+// So the second check compares rule entries and nothing else. A block that
+// switches inline configuration back on for some files, or adds a processor,
+// leaves every entry equal and passes it.
 describe("the lint rules the gate relies on", () => {
   test("every enforced rule is set to an error", () => {
     const settings = Object.entries(ENFORCED_RULES);

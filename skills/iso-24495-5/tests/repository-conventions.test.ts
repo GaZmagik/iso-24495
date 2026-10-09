@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix, relative } from "node:path";
+import { delimiter, join, posix, relative } from "node:path";
 import ts from "typescript";
 import {
   auditText,
@@ -1193,35 +1193,131 @@ describe("repository writing conventions", () => {
       }
     });
 
-    // The gate's linter starts on Node, where everything else runs on Bun. A
-    // runner's own Node moves without notice, so each workflow that runs the
-    // gate names one exact version, and both name the same one.
     // The stage that runs every shipped command with nothing installed makes
-    // its copy under the temporary directory, whose name is the contributor's
-    // and not ours. A review gave it a name holding an apostrophe: the stage
-    // had pasted the path into the text of its clean-up, so the clean-up was
-    // a syntax error and the copy stayed. One name here holds an apostrophe,
-    // a space and a dollar sign.
+    // its copy under a directory whose name is the contributor's and not ours.
+    // A review gave it a name holding an apostrophe: the stage had pasted the
+    // path into the text of its clean-up, so the clean-up was a syntax error
+    // and the copy stayed. One name here holds an apostrophe, a space and a
+    // dollar sign, and ends in a space.
+    //
+    // Where that directory may go is the stage's question, not this test's. A
+    // later review ran the gate in a checkout whose parent held node_modules,
+    // with a clean TMPDIR. The stage passed, and this test failed, because it
+    // had its own idea of a clean place: beside the repository. It now asks
+    // the stage's one search.
+    const AWKWARD_NAME = "owner's $tmp dir ";
+    /** The one line ending a script puts after a path it prints. */
+    const LINE_ENDING = /\r?\n$/;
+
     test("the run with nothing installed works, and cleans up, under an awkward temporary path", () => {
-      // Beside the repository, which is where the stage itself falls back to,
-      // because no node_modules may sit above the copy.
-      const holder = mkdtempSync(join(REPOSITORY_ROOT, "..", "iso-24495-odd-"));
+      const search = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", "--clean-parent"], {
+        cwd: REPOSITORY_ROOT,
+        env: process.env,
+      });
+      // With no clean place anywhere, this fails with the stage's own words,
+      // which say to set TMPDIR. It must not pass by doing nothing.
+      expect(search.exitCode, search.stderr.toString()).toBe(0);
+      // The path is kept exactly as printed, less the one line ending. A name
+      // may end in a space, and trimming the output once lost that space.
+      const holder = mkdtempSync(join(search.stdout.toString().replace(LINE_ENDING, ""), "iso-24495-odd-"));
       try {
-        const awkward = join(holder, "owner's $tmp dir");
+        const awkward = join(holder, AWKWARD_NAME);
         mkdirSync(awkward);
         const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh"], {
           cwd: REPOSITORY_ROOT,
-          env: { ...process.env, TMPDIR: forBash(awkward) },
+          // The stage gives its commands an environment of its own making. A
+          // review set NODE_PATH to an installed node_modules, the copy then
+          // reached a package, and the stage failed with no source changed.
+          // So this run carries that variable, and must pass all the same.
+          env: {
+            ...process.env,
+            TMPDIR: forBash(awkward),
+            NODE_PATH: forBash(join(REPOSITORY_ROOT, "node_modules")),
+          },
         });
         expect(run.exitCode, run.stderr.toString()).toBe(0);
         // It must have used that directory, not passed it over for another.
-        expect(run.stdout.toString()).toContain("owner's $tmp dir/iso-24495-bare.");
+        expect(run.stdout.toString()).toContain(`${AWKWARD_NAME}/iso-24495-bare.`);
         expect(readdirSync(awkward), "the copy must be gone").toEqual([]);
       } finally {
         rmSync(holder, { recursive: true, force: true });
       }
     });
 
+    // A place that cannot be written to is passed over, and when every place
+    // is, the stage must say what to do. Here no directory can be made at all,
+    // because the program that makes one is replaced by one that fails.
+    test("with no clean place for its copy, the run says to set TMPDIR", () => {
+      const stubs = mkdtempSync(join(tmpdir(), "iso-24495-stub-"));
+      try {
+        writeFileSync(join(stubs, "mktemp"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+        const environment = { ...process.env, PATH: `${forBash(stubs)}${delimiter}${process.env.PATH ?? ""}` };
+        for (const mode of [["--clean-parent"], []]) {
+          const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", ...mode], {
+            cwd: REPOSITORY_ROOT,
+            env: environment,
+          });
+          expect(run.exitCode).toBe(1);
+          expect(run.stderr.toString()).toBe(
+            "The gate found no place for its copy: each place it tried could not be written to, "
+            + "or has a node_modules directory in it or above it.\n"
+            + "Set TMPDIR to a directory you can write to, with no node_modules in it or above it, "
+            + "then run the gate again.\n"
+            + "One likely cause is a stray node_modules directory in a home directory.\n",
+          );
+          expect(run.stdout.toString()).toBe("");
+        }
+      } finally {
+        rmSync(stubs, { recursive: true, force: true });
+      }
+    });
+
+    // The search tries a place by making a directory there, then removes it. A
+    // review made that removal fail. Asked for the clean place alone, the
+    // script stopped. The stage asked through "$(...)", where the failure
+    // passed unseen: it ran its commands, exited 0, and left the directory
+    // behind. Here the program that removes an empty directory is replaced by
+    // one that fails.
+    test("when the run cannot remove a directory it made, it stops and names it", () => {
+      const search = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", "--clean-parent"], {
+        cwd: REPOSITORY_ROOT,
+        env: process.env,
+      });
+      expect(search.exitCode, search.stderr.toString()).toBe(0);
+      // A holder of this test's own, because the directory will be left in it.
+      const holder = mkdtempSync(join(search.stdout.toString().replace(LINE_ENDING, ""), "iso-24495-kept-"));
+      try {
+        const stubs = join(holder, "stubs");
+        const place = join(holder, "place");
+        mkdirSync(stubs);
+        mkdirSync(place);
+        writeFileSync(join(stubs, "rmdir"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+        const environment = {
+          ...process.env,
+          TMPDIR: forBash(place),
+          PATH: `${forBash(stubs)}${delimiter}${process.env.PATH ?? ""}`,
+        };
+        for (const mode of [["--clean-parent"], []]) {
+          const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", ...mode], {
+            cwd: REPOSITORY_ROOT,
+            env: environment,
+          });
+          expect(run.exitCode).toBe(1);
+          const left = readdirSync(place);
+          expect(left.length, "the directory the search made is still there").toBe(1);
+          // The message gives the directory's own name, and not where it is.
+          expect(run.stderr.toString()).toBe(`Could not remove the directory ${left[0]}, which this stage made.\n`);
+          expect(run.stdout.toString(), "no command may run after that").toBe("");
+          rmSync(join(place, left[0] ?? ""), { recursive: true });
+        }
+      } finally {
+        rmSync(holder, { recursive: true, force: true });
+      }
+    });
+
+    // The gate's linter starts on Node, where everything else runs on Bun. A
+    // runner's own Node moves without notice, so each workflow that runs the
+    // gate names one exact version, and both name the same one.
     test("each workflow that runs the gate sets up the same exact Node", () => {
       const versions = ["tests.yml", "release-tag.yml"].map((name) => {
         const parsed = Bun.YAML.parse(
@@ -1907,15 +2003,35 @@ describe("repository writing conventions", () => {
   // import a package: it would run here, where node_modules exists, and fail
   // for every user.
   //
-  // What proves that is not here. scripts/check-without-packages.sh copies the
+  // Two checks answer that. scripts/check-without-packages.sh copies the
   // repository to a place with nothing installed and runs every shipped
-  // command there. Two reviews defeated a rule about how an import is spelt,
-  // with a computed name and then with a file the rule did not read, and no
-  // list of spellings can be complete.
+  // command there. This rule is the early, readable warning for the honest
+  // mistake: a package named outright. It reads names that are written out.
   //
-  // This rule is only the early, readable warning for the honest mistake: a
-  // package named outright. It reads names that are written out, and makes no
-  // claim about a name worked out while the code runs.
+  // The scope, in the words the README uses:
+  //
+  // These guards catch accidents. The gate catches a package import written by
+  // name in shipped code. It also catches any shipped command that fails to
+  // load or run with nothing installed, in its documented offline modes.
+  //
+  // It does not defend against a deliberate evasion, of which there are three
+  // kinds. A name can be computed while the code runs. A failure can be caught
+  // and hidden by the code. An edit to the lint configuration can change what
+  // a rule does without changing its entry, through inline configuration or a
+  // processor.
+  //
+  // The person who reviews the diff covers those, because each is visible in
+  // the change that introduces it.
+  //
+  // Which forms count as written, again in the README's words:
+  //
+  // The rule on written imports reads five forms. They are a static `import`
+  // and an `export ... from`, and the calls `import()`, `require()` and
+  // `import.meta.require()` with the name as their first argument. A name
+  // handed to any other loader is not read by the rule, even when it is
+  // written out. `createRequire` and `require.resolve` are two such loaders.
+  // The run with nothing installed still catches such a load on any path it
+  // runs.
   describe("shipped code names no package in an import", () => {
     test("every written import outside the tests is a node: built-in or a shipped file", () => {
       const shipped = shippedSources();
@@ -1952,10 +2068,14 @@ describe("repository writing conventions", () => {
         "const r = await import(\"with-attributes\", { with: { type: \"json\" } });",
         "const s = require(\"required-with-more\", 1);",
         "const t = require(`required-template`);",
-        "console.log(b, e, f, g, h, i, j, l, m, o, q, r, s, t);",
+        "const u = import.meta.require(\"meta-required\");",
+        // These two name a module and load nothing, so the rule passes them by.
+        "const v = require.resolve(\"only-resolved\");",
+        "const w = import.meta.resolve(\"only-meta-resolved\");",
+        "console.log(b, e, f, g, h, i, j, l, m, o, q, r, s, t, u, v, w);",
       ].join("\n");
       expect(writtenImports(source)).toEqual([
-        "./relative.ts", "across-lines", "dynamic", "import-equals", "named", "node:fs",
+        "./relative.ts", "across-lines", "dynamic", "import-equals", "meta-required", "named", "node:fs",
         "plain-template", "re-exported", "re-exported-whole", "required", "required-template",
         "required-with-more", "side-effect", "type-only", "type-query", "type-re-exported",
         "with-attributes", "with-options",
@@ -1977,6 +2097,9 @@ describe("repository writing conventions", () => {
         .toEqual(["scripts/a.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
       expect(problems({ "scripts/a.cjs": "require(\"typescript\");" }))
         .toEqual(["scripts/a.cjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      // A review wrote this one inside a try that hides its failure.
+      expect(problems({ "scripts/a.ts": "try { import.meta.require(\"typescript\"); } catch { console.log(1); }" }))
+        .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
       // A review wrote this one inside a branch that only one flag reaches.
       expect(problems({ "scripts/a.ts": "export async function late(): Promise<void> { await import(\"typescript\", {}); }" }))
         .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
@@ -2004,11 +2127,20 @@ describe("repository writing conventions", () => {
         .toEqual(["scripts/a.ts imports \"./data.json\", which is not a file this rule reads"]);
 
       // No claim is made about a computed name. The run with nothing
-      // installed is what catches these two, which reviews wrote.
+      // installed is what catches this one, which a review wrote.
       expect(problems({ "scripts/a.ts": "const name = \"typescript\"; await import(name);" })).toEqual([]);
+      // Nor about a name handed to another loader. In these three the name is
+      // written out, and the loader is what the rule does not read:
+      // createRequire, reached plainly and then by a computed member as a
+      // review wrote it, and require.resolve. The run with nothing installed
+      // catches such a load on any path it runs.
+      expect(problems({
+        "scripts/a.ts": "import { createRequire } from \"node:module\"; createRequire(import.meta.url)(\"typescript\");",
+      })).toEqual([]);
       expect(problems({
         "scripts/a.ts": "import * as loader from \"node:module\"; loader[\"createRequire\"](import.meta.url)(\"typescript\");",
       })).toEqual([]);
+      expect(problems({ "scripts/a.ts": "require.resolve(\"typescript\");" })).toEqual([]);
       // A member that happens to be called require loads nothing. An earlier
       // form of this rule refused it.
       expect(problems({ "scripts/a.ts": "export interface ReviewPolicy { require: boolean; }" })).toEqual([]);
@@ -2083,8 +2215,8 @@ function importProblems(sources: ReadonlyMap<string, string>, exists: (path: str
  * a string that looks like an import is not one. A name counts as written
  * when it is a string, or a template with nothing substituted into it. It
  * reads `import` and `export ... from` declarations, an import of types
- * alone, and `import()` or `require()` whose first argument is a written
- * name, whatever arguments follow.
+ * alone, and `import()`, `require()` or `import.meta.require()` whose first
+ * argument is a written name, whatever arguments follow.
  *
  * The second is Bun's own scanner. Bun is what loads these files, so this
  * rule must not read fewer written names than Bun does. Bun leaves out an
@@ -2129,7 +2261,8 @@ function writtenModule(node: ts.Node): string | null {
     return node.argument.literal.text;
   }
   if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
-    || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+    || (ts.isIdentifier(node.expression) && node.expression.text === "require")
+    || isImportMetaRequire(node.expression))) {
     // The first argument is the name, whatever follows it. A review wrote
     // import("typescript", {}), and a rule that wanted one argument alone
     // read nothing there.
@@ -2137,4 +2270,14 @@ function writtenModule(node: ts.Node): string | null {
     if (name !== undefined && ts.isStringLiteralLike(name)) return name.text;
   }
   return null;
+}
+
+/**
+ * Whether an expression is `import.meta.require`, which Bun gives a module
+ * as a third call that loads one by name.
+ */
+function isImportMetaRequire(expression: ts.Expression): boolean {
+  return ts.isPropertyAccessExpression(expression) && expression.name.text === "require"
+    && ts.isMetaProperty(expression.expression)
+    && expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword;
 }
