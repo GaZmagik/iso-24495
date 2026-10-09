@@ -6,7 +6,10 @@
 # node_modules exists, so a command that imports a package passes every other
 # stage and then fails for every user. So this asks the question itself. It
 # copies the working tree to a place with no packages, runs each command
-# there, and reads its exit code. The copy goes under TMPDIR when that is set
+# there, and reads its exit code. Each command starts from an empty
+# environment and is given a short list this script builds: a path, a home and
+# a temporary directory inside the stage's own directory, and the option that
+# stops Bun fetching a package. The copy goes under TMPDIR when that is set
 # and clean, and otherwise under the first clean place of a short list, which
 # clean_parent gives below. No contributor has to configure anything.
 #
@@ -45,6 +48,8 @@ cd "$(dirname "$0")/.."
 COPY_ROOT=""
 # How many commands have run and given the exit code required of them.
 RUNS=0
+# Every variable a command in the copy is given. build_environment fills it.
+STAGE_ENVIRONMENT=()
 
 main() {
   # Set before the directory exists, so that no way out can miss it.
@@ -66,24 +71,23 @@ main() {
   git ls-files -z --cached --others --exclude-standard | existing_files \
     | tar --null -T - -cf - | tar -xf - -C "$tree"
 
-  cd "$tree"
-  # Bun fetches a missing package by itself when it finds no node_modules above
-  # the file it is running, which is exactly where this copy sits. That would
-  # turn a missing dependency into a pass. The option switches it off, for bun
-  # started here and for bun started by a shell script started here.
-  export BUN_OPTIONS="--no-install"
-  # No command below sends anything. The key is dropped so that none can.
-  unset TYPESAFE_API_KEY
+  # Read here, from the repository, before anything starts in the copy. So
+  # the only way a program starts in the copy is through "run".
+  local version names
+  version="$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(".claude-plugin/plugin.json", "utf8")).version)')"
+  names="$(bun -e 'console.log(Object.keys(JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies).join(" "))')"
 
-  prove_packages_are_absent "$out"
+  mkdir "$COPY_ROOT/home" "$COPY_ROOT/tmp"
+  build_environment
+  cd "$tree"
+
+  prove_packages_are_absent "$out" "$names"
   local probes="$RUNS"
 
   local part4="skills/iso-24495-4/scripts"
   local answers="skills/iso-24495-4/tests/fixtures/answers.sample.json"
   local text_audit="skills/iso-24495-text-audit/scripts/audit-text-cli.ts"
   local design_audit="skills/iso-24495-design-audit/scripts/design-audit-cli.ts"
-  local version
-  version="$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(".claude-plugin/plugin.json", "utf8")).version)')"
 
   # Every command a user, a skill or a workflow starts, in every flag and
   # mode its usage text or its skill documents that can run offline. One
@@ -160,8 +164,10 @@ main() {
   # with the summary file a workflow gives it.
   run 0 "$out" bash scripts/audit-pull-request-text.sh README.md
   run 0 "$out" bun scripts/audit-pull-request-text-cli.ts README.md
-  GITHUB_STEP_SUMMARY="$out/summary.md" run 0 "$out" bash scripts/audit-pull-request-text.sh README.md
-  GITHUB_STEP_SUMMARY="$out/summary-direct.md" run 0 "$out" bun scripts/audit-pull-request-text-cli.ts README.md
+  # The one variable beyond the stage's own list, given to these two runs
+  # alone, and naming a file inside the stage's directory.
+  run 0 "$out" env GITHUB_STEP_SUMMARY="$out/summary.md" bash scripts/audit-pull-request-text.sh README.md
+  run 0 "$out" env GITHUB_STEP_SUMMARY="$out/summary-direct.md" bun scripts/audit-pull-request-text-cli.ts README.md
 
   # The traffic snapshot from a fixture: as a dry run, and writing its files.
   mkdir "$out/traffic"
@@ -313,12 +319,10 @@ existing_files() {
 # it. A package found here means node_modules is within reach, or that Bun
 # fetched it.
 prove_packages_are_absent() {
-  local out="$1"
+  local out="$1" names="$2"
   local name probe="scripts/gate-probe.ts"
   printf 'import { sep } from "node:path";\nconsole.log(sep.length);\n' > "$probe"
   run 0 "$out" bun "$probe"
-  local names
-  names="$(bun -e 'console.log(Object.keys(JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies).join(" "))')"
   # With no name to try, the loop below would prove nothing and say it had.
   if [ -z "$names" ]; then
     echo "package.json names no development dependency, so none could be shown to be absent." >&2
@@ -337,13 +341,47 @@ prove_packages_are_absent() {
   echo "    no development dependency can be reached from the copy"
 }
 
-# Runs one command and requires the exit code given first. Its output goes to
-# files in the directory given second. On any other code, prints what the
-# command wrote to standard error and stops the script.
+# Sets the whole environment a command in the copy is given. A command starts
+# from nothing and receives this list, so what the contributor's shell holds
+# cannot reach it. An earlier form of this stage inherited that shell: a
+# NODE_PATH naming an installed node_modules let the copy load a package, and
+# the stage failed for a contributor who had changed nothing. Removing that
+# one variable would have left the next one, so nothing is inherited at all.
+#
+# Each run passes with this list alone, on Linux and on Windows, so no more
+# is named. On Windows, Git Bash itself hands a program SYSTEMROOT, WINDIR and
+# MSYSTEM, which a program there needs in order to start.
+build_environment() {
+  STAGE_ENVIRONMENT=(
+    # So that bun, bash, git and env are found.
+    "PATH=$PATH"
+    # A home directory of the stage's own, so that no configuration of the
+    # contributor's is read: a bunfig.toml there, or Bun's cache of packages.
+    # Bun and git read HOME, and on Windows Bun reads USERPROFILE.
+    "HOME=$COPY_ROOT/home"
+    "USERPROFILE=$COPY_ROOT/home"
+    # A temporary directory of the stage's own. Linux reads TMPDIR, and
+    # Windows reads TEMP and TMP.
+    "TMPDIR=$COPY_ROOT/tmp"
+    "TEMP=$COPY_ROOT/tmp"
+    "TMP=$COPY_ROOT/tmp"
+    # Bun fetches a missing package by itself when it finds no node_modules
+    # above the file it is running, which is exactly where this copy sits.
+    # That would turn a missing dependency into a pass. The option switches
+    # it off, for bun started here and for bun started by a shell script
+    # started here. It is set here and never taken from the shell.
+    "BUN_OPTIONS=--no-install"
+  )
+}
+
+# Runs one command, in the environment above and no other, and requires the
+# exit code given first. This is the only way a command starts in the copy.
+# Its output goes to files in the directory given second. On any other code,
+# prints what the command wrote to standard error and stops the script.
 run() {
   local expected="$1" out="$2" code=0
   shift 2
-  "$@" > "$out/stdout" 2> "$out/stderr" || code=$?
+  env -i "${STAGE_ENVIRONMENT[@]}" "$@" > "$out/stdout" 2> "$out/stderr" || code=$?
   if [ "$code" -ne "$expected" ]; then
     echo "With nothing installed, this command exited with code $code where $expected was expected:" >&2
     echo "    $*" >&2

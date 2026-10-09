@@ -246,6 +246,8 @@ Run `bun install` once after you clone, and have Node on your path. The gate run
 
 A user of the plugin installs none of this. So the gate copies the working tree to a place with nothing installed, and runs every shipped command there, in each documented mode that works offline. Bun is told not to fetch a missing package during that run.
 
+Each command there starts from an empty environment. The gate gives it a path, the option above, and a home and a temporary directory of the gate's own. So nothing set in your shell, and no configuration in your home directory, can change the result.
+
 The copy needs a place with no `node_modules` directory above it. The gate uses `TMPDIR` when that is set and clean. Otherwise it tries the system's temporary directory, the directory holding the repository, and the root of the repository's drive. On Windows it then tries the system drive, and elsewhere `/var/tmp` and `/dev/shm`. It uses the first clean one and says which, so you configure nothing.
 
 That run proves each command loads and runs in those modes with nothing installed. It does not prove that every path through a command does. A send and a live fetch are not run. A test also refuses a package named outright in a shipped import, which catches the plain mistake early.

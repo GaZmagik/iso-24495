@@ -1223,7 +1223,15 @@ describe("repository writing conventions", () => {
         mkdirSync(awkward);
         const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh"], {
           cwd: REPOSITORY_ROOT,
-          env: { ...process.env, TMPDIR: forBash(awkward) },
+          // The stage gives its commands an environment of its own making. A
+          // review set NODE_PATH to an installed node_modules, the copy then
+          // reached a package, and the stage failed with no source changed.
+          // So this run carries that variable, and must pass all the same.
+          env: {
+            ...process.env,
+            TMPDIR: forBash(awkward),
+            NODE_PATH: forBash(join(REPOSITORY_ROOT, "node_modules")),
+          },
         });
         expect(run.exitCode, run.stderr.toString()).toBe(0);
         // It must have used that directory, not passed it over for another.
