@@ -260,6 +260,8 @@ It does not defend against a deliberate evasion, of which there are three kinds.
 
 The person who reviews the diff covers those, because each is visible in the change that introduces it.
 
+The rule on written imports reads five forms. They are a static `import` and an `export ... from`, and the calls `import()`, `require()` and `import.meta.require()` with the name as their first argument. A name handed to any other loader is not read by the rule, even when it is written out. `createRequire` and `require.resolve` are two such loaders. The run with nothing installed still catches such a load on any path it runs.
+
 A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
 
 ```bash

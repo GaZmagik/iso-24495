@@ -2017,6 +2017,16 @@ describe("repository writing conventions", () => {
   //
   // The person who reviews the diff covers those, because each is visible in
   // the change that introduces it.
+  //
+  // Which forms count as written, again in the README's words:
+  //
+  // The rule on written imports reads five forms. They are a static `import`
+  // and an `export ... from`, and the calls `import()`, `require()` and
+  // `import.meta.require()` with the name as their first argument. A name
+  // handed to any other loader is not read by the rule, even when it is
+  // written out. `createRequire` and `require.resolve` are two such loaders.
+  // The run with nothing installed still catches such a load on any path it
+  // runs.
   describe("shipped code names no package in an import", () => {
     test("every written import outside the tests is a node: built-in or a shipped file", () => {
       const shipped = shippedSources();
@@ -2112,11 +2122,20 @@ describe("repository writing conventions", () => {
         .toEqual(["scripts/a.ts imports \"./data.json\", which is not a file this rule reads"]);
 
       // No claim is made about a computed name. The run with nothing
-      // installed is what catches these two, which reviews wrote.
+      // installed is what catches this one, which a review wrote.
       expect(problems({ "scripts/a.ts": "const name = \"typescript\"; await import(name);" })).toEqual([]);
+      // Nor about a name handed to another loader. In these three the name is
+      // written out, and the loader is what the rule does not read:
+      // createRequire, reached plainly and then by a computed member as a
+      // review wrote it, and require.resolve. The run with nothing installed
+      // catches such a load on any path it runs.
+      expect(problems({
+        "scripts/a.ts": "import { createRequire } from \"node:module\"; createRequire(import.meta.url)(\"typescript\");",
+      })).toEqual([]);
       expect(problems({
         "scripts/a.ts": "import * as loader from \"node:module\"; loader[\"createRequire\"](import.meta.url)(\"typescript\");",
       })).toEqual([]);
+      expect(problems({ "scripts/a.ts": "require.resolve(\"typescript\");" })).toEqual([]);
       // A member that happens to be called require loads nothing. An earlier
       // form of this rule refused it.
       expect(problems({ "scripts/a.ts": "export interface ReviewPolicy { require: boolean; }" })).toEqual([]);
