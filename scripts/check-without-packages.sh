@@ -43,7 +43,7 @@ set -euo pipefail
 # failure, and the stage stops on one with this option off.
 shopt -s inherit_errexit 2>/dev/null || true
 
-cd "$(dirname "$0")/.."
+cd -- "$(dirname -- "$0")/.."
 
 # Where the copy is, once it is made. Clean-up reads it from here. Pasting the
 # path into the text of a trap broke on a path that held an apostrophe, and
@@ -61,11 +61,11 @@ main() {
   parent="$(clean_parent)"
   # Always a new directory of this script's own. Clean-up removes that and
   # nothing else, and never the place it was made in.
-  COPY_ROOT="$(mktemp -d "${parent%/}/iso-24495-bare.XXXXXX")"
+  COPY_ROOT="$(mktemp -d -- "${parent%/}/iso-24495-bare.XXXXXX")"
   local tree="$COPY_ROOT/tree"
   local out="$COPY_ROOT/out"
   echo "    the copy is in $COPY_ROOT"
-  mkdir "$tree" "$out"
+  mkdir -- "$tree" "$out"
 
   # The working tree, not the last commit: what git tracks as it stands on
   # disk, and new files not yet added. A contributor running the gate before
@@ -80,9 +80,9 @@ main() {
   version="$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(".claude-plugin/plugin.json", "utf8")).version)')"
   names="$(bun -e 'console.log(Object.keys(JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).devDependencies).join(" "))')"
 
-  mkdir "$COPY_ROOT/home" "$COPY_ROOT/tmp"
+  mkdir -- "$COPY_ROOT/home" "$COPY_ROOT/tmp"
   build_environment
-  cd "$tree"
+  cd -- "$tree"
 
   prove_packages_are_absent "$out" "$names"
   local probes="$RUNS"
@@ -173,7 +173,7 @@ main() {
   run 0 "$out" env GITHUB_STEP_SUMMARY="$out/summary-direct.md" bun scripts/audit-pull-request-text-cli.ts README.md
 
   # The traffic snapshot from a fixture: as a dry run, and writing its files.
-  mkdir "$out/traffic"
+  mkdir -- "$out/traffic"
   run 0 "$out" bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json --dry-run data
   run 0 "$out" bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json "$out/traffic"
 
@@ -191,7 +191,7 @@ main() {
 # copy is made. Where the copy cannot be removed, says so and makes the script
 # fail, whatever it was about to exit with: a copy left behind is never silent.
 remove_copy() {
-  if [ -n "$COPY_ROOT" ] && ! rm -rf "$COPY_ROOT"; then
+  if [ -n "$COPY_ROOT" ] && ! rm -rf -- "$COPY_ROOT"; then
     could_not_remove "$COPY_ROOT"
     exit 1
   fi
@@ -231,7 +231,7 @@ clean_parent() {
   local parent probe
   while IFS= read -r parent; do
     # Making a directory there is the test of whether it can be written to.
-    probe="$(mktemp -d "${parent%/}/iso-24495-bare.XXXXXX" 2>/dev/null)" || continue
+    probe="$(mktemp -d -- "${parent%/}/iso-24495-bare.XXXXXX" 2>/dev/null)" || continue
     if packages_above "$probe"; then
       remove_probe "$probe" || return 1
     else
@@ -249,7 +249,7 @@ clean_parent() {
 # Removes the empty directory the search made to try a place. Fails, with a
 # message, where it cannot: the search must not answer and leave it behind.
 remove_probe() {
-  if ! rmdir "$1"; then
+  if ! rmdir -- "$1"; then
     could_not_remove "$1"
     return 1
   fi
@@ -275,7 +275,7 @@ packages_above() {
     if [ -e "$at/node_modules" ]; then
       return 0
     fi
-    above="$(dirname "$at")"
+    above="$(dirname -- "$at")"
     if [ "$above" = "$at" ]; then
       return 1
     fi
@@ -286,7 +286,7 @@ packages_above() {
 # Prints the path of a directory as the system knows it. Git Bash can give
 # the Windows form. Any other shell gives the path with links resolved.
 system_path() {
-  (cd "$1" && { pwd -W 2>/dev/null || pwd -P; })
+  (cd -- "$1" && { pwd -W 2>/dev/null || pwd -P; })
 }
 
 # Passes on the names, read from standard input, of files that exist. A
