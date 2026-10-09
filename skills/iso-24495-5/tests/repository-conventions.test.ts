@@ -1949,10 +1949,14 @@ describe("repository writing conventions", () => {
         "const r = await import(\"with-attributes\", { with: { type: \"json\" } });",
         "const s = require(\"required-with-more\", 1);",
         "const t = require(`required-template`);",
-        "console.log(b, e, f, g, h, i, j, l, m, o, q, r, s, t);",
+        "const u = import.meta.require(\"meta-required\");",
+        // These two name a module and load nothing, so the rule passes them by.
+        "const v = require.resolve(\"only-resolved\");",
+        "const w = import.meta.resolve(\"only-meta-resolved\");",
+        "console.log(b, e, f, g, h, i, j, l, m, o, q, r, s, t, u, v, w);",
       ].join("\n");
       expect(writtenImports(source)).toEqual([
-        "./relative.ts", "across-lines", "dynamic", "import-equals", "named", "node:fs",
+        "./relative.ts", "across-lines", "dynamic", "import-equals", "meta-required", "named", "node:fs",
         "plain-template", "re-exported", "re-exported-whole", "required", "required-template",
         "required-with-more", "side-effect", "type-only", "type-query", "type-re-exported",
         "with-attributes", "with-options",
@@ -1974,6 +1978,9 @@ describe("repository writing conventions", () => {
         .toEqual(["scripts/a.mjs imports \"typescript\", which is neither relative nor a node: built-in"]);
       expect(problems({ "scripts/a.cjs": "require(\"typescript\");" }))
         .toEqual(["scripts/a.cjs imports \"typescript\", which is neither relative nor a node: built-in"]);
+      // A review wrote this one inside a try that hides its failure.
+      expect(problems({ "scripts/a.ts": "try { import.meta.require(\"typescript\"); } catch { console.log(1); }" }))
+        .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
       // A review wrote this one inside a branch that only one flag reaches.
       expect(problems({ "scripts/a.ts": "export async function late(): Promise<void> { await import(\"typescript\", {}); }" }))
         .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
@@ -2080,8 +2087,8 @@ function importProblems(sources: ReadonlyMap<string, string>, exists: (path: str
  * a string that looks like an import is not one. A name counts as written
  * when it is a string, or a template with nothing substituted into it. It
  * reads `import` and `export ... from` declarations, an import of types
- * alone, and `import()` or `require()` whose first argument is a written
- * name, whatever arguments follow.
+ * alone, and `import()`, `require()` or `import.meta.require()` whose first
+ * argument is a written name, whatever arguments follow.
  *
  * The second is Bun's own scanner. Bun is what loads these files, so this
  * rule must not read fewer written names than Bun does. Bun leaves out an
@@ -2126,7 +2133,8 @@ function writtenModule(node: ts.Node): string | null {
     return node.argument.literal.text;
   }
   if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
-    || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+    || (ts.isIdentifier(node.expression) && node.expression.text === "require")
+    || isImportMetaRequire(node.expression))) {
     // The first argument is the name, whatever follows it. A review wrote
     // import("typescript", {}), and a rule that wanted one argument alone
     // read nothing there.
@@ -2134,4 +2142,14 @@ function writtenModule(node: ts.Node): string | null {
     if (name !== undefined && ts.isStringLiteralLike(name)) return name.text;
   }
   return null;
+}
+
+/**
+ * Whether an expression is `import.meta.require`, which Bun gives a module
+ * as a third call that loads one by name.
+ */
+function isImportMetaRequire(expression: ts.Expression): boolean {
+  return ts.isPropertyAccessExpression(expression) && expression.name.text === "require"
+    && ts.isMetaProperty(expression.expression)
+    && expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword;
 }
