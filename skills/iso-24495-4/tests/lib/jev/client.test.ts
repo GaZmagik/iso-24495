@@ -125,6 +125,22 @@ describe("transport controls", () => {
     expect(added.mock.calls.length).toBe(6);
     expect(removed.mock.calls.map(call => call[1])).toEqual(added.mock.calls.map(call => call[1]));
   });
+  // The timer is cancelled and the listener removed as each attempt ends. A
+  // cancel that threw stopped the clean-up before it reached the listener.
+  // The cancel's failure is not hidden: it takes the place of the valid
+  // answer, so each attempt fails and the request does after six.
+  test("a timer that cannot be cancelled fails the request and still leaves no listener", async () => {
+    const signal = new AbortController().signal;
+    const added = spyOn(signal, "addEventListener");
+    const removed = spyOn(signal, "removeEventListener");
+    const clock: Clock = { schedule: () => () => { throw new Error("fixture cancellation failed"); } };
+    let sent = 0;
+    await expect(createAsk("key", { fetch: async () => { sent++; return valid(); }, clock, sleep: noWait, signal })(OPENING))
+      .rejects.toThrow("Jev did not answer after six transport attempts.");
+    expect(sent).toBe(6);
+    expect(added.mock.calls.length).toBe(6);
+    expect(removed.mock.calls.map(call => call[1])).toEqual(added.mock.calls.map(call => call[1]));
+  });
   test("times out attempts, ignores late answers and cancels", async () => {
     const callbacks: Array<() => void> = [];
     const clock: Clock = { schedule: (callback, ms) => { expect(ms).toBe(TIMEOUT_MS); callbacks.push(callback); return () => {}; } };

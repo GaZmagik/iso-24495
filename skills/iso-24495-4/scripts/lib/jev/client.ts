@@ -139,11 +139,15 @@ async function transport(body: string, key: string, send: Fetch, clock: Clock, s
   // Unset until the timer is made, so that a clock which throws leaves nothing to cancel.
   let cancelTimer: (() => void) | undefined;
   signal?.addEventListener("abort", cancel, { once: true });
-  // Everything after the listener is added sits inside the try, so the listener is always removed.
+  // Everything after the listener is added sits inside the try, so the clean-up below is always reached.
   try {
     cancelTimer = clock.schedule(() => { interrupted.reject(new TransportError()); controller.abort(); }, TIMEOUT_MS);
     return await Promise.race([interrupted.promise, send(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: controller.signal }).then(async response => ({ status: response.status, text: await response.text() }))]);
-  } finally { cancelTimer?.(); signal?.removeEventListener("abort", cancel); }
+  } finally {
+    // The removal has a finally of its own, so it happens even when cancelling the timer throws.
+    // That error is not caught here: it surfaces in place of the answer, as it did before.
+    try { cancelTimer?.(); } finally { signal?.removeEventListener("abort", cancel); }
+  }
 }
 
 function isProbability(value: unknown): value is number { return typeof value === "number" && value >= 0 && value <= 1; }
