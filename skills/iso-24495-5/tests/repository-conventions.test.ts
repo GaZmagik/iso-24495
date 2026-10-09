@@ -1257,9 +1257,11 @@ describe("repository writing conventions", () => {
           });
           expect(run.exitCode).toBe(1);
           expect(run.stderr.toString()).toBe(
-            "The gate found no place for its copy: each place it tried has a node_modules directory in it or above it.\n"
-            + "Set TMPDIR to a directory with no node_modules in it or above it, then run the gate again.\n"
-            + "The usual cause is a stray node_modules directory in a home directory.\n",
+            "The gate found no place for its copy: each place it tried could not be written to, "
+            + "or has a node_modules directory in it or above it.\n"
+            + "Set TMPDIR to a directory you can write to, with no node_modules in it or above it, "
+            + "then run the gate again.\n"
+            + "One likely cause is a stray node_modules directory in a home directory.\n",
           );
           expect(run.stdout.toString()).toBe("");
         }

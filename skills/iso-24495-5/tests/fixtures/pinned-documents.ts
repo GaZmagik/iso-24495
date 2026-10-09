@@ -701,7 +701,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "",
     "The copy needs a place with no `node_modules` directory above it. The gate uses `TMPDIR` when that is set and clean. Otherwise it tries the system's temporary directory, then the directory holding the repository. It uses the first clean one and says which.",
     "",
-    "Where none of the three is clean, the gate stops and says so. Then set `TMPDIR` to a directory with no `node_modules` in it or above it. The usual cause is a stray `node_modules` directory in your home directory, above both your checkout and your temporary directory.",
+    "Where none of the three can be written to and is clean, the gate stops and says so. Then set `TMPDIR` to a directory you can write to, with no `node_modules` in it or above it. One likely cause is a stray `node_modules` directory in your home directory, above both your checkout and your temporary directory.",
     "",
     "That run proves each command loads and runs in those modes with nothing installed. It does not prove that every path through a command does. A send and a live fetch are not run. A test also refuses a package named outright in a shipped import, which catches the plain mistake early.",
     "",

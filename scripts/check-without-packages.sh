@@ -12,8 +12,8 @@
 # thing is inherited, the path searched for programs, so a different bun on
 # that path is a different result. The copy goes under TMPDIR when that is set
 # and clean, and otherwise under the system's temporary directory or beside
-# the repository, as clean_parent decides below. Where none of the three is
-# clean, the stage stops and says to set TMPDIR.
+# the repository, as clean_parent decides below. Where none of the three can
+# be written to and is clean, the stage stops and says to set TMPDIR.
 #
 # What it establishes: each command listed below loads and runs with nothing
 # installed, in each documented mode that can run offline. What it does not:
@@ -240,9 +240,11 @@ clean_parent() {
       return 0
     fi
   done < <(candidate_parents)
-  echo "The gate found no place for its copy: each place it tried has a node_modules directory in it or above it." >&2
-  echo "Set TMPDIR to a directory with no node_modules in it or above it, then run the gate again." >&2
-  echo "The usual cause is a stray node_modules directory in a home directory." >&2
+  # A place is passed over for either of two reasons, and which one applied
+  # is not kept. So the words cover both, and claim neither of any one place.
+  echo "The gate found no place for its copy: each place it tried could not be written to, or has a node_modules directory in it or above it." >&2
+  echo "Set TMPDIR to a directory you can write to, with no node_modules in it or above it, then run the gate again." >&2
+  echo "One likely cause is a stray node_modules directory in a home directory." >&2
   return 1
 }
 
