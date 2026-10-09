@@ -10,8 +10,9 @@
 # environment and is given a short list this script builds: a path, a home and
 # a temporary directory inside the stage's own directory, and the option that
 # stops Bun fetching a package. The copy goes under TMPDIR when that is set
-# and clean, and otherwise under the first clean place of a short list, which
-# clean_parent gives below. No contributor has to configure anything.
+# and clean, and otherwise under the system's temporary directory or beside
+# the repository, as clean_parent decides below. Where none of the three is
+# clean, the stage stops and says to set TMPDIR.
 #
 # What it establishes: each command listed below loads and runs with nothing
 # installed, in each documented mode that can run offline. What it does not:
@@ -212,13 +213,12 @@ could_not_remove() {
 # 1. TMPDIR, when it is set.
 # 2. The system's temporary directory.
 # 3. The directory that holds this repository.
-# 4. The root of the drive or file system this repository is on.
-# 5. On Windows, the root of the system drive.
-# 6. Elsewhere, /var/tmp and /dev/shm, where they exist.
 #
-# The list is long because the ordinary places fail on an ordinary machine. A
-# checkout under a home directory that holds node_modules has it above the
-# first three, and a contributor should not have to configure anything.
+# There are three and no more, by the owner's ruling of 2026-10-09. An earlier
+# form went on to the root of a drive, and the ruling was that the gate does
+# not write there. So a checkout under a home directory that holds
+# node_modules, with nothing set, finds no place: all three have it above
+# them. The message then says what to do.
 #
 # The path printed is the one the system knows, so that a command given it
 # needs no translation: Git Bash translates its own names for a Windows path
@@ -238,8 +238,9 @@ clean_parent() {
       return 0
     fi
   done < <(candidate_parents)
-  echo "No temporary directory is free of a node_modules directory above it." >&2
-  echo "Set TMPDIR to a directory with none above it, then run the gate again." >&2
+  echo "The gate found no place for its copy: each place it tried has a node_modules directory in it or above it." >&2
+  echo "Set TMPDIR to a directory with no node_modules in it or above it, then run the gate again." >&2
+  echo "The usual cause is a stray node_modules directory in a home directory." >&2
   return 1
 }
 
@@ -255,26 +256,11 @@ remove_probe() {
 # Prints each place the copy might go, one to a line, in the order they are
 # tried. A place is listed whether or not it exists.
 candidate_parents() {
-  local here root
   if [ -n "${TMPDIR:-}" ]; then
     echo "$TMPDIR"
   fi
   echo "/tmp"
   (cd .. && pwd)
-  # The root is where going up stops. On Windows that is the drive, such as
-  # "D:", which needs its slash to name the root and not a place on the drive.
-  here="$(system_path .)"
-  root="$here"
-  while [ "$(dirname "$root")" != "$root" ]; do
-    root="$(dirname "$root")"
-  done
-  echo "${root%/}/"
-  if [ -n "${SYSTEMDRIVE:-}" ]; then
-    echo "${SYSTEMDRIVE%/}/"
-  else
-    echo "/var/tmp"
-    echo "/dev/shm"
-  fi
 }
 
 # Succeeds when a directory, or any directory above it, holds node_modules.

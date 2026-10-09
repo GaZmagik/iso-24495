@@ -1257,8 +1257,9 @@ describe("repository writing conventions", () => {
           });
           expect(run.exitCode).toBe(1);
           expect(run.stderr.toString()).toBe(
-            "No temporary directory is free of a node_modules directory above it.\n"
-            + "Set TMPDIR to a directory with none above it, then run the gate again.\n",
+            "The gate found no place for its copy: each place it tried has a node_modules directory in it or above it.\n"
+            + "Set TMPDIR to a directory with no node_modules in it or above it, then run the gate again.\n"
+            + "The usual cause is a stray node_modules directory in a home directory.\n",
           );
           expect(run.stdout.toString()).toBe("");
         }
