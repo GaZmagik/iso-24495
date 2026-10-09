@@ -186,7 +186,8 @@ export interface AuditOptions extends Reading {
  */
 export function auditText(text: string, options: AuditOptions = {}): Violation[] {
   // Every rule re-reads the text, so each is told the same thing about front matter.
-  const reading: Reading = options.frontMatter === undefined ? {} : { frontMatter: options.frontMatter };
+  const frontMatter = options.frontMatter;
+  const reading: Reading = frontMatter === undefined ? {} : { frontMatter };
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
   const mergedLengths: number[] = [];
@@ -306,7 +307,8 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
   if (options.markdown) {
-    violations.push(...layoutViolations(text, options.fileName === undefined ? reading : { ...reading, fileName: options.fileName }));
+    const fileName = options.fileName;
+    violations.push(...layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
   }
   return violations;
 }

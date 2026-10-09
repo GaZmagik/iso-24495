@@ -429,3 +429,28 @@ describe("text nobody has read, in the printed findings", () => {
     }
   });
 });
+
+describe("options and arguments that are not plain", () => {
+  // A spread copies only an object's own enumerable properties, so reading the
+  // option that way lost one that was inherited or not enumerable.
+  test("frontMatter set to false is read however the object carries it", () => {
+    class ReadingOptions { get frontMatter(): boolean { return false; } }
+    const hidden = Object.defineProperty({}, "frontMatter", { value: false, enumerable: false });
+    const project = makeProject();
+    try {
+      const file = join(project, "policy.md");
+      writeFileSync(file, "");
+      const read = (): string => "---\npolicy: We shall comply.\n---\n";
+      const findings = (reading: object): string[] => Object.values(auditTarget(file, project, read, reading).files)
+        .flatMap((result) => result.violations.map((violation) => `${violation.rule} at line ${violation.line}`)).sort();
+      const asText = ["heading-style at line 2", "legalese at line 2"];
+      expect(findings({ frontMatter: false })).toEqual(asText);
+      expect(findings(new ReadingOptions()), "a getter on a class").toEqual(asText);
+      expect(findings(Object.create({ frontMatter: false })), "an inherited property").toEqual(asText);
+      expect(findings(hidden), "a property that is not enumerable").toEqual(asText);
+      expect(findings({})).toEqual([]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
