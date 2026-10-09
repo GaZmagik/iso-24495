@@ -6,10 +6,11 @@
 # node_modules exists, so a command that imports a package passes every other
 # stage and then fails for every user. So this asks the question itself. It
 # copies the working tree to a place with no packages, runs each command
-# there, and reads its exit code. Each command starts from an empty
-# environment and is given a short list this script builds: a path, a home and
-# a temporary directory inside the stage's own directory, and the option that
-# stops Bun fetching a package. The copy goes under TMPDIR when that is set
+# there, and reads its exit code. Each command runs in an environment this
+# script builds, not the shell's: a home and a temporary directory inside the
+# stage's own directory, and the option that stops Bun fetching a package. One
+# thing is inherited, the path searched for programs, so a different bun on
+# that path is a different result. The copy goes under TMPDIR when that is set
 # and clean, and otherwise under the system's temporary directory or beside
 # the repository, as clean_parent decides below. Where none of the three is
 # clean, the stage stops and says to set TMPDIR.
@@ -36,9 +37,10 @@
 set -euo pipefail
 # "set -e" stops at a command that fails, but not inside "$(...)": there the
 # failure passed unseen, and a search that could not remove its own directory
-# still gave an answer. This carries the setting into "$(...)" where bash has
-# the option. The removals below also report their own failure, so that
-# neither rests on the other.
+# still gave an answer. The line below carries the setting into "$(...)" where
+# bash has the option, and does nothing where bash lacks it. So it is an extra
+# and the stage does not rely on it: each removal below reports its own
+# failure, and the stage stops on one with this option off.
 shopt -s inherit_errexit 2>/dev/null || true
 
 cd "$(dirname "$0")/.."
@@ -328,8 +330,8 @@ prove_packages_are_absent() {
 }
 
 # Sets the whole environment a command in the copy is given. A command starts
-# from nothing and receives this list, so what the contributor's shell holds
-# cannot reach it. An earlier form of this stage inherited that shell: a
+# from nothing and receives this list. So nothing the contributor's shell
+# holds reaches it, except the path searched for programs. An earlier form of this stage inherited that shell: a
 # NODE_PATH naming an installed node_modules let the copy load a package, and
 # the stage failed for a contributor who had changed nothing. Removing that
 # one variable would have left the next one, so nothing is inherited at all.
