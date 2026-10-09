@@ -47,18 +47,12 @@ const leaves: Array<[string, string[]]> = [
   ["after break", ["One.", "", "***", "", "Two."]],
 ];
 
-function indentFor(prefixes: string[]): string {
-  return prefixes.map((prefix) => " ".repeat(prefix.length)).join("");
-}
-
-
-
 for (const [containerName, prefixes] of containers) {
   for (const [leafName, body] of leaves) {
     const lines = body.map((line, index) => {
       if (prefixes.length === 0) return line;
       const opener = prefixes.join("");
-      const continuation = prefixes.map((prefix, depth) =>
+      const continuation = prefixes.map((prefix) =>
         prefix.trimEnd() === ">" ? "> " : " ".repeat(prefix.length)).join("");
       return (index === 0 ? opener : continuation) + line;
     });
@@ -126,7 +120,9 @@ function next(limit: number): number {
   return seed % limit;
 }
 function pick<T>(items: T[]): T {
-  return items[next(items.length)];
+  const item = items[next(items.length)];
+  if (item === undefined) throw new Error("pick needs a list that holds an item");
+  return item;
 }
 
 const PREFIXES = ["", "- ", "1. ", "> ", "  ", "    ", TAB, ">", "* ", "2) ", "  - ", "> > ", "- > ", "> - "];

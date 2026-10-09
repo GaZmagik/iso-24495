@@ -1,6 +1,6 @@
 # ISO 24495 Plain Language Skills
 
-Seven [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
+Eight [Agent Skills](https://code.claude.com/docs/en/skills) that support plain language writing, document audits, code, and organisational implementation. They apply principles inspired by the ISO 24495 *Plain language* series.
 
 The skills are plain `SKILL.md` files with agent-neutral wording. Any tool that reads the Agent Skills format can use them.
 
@@ -17,6 +17,7 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
+| `iso-24495-design-audit` | **User-invoked design audit.** Previews calibrated purpose and colour checks for selected Markdown, with a local title check. Sending requires agreement and a TypeSafe API key. |
 
 The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
@@ -76,6 +77,12 @@ Invoke `iso-24495-text-audit` directly and supply one file or directory. The ski
 
 ```text
 /iso-24495-plain-language:iso-24495-text-audit docs/policy.md
+```
+
+Invoke `iso-24495-design-audit` the same way. It needs a TypeSafe API key, and it asks before it sends the document to the TypeSafe service:
+
+```text
+/iso-24495-plain-language:iso-24495-design-audit docs/guide.md
 ```
 
 To enforce the core skill on every response, add a line to your agent's instruction file (`CLAUDE.md`, `AGENTS.md`, or equivalent):
@@ -139,15 +146,31 @@ Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-ph
 
 Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
 
+Those five rules, `acronym-undefined` and `prose-enumeration` read through paired emphasis marks, so `in **order** to` is the phrase `in order to`. A block whose lines hold `[`, `<`, `://` or `www.` is the exception: its marks stay, because pairing them around a link reported words no reader sees. A phrase split by emphasis is therefore missed in a block that holds a link, a bare web address, a task marker, an HTML tag or a bracket in code.
+
 The `sentence-length` and `sentence-average` rules count words separated by whitespace, including spaces and line breaks, and use English benchmarks. The `paragraph-length` rule counts sentences, with a limit of five.
 
 The `prose-enumeration` rule flags three or more distinct ranks in a prose block, including rank one. It recognises English ordinal words and numbered markers from one to six.
 
 The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
 
-A leading `---` block is front matter, which the audit sets aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
+A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-The rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
+Four Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus.
+
+The edition advisory applies only to titled documents and asks whether readers need a version or date.
+Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
+Text audited with `--no-front-matter` is also exempt.
+Front-matter keys `version`, `date`, `updated` and `last_updated` satisfy it at the top level or directly under `metadata`.
+Visible opening fields still require a recognised version or date.
+
+Front matter is parsed once; aliases resolve before checking for a declared field.
+A non-empty trimmed string, finite number or date counts, including `version: banana`.
+The field's format is not validated, because YAML can change number spelling and resolve aliases.
+Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
+
+The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
 
 The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
@@ -165,9 +188,79 @@ The skill never runs automatically. It requires Bun and does not alter the selec
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
 
+## User-invoked design audit
+
+The design audit previews calibrated purpose and colour checks for selected Markdown.
+The text audit optionally adds these same checks with `--jev-preview` or `--jev --send`.
+Its default remains offline and free, and `.txt` files remain mechanical-only.
+
+Only purpose and colour receive calibrated decisions.
+Purpose can fail or remain unsure; colour can pass or remain unsure.
+The neither diagnosis refines one purpose failure.
+Reader and position travel as companion questions, but their judgements are discarded.
+Missing titles produce local findings and skip purpose assessment, while colour checks continue.
+
+A document whose closed leading `---` block is not recognised as front matter is never sent, and the preview names it.
+
+Requests reproduce calibration tag `results-r11`, commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`, using arm A and model `jev-1.13.0`.
+The three-gate catalogue pins purpose failure at 0.87, colour pass at 0.83, and neither diagnosis at 0.83.
+All scores use exact decimal tokens and distributions are never renormalised.
+Read the [calibration gates and evidence](skills/iso-24495-design-audit/SKILL.md#checks-and-calibration) for the decision arithmetic and counts.
+
+Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters.
+They are neither per-block reliability nor a document-level success probability.
+Correlated document blocks do not extend that guarantee.
+Unsure asserts no fault, and colour passes appear only in counts.
+
+Preview names TypeSafe, the model, selected files, requests, companion questions and the five largest payload totals.
+Document text leaves the machine when sent, and charges may apply.
+Pricing, retention and live transport behaviour have not been checked.
+Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing).
+
+`--send` alone is never agreement.
+An interactive command requires exact yes from the controlling terminal.
+Piped or redirected input or output requires a user-supplied `--yes` as well.
+Agents show the full disclosure and wait for the user's own live agreement; they must never add `--yes`.
+Changed payloads require renewed agreement, and retries preserve the captured bytes.
+
+Mechanical findings and Jev results occupy separate report sections and JSON properties.
+JSON defaults to excerpts and state hashes.
+Full judged state requires `--include-judged-text --json <requested-report-path>` and is disclosed as a local text export.
+Credentials and raw responses are never saved.
+A local send log records transmission rather than proof of agreement.
+
+Sending requires Bun and a key in `TYPESAFE_API_KEY`.
+The client permits four concurrent requests and six transport attempts, with a 30-second timeout per attempt.
+It retries connection failures, timeouts, 429 and 5xx only, and never replaces an accepted answer.
+On terminal failure, Jev verdicts are discarded and the report states incomplete execution.
+
+Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
+Code 3 covers service, response, model and calibration failures; code 4 covers a missing or locally invalid key.
+Findings and unsure results never change a completed audit's exit code.
+
 ## Testing policy
 
 Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
+
+Run `bun install` once after you clone, and have Node on your path. The gate runs a type check and a linter before the tests, and both are development dependencies. The linter starts on Node. The gate installs exactly what `bun.lock` records, and stops when that file and `package.json` disagree.
+
+A user of the plugin installs none of this. So the gate copies the working tree to a place with nothing installed, and runs every shipped command there, in each documented mode that works offline. Bun is told not to fetch a missing package during that run.
+
+Each command there runs in an environment the gate builds, not the one in your shell. It holds the option above, and a home and a temporary directory of the gate's own. One thing is inherited: the path the system searches for programs, so that `bun`, `bash`, `git` and `env` are found. A different `bun` on that path is a different result.
+
+The copy needs a place with no `node_modules` directory above it. The gate uses `TMPDIR` when that is set and clean. Otherwise it tries the system's temporary directory, then the directory holding the repository. It uses the first clean one and says which.
+
+Where none of the three can be written to and is clean, the gate stops and says so. Then set `TMPDIR` to a directory you can write to, with no `node_modules` in it or above it. One likely cause is a stray `node_modules` directory in your home directory, above both your checkout and your temporary directory.
+
+That run proves each command loads and runs in those modes with nothing installed. It does not prove that every path through a command does. A send and a live fetch are not run. A test also refuses a package named outright in a shipped import, which catches the plain mistake early.
+
+These guards catch accidents. The gate catches a package import written by name in shipped code. It also catches any shipped command that fails to load or run with nothing installed, in its documented offline modes.
+
+It does not defend against a deliberate evasion, of which there are three kinds. A name can be computed while the code runs. A failure can be caught and hidden by the code. An edit to the lint configuration can change what a rule does without changing its entry, through inline configuration or a processor.
+
+The person who reviews the diff covers those, because each is visible in the change that introduces it.
+
+The rule on written imports reads five forms. They are a static `import` and an `export ... from`, and the calls `import()`, `require()` and `import.meta.require()` with the name as their first argument. A name handed to any other loader is not read by the rule, even when it is written out. `createRequire` and `require.resolve` are two such loaders. The run with nothing installed still catches such a load on any path it runs.
 
 A pull request description is text a reader receives, so it is audited as well. It is not in the tree, so `scripts/check.sh` cannot reach it and a second workflow fetches it instead. The rule above still holds, because that workflow decides nothing: it hands the text to a checked-in script, which you can run over any file.
 
@@ -177,13 +270,17 @@ bash scripts/audit-pull-request-text.sh <file>
 
 Findings are advice, and never fail the check. The script lists them in its log, and on the job's summary page when it runs on GitHub. No explanation of why a text suits its readers could satisfy a check that failed on findings.
 
-The check fails in two cases only. It fails a description that is empty or holds only whitespace, because there is nothing to audit. It also fails when the audit does not run, or its report does not show that it read the text.
+The check fails in two cases only. It fails a description that is empty or holds nothing a reader can see, because there is nothing to audit. It also fails when the audit does not run.
 
 A pass means only that the audit ran on a description that is not empty. It does not mean the description is clear.
 
-A description has no front matter, so the script passes `--no-front-matter` to the audit. A leading `---` block is then read as text, rather than set aside as metadata the way a repository file's is.
+A description has no front matter, so the check tells the audit there is none. A leading `---` block is then read as text, rather than set aside as metadata the way a repository file's is.
 
 A file the script cannot read stops it with a different code, rather than any verdict about text. A review found the reason for that: a mistyped name beginning with a dash reached `dirname` as an option, and the script audited a neighbouring file and passed. A check that passes for the wrong target is worse than one that fails.
+
+The script only starts one program, `scripts/audit-pull-request-text.ts`, which reads the file once. The text it tests for emptiness is therefore the text it audits. A directory or a symbolic link is refused like a file that cannot be read.
+
+The file is opened once. Its text is read from that open file, and only where that is the regular file the path names. So a link put in its place between the check and the read is not followed.
 
 Both workflows are required status checks on main, so a pull request merges only once each reports a pass. Each check takes its name from the job key inside its workflow, which is why those keys carry a warning against renaming them. Renaming one leaves a required check waiting for a report that never arrives, and every merge stops.
 
@@ -199,7 +296,15 @@ Every new test receives a mutation check. The implementation is deliberately bro
 
 ## TypeScript style
 
-This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem, and the repository conventions test enforces the mechanically checkable rules.
+This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem.
+
+Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. It also has `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and a few more.
+
+A lint that finds nothing proves little when a rule is switched off or weakened by mistake. So `eslint.config.mjs` states the enforced rules once, and a test reads that list.
+
+The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.
+
+As configured, a comment in a file cannot change a rule or switch one off, and the gate fails on a warning. The testing policy above says what these guards do not defend against. Rules of the guide that no tool here checks are left to review.
 
 ## Why this project holds itself to these rules
 

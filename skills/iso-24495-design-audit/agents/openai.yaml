@@ -1,0 +1,7 @@
+interface:
+  display_name: "ISO 24495 Design Audit"
+  short_description: "Preview calibrated purpose and colour checks; send only with agreement"
+  default_prompt: "Use $iso-24495-design-audit to preview calibrated purpose and colour checks for selected Markdown. Show the full disclosure and wait for my own agreement before sending."
+
+policy:
+  allow_implicit_invocation: false

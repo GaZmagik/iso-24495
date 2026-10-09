@@ -1,5 +1,4 @@
-// Every place that carries the release version, and the three checks that read
-// them.
+// Every place that carries the release version, and the check that they agree.
 //
 // Twelve places carry the version between them: both plugin manifests, the
 // marketplace entry's version and the `ref` in its source object, and every
@@ -16,18 +15,88 @@
 //      of a release that is already tagged still passes.
 //   2. Before tagging, by hand: `bun scripts/release-preflight-cli.ts` adds the
 //      release history from `origin`, and requires the version to be later than
-//      every release and its tag to be free.
+//      every release and its tag to be free. That stage is `release-preflight.ts`.
 //   3. On a pushed tag: `.github/workflows/release-tag.yml` runs
 //      `bun scripts/release-tag-cli.ts <tag>`, which requires the tag to name
-//      the version every site declares.
+//      the version every site declares. That stage is `release-tag.ts`.
+//
+// Stage 1 is this module. Stages 2 and 3 import it, and it imports neither.
+// The two patterns that say what a version and a release tag look like are
+// exported for the same reason as the check: one definition, read by all three.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safePath } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 
-const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
-const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/;
-const CHANGELOG_HEADING = /^## \[([^\]]+)\]/gm;
-const SKILL_ROOTS = ["skills", "codex-skills"];
+/**
+ * Whether every version site in a checkout agrees, and the changelog records the
+ * version. A site that is missing or malformed is a problem, never an exception,
+ * so one report names everything wrong at once.
+ *
+ * @param root The checkout to read. Nothing is written and no tag is read.
+ * @returns The report. `version` is what `.claude-plugin/plugin.json` states,
+ *     or an empty string where it states no text. `problems` is empty only
+ *     when every site agrees, so test that list and not `version`. A problem
+ *     is written to be printed, so a skill directory is named in it with
+ *     control characters and marks that reverse text direction made spaces.
+ *     `skills` is data and keeps each name as the directory listing gave it.
+ */
+export function checkVersionSites(root: string): VersionReport {
+  const problems: string[] = [];
+  const claude = readJson(root, problems, ".claude-plugin/plugin.json");
+  const version = typeof claude.version === "string" ? claude.version : "";
+  if (!DOTTED_VERSION.test(version)) {
+    problems.push(
+      `.claude-plugin/plugin.json version must have the form 1.2.3; it states ${describeStated(claude.version)}.`,
+    );
+  }
+  requireValue(problems, ".codex-plugin/plugin.json version",
+    readJson(root, problems, ".codex-plugin/plugin.json").version, version);
+
+  // Each level is checked before it is read. A manifest is a file anyone can
+  // edit, and one of the wrong shape must state nothing, not stop the check.
+  const marketplace = readJson(root, problems, ".claude-plugin/marketplace.json");
+  const first: unknown = Array.isArray(marketplace.plugins) ? marketplace.plugins[0] : undefined;
+  const entry = isObject(first) ? first : {};
+  const source = isObject(entry.source) ? entry.source : {};
+  requireValue(problems, ".claude-plugin/marketplace.json marketplace version", entry.version,
+    version);
+  // The ref is the half that gets forgotten, because it reads as a separate
+  // fact rather than as the same number wearing a "v".
+  requireValue(problems, ".claude-plugin/marketplace.json marketplace source.ref",
+    source.ref, `v${version}`);
+
+  const skills = SKILL_ROOTS.flatMap((skillRoot) => {
+    try {
+      return readdirSync(join(root, skillRoot))
+        .filter((name) => name.startsWith("iso-24495-"))
+        .map((name) => `${skillRoot}/${name}/SKILL.md`);
+    } catch {
+      problems.push(`${skillRoot} cannot be listed.`);
+      return [];
+    }
+  }).sort();
+  for (const skill of skills) {
+    const text = read(root, problems, skill);
+    if (text === null) continue;
+    const found = skillVersion(text);
+    if ("problem" in found) {
+      problems.push(`${safePath(skill)} ${found.problem}`);
+      continue;
+    }
+    requireValue(problems, `${safePath(skill)} metadata.version`, found.stated, version);
+  }
+
+  const changelog = read(root, problems, "CHANGELOG.md");
+  if (changelog !== null) {
+    const recorded = [...changelog.matchAll(CHANGELOG_HEADING)].map((match) => match[1]);
+    if (!recorded.includes(version)) {
+      const heading = DOTTED_VERSION.test(version) ? `[${version}]` : "with the declared version";
+      problems.push(`CHANGELOG.md has no entry headed ${heading}.`);
+    }
+  }
+  return { version, skills, problems };
+}
 
 export interface VersionReport {
   /** The version the Claude manifest declares, which every other site must match. */
@@ -38,11 +107,29 @@ export interface VersionReport {
   problems: string[];
 }
 
-/** The outcome of listing the release tags on `origin`. */
-export type RemoteTags = { ok: true; output: string } | { ok: false; reason: string };
+export const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
+export const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/;
+const CHANGELOG_HEADING = /^## \[([^\]]+)\]/gm;
+const SKILL_ROOTS = ["skills", "codex-skills"];
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether text is a version or a release tag. Such text is safe to quote, because the pattern decides what it holds. */
+function isVersionText(text: string): boolean {
+  return DOTTED_VERSION.test(text) || RELEASE_TAG.test(text);
+}
+
+/**
+ * What a site states, worded for a problem. A version or a release tag is
+ * quoted. Anything else has failed the check with contents nobody has read, so
+ * only its shape is given.
+ */
+function describeStated(stated: unknown): string {
+  if (stated === undefined || stated === null) return "nothing";
+  if (typeof stated !== "string") return `a value of type ${typeof stated}`;
+  return isVersionText(stated) ? `"${stated}"` : `${stated.length} characters that are not a version`;
 }
 
 /**
@@ -69,205 +156,49 @@ function skillVersion(text: string): { stated: unknown } | { problem: string } {
 }
 
 /**
- * Whether every version site in a checkout agrees, and the changelog records the
- * version. A site that is missing or malformed is a problem, never an exception,
- * so one report names everything wrong at once.
+ * A file's text, or null with a problem recorded where it cannot be read. A
+ * skill's path holds a name from a directory listing, so the problem shows the
+ * path as `safePath` prints it.
  */
-export function checkVersionSites(root: string): VersionReport {
-  const problems: string[] = [];
-  const read = (path: string): string | null => {
-    try {
-      return readFileSync(join(root, path), "utf8");
-    } catch {
-      problems.push(`${path} cannot be read.`);
-      return null;
-    }
-  };
-  const readJson = (path: string): Record<string, unknown> => {
-    const text = read(path);
-    if (text === null) return {};
-    try {
-      return JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      problems.push(`${path} is not valid JSON.`);
-      return {};
-    }
-  };
-  const requireValue = (site: string, stated: unknown, wanted: string): void => {
-    if (stated !== wanted) {
-      problems.push(`${site} states ${JSON.stringify(stated) ?? "nothing"}, not "${wanted}".`);
-    }
-  };
-
-  const claude = readJson(".claude-plugin/plugin.json");
-  const version = typeof claude.version === "string" ? claude.version : "";
-  if (!DOTTED_VERSION.test(version)) {
-    problems.push(
-      `.claude-plugin/plugin.json states "${version}", not a version of the form 1.2.3.`,
-    );
-  }
-  requireValue(".codex-plugin/plugin.json version", readJson(".codex-plugin/plugin.json").version,
-    version);
-
-  const marketplace = readJson(".claude-plugin/marketplace.json") as {
-    plugins?: Array<{ version?: unknown; source?: { ref?: unknown } }>;
-  };
-  const entry = marketplace.plugins?.[0];
-  requireValue(".claude-plugin/marketplace.json marketplace version", entry?.version, version);
-  // The ref is the half that gets forgotten, because it reads as a separate
-  // fact rather than as the same number wearing a "v".
-  requireValue(".claude-plugin/marketplace.json marketplace source.ref", entry?.source?.ref,
-    `v${version}`);
-
-  const skills = SKILL_ROOTS.flatMap((skillRoot) => {
-    try {
-      return readdirSync(join(root, skillRoot))
-        .filter((name) => name.startsWith("iso-24495-"))
-        .map((name) => `${skillRoot}/${name}/SKILL.md`);
-    } catch {
-      problems.push(`${skillRoot} cannot be listed.`);
-      return [];
-    }
-  }).sort();
-  for (const skill of skills) {
-    const text = read(skill);
-    if (text === null) continue;
-    const found = skillVersion(text);
-    if ("problem" in found) {
-      problems.push(`${skill} ${found.problem}`);
-      continue;
-    }
-    requireValue(`${skill} metadata.version`, found.stated, version);
-  }
-
-  const changelog = read("CHANGELOG.md");
-  if (changelog !== null) {
-    const recorded = [...changelog.matchAll(CHANGELOG_HEADING)].map((match) => match[1]);
-    if (!recorded.includes(version)) {
-      problems.push(`CHANGELOG.md has no entry headed [${version}].`);
-    }
-  }
-  return { version, skills, problems };
-}
-
-/** Compares dotted versions as numbers, so 0.10.0 sorts after 0.9.0 rather than before it. */
-export function compareVersions(left: string, right: string): number {
-  const a = left.split(".").map(Number);
-  const b = right.split(".").map(Number);
-  for (let part = 0; part < 3; part += 1) {
-    if (a[part] !== b[part]) return (a[part] as number) - (b[part] as number);
-  }
-  return 0;
-}
-
-/**
- * The released versions in the output of `git ls-remote --tags`.
- *
- * Only tags of the form v1.2.3 are releases. An annotated tag is listed twice,
- * the second time with "^{}" to name the commit it points at, and that line is
- * the same release rather than a second one.
- */
-export function releasedVersions(listing: string): string[] {
-  return listing.split(/\r?\n/).flatMap((line) => {
-    const name = line.split("\trefs/tags/")[1];
-    const match = name === undefined ? null : RELEASE_TAG.exec(name);
-    return match === null ? [] : [match[1] as string];
-  });
-}
-
-/**
- * Why `version` cannot be the next release, given the versions already released.
- *
- * The version must be later than every release. Equal is not enough: equal is
- * what a forgotten version bump looks like.
- */
-export function preflightProblems(version: string, released: string[]): string[] {
-  const problems: string[] = [];
-  if (released.includes(version)) {
-    problems.push(`v${version} is already tagged. Raise the version at every site before releasing.`);
-  }
-  const latest = [...released].sort(compareVersions).at(-1);
-  if (latest !== undefined && compareVersions(version, latest) <= 0) {
-    problems.push(`${version} is not later than the latest release, ${latest}.`);
-  }
-  return problems;
-}
-
-/** Why a pushed tag does not match the version the checkout declares. */
-export function tagProblems(tag: string, version: string): string[] {
-  return tag === `v${version}`
-    ? []
-    : [`The tag ${tag} does not name the declared version, which would be tagged v${version}.`];
-}
-
-/** Lists the tags on `origin` with git. A failure is returned, never thrown. */
-export function remoteTags(root: string): RemoteTags {
+function read(root: string, problems: string[], path: string): string | null {
   try {
-    const run = Bun.spawnSync(["git", "ls-remote", "--tags", "origin"], { cwd: root });
-    const decoder = new TextDecoder();
-    if (run.exitCode === 0) return { ok: true, output: decoder.decode(run.stdout) };
-    return { ok: false, reason: decoder.decode(run.stderr).trim() || `git exited ${run.exitCode}` };
-  } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    return readFileSync(join(root, path), "utf8");
+  } catch {
+    problems.push(`${safePath(path)} cannot be read.`);
+    return null;
   }
 }
 
 /**
- * Stage 2: checks a checkout before its version is tagged.
- *
- * Exit 0 means the tag can be created. Exit 1 means the checkout is not ready:
- * a site disagrees, or the version is not later than every release. Exit 2 means
- * the release history could not be read, which is never a pass, because an empty
- * list is what an unreachable remote looks like.
+ * The JSON object a file holds. Where the file cannot be read, is not JSON, or
+ * holds JSON that is not an object, a problem is recorded and the result is an
+ * empty object, so every site read from it states nothing.
  */
-export function runPreflight(
-  root: string,
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-  listTags: (root: string) => RemoteTags = remoteTags,
-): number {
-  const tags = listTags(root);
-  if (!tags.ok) {
-    stderr(`release preflight: the release tags on origin could not be listed: ${tags.reason}`);
-    return 2;
+function readJson(root: string, problems: string[], path: string): Record<string, unknown> {
+  const text = read(root, problems, path);
+  if (text === null) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    problems.push(`${path} is not valid JSON.`);
+    return {};
   }
-  const released = releasedVersions(tags.output);
-  if (released.length === 0) {
-    stderr("release preflight: origin lists no release tags, so the release history was not read.");
-    return 2;
-  }
-  const report = checkVersionSites(root);
-  const problems = [...report.problems, ...preflightProblems(report.version, released)];
-  for (const problem of problems) stderr(`release preflight: ${problem}`);
-  if (problems.length > 0) return 1;
-  stdout(
-    `release preflight: every site declares ${report.version}, which is later than every release, `
-      + `so v${report.version} can be tagged.`,
-  );
-  return 0;
+  if (isObject(parsed)) return parsed;
+  problems.push(`${path} must hold a JSON object; it holds ${describeShape(parsed)}.`);
+  return {};
 }
 
-/**
- * Stage 3: checks a pushed tag against the checkout it names.
- *
- * Exit 0 means the tag names the version every site declares. Exit 1 means it
- * does not, or the sites disagree. Exit 2 means no tag was given.
- */
-export function runTagCheck(
-  argv: string[],
-  root: string,
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const tag = argv[2];
-  if (!tag) {
-    stderr("Usage: bun scripts/release-tag-cli.ts <tag>");
-    return 2;
+/** What kind of JSON value this is, in fixed words and without its contents. */
+function describeShape(value: unknown): string {
+  if (value === null) return "null";
+  return Array.isArray(value) ? "a list" : `a value of type ${typeof value}`;
+}
+
+/** Records a problem where a site does not state the wanted value. */
+function requireValue(problems: string[], site: string, stated: unknown, wanted: string): void {
+  if (stated !== wanted) {
+    const expected = isVersionText(wanted) ? `"${wanted}"` : "what .claude-plugin/plugin.json declares";
+    problems.push(`${site} states ${describeStated(stated)}, not ${expected}.`);
   }
-  const report = checkVersionSites(root);
-  const problems = [...report.problems, ...tagProblems(tag, report.version)];
-  for (const problem of problems) stderr(`release tag: ${problem}`);
-  if (problems.length > 0) return 1;
-  stdout(`release tag: ${tag} names the version every site declares.`);
-  return 0;
 }

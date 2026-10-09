@@ -2,7 +2,7 @@
 name: iso-24495-5
 description: Provisional sector-specific Plain Language standard for document design (based on ISO/WD 24495-5, under development). Applied when structuring complex documents so readers can find and navigate content through layout, visual hierarchy, and navigation aids.
 metadata:
-  version: "0.7.0"
+  version: "0.8.0"
   iso-standard: "ISO/WD 24495-5"
   iso-status: "working-draft"
 ---
@@ -111,6 +111,36 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
    - Leave it out when no alternative exists, rather than shipping an empty heading.
 
 ---
+
+## Audit proxy notes
+
+The text audit adds four local Markdown layout rules; they are recognition proxies rather than claims of ISO conformance.
+Its six-section trigger counts root H2 headings, including Contents, and ignores H3 headings and headings inside lists or quotations.
+Contents may cover part of the document in a different order, using lists, paragraphs, tables or resolved reference links.
+Wording mismatches are checked only at six sections, against resolved H2 targets.
+
+The version or date proxy asks whether a titled document needs edition metadata when none is recognised.
+Standalone lines, metadata table rows, final parenthesised title suffixes and accessible badge text qualify.
+These visible fields still require a recognised version or date.
+Badge images are never fetched, so hard-coded alternative text can be out of date.
+
+Front-matter keys `version`, `date`, `updated` and `last_updated` qualify at the top level or directly under `metadata`.
+A non-empty trimmed string, finite number or date declares edition metadata, including `version: banana`.
+Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not qualify.
+
+Front matter is parsed once, with aliases resolved, and checks a declared field rather than a valid format.
+YAML can change number spelling and resolve aliases, so the proxy avoids guessing the original format.
+
+Untitled documents and text audited with `--no-front-matter` are exempt from this proxy.
+Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
+The advisory asks readers' needs rather than requiring authors to add metadata.
+
+Bullet depth counts unordered ancestry alone, including task items; ordered and quote containers add no depth.
+An Overview or Summary heading may use any level outside lists or quotations, but must precede the first content H2.
+The need for a conclusion before detail is not detected mechanically, and no approved Jev gate supplies that judgement.
+These recognition choices remain unmeasured on a corpus, and raw HTML structure is unsupported.
+
+Read the [text audit recognition contract](../iso-24495-text-audit/SKILL.md#markdown-layout-recognition) and [calibrated Jev checks](../iso-24495-design-audit/SKILL.md#checks-and-calibration) when interpreting findings.
 
 ## Contrastive Examples
 

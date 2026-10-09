@@ -36,7 +36,7 @@ describe("auditTarget", () => {
       const result = auditTarget(file, project);
 
       expect(Object.keys(result.files)).toEqual(["docs/policy.txt"]);
-      expect(result.files["docs/policy.txt"].violations.map((item) => item.rule)).toEqual([
+      expect(result.files["docs/policy.txt"]?.violations.map((item) => item.rule)).toEqual([
         "legalese",
       ]);
       expect(result.skipped).toEqual([]);
@@ -107,7 +107,22 @@ describe("auditTarget", () => {
     try {
       const file = join(project, "notes.rst");
       writeFileSync(file, "Some prose.\n");
-      expect(() => auditTarget(file, project)).toThrow("supported text file");
+      // The path has just failed the check, so the message gives the endings
+      // the audit reads and the length of what arrived, never the path.
+      let message = "";
+      try {
+        auditTarget(file, project);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toBe(
+        `Select a file ending in .md, .markdown or .txt; got a path of ${file.length} characters with another ending`,
+      );
+      expect(message).not.toContain("notes.rst");
+
+      const refused = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", file], refused.writeOut, refused.writeErr)).toBe(1);
+      expect(refused.stderr).toEqual([`audit-text: ${message}`]);
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
@@ -128,7 +143,7 @@ describe("formatFindings", () => {
     });
 
     expect(output).toContain(
-      "| docs/policy\\|draft.md | 2 | legalese | Replace shall \\| use must. |",
+      "| `docs/policy\\|draft.md` | 2 | legalese | Replace shall \\| use must. |",
     );
     expect(output).toContain("Finding count: 1. Files read: 1. Skipped entries: 0.");
     expect(output).toContain("The user decides whether the text suits its readers and purpose.");
@@ -206,7 +221,7 @@ describe("runCli", () => {
       )).toBe(2);
       expect(twice.stderr[0]).toContain("--no-front-matter appears more than once");
       const usage = capture();
-      runCli(["bun", "audit-text-cli.ts"], usage.writeOut, usage.writeErr);
+      expect(runCli(["bun", "audit-text-cli.ts"], usage.writeOut, usage.writeErr)).toBe(2);
       expect(usage.stderr[0]).toContain("[--no-front-matter]");
     } finally {
       rmSync(project, { recursive: true, force: true });
@@ -236,15 +251,23 @@ describe("runCli", () => {
         unknown.writeOut,
         unknown.writeErr,
       )).toBe(2);
-      expect(unknown.stderr[0]).toContain("unknown option");
+      // The argument has just failed the check, so the message gives its place
+      // and its length, and never the text the caller typed.
+      expect(unknown.stderr).toEqual([
+        "audit-text: unknown option of 9 characters at argument 2; "
+          + "expected --json, --project-dir or --no-front-matter",
+      ]);
 
       const extra = capture();
       expect(runCli(
-        ["bun", "audit-text-cli.ts", "policy.md", "extra.md"],
+        ["bun", "audit-text-cli.ts", "policy.md", "--no-front-matter", "extra.md"],
         extra.writeOut,
         extra.writeErr,
       )).toBe(2);
-      expect(extra.stderr[0]).toContain("unexpected argument");
+      expect(extra.stderr).toEqual([
+        "audit-text: unexpected argument of 8 characters at argument 3; "
+          + "expected --json, --project-dir or --no-front-matter",
+      ]);
 
       const duplicate = capture();
       expect(runCli(
@@ -272,7 +295,7 @@ describe("runCli", () => {
         output.writeOut,
         output.writeErr,
       )).toBe(0);
-      expect(output.stdout.join("\n")).toContain("| policy.md | 1 | legalese |");
+      expect(output.stdout.join("\n")).toContain("| `policy.md` | 1 | legalese |");
       expect(output.stderr).toEqual([]);
       expect(JSON.parse(readFileSync(json, "utf8")).totals).toEqual({ legalese: 1 });
     } finally {
@@ -304,6 +327,151 @@ describe("runCli", () => {
         absent.writeErr,
       )).toBe(1);
       expect(absent.stderr[0]).toStartWith("audit-text:");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
+// An escape character, the C1 control that opens the same terminal sequences
+// in one character, and a right-to-left override. A document or a file name
+// can hold any of them, and a finding quotes both.
+const UNREAD_CHARACTERS = [27, 0x9b, 0x202e].map((code) => String.fromCharCode(code));
+
+describe("text nobody has read, in the printed findings", () => {
+  test("formatFindings prints a file name, a rule and a detail without control characters", () => {
+    for (const character of UNREAD_CHARACTERS) {
+      const output = formatFindings({
+        configHash: "abcd1234",
+        files: {
+          [`docs/a${character}[2Jb.md`]: {
+            violations: [{
+              rule: `link${character}text`,
+              line: 1,
+              detail: `link text "here" describes no destination (https://x.invalid/${character}[2J)`,
+            }],
+          },
+        },
+        totals: { "link-text": 1 },
+        skipped: [],
+      });
+      expect(output).not.toContain(character);
+      // The file name is a path, so the character is shown as its code. The rule and
+      // the detail are quoted wording, where it becomes a space.
+      const shown = `${String.fromCharCode(92)}u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+      expect(output).toContain(
+        "| " + String.fromCharCode(96) + `docs/a${shown}[2Jb.md` + String.fromCharCode(96)
+          + ' | 1 | link text | link text "here" describes no destination (https://x.invalid/ [2J) |',
+      );
+    }
+  });
+
+  // A file name was cleaned like a quoted detail: a control character became a space
+  // and each run of spaces became one. Three files then shared one printed name, and
+  // nobody could tell which of them a finding was in.
+  test("three file names that printed alike are told apart", () => {
+    const override = String.fromCharCode(0x202e);
+    const names = ["a b.md", "a  b.md", `a${override}b.md`];
+    const output = formatFindings({
+      configHash: "abcd1234",
+      files: Object.fromEntries(names.map((name) =>
+        [name, { violations: [{ rule: "legalese", line: 1, detail: "banned  term" }] }])),
+      totals: { legalese: 3 },
+      skipped: [],
+    });
+    const rows = output.split("\n").slice(2, 5);
+    expect(new Set(rows).size).toBe(3);
+    expect(rows).toEqual([
+      "| `a b.md` | 1 | legalese | banned term |",
+      "| `a  b.md` | 1 | legalese | banned term |",
+      "| " + String.fromCharCode(96) + `a${String.fromCharCode(92)}u202eb.md` + String.fromCharCode(96) + " | 1 | legalese | banned term |",
+    ]);
+    expect(output).not.toContain(override);
+  });
+
+  test("a finding stays on one line whatever line ending it holds", () => {
+    const output = formatFindings({
+      configHash: "abcd1234",
+      files: { "a.md": { violations: [{ rule: "legalese", line: 1, detail: "one\r\ntwo\rthree\nfour | five" }] } },
+      totals: { legalese: 1 },
+      skipped: [],
+    });
+    expect(output.split("\n")[2]).toBe("| `a.md` | 1 | legalese | one two three four \\| five |");
+  });
+
+  test("the command prints a link destination and a file name without them, and the report keeps them", () => {
+    const project = makeProject();
+    try {
+      const [escape, control, override] = UNREAD_CHARACTERS as [string, string, string];
+      // Windows refuses an escape character in a file name and allows the other two.
+      const name = `gu${override}ide${control}.md`;
+      writeFileSync(join(project, name), `Use [here](https://x.invalid/${escape}[2J${control}).\n`);
+      const report = join(project, "report.json");
+      const output = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", project, "--project-dir", project, "--json", report],
+        output.writeOut,
+        output.writeErr,
+      )).toBe(0);
+      const printed = output.stdout.join("\n");
+      for (const character of UNREAD_CHARACTERS) expect(printed).not.toContain(character);
+      const slash = String.fromCharCode(92);
+      expect(printed).toContain(
+        "| " + String.fromCharCode(96) + `gu${slash}u202eide${slash}u009b.md` + String.fromCharCode(96)
+          + ' | 1 | link-text | link text "here" describes no destination (https://x.invalid/ [2J ) |',
+      );
+      // The JSON report is data for another program, so it holds what was found.
+      const saved = JSON.parse(readFileSync(report, "utf8")) as { files: Record<string, { violations: Array<{ detail: string }> }> };
+      expect(Object.keys(saved.files)).toEqual([name]);
+      expect(saved.files[name]?.violations[0]?.detail).toContain(`${escape}[2J${control}`);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("options and arguments that are not plain", () => {
+  // A spread copies only an object's own enumerable properties, so reading the
+  // option that way lost one that was inherited or not enumerable.
+  test("frontMatter set to false is read however the object carries it", () => {
+    class ReadingOptions { get frontMatter(): boolean { return false; } }
+    const hidden = Object.defineProperty({}, "frontMatter", { value: false, enumerable: false });
+    const project = makeProject();
+    try {
+      const file = join(project, "policy.md");
+      writeFileSync(file, "");
+      const read = (): string => "---\npolicy: We shall comply.\n---\n";
+      const findings = (reading: object): string[] => Object.values(auditTarget(file, project, read, reading).files)
+        .flatMap((result) => result.violations.map((violation) => `${violation.rule} at line ${violation.line}`)).sort();
+      const asText = ["heading-style at line 2", "legalese at line 2"];
+      expect(findings({ frontMatter: false })).toEqual(asText);
+      expect(findings(new ReadingOptions()), "a getter on a class").toEqual(asText);
+      expect(findings(Object.create({ frontMatter: false })), "an inherited property").toEqual(asText);
+      expect(findings(hidden), "a property that is not enumerable").toEqual(asText);
+      expect(findings({})).toEqual([]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  // Stopping at a hole ended the options early, so the command ran and exited 0
+  // with an option it would have refused still unread.
+  test("a hole in the argument list is refused, and so is what follows it", () => {
+    const project = makeProject();
+    try {
+      const file = join(project, "note.md");
+      writeFileSync(file, "Plain words.\n");
+      const holed: string[] = ["bun", "audit-text-cli.ts", file];
+      holed.length = 4;
+      const trailing = [...holed];
+      trailing.length = 4;
+      holed.push("--unknown");
+      for (const argv of [holed, trailing]) {
+        const output = capture();
+        expect(runCli(argv, output.writeOut, output.writeErr)).toBe(2);
+        expect(output.stderr).toEqual(["audit-text: argument 2 is missing; expected --json, --project-dir or --no-front-matter"]);
+        expect(output.stdout).toEqual([]);
+      }
     } finally {
       rmSync(project, { recursive: true, force: true });
     }

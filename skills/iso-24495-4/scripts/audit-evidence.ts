@@ -2,9 +2,69 @@
 // of organisational plain language systems. It records presence and paths
 // only. Evaluating artefact quality is the agent's job, with the human.
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathFailure, writeTextFile } from "./lib/failure.ts";
+import { safePathCell } from "./lib/safe-text.ts";
 import type { Evidence } from "./lib/types.ts";
+
+/**
+ * Sweeps a workspace for plain language artefacts and prints what it found.
+ *
+ *   bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]
+ *
+ * `--json` also writes the evidence to that file, replacing it. The file holds
+ * each path as the walk gave it. The table shows each path as `safePathCell`
+ * prints it: a code span, with a control character or a mark that reverses
+ * text direction shown as its code and a pipe escaped, because a file name is
+ * text nobody has read.
+ *
+ * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
+ * could not be read in full or the evidence file could not be written. Exit 2
+ * means the arguments were wrong.
+ *
+ * @param argv The whole command line, so the workspace is at index 2.
+ * @param stdout Receives the table, one line at a time.
+ * @param stderr Receives the usage line or the reason for exit 1 or 2.
+ */
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
+  if (!dir) {
+    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
+    return 2;
+  }
+  const jsonFlag = argv.indexOf("--json");
+  const jsonPath = jsonFlag === -1 ? undefined : argv[jsonFlag + 1];
+  if (jsonFlag !== -1 && !jsonPath) {
+    stderr("audit-evidence: --json requires an output file");
+    return 2;
+  }
+  try {
+    const evidence = auditEvidence(dir);
+    if (jsonPath !== undefined) {
+      const problem = writeTextFile(jsonPath, JSON.stringify(evidence, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-evidence: ${problem}`);
+        return 1;
+      }
+    }
+    stdout("| Artefact category | Found | Paths |");
+    stdout("|-------------------|-------|-------|");
+    for (const [category, { found, paths }] of Object.entries(evidence.artefacts)) {
+      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.map((path) => safePathCell(path)).join("<br>") || "-"} |`);
+    }
+    return 0;
+  } catch (error) {
+    // The report is written without throwing, so the sweep is the only work
+    // here that touches a file, and every file it touches is under `dir`.
+    stderr(`audit-evidence: ${pathFailure(error, dir, "<workspace-dir>", "cannot be read in full")}`);
+    return 1;
+  }
+}
 
 export const CATEGORIES = [
   "policy",
@@ -49,6 +109,23 @@ function matchCategory(category: string, path: string, root: string): boolean {
   }
 }
 
+/**
+ * Which plain language artefacts a workspace holds, by category.
+ *
+ * A file is matched by its path alone, so its presence is recorded and its
+ * quality is not judged. The one exception is a workflow file, which is read
+ * to see whether it names a prose checker. `node_modules` and `.git` are not
+ * entered.
+ *
+ * @param dir The workspace to walk, at any depth. Links are followed, and
+ *     nothing guards against one that forms a cycle.
+ * @returns An entry for every name in `CATEGORIES`, each with the matching
+ *     paths from `dir`, sorted, with forward slashes. A category with no
+ *     match has `found: false` and no paths, which is the result for an empty
+ *     workspace.
+ * @throws The file system error when `dir`, or anything beneath it, cannot be
+ *     read. A dangling link is such a case, and nothing is skipped.
+ */
 export function auditEvidence(dir: string): Evidence {
   const paths: string[] = [];
   walk(dir, dir, paths);
@@ -58,37 +135,4 @@ export function auditEvidence(dir: string): Evidence {
     evidence.artefacts[category] = { found: matched.length > 0, paths: matched };
   }
   return evidence;
-}
-
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const dir = argv[2];
-  if (!dir) {
-    stderr("Usage: bun audit-evidence-cli.ts <workspace-dir> [--json <out-file>]");
-    return 2;
-  }
-  const jsonFlag = argv.indexOf("--json");
-  if (jsonFlag !== -1 && !argv[jsonFlag + 1]) {
-    stderr("audit-evidence: --json requires an output file");
-    return 2;
-  }
-  try {
-    const evidence = auditEvidence(dir);
-    if (jsonFlag !== -1) {
-      writeFileSync(argv[jsonFlag + 1], JSON.stringify(evidence, null, 2));
-    }
-    stdout("| Artefact category | Found | Paths |");
-    stdout("|-------------------|-------|-------|");
-    for (const category of CATEGORIES) {
-      const { found, paths } = evidence.artefacts[category];
-      stdout(`| ${category} | ${found ? "yes" : "no"} | ${paths.join("<br>") || "-"} |`);
-    }
-    return 0;
-  } catch (error) {
-    stderr(`audit-evidence: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
-  }
 }

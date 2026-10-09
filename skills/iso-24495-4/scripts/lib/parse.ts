@@ -10,6 +10,30 @@
 
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
 
+/**
+ * Read a document once, for the rules that work line by line.
+ *
+ * They skip metadata and code, and deliberately not tables: a rule about
+ * links, images or table headings has to look at a table to do its job.
+ *
+ * @returns `lines` and `markupLines` hold one entry for each source line, so
+ *     index 0 is line 1. A line a reader never sees is blank in both.
+ *     `markupLines` keeps HTML tags and `lines` does not. `hidden` takes such
+ *     an index and is true for front matter and code. `references` holds
+ *     each defined label as `normaliseReference` gives it. Empty text gives
+ *     one empty line.
+ */
+export function readDocument(text: string, reading: Reading = {}): Document {
+  const lines = toLines(text);
+  const parsed = parse(lines, reading);
+  return {
+    lines: parsed.readable.map((line) => visibleInline(line, false)),
+    markupLines: parsed.markup,
+    references: parsed.references,
+    hidden: (index) => parsed.hidden.has(index),
+  };
+}
+
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
@@ -23,12 +47,14 @@ export interface Heading {
   text: string;
   /** How many source lines the text spans: a setext heading's text can wrap. */
   lines: number;
+  /** True when an underline on the line after the text makes this a heading. */
+  setext: boolean;
 }
 
 /** How a document is read, where the place it is shown decides. */
 export interface Reading {
   /**
-   * Whether a leading "---" block is front matter, which is metadata no rule reads.
+   * Whether a leading "---" block is front matter, excluded from prose checks.
    * A file in a repository may carry it, so that is the default. A pull request
    * description cannot, and GitHub shows the block as a rule and a heading, so the
    * check that reads a description passes false and the block is read as text.
@@ -42,7 +68,7 @@ export interface Document {
   markupLines: string[];
   /** Normalised reference labels that have valid definitions. */
   references: ReadonlySet<string>;
-  /** True when the line is metadata or fenced code, which no rule reads. */
+  /** True when the line is metadata or fenced code, excluded from prose checks. */
   hidden: (index: number) => boolean;
 }
 
@@ -99,7 +125,7 @@ function isLinkDefinition(line: string): boolean {
     index++;
     let closed = false;
     while (index < line.length) {
-      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line[index + 1])) {
+      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line.charAt(index + 1))) {
         index += 2;
         continue;
       }
@@ -116,7 +142,7 @@ function isLinkDefinition(line: string): boolean {
     const destinationStart = index;
     let depth = 0;
     while (index < line.length && line[index] !== " " && line[index] !== "\t") {
-      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line[index + 1])) {
+      if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line.charAt(index + 1))) {
         index += 2;
         continue;
       }
@@ -151,9 +177,12 @@ function isLinkDefinition(line: string): boolean {
  * so a heading prefix swallowed every sentence after it. A leading byte order
  * mark is removed for the same reason: it made the first line something other
  * than "---", so front matter was not recognised.
+ *
+ * @returns The lines without their endings. There is always at least one:
+ *     empty text gives a single empty line.
  */
 export function toLines(text: string): string[] {
-  return text.replace(/^﻿/, "").split(/\r\n|\n|\r/);
+  return text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
 }
 
 /** Expand tabs to four-column stops, as CommonMark measures indentation. */
@@ -175,6 +204,12 @@ function expandTabs(line: string): string {
  * The delimiter sits at column 0, because an indented "---" inside a YAML
  * block scalar once closed the block early and hid the whole document body.
  * Jekyll closes with "..." as well as "---".
+ *
+ * @param lines The document as `toLines` returns it.
+ * @returns The indexes of the opening and closing delimiter lines, counted
+ *     from 0, so `start` is always 0. Null when the first line is not "---",
+ *     when nothing closes the block, or when a line inside it does not look
+ *     like YAML.
  */
 export function frontMatterRange(lines: string[]): { start: number; end: number } | null {
   if (!/^---[ \t]*$/.test(lines[0] ?? "")) return null;
@@ -195,12 +230,29 @@ export function frontMatterRange(lines: string[]): { start: number; end: number 
   return yaml ? { start: 0, end: closing } : null;
 }
 
+/**
+ * Whether a line is blank as CommonMark has it: it holds nothing, or only spaces and
+ * tabs. A no-break space, and every other space of Unicode, is text: a renderer
+ * carries a paragraph on over a line that holds one.
+ */
+function isBlank(line: string): boolean {
+  return /^[ \t]*$/.test(line);
+}
+
 function indentOf(line: string): number {
   return (/^ */.exec(line)?.[0] ?? "").length;
 }
 
-/** The columns a table row declares, respecting escaped pipes. */
-function cellCount(row: string): number {
+/**
+ * The columns a table row declares, respecting escaped pipes.
+ *
+ * @param row One line of a table, trimmed by the caller.
+ * @returns The text of each cell as written: untrimmed, with an escaped pipe
+ *     still behind its backslash. The empty cell that an outer pipe leaves at
+ *     either end is dropped. A row with no pipe is one cell, and an empty row
+ *     is no cells.
+ */
+export function tableCells(row: string): string[] {
   const cells: string[] = [];
   let cell = "";
   for (let i = 0; i < row.length; i++) {
@@ -217,10 +269,12 @@ function cellCount(row: string): number {
     cell += row[i];
   }
   cells.push(cell);
-  if (cells[0].trim() === "") cells.shift();
-  if (cells.length > 0 && cells[cells.length - 1].trim() === "") cells.pop();
-  return cells.length;
+  if (cells.at(0)?.trim() === "") cells.shift();
+  if (cells.at(-1)?.trim() === "") cells.pop();
+  return cells;
 }
+
+function cellCount(row: string): number { return tableCells(row).length; }
 
 /** True when every divider cell is hyphens, with optional colons. */
 function isDividerRow(row: string): boolean {
@@ -240,9 +294,17 @@ function startsBlock(line: string): boolean {
     || THEMATIC_BREAK.test(line);
 }
 
-interface Container {
-  kind: "quote" | "item";
-  /** For an item, the column its content starts at. */
+type Container = QuoteContainer | ItemContainer;
+interface QuoteContainer {
+  kind: "quote";
+  column: number;
+}
+interface ItemContainer {
+  kind: "item";
+  unordered: boolean;
+  listId: number;
+  marker: string;
+  /** The column the item's content starts at. */
   column: number;
 }
 
@@ -259,8 +321,26 @@ interface Parsed {
   markup: string[];
   /** Valid link reference labels in this document. */
   references: Set<string>;
+  destinations: Map<string, string>;
+  rootLines: Set<number>;
+  navigationLines: Set<number>;
+  rootHeadingLines: Set<number>;
+  items: Array<{ line: number; depth: number }>;
+  blocks: Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
+  tableRows: Map<number, string[]>;
 }
 
+/**
+ * A link reference label in the form two labels are compared in.
+ *
+ * Use it on a label before looking it up in `Document.references` or in the
+ * `destinations` that `structure` returns, whose keys are in this form.
+ *
+ * @param label The text between the square brackets, as written.
+ * @returns The label with backslash escapes resolved, the ends trimmed, each
+ *     run of white space made one space, and every letter in lower case.
+ *     Empty for a blank label.
+ */
 export function normaliseReference(label: string): string {
   return label.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, "$1")
     .trim().replace(/\s+/g, " ").toLowerCase();
@@ -284,7 +364,7 @@ function matchOpen(line: string, stack: Container[]): { rest: string; matched: n
       matched++;
       continue;
     }
-    if (rest.trim() === "") {
+    if (isBlank(rest)) {
       // A blank line does not end a list item.
       matched++;
       continue;
@@ -308,22 +388,22 @@ function matchOpen(line: string, stack: Container[]): { rest: string; matched: n
  * the content column is the marker plus one space.
  */
 function listMarkerAt(line: string, midParagraph: boolean): { length: number; column: number } | null {
-  const marker = LIST_MARKER.exec(line);
-  if (marker === null) return null;
+  const [whole, indent, bullet, gap] = LIST_MARKER.exec(line) ?? [];
+  if (whole === undefined || indent === undefined || bullet === undefined || gap === undefined) return null;
   // A marker with no content cannot interrupt a paragraph: CommonMark
   // requires a non-blank first line for a list to do that.
-  if (midParagraph && line.slice(marker[0].length).trim() === "") return null;
-  const ordered = /^\d/.test(marker[2]);
-  if (midParagraph && (!ordered || marker[2].slice(0, -1) !== "1")) {
+  if (midParagraph && isBlank(line.slice(whole.length))) return null;
+  const ordered = /^\d/.test(bullet);
+  if (midParagraph && (!ordered || bullet.slice(0, -1) !== "1")) {
     // A bullet may interrupt a paragraph; an ordered marker may not unless it
     // is 1. Both rules protect wrapped lines from being read as lists.
     if (ordered) return null;
   }
-  const spaces = marker[3].length;
+  const spaces = gap.length;
   // Five or more spaces after a marker begin indented code inside the item, so
   // only one of them belongs to the marker and the rest stay as indentation.
-  const consumed = spaces > 4 ? marker[1].length + marker[2].length + 1 : marker[0].length;
-  const column = marker[1].length + marker[2].length + (spaces > 4 ? 1 : spaces);
+  const consumed = spaces > 4 ? indent.length + bullet.length + 1 : whole.length;
+  const column = indent.length + bullet.length + (spaces > 4 ? 1 : spaces);
   return { length: consumed, column };
 }
 
@@ -336,7 +416,7 @@ function startsAnyBlock(text: string): boolean {
     || LIST_MARKER.test(text);
 }
 
-function parse(lines: string[], reading: Reading = {}): Parsed {
+function parse(lines: string[], reading: Reading = {}, structural = false): Parsed {
   const paragraphs: ProseBlock[] = [];
   const found: Heading[] = [];
   const hidden = new Set<number>();
@@ -344,6 +424,13 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   const readable = [...lines];
   const markup = [...lines];
   const references = new Set<string>();
+  const destinations = new Map<string, string>();
+  const rootLines = new Set<number>();
+  const navigationLines = new Set<number>();
+  const rootHeadingLines = new Set<number>();
+  const items: Array<{ line: number; depth: number }> = [];
+  const blocks = new Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>();
+  const tableRows = new Map<number, string[]>();
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -352,32 +439,40 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
   let fence: { char: string; length: number } | null = null;
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
+  let rawCode: { closing: RegExp; depth: number } | null = null;
 
-  const closeParagraph = (): void => {
-    paragraph = null;
-  };
-
-  for (let i = 0; i < lines.length; i++) {
+  for (const [i, source] of lines.entries()) {
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
-      closeParagraph();
+      paragraph = null;
       continue;
     }
     if (i <= tableUntil) continue;
 
-    const line = expandTabs(lines[i]);
+    const line = expandTabs(source);
     const { rest, matched } = matchOpen(line, stack);
     const allMatched = matched === stack.length;
     let text = rest;
+
+    if (rawCode !== null) {
+      if (matched < rawCode.depth) rawCode = null;
+      else {
+        if (rawCode.closing.test(text)) rawCode = null;
+        readable[i] = "";
+        markup[i] = "";
+        paragraph = null;
+        continue;
+      }
+    }
 
     if (invisible !== null) {
       if (matched < invisible.depth) {
         // An HTML block cannot escape the quotation or list item that owns it.
         // Carrying its close marker past that boundary hid ordinary margin text.
         invisible = null;
-        closeParagraph();
+        paragraph = null;
         stack.length = matched;
       } else {
         const outside = withoutInvisible(text, invisible.until);
@@ -391,7 +486,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         readable[i] = text;
         markup[i] = text;
         if (text.trim() === "") {
-          closeParagraph();
+          paragraph = null;
           continue;
         }
       }
@@ -402,11 +497,11 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         hidden.add(i);
         readable[i] = "";
         markup[i] = "";
-        const closing = FENCE_OPEN.exec(rest);
-        if (closing !== null
-          && closing[2][0] === fence.char
-          && closing[2].length >= fence.length
-          && closing[3].trim() === "") {
+        const [, , run, after] = FENCE_OPEN.exec(rest) ?? [];
+        if (run !== undefined && after !== undefined
+          && run[0] === fence.char
+          && run.length >= fence.length
+          && isBlank(after)) {
           fence = null;
         }
         continue;
@@ -416,8 +511,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       stack.length = matched;
     }
 
-    if (rest.trim() === "") {
-      closeParagraph();
+    if (isBlank(rest)) {
+      paragraph = null;
       if (!allMatched) stack.length = matched;
       continue;
     }
@@ -427,15 +522,16 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     // about the paragraph a reader sees never arrived.
     const lazy = !allMatched && paragraph !== null && !startsAnyBlock(rest);
     let openedQuote = false;
+    const previousItem = stack[matched];
     if (!lazy) {
       if (!allMatched) {
-        closeParagraph();
+        paragraph = null;
         stack.length = matched;
       }
       for (;;) {
         const quote = QUOTE_MARKER.exec(text);
         if (quote !== null) {
-          closeParagraph();
+          paragraph = null;
           text = text.slice(quote[0].length);
           stack.push({ kind: "quote", column: 0 });
           openedQuote = true;
@@ -450,10 +546,14 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
           ? null
           : listMarkerAt(text, paragraph !== null);
         if (marker !== null) {
-          closeParagraph();
+          paragraph = null;
           const consumed = text.slice(0, marker.length);
           text = text.slice(marker.length).replace(TASK_MARKER, "");
-          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed) });
+          const unordered = /^ {0,3}[-*+]/.test(consumed);
+          const family = consumed.trim().replace(/\d+/g, "");
+          const listId = stack.length === matched && previousItem?.kind === "item" && previousItem.marker === family ? previousItem.listId : i;
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered, listId, marker: family });
+          if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.kind === "item" && container.unordered).length });
           continue;
         }
         break;
@@ -480,59 +580,85 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       readable[i] = text;
       markup[i] = text;
       // Invisible markup interrupts a paragraph, so the halves stay separate.
-      closeParagraph();
+      paragraph = null;
       if (text.trim() === "") continue;
+    }
+    // Structural rules exclude raw HTML code specimens. The calibrated reading stays unchanged.
+    const rawOpen = structural ? /^ {0,3}<(pre|script|style|textarea)(?=[\s>])/i.exec(text) : null;
+    if (rawOpen !== null) {
+      const closing = new RegExp(`</${rawOpen[1]}\\s*>`, "i");
+      if (!closing.test(text)) rawCode = { closing, depth: stack.length };
+      readable[i] = "";
+      markup[i] = "";
+      paragraph = null;
+      continue;
     }
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
-    if (paragraph === null && !lines[i].includes("\t") && isLinkDefinition(text)) {
+    if (paragraph === null && !source.includes("\t") && isLinkDefinition(text)) {
       const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
-      if (label !== undefined) references.add(normaliseReference(label));
+      if (label !== undefined) {
+        const name = normaliseReference(label);
+        references.add(name);
+        // Read the way isLinkDefinition read it: spaces lead up to the
+        // destination, and a space or a tab ends it. Any other character is
+        // part of it, a no-break space and U+FEFF among them, as CommonMark
+        // has it. Trimming and matching on white space took those for space,
+        // found no destination, and left the name free for a later duplicate.
+        // The first definition of a name is the one that counts.
+        const destination = /^ *(?:<([^>]*)>|([^ \t]+))/.exec(text.slice(text.indexOf("]:") + 2));
+        if (!destinations.has(name)) destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
+      }
       readable[i] = "";
       markup[i] = "";
       continue;
     }
 
-    const fenceOpen = FENCE_OPEN.exec(text);
-    if (fenceOpen !== null
-      && !(fenceOpen[2][0] === "`" && fenceOpen[3].includes("`"))) {
-      closeParagraph();
-      fence = { char: fenceOpen[2][0], length: fenceOpen[2].length };
+    const [, , opener, info] = FENCE_OPEN.exec(text) ?? [];
+    if (opener !== undefined && info !== undefined
+      && !(opener.charAt(0) === "`" && info.includes("`"))) {
+      paragraph = null;
+      fence = { char: opener.charAt(0), length: opener.length };
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
       continue;
     }
 
-    const atx = ATX_HEADING.exec(text);
-    if (atx !== null) {
-      closeParagraph();
+    const [, hashes, wording] = ATX_HEADING.exec(text) ?? [];
+    if (hashes !== undefined) {
+      paragraph = null;
+      if (stack.length === 0) rootHeadingLines.add(i + 1);
       found.push({
-        level: atx[1].length,
+        level: hashes.length,
         line: i + 1,
-        text: (atx[2] ?? "").replace(/\s+#+\s*$/, "").trim(),
+        text: (wording ?? "").replace(/\s+#+\s*$/, "").trim(),
         lines: 1,
+        setext: false,
       });
       continue;
     }
 
-    const underline = SETEXT_UNDERLINE.exec(text);
-    if (underline !== null && !lazy && paragraph !== null && paragraphDepth === stack.length) {
+    const [, underline] = SETEXT_UNDERLINE.exec(text) ?? [];
+    if (underline !== undefined && !lazy && paragraph !== null && paragraphDepth === stack.length) {
+      if (stack.length === 0) rootHeadingLines.add(paragraph.line);
       // The paragraph above becomes the heading's text, all of its lines.
       found.push({
-        level: underline[1][0] === "=" ? 1 : 2,
+        level: underline.startsWith("=") ? 1 : 2,
         line: paragraph.line,
         text: paragraph.lines.join(" ").trim(),
         lines: paragraph.lines.length,
+        setext: true,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
-      closeParagraph();
+      for (let row = paragraph.line - 1; row < i; row++) blocks.delete(row);
+      paragraph = null;
       continue;
     }
 
     if (THEMATIC_BREAK.test(text)) {
-      closeParagraph();
+      paragraph = null;
       continue;
     }
 
@@ -551,7 +677,7 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       && text.includes("|")
       && isDividerRow(divider.trim())
       && cellCount(text.trim()) === cellCount(divider.trim())) {
-      closeParagraph();
+      paragraph = null;
       // Line-based table rules need the content after its quote or list
       // markers. Keeping the raw container syntax made a quoted empty header
       // invisible even though a listener still hears that table.
@@ -561,6 +687,8 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       markup[i + 1] = divider;
       tables.add(i);
       tables.add(i + 1);
+      blocks.set(i, { id: i, kind: "table", data: false });
+      blocks.set(i + 1, { id: i, kind: "table", data: false });
       let row = i + 2;
       for (; row < lines.length; row++) {
         const content = nextContent(lines, row - 1, stack);
@@ -568,7 +696,13 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
         readable[row] = content;
         markup[row] = content;
         tables.add(row);
+        blocks.set(row, { id: i, kind: "table", data: true });
+        tableRows.set(row, tableCells(content.trim()));
+        if (stack.length === 0) rootLines.add(row);
+        if (!stack.some(container => container.kind === "quote")) navigationLines.add(row);
       }
+      if (stack.length === 0) { rootLines.add(i); rootLines.add(i + 1); }
+      if (!stack.some(container => container.kind === "quote")) { navigationLines.add(i); navigationLines.add(i + 1); }
       tableUntil = row - 1;
       continue;
     }
@@ -578,6 +712,10 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
     }
+    if (stack.length === 0) rootLines.add(i);
+    if (!stack.some(container => container.kind === "quote")) navigationLines.add(i);
+    const list = stack.find(container => container.kind === "item");
+    blocks.set(i, { id: list?.listId ?? paragraph.line - 1, kind: list === undefined ? "paragraph" : "list", data: true });
     paragraph.lines.push(text.trimStart());
   }
 
@@ -585,17 +723,74 @@ function parse(lines: string[], reading: Reading = {}): Parsed {
     const source = block.lines.join("\n");
     const forLineRules = visibleInline(source, false).split("\n");
     const withTags = visibleInline(source, false, true).split("\n");
-    for (let offset = 0; offset < forLineRules.length; offset++) {
-      readable[block.line - 1 + offset] = forLineRules[offset];
-      markup[block.line - 1 + offset] = withTags[offset];
-    }
+    // Both readings keep every line ending of the source, so they hold the same lines.
+    for (const [offset, shown] of forLineRules.entries()) readable[block.line - 1 + offset] = shown;
+    for (const [offset, shown] of withTags.entries()) markup[block.line - 1 + offset] = shown;
     block.lines = visibleInline(source).split("\n");
   }
   for (const heading of found) {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+}
+
+/**
+ * The block structure of a Markdown text, for the rules about layout.
+ *
+ * Structural metadata is separate so existing calibrated text remains
+ * unchanged. This reading alone also blanks raw HTML code blocks: `pre`,
+ * `script`, `style` and `textarea`.
+ *
+ * Two ways of counting meet in the result. Every `line` property is counted
+ * from 1. Every index into `lines` or `markupLines`, and every key or member
+ * of a set or map of lines, is counted from 0.
+ *
+ * @returns
+ * - `headings`: the headings outside any list or quotation. `allHeadings`
+ *   holds every heading.
+ * - `lines` and `markupLines`: one entry for each source line, blank where a
+ *   reader sees nothing. `markupLines` keeps HTML tags.
+ * - `rootLines`: the paragraph and table lines outside every list and
+ *   quotation. `navigationLines`: the paragraph, list and table lines outside
+ *   every quotation. Neither holds a heading line.
+ * - `destinations`: where each defined reference label points, keyed by the
+ *   label as `normaliseReference` gives it.
+ * - `items`: each unordered list item, with a depth of 1 at the top level.
+ * - `blocks`: for each line of a paragraph, list or table, the block it
+ *   belongs to. Lines of one block share an `id`. `data` is false for a
+ *   table header and its divider.
+ * - `tableRows`: the cells of each table row below the divider.
+ *
+ * Empty text gives one empty line and nothing else.
+ */
+export function structure(text: string, reading: Reading = {}): {
+  headings: Heading[]; allHeadings: Heading[]; lines: string[]; markupLines: string[];
+  rootLines: ReadonlySet<number>; destinations: ReadonlyMap<string, string>;
+  navigationLines: ReadonlySet<number>;
+  items: Array<{ line: number; depth: number }>;
+  blocks: ReadonlyMap<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
+  tableRows: ReadonlyMap<number, string[]>;
+} {
+  const parsed = parse(toLines(text), reading, true);
+  return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
+    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows };
+}
+
+/**
+ * Inline text for structural wording comparison, without altering calibrated extraction.
+ *
+ * @param text One heading, label or line of inline Markdown.
+ * @param references The labels that have definitions, each as
+ *     `normaliseReference` gives it. A reference link is replaced only when
+ *     its label is among them, so with none passed every reference link
+ *     stays as written.
+ * @returns The text with each inline link and image replaced by its label,
+ *     and each HTML tag and comment by a space. Backslash escapes, code spans
+ *     and emphasis markers stay as written. Empty for empty text.
+ */
+export function inlineText(text: string, references?: ReadonlySet<string>): string {
+  return visibleText(text, references);
 }
 
 /** The next line's text, with the same containers stripped, or none. */
@@ -665,7 +860,13 @@ function closingMarkup(
   return { at: malformed, length: 4 };
 }
 
-function tickRun(text: string, start: number): number {
+/**
+ * How many backticks stand in a row from `start`.
+ *
+ * @returns The length of the run. 0 when the character at `start` is not a
+ *     backtick, or `start` is past the end of the text.
+ */
+export function tickRun(text: string, start: number): number {
   let end = start;
   while (text[end] === "`") end++;
   return end - start;
@@ -676,7 +877,7 @@ function visibleInline(text: string, keepLiteralSyntax = true, keepHtmlTags = fa
   let visible = "";
   let index = 0;
   while (index < text.length) {
-    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1])) {
+    if (text[index] === "\\" && index + 1 < text.length && ESCAPABLE.test(text.charAt(index + 1))) {
       visible += keepLiteralSyntax ? text.slice(index, index + 2) : "  ";
       index += 2;
       continue;
@@ -845,6 +1046,14 @@ export interface MarkdownLink {
  *
  * Two boundaries are unchanged: a destination still ends at the first ")", and a label
  * still ends at its matching "]" rather than at a nested link.
+ *
+ * @param text A line, or several lines joined. Offsets in the result count from its start.
+ * @returns The links ordered by where they start, with one inside the label of another
+ *     listed as well. `label` and `target` are as written and untrimmed. Any pair of
+ *     square brackets with no "(" or "[" after it is returned as a "shortcut" with an
+ *     empty target, whether or not a definition exists, so the caller must look the
+ *     label up. Brackets behind a backslash or inside a code span are not links.
+ *     Empty when the text holds none.
  */
 export function markdownLinks(text: string): MarkdownLink[] {
   const partners = bracketPartners(text);
@@ -971,32 +1180,43 @@ function flattenedLink(
  * once, however deeply the text nests.
  */
 function flattenLinks(text: string, references?: ReadonlySet<string>): string {
-  const open: Array<{ link: MarkdownLink; label: string }> = [];
-  let flattened = "";
-  let at = 0;
-  const write = (fragment: string): void => {
-    const inner = open.at(-1);
-    if (inner === undefined) flattened += fragment;
-    else inner.label += fragment;
-  };
-  const close = (): void => {
-    const inner = open.pop() as { link: MarkdownLink; label: string };
-    inner.label += text.slice(at, labelStart(inner.link) + inner.link.label.length);
-    at = inner.link.end;
-    write(flattenedLink(inner.link, text.slice(inner.link.start, at), inner.label, references));
-  };
+  const flattening: Flattening = { open: [], flattened: "", at: 0 };
   for (const link of markdownLinks(text)) {
-    while (open.length > 0) {
-      const inner = open.at(-1) as { link: MarkdownLink; label: string };
+    while (flattening.open.length > 0) {
+      const inner = flattening.open.at(-1) as { link: MarkdownLink; label: string };
       if (link.start < labelStart(inner.link) + inner.link.label.length) break;
-      close();
+      closeLabel(flattening, text, references);
     }
-    write(text.slice(at, link.start));
-    at = labelStart(link);
-    open.push({ link, label: "" });
+    writeFragment(flattening, text.slice(flattening.at, link.start));
+    flattening.at = labelStart(link);
+    flattening.open.push({ link, label: "" });
   }
-  while (open.length > 0) close();
-  return flattened + text.slice(at);
+  while (flattening.open.length > 0) {
+    closeLabel(flattening, text, references);
+  }
+  return flattening.flattened + text.slice(flattening.at);
+}
+
+interface Flattening {
+  open: Array<{ link: MarkdownLink; label: string }>;
+  flattened: string;
+  at: number;
+}
+
+/** Adds text to the innermost open label, or to the result where no label is open. */
+function writeFragment(flattening: Flattening, fragment: string): void {
+  const inner = flattening.open.at(-1);
+  if (inner === undefined) flattening.flattened += fragment;
+  else inner.label += fragment;
+}
+
+/** Ends the innermost open label and writes what a reader sees in its place. */
+function closeLabel(flattening: Flattening, text: string, references?: ReadonlySet<string>): void {
+  const inner = flattening.open.pop() as { link: MarkdownLink; label: string };
+  inner.label += text.slice(flattening.at, labelStart(inner.link) + inner.link.label.length);
+  flattening.at = inner.link.end;
+  writeFragment(flattening,
+    flattenedLink(inner.link, text.slice(inner.link.start, flattening.at), inner.label, references));
 }
 
 
@@ -1004,12 +1224,27 @@ function visibleText(text: string, references?: ReadonlySet<string>): string {
   return flattenLinks(visibleInline(text), references);
 }
 
-/** Collect prose paragraphs: what a reader reads as sentences. */
+/**
+ * Collect prose paragraphs: what a reader reads as sentences.
+ *
+ * @returns Each paragraph in document order, wherever it sits, a list item
+ *     or a quotation included. Headings, code, tables and front matter are
+ *     left out. Links stay as written; HTML tags and comments are removed.
+ *     Empty when the text holds no prose.
+ */
 export function proseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
   return parse(toLines(text), reading).paragraphs;
 }
 
-/** Prose reduced to the words a reader meets, without link destinations. */
+/**
+ * Prose reduced to the words a reader meets, without link destinations.
+ *
+ * @returns The blocks `proseBlocks` returns, on the same lines, with each
+ *     link and image replaced by its label. A reference link is replaced only
+ *     where the document defines its label. A block keeps its number of
+ *     lines, so a finding still points at the right one. Empty when the text
+ *     holds no prose.
+ */
 export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlock[] {
   const parsed = parse(toLines(text), reading);
   return parsed.paragraphs.map((block) => ({
@@ -1018,26 +1253,15 @@ export function readerProseBlocks(text: string, reading: Reading = {}): ProseBlo
   }));
 }
 
-/** Heading levels with their 1-indexed line numbers. */
+/**
+ * Heading levels with their 1-indexed line numbers.
+ *
+ * @returns Every heading in document order, of either form, including one
+ *     inside a list or a quotation. `text` has links replaced by their labels
+ *     as `readerProseBlocks` replaces them, and closing hash marks removed. Empty when the text has no heading.
+ */
 export function headings(text: string, reading: Reading = {}): Heading[] {
   return parse(toLines(text), reading).headings;
-}
-
-/**
- * Read a document once, for the rules that work line by line.
- *
- * They skip metadata and code, and deliberately not tables: a rule about
- * links, images or table headings has to look at a table to do its job.
- */
-export function readDocument(text: string, reading: Reading = {}): Document {
-  const lines = toLines(text);
-  const parsed = parse(lines, reading);
-  return {
-    lines: parsed.readable.map((line) => visibleInline(line, false)),
-    markupLines: parsed.markup,
-    references: parsed.references,
-    hidden: (index) => parsed.hidden.has(index),
-  };
 }
 
 // A full stop ends a sentence far less often than it ends an abbreviation, and
@@ -1083,7 +1307,6 @@ function bareWord(token: string): string {
   return token.replace(/\./g, "").replace(/^[^A-Za-z]+/, "").toLowerCase();
 }
 
-/** Decide whether the stop between two fragments ends a sentence. */
 /**
  * The text as a reader sees it, with each backslash escape resolved to its character.
  *
@@ -1099,6 +1322,19 @@ function rendered(text: string): string {
   return visible;
 }
 
+/**
+ * Decide whether the stop between two fragments ends a sentence.
+ *
+ * @param previous The text before the gap, ending with its stop. Only its
+ *     last word is read.
+ * @param next The text after the gap. Only its first word is read.
+ * @returns "split" where a sentence ends, "merge" where a title, an initial
+ *     or an abbreviation carries on, and "ambiguous" where the two words
+ *     cannot settle it, which leaves the choice to the caller. A `previous`
+ *     that does not end in a full stop, once closing quotation marks and
+ *     emphasis are set aside, is always "split". So an exclamation mark, a
+ *     question mark and empty text all split.
+ */
 export function classifyBoundary(previous: string, next: string): Boundary {
   // `**e.g.**` is the same abbreviation as `e.g.`, so the closing markup comes off
   // before the token is read. Leaving it on hid the stop and split the sentence.
@@ -1175,8 +1411,13 @@ let spanCacheEnds: Map<number, number> | null = null;
  * CommonMark reads escapes left to right, so a backslash stops a run from opening a span.
  * Once a span is open the search for its closer ignores backslashes, which is why an
  * escaped run is collected here rather than discarded: it can still close.
+ *
+ * @returns A map from the offset of the first backtick of each span to the offset just
+ *     past its last. A run of backticks with no partner has no entry. Empty when the
+ *     text holds no span. The map for the last text asked about is kept and handed out
+ *     again, so treat it as read-only.
  */
-function codeSpanEnds(text: string): Map<number, number> {
+export function codeSpanEnds(text: string): Map<number, number> {
   if (spanCacheText === text && spanCacheEnds !== null) return spanCacheEnds;
   const runs: Array<{ start: number; length: number; escaped: boolean }> = [];
   // Counted forward rather than looked up behind each run, because a long backslash
@@ -1334,6 +1575,12 @@ function segment(text: string, ambiguous: "merge" | "split"): LocatedSentence[] 
  * Each sentence with the offset it starts at. Callers that need to report a line use
  * this, rather than rebuilding the sentence as a regular expression to find it again.
  * That rebuild threw `regular expression too large` on a long enough sentence.
+ *
+ * @param text One block of prose, which may run over several lines.
+ * @returns The sentences in order, split as `splitSentences` splits them. `text` is
+ *     trimmed, and `start` is the offset of its first character in the block. Where a
+ *     title or an abbreviation joined two fragments, `text` holds one space at the join
+ *     whatever the source held. Empty for blank text.
  */
 export function locateSentences(text: string): LocatedSentence[] {
   return segment(text, "split");
@@ -1343,6 +1590,8 @@ export function locateSentences(text: string): LocatedSentence[] {
  * The most sentences the text can hold: every ambiguous stop is a boundary.
  * Rules that punish length use this, so an unresolved stop can never inflate a
  * sentence into a violation.
+ *
+ * @returns The sentences in order, each trimmed. Empty for blank text.
  */
 export function splitSentences(text: string): string[] {
   return segment(text, "split").map((sentence) => sentence.text);
@@ -1352,11 +1601,18 @@ export function splitSentences(text: string): string[] {
  * The fewest sentences the text can hold: every ambiguous stop is joined.
  * Rules that punish sentence count use this, so an unresolved stop can never
  * manufacture an extra sentence.
+ *
+ * @returns The sentences in order, each trimmed. Empty for blank text.
  */
 export function mergedSentences(text: string): string[] {
   return segment(text, "merge").map((sentence) => sentence.text);
 }
 
+/**
+ * How many words the text holds, where a word is any run of characters
+ * between white space. Punctuation standing alone therefore counts as a word.
+ * Blank text has none.
+ */
 export function wordCount(sentence: string): number {
   return sentence.split(/\s+/).filter(Boolean).length;
 }

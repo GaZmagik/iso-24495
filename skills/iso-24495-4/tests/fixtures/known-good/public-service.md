@@ -1,4 +1,4 @@
-# Apply for support
+# Apply for support (Version: 1.0)
 
 Collect the details about your request before you begin.
 

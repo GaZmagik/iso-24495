@@ -1,0 +1,254 @@
+import { describe, expect, spyOn, test } from "bun:test";
+import { layoutViolations, normaliseWording, headingIds } from "../../scripts/lib/layout.ts";
+import { structure } from "../../scripts/lib/parse.ts";
+import { auditCorpus, auditText } from "../../scripts/audit-corpus.ts";
+import { selectDocuments } from "../../scripts/lib/jev/audit.ts";
+import { auditTarget } from "../../../iso-24495-text-audit/scripts/audit-text.ts";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## Section ${index + 1}\n\nText.\n`).join("\n");
+const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
+describe("layout rules", () => {
+  const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
+  for (const depth of ["root", "metadata"]) {
+    for (const key of ["version", "date", "updated", "last_updated"]) {
+      test(`A7 accepts declared ${key} at ${depth} without format validation`, () => {
+        for (const value of ["banana", '"  next release  "', "0", "-2", "1e2", "0x10", "2026-02-30"]) {
+          const field = `${key}: ${value}`;
+          const source = depth === "root" ? field : `metadata: {${field}}`;
+          expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+        }
+      });
+    }
+    test(`A7 resolves numeric aliases at ${depth}`, () => {
+      const field = "version: *release";
+      const source = `release: &release 1.0\n${depth === "root" ? field : `metadata: {${field}}`}`;
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+    });
+    for (const value of ["true", "false", "~", '""', '"   "', "[1]", "{a: 1}", ".inf", "-.inf", ".nan"]) {
+      test(`A7 rejects ${value} at ${depth}`, () => {
+        const source = depth === "root" ? `version: ${value}` : `metadata: {version: ${value}}`;
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+      });
+    }
+    test(`A7 accepts parser-resolved dates at ${depth}`, () => {
+      const fields = { date: new Date("2026-10-04T00:00:00Z") };
+      const parser = spyOn(Bun.YAML, "parse").mockImplementation(() => depth === "root" ? fields : { metadata: fields });
+      try {
+        expect(layoutViolations("---\ndate: 2026-10-04\n---\n# Guide\n\nInstructions.")).toEqual([]);
+      } finally { parser.mockRestore(); }
+    });
+    for (const form of ["next-line", "comment", "flow", "tab"]) {
+      test(`A7 retains ${form} declarations at ${depth}`, () => {
+        const field = form === "next-line" ? "version:\n  1.0" : form === "comment" ? "version: # Edition\n  # Current\n  1.0" : form === "tab" ? "version:\t1.0" : "{version: 1.0}";
+        const source = depth === "root" ? field : form === "flow" ? `metadata: ${field}` : `metadata:\n  ${field.replaceAll("\n", "\n  ")}`;
+        expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+      });
+    }
+  }
+  test("A7 ignores nested release history before a declared metadata version", () => {
+    const history = Array.from({ length: 16 }, (_, index) => `  edition${index}: {version: 1.0}`).join("\n");
+    expect(layoutViolations(`---\nhistory:\n${history}\nmetadata: {version: 2.0}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
+  });
+  test("A7 rejects unrelated and deeper declarations", () => {
+    for (const source of ["count: 3", "metadata: {edition: {version: banana}}", "edition: {metadata: {version: banana}}", "Metadata: {version: banana}", "metadata: banana", "metadata: [banana]", "metadata: null", 'description: "version: banana"', "description: |\n  version: banana"]) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: source.split("\n").length + 3 }]);
+    }
+  });
+  test("A7 rejects malformed, absent and non-mapping front matter", () => {
+    for (const source of ["version: [broken", "null", "- banana", '"banana"', "# Comment", ""]) {
+      expect(layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`)).toEqual([{ ...editionFinding, line: 4 }]);
+    }
+    expect(layoutViolations("---\nversion: 1.0\n# Guide\n\nInstructions.")).toEqual([{ ...editionFinding, line: 3 }]);
+  });
+  test("A7 parses front matter exactly once, including large documents", () => {
+    const unrelated = Array.from({ length: 5000 }, (_, index) => `k${index}: 1.0`).join("\n");
+    for (const source of ["version: 1.0", "release: &release 1.0\nmetadata: {version: *release}", `version: 1\n${unrelated}`]) {
+      const parser = spyOn(Bun.YAML, "parse");
+      try {
+        const findings = layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`);
+        expect(parser.mock.calls.length).toBe(1);
+        expect(findings).toEqual([]);
+      } finally { parser.mockRestore(); }
+    }
+  });
+  test("A7 leaves visible-opening format recognition strict", () => {
+    for (const opening of ["# Guide\n\nVersion: banana", "# Guide (Version: banana)", "# Guide\n\n| Field | Value |\n|---|---|\n| Version | banana |", "# Guide\n\n![Version: banana](badge.svg)"]) {
+      expect(layoutViolations(opening)).toEqual([editionFinding]);
+    }
+  });
+  for (const fileName of ["PULL_REQUEST_TEMPLATE", "pull_request_template.markdown", "D:/docs/nested/.github/PULL_REQUEST_TEMPLATE.md"]) {
+    test(`A6 correction exempts template ${fileName}`, () => {
+      expect(layoutViolations("# Title\n\nText.", { fileName })).toEqual([]);
+      expect(layoutViolations("# Title\n\nText.", { fileName: "PULL_REQUEST_TEMPLATE-copy.md" })).toEqual([editionFinding]);
+    });
+  }
+  test("A6 skips untitled documents", () => {
+    for (const text of ["Text only.", "## Section\n\nText.", "> # Quoted title\n\nText.", "- # List title\n\nText."]) expect(layoutViolations(text)).toEqual([]);
+  });
+  for (const base of ["README", "CONTRIBUTING", "SECURITY"]) {
+    for (const name of [base, base.toLowerCase(), `${base}.markdown`, `${base.toLowerCase()}.MARKDOWN`]) {
+      test(`A6 exempts file name ${name}`, () => {
+        expect(layoutViolations("# Title\n\nText.", { fileName: `D:\\docs\\${name}` })).toEqual([]);
+      });
+    }
+  }
+  test("A6 exempts titled pull request text without front matter", () => {
+    expect(layoutViolations("# Title\n\nText.", { frontMatter: false })).toEqual([]);
+    expect(auditText("# Title\n\nText.", { markdown: true, frontMatter: false })).toEqual([]);
+  });
+  test("A6 retains a neutral finding for titled ordinary documents", () => {
+    expect(layoutViolations("# Title\n\nText.", { fileName: "policy.md" })).toEqual([editionFinding]);
+    expect(layoutViolations("# Title\n\nText.", { fileName: "README-copy.md" })).toEqual([editionFinding]);
+    expect(auditText(editionFinding.detail)).toEqual([]);
+  });
+  for (const route of ["corpus", "text", "jev-preview"]) {
+    test(`A6 file-name scope reaches the ${route} route`, () => {
+      const directory = mkdtempSync(join(tmpdir(), "iso-a6-scope-"));
+      try {
+        for (const name of ["readme.md", "CONTRIBUTING.markdown", "SECURITY.md", "policy.md"]) {
+          writeFileSync(join(directory, name), "# Title\n\nText.");
+        }
+        const findings = route === "corpus" ? auditCorpus(directory) : route === "text" ? auditTarget(directory, directory) : selectDocuments(directory, directory, "text").mechanical;
+        expect(findings.totals["opening-version-date"]).toBe(1);
+        expect(Object.entries(findings.files).filter(([, file]) => file.violations.some(finding => finding.rule === "opening-version-date")).map(([name]) => name)).toEqual(["policy.md"]);
+      } finally { rmSync(directory, { recursive: true, force: true }); }
+    });
+  }
+  test("review 1: contents entries follow Markdown blocks rather than blank lines", () => {
+    const opening = "# Title\n\nVersion 1.0\n\n";
+    expect(rules(opening + "- [Section 1](#section-1)\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual([]);
+    for (const contents of ["## Contents\n\n", "## Contents\n\n| Section |\n|---|\n\n", "## Contents\n\n### Links\n\n", "## Contents\n\nChoose the section that helps you.\n\n", "## Contents\n\nSee [Section 1](#section-1) for details.\n\n", "## Contents\n\n| [Section 1](#section-1) |\n|---|\n\n"]) {
+      expect(rules(opening + contents + "### Overview\n\n" + sections()), contents).toEqual(["contents-list"]);
+    }
+    expect(rules(opening + "[Section 1](#section-1)\n\n[Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+    expect(rules(opening + "Read [Section 1](#section-1) and [Section 2](#section-2) for details.\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+    expect(rules(opening + "- [Section 1](#section-1)\n\nExplanation.\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+  });
+  test("review 2: literal punctuation and code survive wording recognition", () => {
+    expect(normaliseWording("Over_view_ foo_bar_baz \\*literal\\* `*literal* &amp;`" )).toBe("Over_view_ foo_bar_baz *literal* *literal* &amp;");
+    expect(headingIds(["foo_bar_baz"])).toEqual(["foo_bar_baz"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n## Over_view_\n\n" + sections(4))).toEqual(["overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[Incorrect](#foo_bar_baz)\n\n### Overview\n\n## foo_bar_baz\n\n" + sections(4))).toEqual(["contents-list"]);
+  });
+  test("review 3: metadata requires a parsed table and correct cell boundaries", () => {
+    expect(rules("# Title\n\nVersion | 2.1\n")).toEqual(["opening-version-date"]);
+    expect(rules("# Title\n\nVersion | 2.1\n--- | ---\nDate | 2026-10-03\n")).toEqual([]);
+    expect(rules("# Title\n\n| Field | Value |\n|---|---|\n| Version\\|other | 2.1 |\n")).toEqual(["opening-version-date"]);
+  });
+  test("review 4: raw HTML code blocks do not supply structural headings or bullets", () => {
+    for (const tag of ["pre", "script", "style", "textarea"]) {
+      expect(rules("# Title\n\nVersion 1.0\n\n<" + tag + ">\n\n" + sections() + "\n- One\n  - Two\n    - Three\n</" + tag + ">\n"), tag).toEqual([]);
+    }
+    expect(rules("# Title\n\nVersion 1.0\n\n<pre>\n" + sections() + "</pre>\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n<PRE class=example>code</PRE>\n")).toEqual([]);
+    expect(rules("# Title\n\nVersion 1.0\n\n> <pre>\n> ## Quoted\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n<pre>\n" + sections())).toEqual([]);
+  });
+  test("review 6: layout rules exclude quoted overviews and count only unordered ancestry", () => {
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n> ## Overview\n\n" + sections(5))).toEqual(["overview-label"]);
+    expect(layoutViolations("# Title\n\nVersion 1.0\n\n> - One\n>   - Two\n>     - Three\n")).toEqual([{ rule: "bullet-depth", line: 7, detail: "Unordered bullet depth 3 (limit 2). Flatten this item." }]);
+    expect(layoutViolations("# Title\n\nVersion 1.0\n\n1. Parent\n   - One\n     1. Ordered\n        - Two\n          - Three\n")).toEqual([{ rule: "bullet-depth", line: 9, detail: "Unordered bullet depth 3 (limit 2). Flatten this item." }]);
+  });
+  test("counts root H2 sections only and applies contents wording only at six", () => {
+    expect(rules("# Title\n\nVersion 1.0\n\n" + sections(5))).toEqual([]);
+    expect(rules("# Title\n\nVersion 1.0\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
+    expect(rules("# Title\n\nDate 2026-10-03\n\n" + sections(3) + "### Child\n\n### Other\n\n> ## Quote\n\n- ## List\n")).toEqual([]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- [Wrong](#section-1)\n\n" + sections(4))).toEqual([]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- [Wrong](#section-1)\n\n### Overview\n\n" + sections(5))).toEqual(["contents-list"]);
+  });
+  test("recognises partial, paragraph, table, opening and reference navigation", () => {
+    for (const navigation of ["## Contents\n\n- Section 1\n", "## Table of contents\n\n[Section 1](#section-1)\n", "## TOC\n\n| Links |\n|---|\n| [Section 1](#section-1) |\n", "## Key sections\n\n[Section 1][one]\n\n[one]: #section-1\n", "[Section 1](#section-1) [Section 2](#section-2)\n", "- [Section 1](#section-1)\n- [Section 2](#section-2)\n"]) {
+      expect(rules("# Title\n\nVersion 1.0\n\n" + navigation + "\n### Summary\n\n" + sections())).toEqual([]);
+    }
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[Custom](#custom)\n\n### Overview\n\n" + sections())).toEqual([]);
+    expect(rules("# Title\n\nVersion 1.0\n\n[Outside](https://example.org)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n> [Section 1](#section-1) [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
+  });
+  test("resolves deterministic Unicode and duplicate heading IDs", () => {
+    expect(headingIds(["A!", "A!", "A-1", "A!", "École _name_"])).toEqual(["a", "a-1", "a-1-1", "a-2", "école-name"]);
+    expect(normaliseWording("**A &amp; [B](#b)**\ntext")).toBe("A & B text");
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[A!](#a-1)\n\n### Overview\n\n## A!\n\n## A!\n\n" + sections(3))).toEqual([]);
+  });
+  test("requires version or calendar-valid date in a document field in the opening", () => {
+    for (const field of ["Version: v2.1", "Revision 2.1.0-rc.1+build.2", "Date 2024-02-29", "Updated: 29 Feb 2024", "Last updated October 3, 2026", "Reviewed: 03/10/2026", "Date: 12/31/2026", "Date 10/2026", "Date Q4 2026", "![Version: 2.1](badge.svg)", "| Field | Value |\n|---|---|\n| Version | 2.1 |", "| Field | Value |\n|---|---|\n| Date | March 2026 |"])
+      expect(rules("# Title\n\n" + field + "\n"), field).toEqual([]);
+    expect(rules("# Title (Version: 2.1)\n")).toEqual([]);
+    for (const field of ["v2.1", "Requires v2.1", "Updated targets for Q3 2026", "Reviewed the policy in March 2026", "Version 2.1 is required", "Date 2023-02-29", "Date 2026-13-01", "Date 13/2026", "Date 13/13/2026", "Date Q5 2026", "Date 2026-04-31", "Date 00/2026", "Version 2", "Date 3 Smarch 2026", "![Updated targets for Q3 2026](badge.svg)"])
+      expect(rules("# Title\n\n" + field + "\n"), field).toEqual(["opening-version-date"]);
+    expect(rules("---\nversion: 2.1\n---\n# Title\n\n## Footer\n\nDate 2026-10-03\n")).toEqual([]);
+  });
+  test("counts unordered ancestry alone, including task items and mixed containers", () => {
+    const text = "# Title\n\nVersion 1.0\n\n- One\n  1. Ordered\n     - Two\n       > - [x] Three\n\n- Next\n\n```\n- one\n  - two\n    - three\n```\n";
+    expect(layoutViolations(text)).toEqual([{ rule: "bullet-depth", line: 8, detail: "Unordered bullet depth 3 (limit 2). Flatten this item." }]);
+    expect(normaliseWording("&#65; &#x41; &unknown; &#0;")).toBe("A A &unknown; \ufffd");
+    expect(rules("# T\n\nVersion 1.0\n\n- One\n\t- Two\n\t\t- Three\n")).toEqual(["bullet-depth"]);
+    expect(rules("# T\n\nVersion 1.0\n\n1. One\n   10. Two\n       - Bullet\n")).toEqual([]);
+  });
+  test("requires an overview heading before the first content H2, at any root heading level", () => {
+    for (const overview of ["### Overview", "## **1. Summary**", "Overview\n========", "Overview\n--------"]) expect(rules("# Title\n\nVersion 1.0\n\n" + overview + "\n\n## Contents\n\n- Section 1\n\n" + sections())).toEqual([]);
+    for (const overview of ["**Overview**", "> ### Overview", "- ### Overview", "[Overview](#overview)"]) expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n" + overview + "\n\n" + sections())).toEqual(["overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n" + sections() + "\n### Overview\n")).toEqual(["overview-label"]);
+    expect(rules("# Title\n\nVersion 1.0\n\n## First\n\n### Overview\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
+  });
+  test("retains container metadata without changing heading and prose extraction", () => {
+    const parsed = structure("# T\n\n> ## Example\n\n- Item\n  - Child\n    - Grandchild\n\n## Root\n");
+    expect(parsed.headings.map(heading => heading.text)).toEqual(["T", "Root"]);
+    expect(parsed.items.map(item => item.depth)).toEqual([1, 2, 3]);
+  });
+  // The definition check takes any character but a space or a tab as part of
+  // a destination. Reading the destination back by trimming took a no-break
+  // space, U+FEFF and a form feed for space and found none. That first threw,
+  // and once guarded it left the name free, so a later duplicate replaced the
+  // first definition. Each character is built from its code, so that none
+  // sits unseen in this file.
+  test("the first definition of a name keeps it, whatever character its destination is", () => {
+    for (const code of [0xa0, 0xfeff, 0x0c, 0x2028, 0x3000]) {
+      const character = String.fromCharCode(code);
+      const label = `U+${code.toString(16)}`;
+      expect(structure(`[a]: ${character}\n[a]: #later\n`).destinations.get("a"), label).toBe(character);
+      expect(structure(`[a]: <${character}>\n[a]: #later\n`).destinations.get("a"), label).toBe(character);
+    }
+    expect(structure("[a]: <>\n[a]: #later\n").destinations.get("a")).toBe("");
+
+    // With the name left free, "[a]" resolved to "#a", the line of links read
+    // as a contents list, and the missing contents went unreported.
+    const document = "# Title\n\nVersion 1.0\n\n[A][a] | [B][b]\n\n"
+      + `[a]: ${String.fromCharCode(0xa0)}\n[a]: #a\n[b]: #b\n\n`
+      + ["A", "B", "C", "D", "E", "F"].map(name => `## ${name}\n\nWords.`).join("\n\n");
+    expect(auditText(document, { markdown: true }).map(finding => finding.rule))
+      .toEqual(["contents-list", "overview-label"]);
+  });
+});
+
+describe("what a heading identifier keeps", () => {
+  // The interface comment said a wording with no letter or digit gives an empty
+  // identifier. It does not: hyphens and underscores are kept. Each line here is a
+  // sentence of the corrected comment, so the comment and the function cannot part again.
+  test("hyphens and underscores are kept, so a wording made of them is its own identifier", () => {
+    expect(headingIds(["---"])).toEqual(["---"]);
+    expect(headingIds(["_"])).toEqual(["_"]);
+    expect(headingIds(["--", "- -", "a - b"])).toEqual(["--", "---", "a---b"]);
+  });
+
+  test("only a wording with none of the kept characters gives an empty identifier", () => {
+    expect(headingIds(["!!!"])).toEqual([""]);
+    expect(headingIds([" "])).toEqual([""]);
+    expect(headingIds([""])).toEqual([""]);
+    expect(headingIds(["!!!", "", "???"])).toEqual(["", "-1", "-2"]);
+    expect(headingIds([])).toEqual([]);
+  });
+
+  test("letters, numbers and combining marks are kept, and each space left becomes a hyphen", () => {
+    const acute = String.fromCharCode(0x301);
+    expect(headingIds([`Cafe${acute} 5!`, "x_y z"])).toEqual([`cafe${acute}-5`, "x_y-z"]);
+    // Removing the ampersand leaves the space on each side of it.
+    expect(headingIds(["a & b"])).toEqual(["a--b"]);
+  });
+
+  test("an identifier already given takes a suffix, whatever wording gave it", () => {
+    expect(headingIds(["a b", "A  B", "a-b"])).toEqual(["a-b", "a-b-1", "a-b-2"]);
+  });
+});
