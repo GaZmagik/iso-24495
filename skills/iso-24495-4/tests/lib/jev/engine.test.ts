@@ -17,7 +17,7 @@ describe("calibrated engine", () => {
     let checked = 0;
     for (const fixture of fixtures) {
       const plan = planDocument(fixture.text);
-      expect(plan.candidates.map(candidate => ({ line: candidate.line, state: candidate.body.state }))).toEqual(fixture.states.filter(item => Object.values(item.state).some(value => typeof value === "string" && value.trim() !== "")));
+      expect(plan.candidates.map(candidate => ({ line: candidate.line, state: candidate.body.state }))).toEqual(fixture.states.filter((item: { state: Record<string, unknown> }) => Object.values(item.state).some(value => typeof value === "string" && value.trim() !== "")));
       checked += fixture.states.length;
     }
     expect(checked).toBe(46005);

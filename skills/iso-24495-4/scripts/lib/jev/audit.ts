@@ -188,7 +188,7 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
  *     a selected directory is skipped instead. Whatever `planDocument`
  *     throws.
  */
-export function selectDocuments(target: string, projectDir: string, mode: "text" | "design" = "design", read = readFileSync, frontMatter = true): Selection {
+export function selectDocuments(target: string, projectDir: string, mode: "text" | "design" = "design", read: (path: string, encoding: "utf8") => string = readFileSync, frontMatter = true): Selection {
   const selected = resolve(target);
   const project = resolve(projectDir);
   const skipped: string[] = [];

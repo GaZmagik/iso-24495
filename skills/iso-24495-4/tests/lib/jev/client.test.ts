@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { buildRequest, MODEL } from "../../../scripts/lib/jev/catalogue.ts";
 import { createAsk, readAnswers, TIMEOUT_MS, systemClock, wait, type Clock, type Fetch } from "../../../scripts/lib/jev/client.ts";
-import { decimalText } from "../../../scripts/lib/jev/decimal.ts";
+import { parseDecimal } from "../../../scripts/lib/jev/decimal.ts";
 
 const OPENING = buildRequest("opening", { opening: "# Title" });
 const BLOCK = buildRequest("block", { paragraph: "Words." });
@@ -13,7 +13,7 @@ const noWait = async () => {};
 describe("exact response validation", () => {
   test("keeps the calibration's exact probability and companion validation", () => {
     const text = JSON.stringify(VALID).replace('"both":0.1', '"both":0.10000000000000001');
-    expect(decimalText(readAnswers(text, OPENING.questions).purpose.both)).toBe("0.10000000000000001");
+    expect(readAnswers(text, OPENING.questions).purpose).toHaveProperty("both", parseDecimal("0.10000000000000001"));
     expect(readAnswers(JSON.stringify({ model: MODEL, answers: { colour_only: { type: "noul", noul: 0.17 }, position_only: { type: "noul", noul: 1 } } }), BLOCK.questions).colour_only).toEqual({ units: 17n, scale: 2 });
   });
   test("rejects malformed JSON, models and all malformed answer shapes", () => {
@@ -109,6 +109,37 @@ describe("transport controls", () => {
     let failures = 0;
     await expect(createAsk("key", { fetch: async () => { failures++; throw new Error("secret"); }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow("six");
     expect(failures).toBe(6);
+  });
+  // The timer is set after the listener is added. A clock that throws left the
+  // listener on the signal, because the code that removes it had not yet been
+  // reached. Each of the six attempts adds one, so each must take its own away.
+  test("a clock that cannot set a timer fails the request, sends nothing and leaves no listener", async () => {
+    const signal = new AbortController().signal;
+    const added = spyOn(signal, "addEventListener");
+    const removed = spyOn(signal, "removeEventListener");
+    const clock: Clock = { schedule: () => { throw new Error("no timer"); } };
+    let sent = 0;
+    await expect(createAsk("key", { fetch: async () => { sent++; return valid(); }, clock, sleep: noWait, signal })(OPENING))
+      .rejects.toThrow("Jev did not answer after six transport attempts.");
+    expect(sent).toBe(0);
+    expect(added.mock.calls.length).toBe(6);
+    expect(removed.mock.calls.map(call => call[1])).toEqual(added.mock.calls.map(call => call[1]));
+  });
+  // The timer is cancelled and the listener removed as each attempt ends. A
+  // cancel that threw stopped the clean-up before it reached the listener.
+  // The cancel's failure is not hidden: it takes the place of the valid
+  // answer, so each attempt fails and the request does after six.
+  test("a timer that cannot be cancelled fails the request and still leaves no listener", async () => {
+    const signal = new AbortController().signal;
+    const added = spyOn(signal, "addEventListener");
+    const removed = spyOn(signal, "removeEventListener");
+    const clock: Clock = { schedule: () => () => { throw new Error("fixture cancellation failed"); } };
+    let sent = 0;
+    await expect(createAsk("key", { fetch: async () => { sent++; return valid(); }, clock, sleep: noWait, signal })(OPENING))
+      .rejects.toThrow("Jev did not answer after six transport attempts.");
+    expect(sent).toBe(6);
+    expect(added.mock.calls.length).toBe(6);
+    expect(removed.mock.calls.map(call => call[1])).toEqual(added.mock.calls.map(call => call[1]));
   });
   test("times out attempts, ignores late answers and cancels", async () => {
     const callbacks: Array<() => void> = [];

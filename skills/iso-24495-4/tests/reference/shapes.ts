@@ -47,18 +47,12 @@ const leaves: Array<[string, string[]]> = [
   ["after break", ["One.", "", "***", "", "Two."]],
 ];
 
-function indentFor(prefixes: string[]): string {
-  return prefixes.map((prefix) => " ".repeat(prefix.length)).join("");
-}
-
-
-
 for (const [containerName, prefixes] of containers) {
   for (const [leafName, body] of leaves) {
     const lines = body.map((line, index) => {
       if (prefixes.length === 0) return line;
       const opener = prefixes.join("");
-      const continuation = prefixes.map((prefix, depth) =>
+      const continuation = prefixes.map((prefix) =>
         prefix.trimEnd() === ">" ? "> " : " ".repeat(prefix.length)).join("");
       return (index === 0 ? opener : continuation) + line;
     });

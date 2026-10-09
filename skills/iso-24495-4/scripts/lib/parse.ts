@@ -182,7 +182,7 @@ function isLinkDefinition(line: string): boolean {
  *     empty text gives a single empty line.
  */
 export function toLines(text: string): string[] {
-  return text.replace(/^﻿/, "").split(/\r\n|\n|\r/);
+  return text.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
 }
 
 /** Expand tabs to four-column stops, as CommonMark measures indentation. */
@@ -596,8 +596,14 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       if (label !== undefined) {
         const name = normaliseReference(label);
         references.add(name);
-        const destination = text.slice(text.indexOf("]:") + 2).trim().match(/^(?:<([^>]*)>|([^\s]+))/);
-        if (!destinations.has(name)) destinations.set(name, destination[1] ?? destination[2]);
+        // Read the way isLinkDefinition read it: spaces lead up to the
+        // destination, and a space or a tab ends it. Any other character is
+        // part of it, a no-break space and U+FEFF among them, as CommonMark
+        // has it. Trimming and matching on white space took those for space,
+        // found no destination, and left the name free for a later duplicate.
+        // The first definition of a name is the one that counts.
+        const destination = /^ *(?:<([^>]*)>|([^ \t]+))/.exec(text.slice(text.indexOf("]:") + 2));
+        if (!destinations.has(name)) destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
       }
       readable[i] = "";
       markup[i] = "";
@@ -850,7 +856,13 @@ function closingMarkup(
   return { at: malformed, length: 4 };
 }
 
-function tickRun(text: string, start: number): number {
+/**
+ * How many backticks stand in a row from `start`.
+ *
+ * @returns The length of the run. 0 when the character at `start` is not a
+ *     backtick, or `start` is past the end of the text.
+ */
+export function tickRun(text: string, start: number): number {
   let end = start;
   while (text[end] === "`") end++;
   return end - start;

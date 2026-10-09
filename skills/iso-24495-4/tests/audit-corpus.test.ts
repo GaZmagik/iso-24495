@@ -8,6 +8,7 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +45,7 @@ describe("listTextFiles", () => {
       symlinkSync(target, dangling, "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      const inspectEntry: typeof lstatSync = (path) => {
+      const inspectEntry = (path: string): Stats => {
         if (path === blocked) throw new Error("entry vanished");
         return lstatSync(path);
       };
@@ -66,7 +67,7 @@ describe("listTextFiles", () => {
       const nested = join(root, "nested");
       mkdirSync(nested);
       const skipped: string[] = [];
-      const readDirectory: typeof readdirSync = (path) => {
+      const readDirectory = (path: string): string[] => {
         if (path === nested) throw new Error("directory vanished");
         return readdirSync(path);
       };

@@ -132,37 +132,6 @@ describe("Part 5 document templates", () => {
     }
   });
 
-  // Round 17: asserting fragments let a line keep its label while losing its
-  // meaning. These are whole lines, so an edit to any part of one turns it red.
-  const REQUIRED_LINES: Record<string, string[]> = {
-    "adr-template.md": [
-      "- **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]",
-      "- **For:** [Who needs this decision, and who must act on it.]",
-      "- **Version:** [Version or date.]",
-      "- **Status:** [Proposed or accepted. Where deprecated or superseded, name the decision that replaces this one.]",
-      "- **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]",
-      "[Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]",
-    ],
-    "runbook-template.md": [
-      "- **Purpose:** [What the reader will have done by the end, and what the task covers, in one sentence.]",
-      "- **For:** [Who runs this task, and when.]",
-      "- **Version:** [Version or date.]",
-      "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
-      "> [!CAUTION]",
-      "> [Critical risks or conditions, before any step runs.]",
-      "> [!NOTE]",
-      "> [Expected output for step 2. Where it differs, stop and do not run step 3.]",
-    ],
-    "design-doc-template.md": [
-      "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
-      "- **For:** [Who this design is written for.]",
-      "- **Version:** [Version or date.]",
-      "- **Instead of this:** [Link the design that may suit the reader better and say when to read it, or delete this line.]",
-      "[Reviewers cite these sections by number, which is why they are numbered. Where nobody cites yours, delete the numbers from the headings and from this contents list together.]",
-      "[Name the narrowest width each table must survive, then read them back at that width. Where no width is known, use labelled records instead.]",
-    ],
-  };
-
   // Twenty-three rounds of adversarial review found the same lesson in eight
   // different disguises: a test that checks a fragment, a count, a label or a
   // position leaves everything it does not name unprotected. Fragments fell to

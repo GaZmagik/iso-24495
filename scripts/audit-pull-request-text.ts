@@ -167,14 +167,11 @@ const NOT_THE_FILE = "what was opened is not the regular file the path names";
  *     of a call as the call threw it.
  */
 export function readRegularFile(path: string, files: FileCalls = REAL_FILES): string {
-  let handle: number;
-  try {
-    handle = files.open(path);
-  } catch (error) {
-    // The code a system gives when it is told not to follow a link and meets one.
-    if (error instanceof Error && "code" in error && error.code === "ELOOP") throw new Error(NOT_THE_FILE);
-    throw error;
-  }
+  const handle = openUnlessLink(path, files);
+  // Thrown here and not where the system's error was caught, so that it
+  // carries no cause. That error names the path, and whatever prints an error
+  // prints its cause, so fixed words would stop being fixed.
+  if (handle === null) throw new Error(NOT_THE_FILE);
   try {
     const opened = files.ofHandle(handle);
     const named = files.ofPath(path);
@@ -184,6 +181,23 @@ export function readRegularFile(path: string, files: FileCalls = REAL_FILES): st
     return files.read(handle);
   } finally {
     files.close(handle);
+  }
+}
+
+/**
+ * Opens a file to read, where the system does not refuse it as a link.
+ *
+ * @returns The open handle, or null where the system refused to follow a
+ *     symbolic link at open.
+ * @throws Any other failure of the open call, as the call threw it.
+ */
+function openUnlessLink(path: string, files: FileCalls): number | null {
+  try {
+    return files.open(path);
+  } catch (error) {
+    // The code a system gives when it is told not to follow a link and meets one.
+    if (error instanceof Error && "code" in error && error.code === "ELOOP") return null;
+    throw error;
   }
 }
 

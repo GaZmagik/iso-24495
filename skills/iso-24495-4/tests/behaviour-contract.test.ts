@@ -1021,7 +1021,7 @@ ${sentence}`)
       "| A |  |",
       "| --- | --- |",
     ];
-    const expected = [
+    const expected: Array<[string, number]> = [
       ["table-header", 5],
       ["link-text", 1],
       ["image-alt", 3],
@@ -1894,8 +1894,9 @@ ${sentence}`)
       [["| Name | |", "|:---|---:|", "| a | b |"], true],
       [["| Name | |", "| --- | --- |", "| a | b |"], true],
       [["| Name | Role |", "|---|---|", "| a | b |"], false],
-    ].map(([rows, expected]) => [(rows as string[]).join("\n"), expected as boolean]);
-    for (const [table, expected] of tables) {
+    ];
+    for (const [rows, expected] of tables) {
+      const table = rows.join("\n");
       expect(rulesFor(table).includes("table-header"), JSON.stringify(table)).toBe(expected);
     }
 

@@ -134,16 +134,20 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
 
 async function transport(body: string, key: string, send: Fetch, clock: Clock, signal?: AbortSignal): Promise<{ status: number; text: string }> {
   const controller = new AbortController();
-  let cancelTimer: () => void;
-  let cancel: () => void;
-  const interrupted = new Promise<never>((resolve, reject) => {
-    cancel = () => { reject(new JevError("Jev execution was cancelled.")); controller.abort(); };
-    signal?.addEventListener("abort", cancel, { once: true });
-    cancelTimer = clock.schedule(() => { reject(new TransportError()); controller.abort(); }, TIMEOUT_MS);
-  });
+  const interrupted = Promise.withResolvers<never>();
+  const cancel = (): void => { interrupted.reject(new JevError("Jev execution was cancelled.")); controller.abort(); };
+  // Unset until the timer is made, so that a clock which throws leaves nothing to cancel.
+  let cancelTimer: (() => void) | undefined;
+  signal?.addEventListener("abort", cancel, { once: true });
+  // Everything after the listener is added sits inside the try, so the clean-up below is always reached.
   try {
-    return await Promise.race([interrupted, send(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: controller.signal }).then(async response => ({ status: response.status, text: await response.text() }))]);
-  } finally { cancelTimer(); signal?.removeEventListener("abort", cancel); }
+    cancelTimer = clock.schedule(() => { interrupted.reject(new TransportError()); controller.abort(); }, TIMEOUT_MS);
+    return await Promise.race([interrupted.promise, send(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: controller.signal }).then(async response => ({ status: response.status, text: await response.text() }))]);
+  } finally {
+    // The removal has a finally of its own, so it happens even when cancelling the timer throws.
+    // That error is not caught here: it surfaces in place of the answer, as it did before.
+    try { cancelTimer?.(); } finally { signal?.removeEventListener("abort", cancel); }
+  }
 }
 
 function isProbability(value: unknown): value is number { return typeof value === "number" && value >= 0 && value <= 1; }
