@@ -111,6 +111,12 @@ export const GUIDE_SYNTAX = [
     selector: "IfStatement > :not(BlockStatement, IfStatement).alternate",
     message: "guide: an else body is a braced block",
   },
+  {
+    // Not a rule of the guide. With noUncheckedIndexedAccess on, an indexed
+    // read may be undefined, and a cast there tells the compiler it is not.
+    selector: "TSAsExpression > MemberExpression.expression[computed=true], TSAsExpression > ChainExpression.expression > MemberExpression.expression[computed=true]",
+    message: "no cast on an indexed read",
+  },
 ];
 
 /** Every name selector forbids a leading or trailing underscore, as the guide does. */
@@ -256,6 +262,9 @@ export const ENFORCED_RULES = {
   "@typescript-eslint/consistent-generic-constructors": ["error", "constructor"],
   "@typescript-eslint/no-wrapper-object-types": "error",
   "@typescript-eslint/no-empty-object-type": "error",
+  // Not a rule of the guide, which asks for a reason beside each one. Here a
+  // non-null assertion would only move a cast the rule above forbids.
+  "@typescript-eslint/no-non-null-assertion": "error",
   // Comments.
   "multiline-comment-style": ["error", "separate-lines"],
 };

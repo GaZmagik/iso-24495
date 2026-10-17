@@ -24,6 +24,7 @@ import {
   splitSentences,
   wordCount,
 } from "../scripts/lib/parse.ts";
+import { itemAt } from "../scripts/lib/item-at.ts";
 
 const BREAK = String.fromCharCode(10);
 const KNOWN_GOOD = join(import.meta.dir, "fixtures", "known-good");
@@ -692,7 +693,7 @@ ${sentence}`)
     const words = ["Alpha", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
       "India", "Juliett"];
     for (const size of [3, 6, 7, 8, 9, 10]) {
-      const key = spell(words.slice(0, size).map((word) => word[0] as string));
+      const key = spell(words.slice(0, size).map((word) => itemAt(word, 0)));
       const defined = `${key} (${words.slice(0, size).join(" ")}) works.`;
       expect(auditText(defined).map((v) => v.rule), defined.slice(0, 40))
         .not.toContain("acronym-undefined");
@@ -2968,7 +2969,7 @@ describe("a link between an expansion and its acronym", () => {
       const syntax = linkSyntaxIn(`[${label}]`, new Set([label]));
       expect(syntax).toHaveLength(length + 2);
       expect([...syntax.subarray(1, length + 1)].includes(1)).toBe(false);
-      return [syntax[0] as number, syntax[length + 1] as number];
+      return [itemAt(syntax, 0), itemAt(syntax, length + 1)];
     };
     expect([998, 999, 1_000, 1_001].map(marked)).toEqual([[1, 1], [1, 1], [0, 0], [0, 0]]);
   });
@@ -3134,7 +3135,7 @@ describe("a link between an expansion and its acronym", () => {
     // What only looks like a tag is text, so a link after it is still a link. The text
     // itself holds letters, so the link is looked for and not the acronym.
     for (const before of ["<3 ", "</i ", "< i> ", `<i title=${quote} `, "<i title= > ", "<i/ > ", "<!-- ", "<? ", "<![CDATA[ ", "<!D ", "<a@b ", "<x:y z> "]) {
-      const read = acronymReading(link(before).join(BREAK)).blocks[0]?.lines[0] as string;
+      const read = itemAt(itemAt(acronymReading(link(before).join(BREAK)).blocks, 0).lines, 0);
       expect(read.includes("](guide)"), before).toBe(false);
       expect(read.endsWith("management (IAM)."), before).toBe(true);
     }

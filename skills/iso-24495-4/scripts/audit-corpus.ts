@@ -29,6 +29,7 @@ import { layoutViolations } from "./lib/layout.ts";
 import { emphasisMarkOffsets, withoutEmphasis } from "./lib/inline-wording.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 import { skippedEntryWarning } from "./lib/safe-text.ts";
+import { itemAt } from "./lib/item-at.ts";
 
 /**
  * Audits a corpus directory and prints the count of findings for each rule.
@@ -557,7 +558,7 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
   let high = ends.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if ((ends[middle] as number) < offset) {
+    if (itemAt(ends, middle) < offset) {
       low = middle + 1;
     } else {
       high = middle;
@@ -727,7 +728,7 @@ function expansionSpelling(
   let open = -1;
   const window = Math.min(from + ENGINE_THRESHOLDS.acronymDefinitionWindow, tokens.length);
   for (let at = from; at < window; at++) {
-    if ((tokens[at] as { raw: string }).raw.startsWith("(")) {
+    if (itemAt(tokens, at).raw.startsWith("(")) {
       open = at;
       break;
     }
@@ -735,12 +736,12 @@ function expansionSpelling(
   if (open === -1) return null;
   const close = nextClose[open] ?? tokens.length;
   if (close >= tokens.length) return null;
-  const opener = (tokens[open] as { raw: string }).raw;
+  const opener = itemAt(tokens, open).raw;
   if (open === close) return expansionInitials(opener.slice(1, opener.indexOf(")")));
-  const closer = (tokens[close] as { raw: string }).raw;
+  const closer = itemAt(tokens, close).raw;
   const first = expansionInitials(opener.slice(1));
   const last = expansionInitials(closer.slice(0, closer.indexOf(")")));
-  const between = (carried[close] as number) - (carried[open + 1] as number);
+  const between = itemAt(carried, close) - itemAt(carried, open + 1);
   if (first.length + between + last.length !== want) return null;
   return first + initials.slice(carried[open + 1], carried[close]).join("") + last;
 }
@@ -791,8 +792,8 @@ function acronymViolations(
     // "ident*ity*" still gives its initial. The text is one line, and its marks were
     // paired across the whole block the line sits in. A block that may hold a link has
     // none.
-    const marks = marksByLine[i] as number[];
-    const sourceLine = withoutOffsets(lines[i] as string, 0, new Set(marks));
+    const marks = itemAt(marksByLine, i);
+    const sourceLine = withoutOffsets(itemAt(lines, i), 0, new Set(marks));
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
       const key = match[1]?.replaceAll(".", "");
@@ -813,7 +814,7 @@ function acronymViolations(
     const initials: string[] = [];
     carried[0] = 0;
     for (let at = 0; at < tokens.length; at++) {
-      initials.push(...expansionInitials((tokens[at] as { raw: string }).raw));
+      initials.push(...expansionInitials(itemAt(tokens, at).raw));
       carried[at + 1] = initials.length;
     }
 
@@ -821,7 +822,7 @@ function acronymViolations(
     // for the block so no acronym has to search forward for one.
     const nextClose: number[] = new Array(tokens.length);
     for (let at = tokens.length - 1, closing = tokens.length; at >= 0; at--) {
-      if ((tokens[at] as { raw: string }).raw.includes(")")) closing = at;
+      if (itemAt(tokens, at).raw.includes(")")) closing = at;
       nextClose[at] = closing;
     }
     const shouted = shoutedPositions(tokens);
@@ -905,11 +906,11 @@ function pairedMarksByLine(
       : emphasisMarkOffsets(lines.slice(first, last + 1).join("\n"));
     for (const mark of marks) {
       // A mark is never the line break, so this stops on the line that holds it.
-      while (mark > lineStart + (lines[line] as string).length) {
-        lineStart += (lines[line] as string).length + 1;
+      while (mark > lineStart + itemAt(lines, line).length) {
+        lineStart += itemAt(lines, line).length + 1;
         line++;
       }
-      (marksByLine[line] as number[]).push(mark - lineStart);
+      itemAt(marksByLine, line).push(mark - lineStart);
     }
     first = last + 1;
   }
@@ -951,10 +952,10 @@ export function acronymReading(text: string, reading: Reading = {}): { lines: st
   const [linesOne, linesTwo] = [readDocument(one, reading).lines, readDocument(two, reading).lines];
   const [blocksOne, blocksTwo] = [proseBlocks(one, reading), proseBlocks(two, reading)];
   return {
-    lines: linesOne.map((line, index) => whereAlike(line, linesTwo[index] as string)),
+    lines: linesOne.map((line, index) => whereAlike(line, itemAt(linesTwo, index))),
     blocks: blocksOne.map((block, index) => ({
       line: block.line,
-      lines: block.lines.map((line, at) => whereAlike(line, (blocksTwo[index] as ProseBlock).lines[at] as string)),
+      lines: block.lines.map((line, at) => whereAlike(line, itemAt(itemAt(blocksTwo, index).lines, at))),
     })),
   };
 }
@@ -987,7 +988,7 @@ interface LinkSyntax {
  */
 function marked(syntax: LinkSyntax, mark: string): string {
   return syntax.written
-    .map((line, index) => line.split("").map((unit, at) => ((syntax.removed[index] as Uint8Array)[at] === 1 ? mark : unit)).join(""))
+    .map((line, index) => line.split("").map((unit, at) => (itemAt(syntax.removed, index)[at] === 1 ? mark : unit)).join(""))
     .join("\n");
 }
 
@@ -1017,7 +1018,7 @@ function linkSyntax(text: string, reading: Reading): LinkSyntax | null {
   written.forEach((line, index) => {
     // A line in no block is read alone, where a rule reads it at all. Code, front
     // matter and a line that defines a reference are blank to every rule.
-    if (!inBlock.has(index) && (document.lines[index] as string).trim() !== "") {
+    if (!inBlock.has(index) && itemAt(document.lines, index).trim() !== "") {
       spans.push([index, 1]);
     }
   });
@@ -1027,8 +1028,8 @@ function linkSyntax(text: string, reading: Reading): LinkSyntax | null {
     const inBlockRemoved = linkSyntaxIn(source, document.references);
     let start = 0;
     for (let line = first; line < first + count; line++) {
-      (removed[line] as Uint8Array).set(inBlockRemoved.subarray(start, start + (written[line] as string).length));
-      start += (written[line] as string).length + 1;
+      itemAt(removed, line).set(inBlockRemoved.subarray(start, start + itemAt(written, line).length));
+      start += itemAt(written, line).length + 1;
     }
   }
   return { written, removed };
@@ -1181,12 +1182,12 @@ function tagEnd(source: string, at: number, marks: LinkMarks): number {
   let next = TAG_NAME.lastIndex;
   const closing = source[at + 1] === "/";
   // A closing tag has no attribute, and an attribute needs white space before it.
-  while (!closing && (marks.nextText[next] as number) > next) {
-    const end = attributeEnd(source, marks.nextText[next] as number, marks);
+  while (!closing && itemAt(marks.nextText, next) > next) {
+    const end = attributeEnd(source, itemAt(marks.nextText, next), marks);
     if (end === -1) break;
     next = end;
   }
-  const last = marks.nextText[next] as number;
+  const last = itemAt(marks.nextText, next);
   if (source[last] === ">") return last + 1;
   return !closing && source[last] === "/" && source[last + 1] === ">" ? last + 2 : at + 1;
 }
@@ -1196,12 +1197,12 @@ function attributeEnd(source: string, at: number, marks: LinkMarks): number {
   ATTRIBUTE_NAME.lastIndex = at;
   if (!ATTRIBUTE_NAME.test(source)) return -1;
   const name = ATTRIBUTE_NAME.lastIndex;
-  const equals = marks.nextText[name] as number;
+  const equals = itemAt(marks.nextText, name);
   if (source[equals] !== "=") return name;
-  const value = marks.nextText[equals + 1] as number;
+  const value = itemAt(marks.nextText, equals + 1);
   const quote = source.charCodeAt(value);
   if (quote === 34 || quote === 39) {
-    const end = unclosedFrom(source, source[value] as string, value + 1, marks);
+    const end = unclosedFrom(source, itemAt(source, value), value + 1, marks);
     return end === -1 ? -1 : end + 1;
   }
   BARE_VALUE.lastIndex = value;
@@ -1233,7 +1234,7 @@ function linkEnd(
   // A label that names a reference is short. Without this limit, each of many nested
   // brackets would copy everything inside it.
   const label = close - opener.at <= 1000 ? source.slice(opener.at + 1, close) : null;
-  const second = source[close + 1] === "[" ? (marks.nextBracket[close + 2] as number) : -1;
+  const second = source[close + 1] === "[" ? itemAt(marks.nextBracket, close + 2) : -1;
   if (second !== -1 && source[second] === "]") {
     const name = second === close + 2 ? label : source.slice(close + 2, second);
     return name !== null && references.has(normaliseReference(name)) ? second + 1 : -1;
@@ -1256,29 +1257,29 @@ function linkEnd(
  * closes, so "(two(three 'a title')" is a link.
  */
 function inlineLinkEnd(source: string, open: number, marks: LinkMarks): number {
-  const start = marks.nextText[open + 1] as number;
+  const start = itemAt(marks.nextText, open + 1);
   let afterDestination: number;
   if (source[start] === "<") {
     // In angle brackets a destination may hold spaces, and no line break or "<".
-    const closing = marks.nextAngle[start + 1] as number;
+    const closing = itemAt(marks.nextAngle, start + 1);
     if (source[closing] !== ">") return -1;
     afterDestination = closing + 1;
   } else {
-    const closer = marks.closer[open] as number;
-    afterDestination = marks.nextSpace[start] as number;
+    const closer = itemAt(marks.closer, open);
+    afterDestination = itemAt(marks.nextSpace, start);
     if (closer !== -1 && closer < afterDestination) return closer + 1;
   }
-  const next = marks.nextText[afterDestination] as number;
+  const next = itemAt(marks.nextText, afterDestination);
   if (source[next] === ")") return next + 1;
   // A title needs white space between it and the destination.
   if (next === afterDestination) return -1;
   const code = source.charCodeAt(next);
   const titles = code === 34 ? marks.nextDouble : code === 39 ? marks.nextSingle : code === 40 ? marks.nextClose : null;
-  const titleEnd = titles === null ? -1 : (titles[next + 1] as number);
+  const titleEnd = titles === null ? -1 : itemAt(titles, next + 1);
   // A title in parentheses holds no parenthesis of its own, so the first closing one
   // must be the one that closes it.
   if (titleEnd === -1 || (code === 40 && marks.closer[next] !== titleEnd)) return -1;
-  const last = marks.nextText[titleEnd + 1] as number;
+  const last = itemAt(marks.nextText, titleEnd + 1);
   return source[last] === ")" ? last + 1 : -1;
 }
 
@@ -1362,13 +1363,13 @@ function linkMarks(source: string): LinkMarks {
   let runEnd = -1;
   for (let at = source.length - 1; at >= 0; at--) {
     const code = marks.escaped[at] === 1 ? 0 : source.charCodeAt(at);
-    marks.nextText[at] = space[at] === 1 ? (marks.nextText[at + 1] as number) : at;
-    marks.nextSpace[at] = space[at] === 1 ? at : (marks.nextSpace[at + 1] as number);
-    marks.nextAngle[at] = code === 60 || code === 62 || source[at] === "\n" ? at : (marks.nextAngle[at + 1] as number);
-    marks.nextBracket[at] = code === 91 || code === 93 ? at : (marks.nextBracket[at + 1] as number);
-    marks.nextDouble[at] = code === 34 ? at : (marks.nextDouble[at + 1] as number);
-    marks.nextSingle[at] = code === 39 ? at : (marks.nextSingle[at + 1] as number);
-    marks.nextClose[at] = code === 41 ? at : (marks.nextClose[at + 1] as number);
+    marks.nextText[at] = space[at] === 1 ? itemAt(marks.nextText, at + 1) : at;
+    marks.nextSpace[at] = space[at] === 1 ? at : itemAt(marks.nextSpace, at + 1);
+    marks.nextAngle[at] = code === 60 || code === 62 || source[at] === "\n" ? at : itemAt(marks.nextAngle, at + 1);
+    marks.nextBracket[at] = code === 91 || code === 93 ? at : itemAt(marks.nextBracket, at + 1);
+    marks.nextDouble[at] = code === 34 ? at : itemAt(marks.nextDouble, at + 1);
+    marks.nextSingle[at] = code === 39 ? at : itemAt(marks.nextSingle, at + 1);
+    marks.nextClose[at] = code === 41 ? at : itemAt(marks.nextClose, at + 1);
     // A run of backticks is every backtick in a row, whatever stands before the first:
     // inside a code span a backslash escapes nothing.
     if (source[at] !== "`") continue;
@@ -1405,7 +1406,7 @@ function unmarkedTokens(
   const tokens: Array<{ raw: string; line: number; column: number }> = [];
   let lineStart = 0;
   for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex++) {
-    const line = block.lines[lineIndex] as string;
+    const line = itemAt(block.lines, lineIndex);
     for (const match of line.matchAll(/\S+/g)) {
       const start = lineStart + match.index;
       // White space ends the word and is never a mark, so this stops inside the word.
@@ -1433,7 +1434,7 @@ function sourceColumn(unmarked: number, marks: readonly number[]): number {
   let high = marks.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if ((marks[middle] as number) - middle <= unmarked) {
+    if (itemAt(marks, middle) - middle <= unmarked) {
       low = middle + 1;
     } else {
       high = middle;
@@ -1646,7 +1647,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     // One scan serves all three forms. Reading each with its own pattern was quadratic:
     // a label pattern scans to the end of the line from every "[" and then gives the
     // ground back one character at a time.
-    for (const link of markdownLinks(lines[i] as string)) {
+    for (const link of markdownLinks(itemAt(lines, i))) {
       // Skip image syntax: the alt-text rule owns that, and anything inside an alt
       // text, which a reader never meets as a link of its own.
       if (link.image || !link.rendered) continue;
@@ -1727,7 +1728,7 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     // One scan finds both image forms, filtered to the ones with no alternative text.
-    for (const link of markdownLinks(lines[i] as string)) {
+    for (const link of markdownLinks(itemAt(lines, i))) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
       if (link.label.trim().length > 0) continue;
       const target = link.target.trim();
@@ -1824,7 +1825,7 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
   const blocks = readerProseBlocks(text, reading);
   if (blocks.length === 0) return [];
   const written = toLines(text);
-  const first = blocks[0] as ProseBlock;
+  const first = itemAt(blocks, 0);
   // The marks of paired emphasis are removed, not the words inside them:
   // "**Certainly!**" is still a filler opening, and removing the emphasised
   // text hid it. A code span keeps its backticks, because it names a term and

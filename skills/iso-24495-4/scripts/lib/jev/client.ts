@@ -110,13 +110,14 @@ export function createAsk(key: string, options: ClientOptions = {}): Ask {
  *     returned as a value.
  */
 export function readAnswers(text: string, questions: RequestBody["questions"]): ExactAnswers {
-  let payload: { model?: unknown; answers?: Record<string, unknown> };
+  // What JSON.parse returns is not checked against this type; each answer is checked below.
+  let payload: { model?: unknown; answers?: Record<string, Record<string, unknown> | undefined> };
   let exact: { answers: Record<string, Record<string, unknown>> };
   try { payload = JSON.parse(text); exact = parseExactJson(text) as typeof exact; } catch { throw new JevError("Jev returned malformed JSON."); }
   if (payload?.model !== MODEL) throw new JevError("Jev returned a wrong or missing model. Expected jev-1.13.0.");
   const answers: ExactAnswers = {};
   for (const [id, question] of Object.entries(questions)) {
-    const answer = payload.answers?.[id] as Record<string, unknown> | undefined;
+    const answer = payload.answers?.[id];
     const precise = exact.answers?.[id];
     if (question.type === "noul") {
       if (answer?.type !== "noul" || !isProbability(answer.noul) || !isExactProbability(precise?.noul)) throw new JevError("Jev returned an invalid probability.");

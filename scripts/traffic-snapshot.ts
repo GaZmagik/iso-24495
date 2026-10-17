@@ -15,6 +15,7 @@
 import { join } from "node:path";
 import { pathFailure, unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
 import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
+import { itemAt } from "../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 /**
  * Takes one traffic snapshot and merges it into the three CSV files.
@@ -39,8 +40,9 @@ import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
  * date or a count that is no whole number is malformed, and a clock that gives
  * no date stops the run. Exit 1 also means a file could not be written. The
  * files are written one after another, so those before it stay written, and
- * the reason names them. Exit 2 means no data directory was given, or
- * `--from-file` has no file after it; nothing is asked of the network then.
+ * the reason names them. Exit 2 means no data directory was given,
+ * `--from-file` has no file after it, or the argument list has a hole;
+ * nothing is asked of the network then.
  *
  * @param argv The whole command line, so the arguments start at index 2.
  * @param writeOut Receives the dry-run output and the closing summary line.
@@ -61,7 +63,12 @@ export async function runCli(
   let fromFile = "";
   let dryRun = false;
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] as string;
+    const arg = args[index];
+    // A list built in code can hold a hole, which no command line does.
+    if (arg === undefined) {
+      writeErr(USAGE);
+      return 2;
+    }
     if (arg === "--dry-run") {
       dryRun = true;
       continue;
@@ -499,7 +506,7 @@ function splitCsvLine(row: string): string[] | null {
   // Whether the cell was in quotes and its closing quote has been read.
   let closed = false;
   for (let index = 0; index < row.length; index += 1) {
-    const character = row[index] as string;
+    const character = itemAt(row, index);
     if (quoted) {
       if (character !== '"') {
         cell += character;
@@ -579,7 +586,7 @@ function readTable(existing: string | null, header: string[]): { rows: string[][
       const held = cells.length === 1 ? "1 cell" : cells.length + " cells";
       return { fault: "the row on line " + line + " has " + held + " where the header has " + header.length };
     }
-    const wrong = header.findIndex((column, at) => !holdsItsKind(column, at, cells[at] as string));
+    const wrong = header.findIndex((column, at) => !holdsItsKind(column, at, itemAt(cells, at)));
     if (wrong !== -1) {
       const kind = wrong === 0 ? "a date" : "a whole number";
       return { fault: "the row on line " + line + " does not hold " + kind + " under " + header[wrong] };

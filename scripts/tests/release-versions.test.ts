@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { runTagCheck } from "../release-tag.ts";
 import { checkVersionSites } from "../release-versions.ts";
 import { edit, SKILLS, withCheckout } from "./fixtures/release-checkout.ts";
+import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 describe("checkVersionSites, which the normal gate runs", () => {
   test("a consistent checkout passes, whether or not its version is released", () => {
@@ -253,7 +254,7 @@ describe("a manifest that is valid JSON of the wrong shape", () => {
     for (const source of ["null", "\"v0.7.0\"", "[\"v0.7.0\"]"]) {
       withCheckout("0.7.0", (root) => {
         writeFileSync(join(root, ".claude-plugin", "marketplace.json"), `{"plugins":[{"version":"0.7.0","source":${source}}]}`, "utf8");
-        expect(checkVersionSites(root).problems, source).toEqual([nothing[1] as string]);
+        expect(checkVersionSites(root).problems, source).toEqual([itemAt(nothing, 1)]);
       });
     }
   });

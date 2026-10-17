@@ -1,5 +1,6 @@
 import { codeSpanEnds, inlineText, tickRun } from "./parse.ts";
 import entities from "./html-entities.json";
+import { itemAt } from "./item-at.ts";
 
 /** A run of one mark, and the part of it that no pair has taken yet. */
 interface Run {
@@ -205,10 +206,10 @@ function pairedMarks(runs: Run[]): number[] {
   const searched = new Map<string, number>();
   let last = -1;
   for (let closing = 0; closing < runs.length; closing++) {
-    const closer = runs[closing] as Run;
+    const closer = itemAt(runs, closing);
     earlier[closing] = last;
     if (closer.close) pairCloser(runs, closing, earlier, searched, marks);
-    last = closer.start < closer.end ? closing : earlier[closing] as number;
+    last = closer.start < closer.end ? closing : itemAt(earlier, closing);
   }
   return marks;
 }
@@ -221,26 +222,26 @@ function pairCloser(
   searched: Map<string, number>,
   marks: number[],
 ): void {
-  const closer = runs[closing] as Run;
+  const closer = itemAt(runs, closing);
   const kind = `${closer.marker}${closer.open}${closer.original % 3}`;
   const floor = searched.get(kind) ?? -1;
   while (closer.start < closer.end) {
-    let opening = earlier[closing] as number;
-    while (opening > floor && !canPair(runs[opening] as Run, closer)) {
-      opening = earlier[opening] as number;
+    let opening = itemAt(earlier, closing);
+    while (opening > floor && !canPair(itemAt(runs, opening), closer)) {
+      opening = itemAt(earlier, opening);
     }
     if (opening <= floor) {
-      searched.set(kind, earlier[closing] as number);
+      searched.set(kind, itemAt(earlier, closing));
       return;
     }
-    const opener = runs[opening] as Run;
+    const opener = itemAt(runs, opening);
     const strong = opener.end - opener.start >= 2 && closer.end - closer.start >= 2;
     for (let taken = 0; taken < (strong ? 2 : 1); taken++) {
       opener.end--;
       marks.push(opener.end, closer.start);
       closer.start++;
     }
-    earlier[closing] = opener.start < opener.end ? opening : earlier[opening] as number;
+    earlier[closing] = opener.start < opener.end ? opening : itemAt(earlier, opening);
   }
 }
 

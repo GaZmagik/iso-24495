@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { withoutEmphasis } from "../scripts/lib/inline-wording.ts";
 import { headings, readerProseBlocks } from "../scripts/lib/parse.ts";
+import { itemAt } from "../scripts/lib/item-at.ts";
 
 // The words the audit reads, held against the words a renderer shows.
 //
@@ -102,7 +103,7 @@ function readWords(document: string, heading: boolean): { words: string; removed
     ? headings(document).map((found) => found.text)
     : readerProseBlocks(document).map((block) => block.lines.join("\n"));
   expect(blocks, document).toHaveLength(1);
-  const read = blocks[0] as string;
+  const read = itemAt(blocks, 0);
   const unmarked = withoutEmphasis(read);
   return { words: spaced(unmarked), removed: read.length - unmarked.length };
 }
@@ -148,7 +149,7 @@ function inlinePiece(random: () => number): string {
 }
 
 function pick(random: () => number, choices: readonly string[]): string {
-  return choices[Math.floor(random() * choices.length)] as string;
+  return itemAt(choices, Math.floor(random() * choices.length));
 }
 
 /** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */

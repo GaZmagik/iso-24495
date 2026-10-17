@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { auditText } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { headings } from "../../iso-24495-4/scripts/lib/parse.ts";
+import { itemAt } from "../../iso-24495-4/scripts/lib/item-at.ts";
 
 const SKILL_DIR = join(import.meta.dir, "..");
 const ASSETS_DIR = join(SKILL_DIR, "assets");
@@ -84,7 +85,7 @@ describe("Part 5 document templates", () => {
       const purposeLines = lines.filter((line) => line.startsWith("- **Purpose:**"));
       expect(purposeLines, `${name} keeps purpose to one line`).toHaveLength(1);
       // A continuation line under the purpose would make it two lines in fact.
-      const after = lines[lines.indexOf(purposeLines[0] as string) + 1] ?? "";
+      const after = lines[lines.indexOf(itemAt(purposeLines, 0)) + 1] ?? "";
       expect(after === "" || after.startsWith("- "), `${name} does not continue purpose`).toBe(true);
     }
   });

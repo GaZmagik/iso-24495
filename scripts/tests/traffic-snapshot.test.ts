@@ -14,6 +14,7 @@ import {
   type Deps,
   type Snapshot,
 } from "../traffic-snapshot.ts";
+import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const RAW = {
   clones: {
@@ -377,6 +378,32 @@ describe("runCli", () => {
   });
 });
 
+// A list built in code can hold a hole, which no command line does. The hole was
+// read as the data directory, so a hole at the end left the run with none.
+describe("an argument list with a hole", () => {
+  test("is a usage error, wherever the hole is, and the network is not asked", async () => {
+    const middle: string[] = ["bun", "cli"];
+    middle.length = 3;
+    middle.push("data");
+    const trailing: string[] = ["bun", "cli", "data"];
+    trailing.length = 4;
+    for (const argv of [middle, trailing]) {
+      const asked: string[] = [];
+      const { deps, files, stdout, stderr } = harness({
+        fetchSnapshot: async () => {
+          asked.push("the network");
+          return RAW;
+        },
+      });
+      expect(await runCli(argv, (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(2);
+      expect(asked).toEqual([]);
+      expect(stderr).toHaveLength(1);
+      expect(stderr[0]).toStartWith("Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]");
+      expect([stdout, [...files.keys()]]).toEqual([[], []]);
+    }
+  });
+});
+
 // With no value after it, --from-file was read as "no fixture", and the command asked
 // the network, which is the one thing the option is given to prevent. Issue 49.
 describe("--from-file with no file after it", () => {
@@ -677,7 +704,7 @@ describe("a table is read back as it was written", () => {
     const rows: string[][] = [[""]];
     let quoted = false;
     for (let at = 0; at < table.length; at++) {
-      const character = table[at] as string;
+      const character = itemAt(table, at);
       const row = rows.at(-1) as string[];
       if (quoted && character === quote && table[at + 1] === quote) {
         row[row.length - 1] += quote;
@@ -742,7 +769,7 @@ describe("a table is read back as it was written", () => {
       let made = "";
       const length = Math.floor(random() * 6);
       for (let piece = 0; piece < length; piece++) {
-        made += pieces[Math.floor(random() * pieces.length)] as string;
+        made += itemAt(pieces, Math.floor(random() * pieces.length));
       }
       return made;
     };
@@ -780,7 +807,7 @@ describe("a table is read back as it was written", () => {
     expect(faultOf(() => mergeDaily(daily, base))).toBe("the row on line 2 does not hold a date under date");
 
     const windows = mergeWindows(null, odd, base);
-    expect((records(windows)[0] as string[])[0]).toBe(odd);
+    expect(itemAt(records(windows), 0)[0]).toBe(odd);
     expect(faultOf(() => mergeWindows(windows, "2000-01-02", base))).toBe("the row on line 2 does not hold a date under snapshot_date");
   });
 
@@ -814,7 +841,7 @@ describe("a table is read back as it was written", () => {
       let made = "";
       const length = Math.floor(random() * 6);
       for (let piece = 0; piece < length; piece++) {
-        made += [...pieces, ...more][Math.floor(random() * (pieces.length + more.length))] as string;
+        made += itemAt([...pieces, ...more], Math.floor(random() * (pieces.length + more.length)));
       }
       return made;
     };
@@ -848,7 +875,7 @@ describe("a table is read back as it was written", () => {
           }
         }
       }
-      if (oneRun && [...written.referrers.values()].some((row) => (row[1] as string).includes(lineFeed))) {
+      if (oneRun && [...written.referrers.values()].some((row) => itemAt(row, 1).includes(lineFeed))) {
         withLineBreak++;
       }
       // What this release reads from each table, by merging a snapshot that adds
@@ -922,12 +949,12 @@ describe("a malformed table stops the run before anything is written", () => {
         },
       });
       for (const other of tables) {
-        files.set(join("data", other), other === name ? text : table(other, (rowsByTable[other] as (first: string) => string)("2000-01-02")));
+        files.set(join("data", other), other === name ? text : table(other, forTable(rowsByTable, other)("2000-01-02")));
       }
       const code = await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps);
       expect([code, written, stdout], `${name} ${mode.join("")}`).toEqual([1, [], []]);
       expect(stderr).toHaveLength(1);
-      reported = stderr[0] as string;
+      reported = itemAt(stderr, 0);
     }
     return reported;
   }
@@ -949,15 +976,15 @@ describe("a malformed table stops the run before anything is written", () => {
   });
 
   test.each(tables)("%s with a quote that never closes", async (name) => {
-    const row = rowsByTable[name] as (first: string) => string;
+    const row = forTable(rowsByTable, name);
     for (const rows of [[row(`${quote}2000-01-01`), row("2000-01-03")], [row("2000-01-01"), `${row("2000-01-03")}${quote}`]]) {
       expect(await refusal(name, table(name, ...rows))).toBe(`Could not read ${name}: it holds a quote that never closes. ${asItWas}`);
     }
   });
 
   test.each(tables)("%s with a row of more or fewer cells than its header", async (name) => {
-    const row = rowsByTable[name] as (first: string) => string;
-    const cells = (headers[name] as string).split(",").length;
+    const row = forTable(rowsByTable, name);
+    const cells = forTable(headers, name).split(",").length;
     const words = (line: number, held: number): string =>
       `Could not read ${name}: the row on line ${line} has ${held === 1 ? "1 cell" : `${held} cells`} where the header has ${cells}. ${asItWas}`;
     expect(await refusal(name, table(name, row("2000-01-01"), `${row("2000-01-03")},9`))).toBe(words(3, cells + 1));
@@ -974,17 +1001,17 @@ describe("a malformed table stops the run before anything is written", () => {
   });
 
   test.each(tables)("%s with a first row that is not its header", async (name) => {
-    const row = rowsByTable[name] as (first: string) => string;
+    const row = forTable(rowsByTable, name);
     const words = `Could not read ${name}: its first row is not the header this command writes. ${asItWas}`;
     // With no header, the first row of the history was dropped as one.
     expect(await refusal(name, [row("2000-01-01"), row("2000-01-03"), ""].join(lineFeed))).toBe(words);
-    expect(await refusal(name, [(headers[name] as string).replace("views", "visits"), row("2000-01-01"), ""].join(lineFeed))).toBe(words);
+    expect(await refusal(name, [forTable(headers, name).replace("views", "visits"), row("2000-01-01"), ""].join(lineFeed))).toBe(words);
     expect(await refusal(name, [`${headers[name]},more`, `${row("2000-01-01")},1`, ""].join(lineFeed))).toBe(words);
     expect(await refusal(name, [headers[other(name)], ""].join(lineFeed))).toBe(words);
   });
 
   test.each(tables)("%s with a quote that is not around a whole cell", async (name) => {
-    const row = rowsByTable[name] as (first: string) => string;
+    const row = forTable(rowsByTable, name);
     // Each of these read as a row of the right length, with its quotes dropped.
     for (const first of [`2000-${quote}01${quote}-01`, `${quote}2000${quote}-01-01`, `2000-01-01${quote}${quote}`, `${quote}2000-01-01${quote} `]) {
       expect(await refusal(name, table(name, row("2000-01-01"), "", row(first))), first)
@@ -1009,8 +1036,8 @@ describe("a malformed table stops the run before anything is written", () => {
   });
 
   test.each(tables)("%s with a cell that is not what its column holds", async (name) => {
-    const columns = (headers[name] as string).split(",");
-    const good = (rowsByTable[name] as (first: string) => string)("2000-01-01").split(",");
+    const columns = forTable(headers, name).split(",");
+    const good = forTable(rowsByTable, name)("2000-01-01").split(",");
     const quoted = (cell: string): string => (/^[0-9a-z.-]*$/.test(cell) ? cell : `${quote}${cell}${quote}`);
     /** The table with one good row, then a row that has `cell` in one column. */
     const withCell = (column: number, cell: string): string =>
@@ -1142,8 +1169,8 @@ describe("a malformed table stops the run before anything is written", () => {
     });
 
     test.each(tables)("%s is refused for a first cell that is no day, and read for one that is", async (name) => {
-      const row = rowsByTable[name] as (first: string) => string;
-      const column = (headers[name] as string).split(",")[0];
+      const row = forTable(rowsByTable, name);
+      const column = forTable(headers, name).split(",")[0];
       for (const date of notReal) {
         expect(await refusal(name, table(name, row("2000-01-01"), row(date))), date)
           .toBe(`Could not read ${name}: the row on line 3 does not hold a date under ${column}. ${asItWas}`);
@@ -1197,7 +1224,7 @@ describe("a malformed table stops the run before anything is written", () => {
   // a line at a time. Its second run left two rows that are neither the row it wrote.
   // A table in that state is not mended. It is refused, and a person repairs it.
   test("a table that release 0.7.0 broke is refused, with the line of its first broken row", async () => {
-    const header = (headers["referrers.csv"] as string).split(",");
+    const header = forTable(headers, "referrers.csv").split(",");
     const once = merge070(null, header, [["2000-01-01", `first${lineFeed}second`, "7", "2"]], 2);
     expect(once).toBe(table("referrers.csv", `2000-01-01,${quote}first${lineFeed}second${quote},7,2`));
     const twice = merge070(once, header, [["2000-01-02", "plain.example", "1", "1"]], 2);
@@ -1214,7 +1241,7 @@ describe("a malformed table stops the run before anything is written", () => {
       "referrers.csv": (kept) => mergeReferrers(kept, "2000-01-09", base),
     };
     for (const name of tables) {
-      const merge = merges[name] as (kept: string) => string;
+      const merge = forTable(merges, name);
       let thrown: unknown = null;
       try {
         merge(table(name, `${quote}`));
@@ -1231,13 +1258,13 @@ describe("a malformed table stops the run before anything is written", () => {
   test("what is still read: a header alone, a blank file, quoted cells and Windows line endings", async () => {
     const good: Record<string, string[]> = {
       "daily.csv": [`${quote}date${quote},clones,clone_uniques,views,view_uniques `, `2000-01-01,${quote}1${quote},1,1,${quote}7${quote}`],
-      "windows.csv": [headers["windows.csv"] as string, "", ` ${rowsByTable["windows.csv"]?.("2000-01-01")}`],
-      "referrers.csv": [headers["referrers.csv"] as string, `2000-01-01,${quote}a ${quote}${quote}b${quote}${quote}, c${lineFeed}d${quote},1,1`],
+      "windows.csv": [forTable(headers, "windows.csv"), "", ` ${rowsByTable["windows.csv"]?.("2000-01-01")}`],
+      "referrers.csv": [forTable(headers, "referrers.csv"), `2000-01-01,${quote}a ${quote}${quote}b${quote}${quote}, c${lineFeed}d${quote},1,1`],
     };
     for (const ending of [lineFeed, String.fromCharCode(13) + lineFeed]) {
       const { deps, files, stdout, stderr } = harness();
       for (const name of tables) {
-        files.set(join("data", name), (good[name] as string[]).join(ending));
+        files.set(join("data", name), forTable(good, name).join(ending));
       }
       expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
       expect(stderr).toEqual([]);
@@ -1249,7 +1276,7 @@ describe("a malformed table stops the run before anything is written", () => {
     for (const blank of ["", lineFeed, `  ${lineFeed}${lineFeed}`]) {
       const { deps, files, stdout, stderr } = harness();
       for (const name of tables) {
-        files.set(join("data", name), name === "daily.csv" ? blank : (headers[name] as string));
+        files.set(join("data", name), name === "daily.csv" ? blank : forTable(headers, name));
       }
       expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
       expect(stderr).toEqual([]);
@@ -1260,7 +1287,7 @@ describe("a malformed table stops the run before anything is written", () => {
 
   /** The table after this one in the list, whose header this one must not carry. */
   function other(name: string): string {
-    return tables[(tables.indexOf(name) + 1) % tables.length] as string;
+    return itemAt(tables, (tables.indexOf(name) + 1) % tables.length);
   }
 });
 
@@ -1279,7 +1306,7 @@ function merge070(existing: string | null, header: string[], rows: string[][], k
     let held = "";
     let quoted = false;
     for (let index = 0; index < line.length; index += 1) {
-      const character = line[index] as string;
+      const character = itemAt(line, index);
       if (quoted && character === quote && line[index + 1] === quote) {
         held += quote;
         index += 1;
@@ -1314,4 +1341,16 @@ function sequence(seed: number): () => number {
     mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
     return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * What a record of tables holds for one table. Every record here names every
+ * table, so a missing one is a mistake in the test itself.
+ */
+function forTable<T>(record: Readonly<Record<string, T>>, name: string): T {
+  const value = record[name];
+  if (value === undefined) {
+    throw new Error("The test asked a record of tables for a table it does not name.");
+  }
+  return value;
 }

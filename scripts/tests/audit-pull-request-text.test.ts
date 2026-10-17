@@ -3,6 +3,7 @@ import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, syml
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
+import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
@@ -30,7 +31,7 @@ function run(path: string, contents: string[], replace: Partial<Dependencies> = 
     // Each read gives the next of the contents, so a second read would see a changed file.
     readText: (asked) => {
       result.read.push(asked);
-      return contents[result.read.length - 1] as string;
+      return itemAt(contents, result.read.length - 1);
     },
     audit: real.audit,
     appendText: (path, text) => {

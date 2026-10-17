@@ -23,6 +23,7 @@ import {
 import { checkVersionSites } from "../../../scripts/release-versions.ts";
 import { PINNED_DOCUMENT_TEXT } from "./fixtures/pinned-documents.ts";
 import { SHIPPED_DOCUMENTS } from "./reference/shipped-documents.ts";
+import { itemAt } from "../../iso-24495-4/scripts/lib/item-at.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
@@ -105,7 +106,7 @@ const AGENT_SPECIFIC_PATTERNS = [
 function documentRuleNames(legal: string): string[] {
   return [...legal.matchAll(/^(\d+)\. \*\*(.+?):\*\*/gm)]
     .filter((match) => Number(match[1]) >= 4)
-    .map((match) => (match[2] as string).toLowerCase().replace(/^the /, ""));
+    .map((match) => itemAt(match, 2).toLowerCase().replace(/^the /, ""));
 }
 
 function repositoryTextFiles(dir = REPOSITORY_ROOT): string[] {
@@ -1009,7 +1010,7 @@ describe("repository writing conventions", () => {
       const reach = Math.max(actual.length, expected.length);
       for (let line = 0; line < reach; line += 1) {
         expect(actual[line], `${file}:${line + 1} changed. ${REBUILD}`)
-          .toBe(expected[line] as string);
+          .toBe(itemAt(expected, line));
       }
     }
   });

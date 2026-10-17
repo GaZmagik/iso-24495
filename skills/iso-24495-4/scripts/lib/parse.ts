@@ -9,6 +9,7 @@
 // columns in. This is the algorithm those scanners were approximating.
 
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
+import { itemAt } from "./item-at.ts";
 
 /**
  * Read a document once, for the rules that work line by line.
@@ -1326,11 +1327,11 @@ const WHITESPACE = /\s/;
  */
 function lastToken(fragment: string): string {
   let end = fragment.length;
-  while (end > 0 && WHITESPACE.test(fragment[end - 1] as string)) {
+  while (end > 0 && WHITESPACE.test(itemAt(fragment, end - 1))) {
     end -= 1;
   }
   let start = end;
-  while (start > 0 && !WHITESPACE.test(fragment[start - 1] as string)) {
+  while (start > 0 && !WHITESPACE.test(itemAt(fragment, start - 1))) {
     start -= 1;
   }
   return fragment.slice(start, end);
@@ -1485,7 +1486,7 @@ export function codeSpanEnds(text: string): Map<number, number> {
   const ends = new Map<number, number>();
   let position = 0;
   while (position < runs.length) {
-    const run = runs[position] as { start: number; length: number; escaped: boolean };
+    const run = itemAt(runs, position);
     // An escaped backslash consumes the first backtick only, so a longer run still
     // opens a span, one backtick shorter and one offset later.
     const openLength = run.escaped ? run.length - 1 : run.length;
@@ -1496,7 +1497,7 @@ export function codeSpanEnds(text: string): Map<number, number> {
     }
     const candidates = byLength.get(openLength) ?? [];
     let cursor = cursors.get(openLength) ?? 0;
-    while (cursor < candidates.length && (candidates[cursor] as number) <= position) {
+    while (cursor < candidates.length && itemAt(candidates, cursor) <= position) {
       cursor += 1;
     }
     cursors.set(openLength, cursor);
@@ -1504,9 +1505,9 @@ export function codeSpanEnds(text: string): Map<number, number> {
       position += 1;
       continue;
     }
-    const closing = runs[candidates[cursor] as number] as { start: number; length: number };
+    const closing = itemAt(runs, itemAt(candidates, cursor));
     ends.set(openStart, closing.start + closing.length);
-    position = (candidates[cursor] as number) + 1;
+    position = itemAt(candidates, cursor) + 1;
   }
   spanCacheText = text;
   spanCacheEnds = ends;
@@ -1539,12 +1540,12 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
   let terminated = false;
   let index = 0;
   while (index < text.length) {
-    const character = text[index] as string;
-    if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1] as string)) {
+    const character = itemAt(text, index);
+    if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(itemAt(text, index + 1))) {
       // The escape renders as the bare character, so the reader sees a terminator or a
       // closing marker and the state must follow it. Clearing the state outright was
       // right only for an escaped backtick, and it lost every other boundary.
-      terminated = readTerminatorState(text[index + 1] as string, terminated);
+      terminated = readTerminatorState(itemAt(text, index + 1), terminated);
       index += 2;
       continue;
     }
@@ -1561,7 +1562,7 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
     }
     if (/\s/.test(character)) {
       let end = index;
-      while (end < text.length && /\s/.test(text[end] as string)) {
+      while (end < text.length && /\s/.test(itemAt(text, end))) {
         end++;
       }
       if (terminated) spans.push({ at: index, length: end - index });

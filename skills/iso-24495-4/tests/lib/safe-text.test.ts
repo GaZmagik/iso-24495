@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { drawsNothing, safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryWarning } from "../../scripts/lib/safe-text.ts";
+import { itemAt } from "../../scripts/lib/item-at.ts";
 
 const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
@@ -189,22 +190,22 @@ describe("a path in Markdown that is rendered", () => {
   function renderedCells(names: readonly string[]): string[] {
     const table = ["| File | Line |", "|------|------|", ...names.map((name) => `| ${safePathCell(name, false)} | 1 |`)];
     const html = Bun.markdown.html(table.join(LINE_FEED));
-    const rows = [...html.matchAll(/<tr>([^]*?)<[/]tr>/g)].map((row) => [...(row[1] as string).matchAll(/<td>([^]*?)<[/]td>/g)]);
+    const rows = [...html.matchAll(/<tr>([^]*?)<[/]tr>/g)].map((row) => [...itemAt(row, 1).matchAll(/<td>([^]*?)<[/]td>/g)]);
     // The first row is the header, whose cells are not data cells.
     const data = rows.slice(1);
     expect(data, "one row for each name").toHaveLength(names.length);
     for (const cells of data) {
       expect(cells, "the row keeps its two columns").toHaveLength(2);
-      expect((cells[1] as RegExpMatchArray)[1]).toBe("1");
+      expect(itemAt(cells, 1)[1]).toBe("1");
     }
-    return data.map((cells) => (cells[0] as RegExpMatchArray)[1] as string);
+    return data.map((cells) => itemAt(itemAt(cells, 0), 1));
   }
 
   /** The text of a rendered cell that holds one code span and nothing else. */
   function shown(cell: string): string {
     const code = /^<code>([^]*)<[/]code>$/.exec(cell);
     expect(code, cell).not.toBeNull();
-    const text = (code as RegExpExecArray)[1] as string;
+    const text = itemAt((code as RegExpExecArray), 1);
     expect(text.includes("<"), cell).toBe(false);
     return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", String.fromCharCode(34)).replaceAll("&amp;", "&");
   }
@@ -224,7 +225,7 @@ describe("a path in Markdown that is rendered", () => {
     names.forEach((name, index) => {
       const printed = safePath(name, false);
       // A name of spaces alone keeps the space added on each side of it.
-      expect(shown(cells[index] as string), JSON.stringify(name)).toBe(printed.trim() === "" ? ` ${printed} ` : printed);
+      expect(shown(itemAt(cells, index)), JSON.stringify(name)).toBe(printed.trim() === "" ? ` ${printed} ` : printed);
     });
   });
 
@@ -237,7 +238,7 @@ describe("a path in Markdown that is rendered", () => {
       let name = "";
       const length = 1 + Math.floor(random() * 8);
       for (let made = 0; made < length; made++) {
-        name += pieces[Math.floor(random() * pieces.length)] as string;
+        name += itemAt(pieces, Math.floor(random() * pieces.length));
       }
       names.add(name);
     }
@@ -246,7 +247,7 @@ describe("a path in Markdown that is rendered", () => {
     expect(new Set(cells).size).toBe(list.length);
     list.forEach((name, index) => {
       const printed = safePath(name, false);
-      expect(shown(cells[index] as string), JSON.stringify(name)).toBe(printed.trim() === "" ? ` ${printed} ` : printed);
+      expect(shown(itemAt(cells, index)), JSON.stringify(name)).toBe(printed.trim() === "" ? ` ${printed} ` : printed);
     });
     // The same names on Windows, where a backslash is a separator: two names may then
     // be one path, and the cells must be as many as the paths.
@@ -337,7 +338,7 @@ describe("a character that draws nothing is shown as its code", () => {
     const random = sequence(24495);
     const names = new Set<string>();
     while (names.size < 3_000) {
-      const point = unseen[Math.floor(random() * unseen.length)] as number;
+      const point = itemAt(unseen, Math.floor(random() * unseen.length));
       const at = Math.floor(random() * (base.length + 1));
       names.add(base.slice(0, at) + String.fromCodePoint(point) + base.slice(at));
     }

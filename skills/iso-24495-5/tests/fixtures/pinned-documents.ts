@@ -752,6 +752,8 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "",
     "Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. It also has `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and each further rule of the guide that a linter can state. These cover names, braces, switch statements, assertions, exceptions and the disallowed features.",
     "",
+    "ESLint also refuses a cast on a read by index, because the cast would undo `noUncheckedIndexedAccess`.",
+    "",
     "A lint that finds nothing proves little when a rule is switched off or weakened by mistake. So `eslint.config.mjs` states the enforced rules once, and a test reads that list.",
     "",
     "The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.",

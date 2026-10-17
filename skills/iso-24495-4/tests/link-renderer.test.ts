@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { acronymReading, auditText, linkSyntaxIn } from "../scripts/audit-corpus.ts";
 import { proseBlocks } from "../scripts/lib/parse.ts";
 import { GITHUB_LINK_FORMS } from "./fixtures/github-link-forms.ts";
+import { itemAt } from "../scripts/lib/item-at.ts";
 
 // Whether brackets form a link, held against what a renderer shows.
 //
@@ -168,7 +169,7 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       let tagged = false;
       written.forEach((line, index) => {
         const cut = line.length - line.trimStart().length;
-        const places = placesOf(parsed[index] as string, line.slice(cut));
+        const places = placesOf(itemAt(parsed, index), line.slice(cut));
         if (places === null) {
           setAside ||= "notFollowedBack";
           return;
@@ -177,7 +178,7 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
         places.forEach(([from, to], at) => {
           const inSyntax = mask.subarray(start + cut + from, start + cut + to).reduce((sum, entry) => sum + entry, 0);
           if (inSyntax === 0) {
-            text += (parsed[index] as string)[at];
+            text += itemAt(parsed, index)[at];
           } else if (inSyntax < to - from) {
             setAside ||= "aLinkTookPartOfATag";
           }
@@ -238,8 +239,8 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const mark = pick(random, marks);
       const from = Math.floor(random() * words.length);
       const to = from + Math.floor(random() * (words.length - from));
-      words[from] = pick(random, [mark + words[from], (words[from] as string).slice(0, 3) + mark + (words[from] as string).slice(3)]);
-      words[to] = pick(random, [words[to] + mark, words[to] + mark, (words[to] as string).slice(0, -1) + mark + (words[to] as string).slice(-1)]);
+      words[from] = pick(random, [mark + words[from], itemAt(words, from).slice(0, 3) + mark + itemAt(words, from).slice(3)]);
+      words[to] = pick(random, [words[to] + mark, words[to] + mark, itemAt(words, to).slice(0, -1) + mark + itemAt(words, to).slice(-1)]);
       const line = words.join(pick(random, [" ", " ", BREAK]));
       expect(/[[<]|:\/\/|www\./.test(line)).toBe(false);
       // A mark that opens a line can open emphasis. With a character straight before it
@@ -322,7 +323,7 @@ function pieces(random: () => number, from: readonly string[], most: number): st
 }
 
 function pick(random: () => number, choices: readonly string[]): string {
-  return choices[Math.floor(random() * choices.length)] as string;
+  return itemAt(choices, Math.floor(random() * choices.length));
 }
 
 /** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */
