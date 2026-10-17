@@ -42,7 +42,9 @@ describe("layout rules", () => {
       const parser = spyOn(Bun.YAML, "parse").mockImplementation(() => depth === "root" ? fields : { metadata: fields });
       try {
         expect(layoutViolations("---\ndate: 2026-10-04\n---\n# Guide\n\nInstructions.")).toEqual([]);
-      } finally { parser.mockRestore(); }
+      } finally {
+        parser.mockRestore();
+      }
     });
     for (const form of ["next-line", "comment", "flow", "tab"]) {
       test(`A7 retains ${form} declarations at ${depth}`, () => {
@@ -75,7 +77,9 @@ describe("layout rules", () => {
         const findings = layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`);
         expect(parser.mock.calls.length).toBe(1);
         expect(findings).toEqual([]);
-      } finally { parser.mockRestore(); }
+      } finally {
+        parser.mockRestore();
+      }
     }
   });
   test("A7 leaves visible-opening format recognition strict", () => {
@@ -120,7 +124,9 @@ describe("layout rules", () => {
         const findings = route === "corpus" ? auditCorpus(directory) : route === "text" ? auditTarget(directory, directory) : selectDocuments(directory, directory, "text").mechanical;
         expect(findings.totals["opening-version-date"]).toBe(1);
         expect(Object.entries(findings.files).filter(([, file]) => file.violations.some(finding => finding.rule === "opening-version-date")).map(([name]) => name)).toEqual(["policy.md"]);
-      } finally { rmSync(directory, { recursive: true, force: true }); }
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     });
   }
   test("review 1: contents entries follow Markdown blocks rather than blank lines", () => {
@@ -138,6 +144,12 @@ describe("layout rules", () => {
     expect(headingIds(["foo_bar_baz"])).toEqual(["foo_bar_baz"]);
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n## Over_view_\n\n" + sections(4))).toEqual(["overview-label"]);
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[Incorrect](#foo_bar_baz)\n\n### Overview\n\n## foo_bar_baz\n\n" + sections(4))).toEqual(["contents-list"]);
+  });
+  test("a contents link whose fragment cannot be decoded is passed over", () => {
+    const passedOver = ["Add contents or navigation for six or more root H2 sections."];
+    for (const fragment of ["#%", "#%E0%A4%A"]) {
+      expect(layoutViolations(`# Title\n\nVersion 1.0\n\n## Contents\n\n[Incorrect](${fragment})\n\n### Overview\n\n## foo_bar_baz\n\n` + sections(4)).map(finding => finding.detail), fragment).toEqual(passedOver);
+    }
   });
   test("review 3: metadata requires a parsed table and correct cell boundaries", () => {
     expect(rules("# Title\n\nVersion | 2.1\n")).toEqual(["opening-version-date"]);

@@ -6,7 +6,13 @@ test("the prompt reads the controlling terminal and preserves exact agreement", 
   const input = new PassThrough();
   const output = new PassThrough();
   const paths: string[] = [];
-  const terminal = controllingTerminal(true, true, path => { paths.push(path); return input; }, path => { paths.push(path); return output; });
+  const terminal = controllingTerminal(true, true, path => {
+    paths.push(path);
+    return input;
+  }, path => {
+    paths.push(path);
+    return output;
+  });
   const answer = terminal.prompt();
   input.write("yes\n");
   expect(await answer).toBe("yes");

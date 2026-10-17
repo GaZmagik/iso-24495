@@ -39,7 +39,10 @@ export function controllingTerminal(
         terminal.once("close", () => reject(new Error("The controlling terminal closed without agreement.")));
         terminal.question("Type yes to send this disclosed snapshot: ").then(resolve, reject);
       });
+    } finally {
+      terminal.close();
+      input.destroy();
+      output.destroy();
     }
-    finally { terminal.close(); input.destroy(); output.destroy(); }
   } };
 }

@@ -290,7 +290,9 @@ export function tableCells(row: string): string[] {
   return cells;
 }
 
-function cellCount(row: string): number { return tableCells(row).length; }
+function cellCount(row: string): number {
+  return tableCells(row).length;
+}
 
 /** True when every divider cell is hyphens, with optional colons. */
 function isDividerRow(row: string): boolean {
@@ -719,8 +721,14 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         if (stack.length === 0) rootLines.add(row);
         if (!stack.some(container => container.kind === "quote")) navigationLines.add(row);
       }
-      if (stack.length === 0) { rootLines.add(i); rootLines.add(i + 1); }
-      if (!stack.some(container => container.kind === "quote")) { navigationLines.add(i); navigationLines.add(i + 1); }
+      if (stack.length === 0) {
+        rootLines.add(i);
+        rootLines.add(i + 1);
+      }
+      if (!stack.some(container => container.kind === "quote")) {
+        navigationLines.add(i);
+        navigationLines.add(i + 1);
+      }
       tableUntil = row - 1;
       continue;
     }

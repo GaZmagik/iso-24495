@@ -96,13 +96,18 @@ export function headingIds(wordings: readonly string[]): string[] {
     const base = normaliseWording(wording).toLowerCase().replace(/[^\p{L}\p{N}\p{M} _-]/gu, "").replace(/ /g, "-");
     let id = base;
     let suffix = 0;
-    while (used.has(id)) { suffix++; id = `${base}-${suffix}`; }
+    while (used.has(id)) {
+      suffix++;
+      id = `${base}-${suffix}`;
+    }
     used.add(id);
     return id;
   });
 }
 
-function label(text: string): string { return normaliseWording(text).replace(/^\d+(?:\.\d+)*\.?\s+/, ""); }
+function label(text: string): string {
+  return normaliseWording(text).replace(/^\d+(?:\.\d+)*\.?\s+/, "");
+}
 function recognisedFrontMatter(text: string): boolean {
   const lines = toLines(text);
   // This rule validates YAML itself. Keep the calibrated extraction guard
@@ -114,7 +119,9 @@ function recognisedFrontMatter(text: string): boolean {
   let metadata: unknown;
   try {
     metadata = Bun.YAML.parse(source);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
   return declaredEditionFields(metadata) || declaredEditionFields((metadata as Record<string, unknown>).metadata);
 }
@@ -194,7 +201,11 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
       const destination = link.kind === "inline" ? link.target.trim().replace(/^<|>$/g, "") : parsed.destinations.get(normaliseReference(link.target || link.label));
       if (destination === undefined || !destination.startsWith("#")) continue;
       let fragment: string;
-      try { fragment = decodeURIComponent(destination.slice(1)); } catch { continue; }
+      try {
+        fragment = decodeURIComponent(destination.slice(1));
+      } catch {
+        continue;
+      }
       const heading = targets.get(fragment);
       if (labelled.has(index)) {
         labelledEntries = true;

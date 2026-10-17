@@ -127,10 +127,25 @@ export interface JevReport { complete: boolean; limitation: string; evidence: Ga
  */
 export async function runAuditCli(mode: "text" | "design", argv: string[], stdout: (text: string) => void, stderr: (text: string) => void, dependencies: AuditDependencies = {}): Promise<number> {
   let args: Arguments;
-  try { args = readArguments(mode, argv); } catch { stderr("Invalid audit arguments. Use --jev-preview or --jev --send for text; use --send for design. Non-interactive sending also requires --yes. Full judged text requires --include-judged-text and --json <file>."); return 2; }
-  try { (dependencies.client?.validate ?? validateCalibration)(); } catch { stderr("Calibration integrity failed. Nothing was sent."); return 3; }
+  try {
+    args = readArguments(mode, argv);
+  } catch {
+    stderr("Invalid audit arguments. Use --jev-preview or --jev --send for text; use --send for design. Non-interactive sending also requires --yes. Full judged text requires --include-judged-text and --json <file>.");
+    return 2;
+  }
+  try {
+    (dependencies.client?.validate ?? validateCalibration)();
+  } catch {
+    stderr("Calibration integrity failed. Nothing was sent.");
+    return 3;
+  }
   let selection: Selection;
-  try { selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter); } catch { stderr("The selected path could not be read or is not a supported document."); return 1; }
+  try {
+    selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter);
+  } catch {
+    stderr("The selected path could not be read or is not a supported document.");
+    return 1;
+  }
   for (const path of selection.skipped) {
     stderr(skippedEntryWarning(path));
   }
@@ -140,41 +155,76 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   if (mode === "text") stdout(formatMechanical(selection.mechanical));
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
-    try { if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true }, null, 2)); } catch { stderr("The preview report could not be written."); return 1; }
+    try {
+      if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true }, null, 2));
+    } catch {
+      stderr("The preview report could not be written.");
+      return 1;
+    }
     return 0;
   }
   const terminal = dependencies.terminal ?? controllingTerminal();
   if (!terminal.inputIsTTY || !terminal.outputIsTTY) {
-    if (!args.yes) { stderr("No terminal agreement is available. A user-supplied --yes is required with --send."); return 2; }
+    if (!args.yes) {
+      stderr("No terminal agreement is available. A user-supplied --yes is required with --send.");
+      return 2;
+    }
   } else {
     let agreement: string;
-    try { agreement = await terminal.prompt(); } catch { stderr("The controlling terminal could not read agreement. Nothing was sent."); return 2; }
-    if (agreement !== "yes") { stderr("Agreement was not yes. Nothing was sent."); return 2; }
+    try {
+      agreement = await terminal.prompt();
+    } catch {
+      stderr("The controlling terminal could not read agreement. Nothing was sent.");
+      return 2;
+    }
+    if (agreement !== "yes") {
+      stderr("Agreement was not yes. Nothing was sent.");
+      return 2;
+    }
   }
   const digest = scopeDigest(selection, args);
   try {
     const rebuilt = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter);
-    if (scopeDigest(rebuilt, args) !== digest) { stderr("The selected content or scope changed. Preview it and agree again. Nothing was sent."); return 2; }
-  } catch { stderr("The selected content could not be rechecked. Nothing was sent."); return 1; }
+    if (scopeDigest(rebuilt, args) !== digest) {
+      stderr("The selected content or scope changed. Preview it and agree again. Nothing was sent.");
+      return 2;
+    }
+  } catch {
+    stderr("The selected content could not be rechecked. Nothing was sent.");
+    return 1;
+  }
   let ask: ReturnType<typeof createAsk>;
-  try { ask = createAsk((dependencies.env ?? process.env).TYPESAFE_API_KEY ?? "", dependencies.client); }
-  catch (error) { stderr(error instanceof JevError ? error.message : "Jev could not initialise."); return error instanceof JevError ? error.exitCode : 3; }
+  try {
+    ask = createAsk((dependencies.env ?? process.env).TYPESAFE_API_KEY ?? "", dependencies.client);
+  } catch (error) {
+    stderr(error instanceof JevError ? error.message : "Jev could not initialise.");
+    return error instanceof JevError ? error.exitCode : 3;
+  }
   const report = emptyReport(selection, true);
   const items = selection.documents.flatMap(document => document.plan.candidates.map(candidate => ({ document, candidate })));
   const sent = new Set<number>();
   const queue: Queue = { items, sent, next: 0, failed: false };
   await Promise.all(Array.from({ length: 4 }, () => worker(queue, ask, args.includeText, report)));
   report.results.sort((first, second) => selection.documents.findIndex(document => document.file === first.file) - selection.documents.findIndex(document => document.file === second.file) || first.line - second.line || first.id.localeCompare(second.id));
-  if (queue.failed) { report.complete = false; report.results = []; }
+  if (queue.failed) {
+    report.complete = false;
+    report.results = [];
+  }
   fillCoverage(report);
   report.results = report.results.filter(result => result.band !== "pass");
   try {
     const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: !queue.failed };
     (dependencies.writeLog ?? writeAuditLog)(record, join(args.projectDir, ".iso-24495-4", "jev-audit.jsonl"));
     if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report }, null, 2));
-  } catch { stderr("The audit log or report could not be written. Execution is incomplete."); return 1; }
+  } catch {
+    stderr("The audit log or report could not be written. Execution is incomplete.");
+    return 1;
+  }
   stdout(formatFindings(report));
-  if (queue.failed) { stderr("Jev execution is incomplete. Jev verdicts were discarded; mechanical findings remain available."); return 3; }
+  if (queue.failed) {
+    stderr("Jev execution is incomplete. Jev verdicts were discarded; mechanical findings remain available.");
+    return 3;
+  }
   return 0;
 }
 
@@ -193,7 +243,9 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
       const decision = classify(candidate.kind, await ask(candidate.body));
       const result = judgement(document.file, candidate, decision, includeText);
       report.results.push(result);
-    } catch { queue.failed = true; }
+    } catch {
+      queue.failed = true;
+    }
   }
 }
 
@@ -232,13 +284,22 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
   const skipped: string[] = [];
   const selection: Selection = { documents: [], mechanical: { configHash: configHash(), files: {}, totals: {} }, skipped, paths: [] };
   const stat = lstatSync(selected);
-  if (stat.isSymbolicLink()) { skipped.push(selected); return selection; }
+  if (stat.isSymbolicLink()) {
+    skipped.push(selected);
+    return selection;
+  }
   const paths = stat.isDirectory() ? listTextFiles(selected, path => skipped.push(path)).filter(path => mode === "text" || /\.(?:md|markdown)$/i.test(path)) : [selected];
   if (!stat.isDirectory() && (!isAuditedDocument(selected) || (mode === "design" && !/\.(?:md|markdown)$/i.test(selected)))) throw new Error("Unsupported document.");
   const knownAcronyms = projectAcronyms(project);
   for (const path of paths) {
     let text: string;
-    try { text = read(path, "utf8"); } catch { if (!stat.isDirectory()) throw new Error("Unreadable document."); skipped.push(path); continue; }
+    try {
+      text = read(path, "utf8");
+    } catch {
+      if (!stat.isDirectory()) throw new Error("Unreadable document.");
+      skipped.push(path);
+      continue;
+    }
     const file = relative(project, path).replaceAll("\\", "/");
     selection.paths.push(path);
     const markdown = /\.(?:md|markdown)$/i.test(path);
@@ -362,9 +423,16 @@ function formatEvidence(gates: readonly GateEvidence[]): string[] {
   return ["| Gate | Cut-off | Prerequisite | Clusters | Wrong | Lower bound |", "|------|---------|--------------|----------|-------|-------------|",
     ...gates.map(gate => `| ${gate.id} | ${gate.cutOff} | ${gate.dependencies.join(", ") || "none"} | ${gate.clusters} | ${gate.wrong} | ${gate.bound} |`)];
 }
-function payloadBytes(plan: DocumentPlan): number { return plan.candidates.reduce((sum, candidate) => sum + Buffer.byteLength(JSON.stringify(candidate.body)), 0); }
-function scopeDigest(selection: Selection, args: Arguments): string { return sha256(JSON.stringify({ paths: selection.paths, bodies: selection.documents.flatMap(document => document.plan.candidates.map(candidate => candidate.body)), report: args.json === undefined ? null : resolve(args.json), includeText: args.includeText })); }
-function writeAuditLog(record: AuditLog, path: string): void { mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(record) + "\n"); }
+function payloadBytes(plan: DocumentPlan): number {
+  return plan.candidates.reduce((sum, candidate) => sum + Buffer.byteLength(JSON.stringify(candidate.body)), 0);
+}
+function scopeDigest(selection: Selection, args: Arguments): string {
+  return sha256(JSON.stringify({ paths: selection.paths, bodies: selection.documents.flatMap(document => document.plan.candidates.map(candidate => candidate.body)), report: args.json === undefined ? null : resolve(args.json), includeText: args.includeText }));
+}
+function writeAuditLog(record: AuditLog, path: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  appendFileSync(path, JSON.stringify(record) + "\n");
+}
 
 function emptyReport(selection: Selection, complete: boolean): JevReport {
   return { complete, limitation: LIMITATION, evidence: calibrationEvidence(), results: [],

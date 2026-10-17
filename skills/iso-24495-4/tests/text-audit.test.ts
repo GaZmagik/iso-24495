@@ -436,7 +436,11 @@ describe("options and arguments that are not plain", () => {
   // A spread copies only an object's own enumerable properties, so reading the
   // option that way lost one that was inherited or not enumerable.
   test("frontMatter set to false is read however the object carries it", () => {
-    class ReadingOptions { get frontMatter(): boolean { return false; } }
+    class ReadingOptions {
+      get frontMatter(): boolean {
+        return false;
+      }
+    }
     const hidden = Object.defineProperty({}, "frontMatter", { value: false, enumerable: false });
     const project = makeProject();
     try {
