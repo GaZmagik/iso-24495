@@ -580,7 +580,7 @@ function acronymFromToken(raw: string): { display: string; key: string } | null 
   return { display: token, key };
 }
 
-function isLetter(character: string | undefined): boolean {
+function isLetter(character?: string): boolean {
   return character !== undefined && /[A-Za-z]/.test(character);
 }
 
@@ -655,7 +655,7 @@ function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): bo
 }
 
 /** The letters of a token, or nothing where there is no token. */
-function bareLetters(raw: string | undefined): string {
+function bareLetters(raw?: string): string {
   return (raw ?? "").replace(/[^A-Za-z]/g, "");
 }
 

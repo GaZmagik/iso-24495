@@ -116,7 +116,7 @@ export function runCli(
  *     supplies the acronyms the audit already knows.
  * @param summaryPath The value of `GITHUB_STEP_SUMMARY`, or nothing.
  */
-export function realDependencies(projectDir: string, summaryPath: string | undefined): Dependencies {
+export function realDependencies(projectDir: string, summaryPath?: string): Dependencies {
   return {
     inspect: (path) => lstatSync(path),
     readText: (path) => readRegularFile(path),
