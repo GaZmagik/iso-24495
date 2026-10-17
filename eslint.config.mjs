@@ -234,6 +234,9 @@ export const ENFORCED_RULES = {
   "no-implicit-coercion": ["error", { boolean: false, number: true, string: false, disallowTemplateShorthand: false }],
   // Control structures.
   "curly": ["error", "multi-line"],
+  // The first statement of a block begins on its own line, and the closing
+  // brace sits on the line of a following "else", "catch" or "finally".
+  "brace-style": ["error", "1tbs", { allowSingleLine: false }],
   "no-cond-assign": "error",
   "default-case": "error",
   "default-case-last": "error",
