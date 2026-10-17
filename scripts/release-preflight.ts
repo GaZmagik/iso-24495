@@ -43,7 +43,9 @@ export function runPreflight(
   }
   const report = checkVersionSites(root);
   const problems = [...report.problems, ...preflightProblems(report.version, released)];
-  for (const problem of problems) stderr(`release preflight: ${problem}`);
+  for (const problem of problems) {
+    stderr(`release preflight: ${problem}`);
+  }
   if (problems.length > 0) return 1;
   stdout(
     `release preflight: every site declares ${report.version}, which is later than every release, `

@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
-import { ENFORCED_RULES, type RuleSetting } from "../../eslint.config.mjs";
+import { ENFORCED_RULES, GUIDE_SYNTAX, type RuleSetting } from "../../eslint.config.mjs";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js");
@@ -112,12 +112,25 @@ describe("the lint rules the gate relies on", () => {
     expect(reportsFor(PROBE.map(([, line]) => line).join("\n"))).toEqual(expected.sort());
 
     // The probe holds a breach of every enforced rule and of no other, so a
-    // rule cannot join or leave the set without its breach.
+    // rule cannot join or leave the set without its breach. Each syntax
+    // selector is a rule of its own here, named by its message, so a selector
+    // cannot join the set without its breach either.
     const probed = new Set(PROBE.flatMap(([rules]) => rules));
     probed.delete(INERT_COMMENT);
-    expect([...probed].sort()).toEqual(Object.keys(ENFORCED_RULES).sort());
+    const selectors = GUIDE_SYNTAX.map(({ message }) => restricted(message));
+    expect(new Set(selectors).size, "two selectors share a message").toBe(selectors.length);
+    const rules = Object.keys(ENFORCED_RULES).filter((rule) => rule !== "no-restricted-syntax");
+    expect([...probed].sort()).toEqual([...rules, ...selectors].sort());
   });
 });
+
+/**
+ * How a report from one syntax selector reads, given its message. All the
+ * selectors share one rule, so the message tells them apart.
+ */
+function restricted(message: string): string {
+  return `no-restricted-syntax (${message})`;
+}
 
 /** The severity the linter gives a report that makes it exit with a failure. */
 const ERROR = 2;
@@ -130,11 +143,13 @@ const INERT_COMMENT = "(no rule) (severity 1, not an error)";
 const TRAILING_SPACE = " ";
 const NO_BREAK_SPACE = String.fromCharCode(160);
 const BACKSLASH = String.fromCharCode(92);
+const TAB = String.fromCharCode(9);
 
 /**
  * The probe, one line of TypeScript per entry, beside the rules that must
- * report on that line. A line with no rules is one the linter must accept.
- * The last line has no line ending, which is its breach.
+ * report on that line. A line with no rules is one the linter must accept. A
+ * breach that needs a line break is two entries, and the rule is beside the
+ * line it reports on. The last line has no line ending, which is its breach.
  */
 const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = [
   // A reference directive counts only above the first statement, so the three
@@ -153,12 +168,12 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   // The guide allows a loose comparison with null, which also matches undefined.
   [[], "export const absent = legacy == null;"],
   [["@typescript-eslint/no-explicit-any"], "export const anything: any = 1;"],
-  [["@typescript-eslint/no-explicit-any"], "export const listed: Array<any> = [];"],
+  [["@typescript-eslint/no-explicit-any", "@typescript-eslint/array-type"], "export const listed: Array<any> = [];"],
   [["@typescript-eslint/no-namespace"], "export namespace Old { export const inside = 1; }"],
-  [["no-restricted-syntax"], "export default legacy;"],
-  [["no-restricted-syntax"], "export class Holder { #secret = 1; reveal(): number { return this.#secret; } }"],
+  [[restricted("guide: no default exports")], "export default legacy;"],
+  [[restricted("guide: no #private fields"), "@typescript-eslint/prefer-readonly"], "export class Holder { #secret = 1; reveal(): number { return this.#secret; } }"],
   [["no-var", "block-scoped-var"], "export function scoped(flag: boolean): number { if (flag) { var inner = 1; } return inner; }"],
-  [["prefer-arrow-callback"], "export const mapped = [1].map(function (value) { return value; });"],
+  [["prefer-arrow-callback", restricted("guide: no function expressions")], "export const mapped = [1].map(function (value) { return value; });"],
   [["no-restricted-properties"], "describe.only(\"a group\", () => {});"],
   [["no-restricted-properties"], "it.only(\"a case\", () => {});"],
   [["no-restricted-properties"], "test.only(\"a case\", () => {});"],
@@ -175,7 +190,111 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [["@typescript-eslint/no-unused-vars"], "const unused = 1;"],
   [["preserve-caught-error"], "try { scoped(true); } catch (error) { if (error) throw new Error(\"fixed words\"); }"],
   [["no-irregular-whitespace"], `export const spaced =${NO_BREAK_SPACE}1;`],
+  // The guide allows no white space but the plain space, even in a string.
+  [["no-irregular-whitespace"], `export const spacedWords = "a${NO_BREAK_SPACE}b";`],
+  [["no-tabs"], `export const tabbed =${TAB}1;`],
   [["no-regex-spaces"], "export const gaps = /a  b/;"],
+
+  // Names.
+  [["@typescript-eslint/naming-convention"], "export function underscored(_first: number, second: number): number { return second; }"],
+  [["@typescript-eslint/naming-convention"], "export function trailed(second_: number): number { return second_; }"],
+  [["@typescript-eslint/naming-convention"], "export function shouted(): number { const LOUD = 1; return LOUD; }"],
+  [[], "export const QUIET_LIMIT = 1;"],
+  [["@typescript-eslint/naming-convention"], "export function readHTML(): number { return 1; }"],
+  // The platform's own name for a terminal keeps its capitals.
+  [[], "export function terminal(inputIsTTY: boolean): boolean { return inputIsTTY; }"],
+  [["@typescript-eslint/naming-convention"], "export interface lowerShape { size: number }"],
+  [["@typescript-eslint/naming-convention"], "export interface IShape { size: number }"],
+  [["@typescript-eslint/naming-convention"], "export enum Sizes { small = 1 }"],
+  [["id-match"], "export const caf" + String.fromCharCode(233) + " = 1;"],
+
+  // Statements and blocks.
+  [[], "if (reader)"],
+  [["curly"], "  scoped(true);"],
+  [[], "if (reader) scoped(true);"],
+  [[restricted("guide: a loop body is a braced block")], "for (const value of [1]) scoped(value > 0);"],
+  [[restricted("guide: an else body is a braced block")], "if (reader) { scoped(true); } else scoped(false);"],
+  [["default-case"], "switch (reader) { case 1: break; }"],
+  [["default-case-last"], "switch (reader) { default: break; case 1: break; }"],
+  [["guard-for-in"], "for (const key in { a: 1 }) { scoped(key === \"a\"); }"],
+  [[], "let changing = reader;"],
+  [[], "scoped(changing === 1);"],
+  [["no-cond-assign"], "if (changing = Number(reader)) { scoped(true); }"],
+  [["no-fallthrough"], "switch (changing) { case 1: scoped(true); case 2: break; default: break; }"],
+  [["no-empty"], "try { scoped(true); } catch { }"],
+  [["no-extra-boolean-cast"], "if (!!changing) { scoped(true); }"],
+  [["no-debugger"], "debugger;"],
+  [["semi"], "export const unended = 1"],
+  [["no-extra-semi"], "export class Ended { size = 1; };"],
+  [["multiline-comment-style"], "/*"],
+  [[], " * A block of implementation notes. */"],
+
+  // Values and calls.
+  [["no-new-wrappers"], "export const wrapped = new String(\"a\");"],
+  [["no-object-constructor"], "export const emptyObject = new Object();"],
+  [["@typescript-eslint/no-array-constructor"], "export const pairList = new Array(1, 2);"],
+  [["no-multi-str"], `export const continued = "a${BACKSLASH}`],
+  [[], "b\";"],
+  [["no-eval"], "eval(\"1\");"],
+  [["no-new-func", "@typescript-eslint/no-implied-eval"], "export const made = new Function(\"return 1\");"],
+  [["@typescript-eslint/no-implied-eval"], "setTimeout(\"scoped(true)\", 1);"],
+  [["no-extend-native"], "Object.prototype.extra = 1;"],
+  [["no-implicit-coercion"], "export const counted = +\"1\";"],
+  [["new-parens"], "export const today = new Date;"],
+  [["prefer-rest-params"], "export function counter(): number { return Array.from(arguments).length; }"],
+  [[], "export const flags: [boolean] = [true];"],
+  [["prefer-spread"], "scoped.apply(null, flags);"],
+  [["@typescript-eslint/no-require-imports"], "export const required = require(\"node:fs\");"],
+  [["@typescript-eslint/only-throw-error"], "export function thrower(): never { throw \"words\"; }"],
+  [["@typescript-eslint/prefer-promise-reject-errors"], "export const rejected = Promise.reject(\"words\");"],
+  [[restricted("guide: create an error with new")], "export const bare = Error(\"words\");"],
+  [[restricted("guide: parse a number with Number()")], "export const parsed = parseInt(\"12\", 10);"],
+  [[restricted("guide: parse a number with Number()")], "export const floated = Number.parseFloat(\"1.5\");"],
+  // The guide allows another base, once the digits are checked.
+  [[], "export const hexadecimal = parseInt(\"ff\", 16);"],
+  [[restricted("guide: a number literal has a lowercase prefix")], "export const shoutedHex = 0XFF;"],
+  [[restricted("guide: a special escape is written as its letter")], `export const lineFeed = "a${BACKSLASH}x0a";`],
+  [[restricted("guide: a special escape is written as its letter")], `export const lineFeedText = ${"`"}a${BACKSLASH}u000a${"`"};`],
+  // An escaped backslash before the letters is no escape of a line feed.
+  [[], `export const literalLetters = "a${BACKSLASH}${BACKSLASH}x0a";`],
+  [[restricted("guide: no accessors through Object.defineProperty")], "Object.defineProperty({}, \"size\", { get: () => 1 });"],
+
+  // Functions.
+  [[restricted("guide: a named top-level function is a declaration")], "export const doubled = (value: number): number => value * 2;"],
+  // An arrow may name a function where its type needs stating.
+  [[], "export const typed: (value: number) => number = (value) => value * 2;"],
+  [[restricted("guide: no function expressions")], "export const holder = { make: function () { return 1; } };"],
+  [["@typescript-eslint/no-invalid-this"], "export function unbound(): unknown { return this; }"],
+  [["@typescript-eslint/no-inferrable-types"], "export function from(start: number = 0): number { return start; }"],
+  [[restricted("guide: a destructured parameter is one level deep")], "export function nested({ inner: { size } }: { inner: { size: number } }): number { return size; }"],
+  [[restricted("guide: an optional destructured parameter defaults to an empty literal")], "export function defaulted({ size }: { size?: number } = { size: 1 }): number { return size ?? 0; }"],
+  [[], "export function optional({ size = 1 }: { size?: number } = {}): number { return size; }"],
+  [["@typescript-eslint/no-use-before-define"], "export const early = later; export const later = 1;"],
+
+  // Classes.
+  [["@typescript-eslint/explicit-member-accessibility"], "export class Shown { public size = 1; }"],
+  [["@typescript-eslint/prefer-readonly"], "export class Kept { private size = 1; read(): number { return this.size; } }"],
+  [["@typescript-eslint/no-extraneous-class"], "export class Statics { static make(): number { return 1; } }"],
+  [["@typescript-eslint/no-useless-constructor"], "export class Built { size = 1; constructor() {} }"],
+  [["@typescript-eslint/no-this-alias"], "export class Aliased { size = 1; read(): number { const self = this; return self.size; } }"],
+  [[restricted("guide: no this in a static context")], "export class Counter { size = 1; static total = 1; static read(): number { return this.total; } }"],
+  [[restricted("guide: a class member is named, or keyed by a symbol")], "export class Keyed { [\"size\"] = 1; }"],
+  [[restricted("guide: no mutable exports"), "prefer-const"], "export let changeable = 1;"],
+  [[restricted("guide: no const enum")], "export const enum Weights { LIGHT = 1 }"],
+
+  // Types and assertions.
+  [["@typescript-eslint/consistent-type-assertions"], "export const angled = <number>reader;"],
+  [["@typescript-eslint/consistent-type-assertions"], "export const shaped = { size: 1 } as { size: number };"],
+  [[restricted("guide: a double assertion goes through unknown")], "export const twice = reader as number as unknown;"],
+  [[], "export const throughUnknown = reader as unknown as string;"],
+  [["@typescript-eslint/consistent-type-definitions"], "export type Literal = { size: number };"],
+  [[restricted("guide: a type alias holds no null or undefined")], "export type Maybe = number | undefined;"],
+  [["@typescript-eslint/array-type"], "export const counts: Array<number> = [];"],
+  [["@typescript-eslint/consistent-generic-constructors"], "export const names: Set<string> = new Set();"],
+  [["@typescript-eslint/no-wrapper-object-types"], "export const boxed: String = \"a\";"],
+  [["@typescript-eslint/no-empty-object-type"], "export const anyValue: {} = 1;"],
+  [[], "export const items = [1];"],
+  [["@typescript-eslint/prefer-for-of"], "for (let index = 0; index < items.length; index++) { scoped(items[index] === 1); }"],
   [["eol-last"], "export const last = 1;"],
 ];
 
@@ -240,6 +359,7 @@ function scriptFiles(directory = ""): string[] {
 
 interface LintMessage {
   ruleId: string | null;
+  message: string;
   line: number;
   /** 2 for an error, and 1 for a warning. */
   severity: number;
@@ -254,7 +374,8 @@ interface LintMessage {
  * disk.
  *
  * @returns One "line: rule" entry for each line and rule reported, sorted. A
- *     report that names no rule reads "(no rule)". A report that is not an
+ *     report that names no rule reads "(no rule)". A report from a syntax
+ *     selector names its message too. A report that is not an
  *     error has its severity after the rule, so it equals no entry that
  *     expects an error.
  * @throws An `Error` when the linter prints anything but its JSON report, or
@@ -278,7 +399,8 @@ function reportsFor(text: string): string[] {
   }
   const reports = messages.map((message) => {
     const weakened = message.severity === ERROR ? "" : ` (severity ${message.severity}, not an error)`;
-    return `${message.line}: ${message.ruleId ?? "(no rule)"}${weakened}`;
+    const rule = message.ruleId === "no-restricted-syntax" ? restricted(message.message) : message.ruleId ?? "(no rule)";
+    return `${message.line}: ${rule}${weakened}`;
   });
   return [...new Set(reports)].sort();
 }

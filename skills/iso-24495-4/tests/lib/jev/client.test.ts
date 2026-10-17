@@ -6,9 +6,13 @@ import { parseDecimal } from "../../../scripts/lib/jev/decimal.ts";
 const OPENING = buildRequest("opening", { opening: "# Title" });
 const BLOCK = buildRequest("block", { paragraph: "Words." });
 const VALID = { model: MODEL, answers: { purpose: { type: "choice", choice: "neither", confidence: 0.9, probabilities: { both: 0.1, task_only: 0.02, scope_only: 0.02, neither: 0.86 } }, reader: { type: "noul", noul: 0.5 } } };
-const valid = () => new Response(JSON.stringify(VALID));
+function valid(): Response {
+  return new Response(JSON.stringify(VALID));
+}
 const idle: Clock = { schedule: () => () => {} };
-const noWait = async () => {};
+async function noWait(): Promise<void> {
+  // Waits for nothing, so a retry runs at once.
+}
 
 describe("exact response validation", () => {
   test("keeps the calibration's exact probability and companion validation", () => {
@@ -17,11 +21,15 @@ describe("exact response validation", () => {
     expect(readAnswers(JSON.stringify({ model: MODEL, answers: { colour_only: { type: "noul", noul: 0.17 }, position_only: { type: "noul", noul: 1 } } }), BLOCK.questions).colour_only).toEqual({ units: 17n, scale: 2 });
   });
   test("rejects malformed JSON, models and all malformed answer shapes", () => {
-    for (const text of ["broken", "null", "{}", JSON.stringify({ ...VALID, model: "jev-latest" })]) expect(() => readAnswers(text, OPENING.questions)).toThrow();
+    for (const text of ["broken", "null", "{}", JSON.stringify({ ...VALID, model: "jev-latest" })]) {
+      expect(() => readAnswers(text, OPENING.questions)).toThrow();
+    }
     for (const answer of [null, {}, { type: "choice" }, { ...VALID.answers.purpose, type: "noul" }, { ...VALID.answers.purpose, choice: "other" }, { ...VALID.answers.purpose, confidence: -1 }, { ...VALID.answers.purpose, probabilities: [] }, { ...VALID.answers.purpose, probabilities: null }, { ...VALID.answers.purpose, probabilities: { both: 1 } }, { ...VALID.answers.purpose, probabilities: { ...VALID.answers.purpose.probabilities, extra: 0 } }, { ...VALID.answers.purpose, probabilities: { both: 0.1, task_only: 0, scope_only: 0, neither: 0.8 } }, { ...VALID.answers.purpose, probabilities: { ...VALID.answers.purpose.probabilities, both: 2 } }]) {
       expect(() => readAnswers(JSON.stringify({ ...VALID, answers: { ...VALID.answers, purpose: answer } }), OPENING.questions)).toThrow();
     }
-    for (const answer of [null, {}, { type: "choice", noul: 0 }, { type: "noul", noul: -0.1 }, { type: "noul", noul: 1.1 }, { type: "noul", noul: "0.2" }]) expect(() => readAnswers(JSON.stringify({ ...VALID, answers: { ...VALID.answers, reader: answer } }), OPENING.questions)).toThrow();
+    for (const answer of [null, {}, { type: "choice", noul: 0 }, { type: "noul", noul: -0.1 }, { type: "noul", noul: 1.1 }, { type: "noul", noul: "0.2" }]) {
+      expect(() => readAnswers(JSON.stringify({ ...VALID, answers: { ...VALID.answers, reader: answer } }), OPENING.questions)).toThrow();
+    }
     expect(() => readAnswers(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.00000000000000001'), OPENING.questions)).toThrow();
     expect(() => readAnswers(JSON.stringify(VALID).replace('"confidence":0.9', '"confidence":1.00000000000000001'), OPENING.questions)).toThrow();
     expect(() => readAnswers(JSON.stringify(VALID).replace('"both":0.1', '"both":-1e-400'), OPENING.questions)).toThrow();
@@ -77,7 +85,9 @@ describe("transport controls", () => {
     await new Promise<void>(resolve => { systemClock.schedule(resolve, 0); });
   });
   test("checks untrimmed keys and integrity before any connection", () => {
-    for (const key of ["", "   ", " key\n", "\tkey", "key\u007f", "key\u0085"]) expect(() => createAsk(key)).toThrow();
+    for (const key of ["", "   ", " key\n", "\tkey", "key\u007f", "key\u0085"]) {
+      expect(() => createAsk(key)).toThrow();
+    }
     expect(() => createAsk("key", { validate: () => { throw new Error("secret"); } })).toThrow("integrity");
   });
   test("retries transport only, preserves frozen bytes and trims surrounding spaces", async () => {

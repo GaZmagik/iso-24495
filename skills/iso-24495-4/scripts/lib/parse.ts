@@ -119,7 +119,9 @@ function isLinkDefinition(line: string): boolean {
   if (line[index] !== "]" || line[index + 1] !== ":") return false;
   if (label.trim() === "" || label.startsWith("^") || label.length > 999) return false;
   index += 2;
-  while (line[index] === " ") index++;
+  while (line[index] === " ") {
+    index++;
+  }
 
   if (line[index] === "<") {
     index++;
@@ -156,17 +158,23 @@ function isLinkDefinition(line: string): boolean {
 
   if (index === line.length) return true;
   if (line[index] !== " ") return false;
-  while (line[index] === " ") index++;
+  while (line[index] === " ") {
+    index++;
+  }
   if (index === line.length) return true;
 
   const opening = line[index];
   const closing = opening === "(" ? ")" : opening;
   if (opening !== "\"" && opening !== "'" && opening !== "(") return false;
   index++;
-  while (index < line.length && line[index] !== closing) index++;
+  while (index < line.length && line[index] !== closing) {
+    index++;
+  }
   if (line[index] !== closing) return false;
   index++;
-  while (line[index] === " ") index++;
+  while (line[index] === " ") {
+    index++;
+  }
   return index === line.length;
 }
 
@@ -652,7 +660,9 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         setext: true,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
-      for (let row = paragraph.line - 1; row < i; row++) blocks.delete(row);
+      for (let row = paragraph.line - 1; row < i; row++) {
+        blocks.delete(row);
+      }
       paragraph = null;
       continue;
     }
@@ -724,8 +734,12 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     const forLineRules = visibleInline(source, false).split("\n");
     const withTags = visibleInline(source, false, true).split("\n");
     // Both readings keep every line ending of the source, so they hold the same lines.
-    for (const [offset, shown] of forLineRules.entries()) readable[block.line - 1 + offset] = shown;
-    for (const [offset, shown] of withTags.entries()) markup[block.line - 1 + offset] = shown;
+    for (const [offset, shown] of forLineRules.entries()) {
+      readable[block.line - 1 + offset] = shown;
+    }
+    for (const [offset, shown] of withTags.entries()) {
+      markup[block.line - 1 + offset] = shown;
+    }
     block.lines = visibleInline(source).split("\n");
   }
   for (const heading of found) {
@@ -868,7 +882,9 @@ function closingMarkup(
  */
 export function tickRun(text: string, start: number): number {
   let end = start;
-  while (text[end] === "`") end++;
+  while (text[end] === "`") {
+    end++;
+  }
   return end - start;
 }
 
@@ -1080,7 +1096,9 @@ export function markdownLinks(text: string): MarkdownLink[] {
       index = closing === undefined ? index + tickRun(text, index) : closing;
       continue;
     }
-    while (withinAlt.length > 0 && (withinAlt.at(-1) as number) <= index) withinAlt.pop();
+    while (withinAlt.length > 0 && (withinAlt.at(-1) as number) <= index) {
+      withinAlt.pop();
+    }
     const rendered = withinAlt.length === 0;
     const image = text[index] === "!" && text[index + 1] === "[";
     const opens = image ? index + 1 : index;
@@ -1206,8 +1224,11 @@ interface Flattening {
 /** Adds text to the innermost open label, or to the result where no label is open. */
 function writeFragment(flattening: Flattening, fragment: string): void {
   const inner = flattening.open.at(-1);
-  if (inner === undefined) flattening.flattened += fragment;
-  else inner.label += fragment;
+  if (inner === undefined) {
+    flattening.flattened += fragment;
+  } else {
+    inner.label += fragment;
+  }
 }
 
 /** Ends the innermost open label and writes what a reader sees in its place. */
@@ -1297,9 +1318,13 @@ const WHITESPACE = /\s/;
  */
 function lastToken(fragment: string): string {
   let end = fragment.length;
-  while (end > 0 && WHITESPACE.test(fragment[end - 1] as string)) end -= 1;
+  while (end > 0 && WHITESPACE.test(fragment[end - 1] as string)) {
+    end -= 1;
+  }
   let start = end;
-  while (start > 0 && !WHITESPACE.test(fragment[start - 1] as string)) start -= 1;
+  while (start > 0 && !WHITESPACE.test(fragment[start - 1] as string)) {
+    start -= 1;
+  }
   return fragment.slice(start, end);
 }
 
@@ -1442,8 +1467,11 @@ export function codeSpanEnds(text: string): Map<number, number> {
   const byLength = new Map<number, number[]>();
   runs.forEach((run, position) => {
     const list = byLength.get(run.length);
-    if (list === undefined) byLength.set(run.length, [position]);
-    else list.push(position);
+    if (list === undefined) {
+      byLength.set(run.length, [position]);
+    } else {
+      list.push(position);
+    }
   });
   const cursors = new Map<number, number>();
   const ends = new Map<number, number>();
@@ -1460,7 +1488,9 @@ export function codeSpanEnds(text: string): Map<number, number> {
     }
     const candidates = byLength.get(openLength) ?? [];
     let cursor = cursors.get(openLength) ?? 0;
-    while (cursor < candidates.length && (candidates[cursor] as number) <= position) cursor += 1;
+    while (cursor < candidates.length && (candidates[cursor] as number) <= position) {
+      cursor += 1;
+    }
     cursors.set(openLength, cursor);
     if (cursor >= candidates.length) {
       position += 1;
@@ -1523,7 +1553,9 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
     }
     if (/\s/.test(character)) {
       let end = index;
-      while (end < text.length && /\s/.test(text[end] as string)) end++;
+      while (end < text.length && /\s/.test(text[end] as string)) {
+        end++;
+      }
       if (terminated) spans.push({ at: index, length: end - index });
       terminated = false;
       index = end;

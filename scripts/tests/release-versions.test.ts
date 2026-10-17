@@ -101,16 +101,16 @@ describe("checkVersionSites, which the normal gate runs", () => {
   // metadata.version stale, and every stage passed. So the front matter is
   // read as YAML, and only metadata.version counts.
   test("a skill's version is metadata.version, read as YAML, and nothing else", () => {
-    const SKILL = "skills/iso-24495-1/SKILL.md";
+    const skill = "skills/iso-24495-1/SKILL.md";
     const problemsFor = (frontMatter: string[], body = "\n# Skill\n"): string[] => {
       let problems: string[] = [];
       withCheckout("0.7.0", (root) => {
-        writeFileSync(join(root, SKILL), ["---", ...frontMatter, "---", body].join("\n"), "utf8");
+        writeFileSync(join(root, skill), ["---", ...frontMatter, "---", body].join("\n"), "utf8");
         problems = checkVersionSites(root).problems;
       });
       return problems;
     };
-    const stale = `${SKILL} metadata.version states "0.6.2", not "0.7.0".`;
+    const stale = `${skill} metadata.version states "0.6.2", not "0.7.0".`;
 
     // Version-like text inside a description, above a stale metadata.version.
     expect(problemsFor([
@@ -133,29 +133,29 @@ describe("checkVersionSites, which the normal gate runs", () => {
 
     // Missing metadata, and metadata missing its version.
     expect(problemsFor(["name: x", "version: \"0.7.0\""]))
-      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+      .toEqual([`${skill} metadata.version states nothing, not "0.7.0".`]);
     expect(problemsFor(["name: x", "metadata:", "  iso-standard: \"ISO 24495-1:2023\""]))
-      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+      .toEqual([`${skill} metadata.version states nothing, not "0.7.0".`]);
     // An unquoted version that YAML reads as a number is not the string declared.
     expect(problemsFor(["name: x", "metadata:", "  version: 7"]))
-      .toEqual([`${SKILL} metadata.version states a value of type number, not "0.7.0".`]);
+      .toEqual([`${skill} metadata.version states a value of type number, not "0.7.0".`]);
     // Text that is not a version is counted, never quoted, and an empty field states nothing.
     expect(problemsFor(["name: x", "metadata:", "  version: \"latest\""]))
-      .toEqual([`${SKILL} metadata.version states 6 characters that are not a version, not "0.7.0".`]);
+      .toEqual([`${skill} metadata.version states 6 characters that are not a version, not "0.7.0".`]);
     expect(problemsFor(["name: x", "metadata:", "  version:"]))
-      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+      .toEqual([`${skill} metadata.version states nothing, not "0.7.0".`]);
 
     // Front matter that is not YAML, or is not there at all.
     expect(problemsFor(["name: [unclosed", "metadata:", "  version: \"0.7.0\""]))
-      .toEqual([`${SKILL} front matter is not valid YAML.`]);
+      .toEqual([`${skill} front matter is not valid YAML.`]);
     expect(problemsFor(["- a list", "- not a mapping"]))
-      .toEqual([`${SKILL} metadata.version states nothing, not "0.7.0".`]);
+      .toEqual([`${skill} metadata.version states nothing, not "0.7.0".`]);
     let noFrontMatter: string[] = [];
     withCheckout("0.7.0", (root) => {
-      writeFileSync(join(root, SKILL), "# Skill\n\nmetadata:\n  version: \"0.7.0\"\n", "utf8");
+      writeFileSync(join(root, skill), "# Skill\n\nmetadata:\n  version: \"0.7.0\"\n", "utf8");
       noFrontMatter = checkVersionSites(root).problems;
     });
-    expect(noFrontMatter).toEqual([`${SKILL} has no front matter.`]);
+    expect(noFrontMatter).toEqual([`${skill} has no front matter.`]);
 
     // Sound front matter passes, whatever sits around the version, and a "---"
     // inside a value or in the body below does not end the front matter.
@@ -200,8 +200,8 @@ describe("a manifest that is valid JSON of the wrong shape", () => {
   // JSON.parse was trusted to return an object. A manifest holding the text
   // null made the check read a property of null, and the command printed the
   // runtime's TypeError.
-  const MANIFESTS = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/marketplace.json"];
-  const SHAPES: Array<[text: string, held: string]> = [
+  const manifests = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/marketplace.json"];
+  const shapes: Array<[text: string, held: string]> = [
     ["null", "null"],
     ["[]", "a list"],
     ["\"0.7.0\"", "a value of type string"],
@@ -210,8 +210,8 @@ describe("a manifest that is valid JSON of the wrong shape", () => {
   ];
 
   test("each manifest gives a problem, never an exception", () => {
-    for (const manifest of MANIFESTS) {
-      for (const [text, held] of SHAPES) {
+    for (const manifest of manifests) {
+      for (const [text, held] of shapes) {
         withCheckout("0.7.0", (root) => {
           writeFileSync(join(root, manifest), text, "utf8");
           const { problems } = checkVersionSites(root);

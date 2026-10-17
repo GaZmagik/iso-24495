@@ -151,7 +151,7 @@ describe("auditCorpus", () => {
   // A synthetic sentence of exactly n words; programmatic, so the count
   // cannot be wrong by hand.
   const sentenceOf = (n: number) =>
-    Array.from({ length: n }, (_, i) => `word${i}`).join(" ") + ".";
+    Array.from({ length: n }, (slot, i) => `word${i}`).join(" ") + ".";
 
   test("the average fires at exactly ten sentences and not at 20.0 exactly", () => {
     const tenAt21 = Array(10).fill(sentenceOf(21)).join(" ");

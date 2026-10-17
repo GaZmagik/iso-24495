@@ -47,7 +47,9 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     && !fields.some(isDocumentField) && !isDocumentField(titleSuffix ?? "")) {
     findings.push({ rule: "opening-version-date", line: start, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" });
   }
-  for (const item of parsed.items) if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
+  for (const item of parsed.items) {
+    if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
+  }
   const sections = parsed.headings.filter(heading => heading.level === 2);
   if (sections.length < SECTION_LIMIT) return findings;
   findings.push(...contentsFindings(parsed, sections, end));
@@ -134,8 +136,10 @@ function validDate(text: string): boolean {
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (iso !== null) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   const numeric = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(text);
-  if (numeric !== null) return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
-    || calendarDate(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
+  if (numeric !== null) {
+    return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
+      || calendarDate(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
+  }
   const parts = text.toLowerCase().replace(/[,-]/g, " ").split(/\s+/);
   const month = MONTHS.findIndex(name => parts.includes(name) || parts.includes(name.slice(0, 3)));
   if (month < 0) return false;
@@ -158,7 +162,9 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
   const labelled = new Set<number>();
   for (const heading of parsed.headings.filter(heading => CONTENTS_LABEL.test(label(heading.text)))) {
     const next = parsed.headings.find(candidate => candidate.line > heading.line && candidate.level <= heading.level);
-    for (let index = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0); index < (next?.line ?? parsed.lines.length + 1) - 1; index++) labelled.add(index);
+    for (let index = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0); index < (next?.line ?? parsed.lines.length + 1) - 1; index++) {
+      labelled.add(index);
+    }
   }
   const findings: Violation[] = [];
   let labelledEntries = false;
@@ -198,7 +204,9 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
     groups.set(link.block, [...(groups.get(link.block) ?? []), link]);
   }
   const navigation = [...groups.values()].filter(group => group.length >= 2).flat();
-  for (const link of navigation) if (link.heading?.level === 2 && sections.includes(link.heading) && normaliseWording(link.label) !== normaliseWording(link.heading.text)) findings.push({ rule: "contents-list", line: link.line, detail: "Use the target section's exact wording in this navigation link." });
+  for (const link of navigation) {
+    if (link.heading?.level === 2 && sections.includes(link.heading) && normaliseWording(link.label) !== normaliseWording(link.heading.text)) findings.push({ rule: "contents-list", line: link.line, detail: "Use the target section's exact wording in this navigation link." });
+  }
   if (!labelledEntries && navigation.length === 0) findings.unshift({ rule: "contents-list", line: 1, detail: "Add contents or navigation for six or more root H2 sections." });
   return findings;
 }

@@ -148,7 +148,9 @@ function delimiterRuns(text: string, markers: string): Run[] {
 function runAt(text: string, start: number): Run {
   const marker = text.charAt(start);
   let end = start + 1;
-  while (text[end] === marker) end++;
+  while (text[end] === marker) {
+    end++;
+  }
   const before = characterBefore(text, start);
   const after = end < text.length ? asShown(String.fromCodePoint(text.codePointAt(end) as number)) : " ";
   const left = !/\s/.test(after) && (!PUNCTUATION.test(after) || /\s/.test(before) || PUNCTUATION.test(before));

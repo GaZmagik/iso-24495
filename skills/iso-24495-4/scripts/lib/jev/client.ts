@@ -165,7 +165,20 @@ function limitInFlight(most: number): <T>(task: () => Promise<T>) => Promise<T> 
   let active = 0;
   const waiting: Array<() => void> = [];
   return async task => {
-    if (active < most) active++; else await new Promise<void>(resolve => waiting.push(resolve));
-    try { return await task(); } finally { const next = waiting.shift(); if (next === undefined) active--; else next(); }
+    if (active < most) {
+      active++;
+    } else {
+      await new Promise<void>(resolve => waiting.push(resolve));
+    }
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next === undefined) {
+        active--;
+      } else {
+        next();
+      }
+    }
   };
 }

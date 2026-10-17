@@ -142,7 +142,7 @@ describe("Part 5 document templates", () => {
   // guarantee is that no change to them is accidental. The whole text is the
   // expectation. Editing a template means editing this list in the same commit,
   // which is the point rather than a cost.
-  const HEADING_SEQUENCE: Record<string, { level: number; text: string }[]> = {
+  const headingSequence: Record<string, Array<{ level: number; text: string }>> = {
     "adr-template.md": [
       { level: 1, text: "[Decision Title]" },
       { level: 2, text: "Context" },
@@ -179,7 +179,7 @@ describe("Part 5 document templates", () => {
     ],
   };
 
-  const TEMPLATE_SNAPSHOT: Record<string, string[]> = {
+  const templateSnapshot: Record<string, string[]> = {
     "adr-template.md": [
       "# [Decision Title]",
       "",
@@ -338,7 +338,7 @@ describe("Part 5 document templates", () => {
   test("no reader-visible template change happens without this test changing too", () => {
     for (const name of TEMPLATE_NAMES) {
       const actual = readTemplate(name).replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n");
-      expect(actual, `${name} matches its recorded text`).toEqual(TEMPLATE_SNAPSHOT[name] ?? []);
+      expect(actual, `${name} matches its recorded text`).toEqual(templateSnapshot[name] ?? []);
     }
   });
 
@@ -348,7 +348,7 @@ describe("Part 5 document templates", () => {
     for (const name of TEMPLATE_NAMES) {
       const found = headings(readTemplate(name))
         .map((heading) => ({ level: heading.level, text: heading.text.trim() }));
-      expect(found, `${name} heads its sections as expected`).toEqual(HEADING_SEQUENCE[name] ?? []);
+      expect(found, `${name} heads its sections as expected`).toEqual(headingSequence[name] ?? []);
     }
   });
 

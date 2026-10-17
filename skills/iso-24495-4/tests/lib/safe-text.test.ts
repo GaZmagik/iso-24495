@@ -9,7 +9,9 @@ const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
 // rewrites an escape in this file can change what a test expects.
 const BACKSLASH = String.fromCharCode(92);
 /** The six characters a character in the basic plane prints as: a backslash, "u" and four digits. */
-const code = (point: number): string => `${BACKSLASH}u${point.toString(16).padStart(4, "0")}`;
+function code(point: number): string {
+  return `${BACKSLASH}u${point.toString(16).padStart(4, "0")}`;
+}
 
 describe("text nobody has read", () => {
   // Linux and macOS allow all three in a file name. A line break forges a
@@ -58,7 +60,7 @@ describe("every range of characters safeText removes", () => {
     ["the left-to-right and right-to-left marks", 0x200e, 0x200f],
     ["the directional embeddings and overrides", 0x202a, 0x202e],
     ["the directional isolates", 0x2066, 0x2069],
-  ])("%s become a space", (_name, first, last) => {
+  ])("%s become a space", (name, first, last) => {
     for (let code = first; code <= last; code++) {
       const character = String.fromCharCode(code);
       expect(safeText(`a${character}b`), `U+${code.toString(16)}`).toBe("a b");
@@ -134,7 +136,7 @@ describe("a path nobody has read", () => {
     ["the word joiner, the invisible operators and the isolates", 0x2060, 0x2064],
     ["the directional isolates", 0x2066, 0x2069],
     ["the spaces of fixed width", 0x2000, 0x200a],
-  ])("%s print as their codes", (_name, first, last) => {
+  ])("%s print as their codes", (name, first, last) => {
     for (let point = first; point <= last; point++) {
       const character = String.fromCharCode(point);
       expect(safePath(`a${character}b`, false), `U+${point.toString(16)}`).toBe(`a${code(point)}b`);
@@ -181,7 +183,7 @@ describe("a path nobody has read", () => {
 });
 
 describe("a path in Markdown that is rendered", () => {
-  const TICK = String.fromCharCode(96);
+  const tick = String.fromCharCode(96);
 
   /** What Bun's renderer shows in each cell of the first column, for one row to a name. */
   function renderedCells(names: readonly string[]): string[] {
@@ -213,9 +215,9 @@ describe("a path in Markdown that is rendered", () => {
   test("names that Markdown would read are shown as they are written", () => {
     const names = [
       "a b.md", "a&#32;b.md", "a<br>b.md", "a*b*.md", "[x](u).md", "a&b.md", "a&amp;b.md", "a_b_.md", "a|b.md",
-      `a${BACKSLASH}|b.md`, `${TICK}a.md`, `a.md${TICK}`, `a${TICK}${TICK}b${TICK}.md`, " a.md", "a.md ", " a.md ", "  a.md",
+      `a${BACKSLASH}|b.md`, `${tick}a.md`, `a.md${tick}`, `a${tick}${tick}b${tick}.md`, " a.md", "a.md ", " a.md ", "  a.md",
       "<!-- a -->.md", "a~~b~~.md", "# a.md", "", " ", "  ", `a${RIGHT_TO_LEFT_OVERRIDE}b.md`, `a${BACKSLASH}u202eb.md`,
-      `${BACKSLASH}`, `a${BACKSLASH}`, `${TICK}`, `${TICK}${TICK}`, ` ${TICK} `,
+      `${BACKSLASH}`, `a${BACKSLASH}`, `${tick}`, `${tick}${tick}`, ` ${tick} `,
     ];
     const cells = renderedCells(names);
     expect(new Set(cells).size).toBe(names.length);
@@ -227,14 +229,16 @@ describe("a path in Markdown that is rendered", () => {
   });
 
   test("in generated names, distinct names give distinct cells and every row keeps its columns", () => {
-    const pieces = ["a", "b", "x", ".md", " ", " ", TICK, TICK, "|", BACKSLASH, "*", "_", "[", "]", "(u)", "<", ">", "<br>", "&", "&amp;",
+    const pieces = ["a", "b", "x", ".md", " ", " ", tick, tick, "|", BACKSLASH, "*", "_", "[", "]", "(u)", "<", ">", "<br>", "&", "&amp;",
       "&#32;", "#", "~", "!", ";", "/", RIGHT_TO_LEFT_OVERRIDE, LINE_FEED, String.fromCharCode(9), String.fromCharCode(0xa0)];
     const random = sequence(24495);
     const names = new Set<string>();
     while (names.size < 5_000) {
       let name = "";
       const length = 1 + Math.floor(random() * 8);
-      for (let made = 0; made < length; made++) name += pieces[Math.floor(random() * pieces.length)] as string;
+      for (let made = 0; made < length; made++) {
+        name += pieces[Math.floor(random() * pieces.length)] as string;
+      }
       names.add(name);
     }
     const list = [...names];
@@ -254,25 +258,25 @@ describe("a path in Markdown that is rendered", () => {
   });
 
   test("the code span is written with the shortest fence that holds the name", () => {
-    expect(safePathCell("docs/guide.md", false)).toBe(`${TICK}docs/guide.md${TICK}`);
-    expect(safePathCell(`a${TICK}b.md`, false)).toBe(`${TICK}${TICK}a${TICK}b.md${TICK}${TICK}`);
-    expect(safePathCell(`a${TICK}${TICK}b${TICK}.md`, false)).toBe(`${TICK}${TICK}${TICK}a${TICK}${TICK}b${TICK}.md${TICK}${TICK}${TICK}`);
+    expect(safePathCell("docs/guide.md", false)).toBe(`${tick}docs/guide.md${tick}`);
+    expect(safePathCell(`a${tick}b.md`, false)).toBe(`${tick}${tick}a${tick}b.md${tick}${tick}`);
+    expect(safePathCell(`a${tick}${tick}b${tick}.md`, false)).toBe(`${tick}${tick}${tick}a${tick}${tick}b${tick}.md${tick}${tick}${tick}`);
     // A space each side where the name opens or closes with a backtick or a space, or is empty.
-    expect(safePathCell(`${TICK}a.md`, false)).toBe(`${TICK}${TICK} ${TICK}a.md ${TICK}${TICK}`);
-    expect(safePathCell("a.md ", false)).toBe(`${TICK} a.md  ${TICK}`);
-    expect(safePathCell("", false)).toBe(`${TICK}  ${TICK}`);
+    expect(safePathCell(`${tick}a.md`, false)).toBe(`${tick}${tick} ${tick}a.md ${tick}${tick}`);
+    expect(safePathCell("a.md ", false)).toBe(`${tick} a.md  ${tick}`);
+    expect(safePathCell("", false)).toBe(`${tick}  ${tick}`);
     // The pipe is escaped inside the span, because a table is cut into cells first.
-    expect(safePathCell("a|b.md", false)).toBe(`${TICK}a${BACKSLASH}|b.md${TICK}`);
-    expect(safePathCell(["docs", "a|b.md"].join(BACKSLASH), true)).toBe(`${TICK}docs/a${BACKSLASH}|b.md${TICK}`);
-    expect(safePathCell(`a${RIGHT_TO_LEFT_OVERRIDE}b.md`, false)).toBe(`${TICK}a${code(0x202e)}b.md${TICK}`);
-    expect(safePathCell("docs/guide.md")).toBe(`${TICK}docs/guide.md${TICK}`);
+    expect(safePathCell("a|b.md", false)).toBe(`${tick}a${BACKSLASH}|b.md${tick}`);
+    expect(safePathCell(["docs", "a|b.md"].join(BACKSLASH), true)).toBe(`${tick}docs/a${BACKSLASH}|b.md${tick}`);
+    expect(safePathCell(`a${RIGHT_TO_LEFT_OVERRIDE}b.md`, false)).toBe(`${tick}a${code(0x202e)}b.md${tick}`);
+    expect(safePathCell("docs/guide.md")).toBe(`${tick}docs/guide.md${tick}`);
   });
 
   test("a path in a line of a report is a code span too, with its pipe left alone", () => {
-    expect(safePathCode("a|b*c*.md", false)).toBe(`${TICK}a|b*c*.md${TICK}`);
-    expect(safePathCode(`${TICK}a.md`, false)).toBe(`${TICK}${TICK} ${TICK}a.md ${TICK}${TICK}`);
-    expect(safePathCode(["docs", "a.md"].join(BACKSLASH), true)).toBe(`${TICK}docs/a.md${TICK}`);
-    expect(safePathCode("docs/guide.md")).toBe(`${TICK}docs/guide.md${TICK}`);
+    expect(safePathCode("a|b*c*.md", false)).toBe(`${tick}a|b*c*.md${tick}`);
+    expect(safePathCode(`${tick}a.md`, false)).toBe(`${tick}${tick} ${tick}a.md ${tick}${tick}`);
+    expect(safePathCode(["docs", "a.md"].join(BACKSLASH), true)).toBe(`${tick}docs/a.md${tick}`);
+    expect(safePathCode("docs/guide.md")).toBe(`${tick}docs/guide.md${tick}`);
     expect(Bun.markdown.html(`Not sent: ${safePathCode("a*b*<br>&amp;.md", false)}, because`))
       .toBe(`<p>Not sent: <code>a*b*&lt;br&gt;&amp;amp;.md</code>, because</p>${LINE_FEED}`);
   });
@@ -282,8 +286,8 @@ describe("a character that draws nothing is shown as its code", () => {
   /** The printed form of one code point: four digits in the basic plane, and braces past it. */
   const shown = (point: number): string =>
     point > 0xffff ? `${BACKSLASH}u{${point.toString(16)}}` : code(point);
-  const UNSEEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|(?! )\p{Zs}/u;
-  const PRINTABLE = /^[ -~]*$/;
+  const unseenPattern = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|(?! )\p{Zs}/u;
+  const printable = /^[ -~]*$/;
 
   // A combining grapheme joiner and a variation selector draw nothing, and both went
   // through as they were. "ab.md" and the same name with one of them between the
@@ -294,7 +298,7 @@ describe("a character that draws nothing is shown as its code", () => {
       const printed = safePath(`a${String.fromCodePoint(point)}b.md`, false);
       expect(printed, `U+${point.toString(16)}`).toBe(`a${shown(point)}b.md`);
       expect(printed).not.toBe(plain);
-      expect(PRINTABLE.test(printed), printed).toBe(true);
+      expect(printable.test(printed), printed).toBe(true);
     }
     // An interlinear annotation anchor draws nothing and is not in that Unicode property.
     // It is a format character, which is why that class is read as well.
@@ -326,7 +330,7 @@ describe("a character that draws nothing is shown as its code", () => {
     const unseen: number[] = [];
     for (let point = 0; point <= 0x10ffff; point++) {
       if (point >= 0xd800 && point <= 0xdfff) continue;
-      if (UNSEEN.test(String.fromCodePoint(point))) unseen.push(point);
+      if (unseenPattern.test(String.fromCodePoint(point))) unseen.push(point);
     }
     expect(unseen.length).toBeGreaterThan(4_000);
     const base = "ab.md";
@@ -339,7 +343,7 @@ describe("a character that draws nothing is shown as its code", () => {
     }
     const printed = [...names].map((name) => safePath(name, false));
     for (const form of printed) {
-      if (!PRINTABLE.test(form) || form === base) expect(form).toBe("a form in visible characters that is not the base name");
+      if (!printable.test(form) || form === base) expect(form).toBe("a form in visible characters that is not the base name");
     }
     expect(new Set(printed).size).toBe(names.size);
   });

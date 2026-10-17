@@ -18,6 +18,12 @@ const SHAPE: Shape = {
 };
 
 describe("a parsed value checked against a documented shape", () => {
+  test("a shape of a kind the reader does not know is refused, without its kind", () => {
+    // The type admits no such shape, so it comes from outside the type.
+    const unknownKind: unknown = JSON.parse(`{ "kind": "${MARKER}" }`);
+    expect(() => shapeProblem(1, unknownKind as Shape, "<file>")).toThrow(new TypeError("The shape has no kind this reader knows."));
+  });
+
   test("a value of the shape has no problem", () => {
     expect(shapeProblem({ entries: [], totals: {} }, SHAPE, "<file>")).toBeNull();
     expect(shapeProblem(
@@ -55,7 +61,9 @@ describe("a parsed value checked against a documented shape", () => {
 
   test("a number must be whole and inside its range", () => {
     const level = (value: unknown) => shapeProblem(value, { kind: "whole", least: 0, most: 4 }, "level");
-    for (const fits of [0, 1, 4]) expect(level(fits)).toBeNull();
+    for (const fits of [0, 1, 4]) {
+      expect(level(fits)).toBeNull();
+    }
     expect(level(99)).toBe("level must be a whole number from 0 to 4; got a whole number outside that range");
     expect(level(-1)).toBe("level must be a whole number from 0 to 4; got a whole number outside that range");
     expect(level(1.5)).toBe("level must be a whole number from 0 to 4; got a number that is not whole");

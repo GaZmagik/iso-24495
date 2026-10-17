@@ -552,8 +552,11 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
   let high = ends.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if ((ends[middle] as number) < offset) low = middle + 1;
-    else high = middle;
+    if ((ends[middle] as number) < offset) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
   }
   return blockLine + low;
 }
@@ -584,9 +587,13 @@ function isLetter(character: string | undefined): boolean {
  */
 function lettersOnly(raw: string): string {
   let start = 0;
-  while (start < raw.length && !isLetter(raw[start])) start += 1;
+  while (start < raw.length && !isLetter(raw[start])) {
+    start += 1;
+  }
   let end = raw.length;
-  while (end > start && !isLetter(raw[end - 1]) && raw[end - 1] !== ".") end -= 1;
+  while (end > start && !isLetter(raw[end - 1]) && raw[end - 1] !== ".") {
+    end -= 1;
+  }
   return raw.slice(start, end);
 }
 
@@ -679,7 +686,9 @@ function markRun(
   // unknown words and still be a shout.
   const enough = length === 2 ? known === 2 : known * 2 >= length;
   if (!enough) return;
-  for (let j = start; j < end; j++) shouted.add(j);
+  for (let j = start; j < end; j++) {
+    shouted.add(j);
+  }
 }
 
 /** The letters of a token in lower case, as the lexicon lists a word. */
@@ -706,9 +715,9 @@ function expansionSpelling(
   tokens: ReadonlyArray<{ raw: string }>,
   from: number,
   want: number,
-  carried: ReadonlyArray<number>,
-  initials: ReadonlyArray<string>,
-  nextClose: ReadonlyArray<number>,
+  carried: readonly number[],
+  initials: readonly string[],
+  nextClose: readonly number[],
 ): string | null {
   let open = -1;
   const window = Math.min(from + ENGINE_THRESHOLDS.acronymDefinitionWindow, tokens.length);
@@ -881,7 +890,9 @@ function pairedMarksByLine(
   for (let first = 0; first < lines.length;) {
     const block = blockOfLine.get(first);
     let last = first;
-    while (block !== undefined && blockOfLine.get(last + 1) === block) last++;
+    while (block !== undefined && blockOfLine.get(last + 1) === block) {
+      last++;
+    }
     let line = first;
     let lineStart = 0;
     const marks = mayHoldLink(written, first, last - first + 1)
@@ -998,7 +1009,7 @@ function linkSyntax(text: string, reading: Reading): LinkSyntax | null {
       inBlock.add(line);
     }
   }
-  written.forEach((_line, index) => {
+  written.forEach((line, index) => {
     // A line in no block is read alone, where a rule reads it at all. Code, front
     // matter and a line that defines a reference are blank to every rule.
     if (!inBlock.has(index) && (document.lines[index] as string).trim() !== "") {
@@ -1097,7 +1108,9 @@ const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
  */
 function codeSpanEnd(source: string, at: number, marks: LinkMarks): number {
   let end = at;
-  while (source[end] === "`") end++;
+  while (source[end] === "`") {
+    end++;
+  }
   const length = end - at;
   const later = marks.backtickRuns.get(length) ?? [];
   // The runs behind this one can close nothing that is still to come.
@@ -1392,7 +1405,9 @@ function unmarkedTokens(
       const start = lineStart + match.index;
       // White space ends the word and is never a mark, so this stops inside the word.
       let leading = 0;
-      while (marks.has(start + leading)) leading++;
+      while (marks.has(start + leading)) {
+        leading++;
+      }
       const raw = withoutOffsets(match[0], start, marks);
       tokens.push({ raw, line: block.line + lineIndex, column: match.index + leading });
     }
@@ -1413,8 +1428,11 @@ function sourceColumn(unmarked: number, marks: readonly number[]): number {
   let high = marks.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if ((marks[middle] as number) - middle <= unmarked) low = middle + 1;
-    else high = middle;
+    if ((marks[middle] as number) - middle <= unmarked) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
   }
   return unmarked + low;
 }

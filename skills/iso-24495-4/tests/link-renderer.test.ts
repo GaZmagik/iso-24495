@@ -34,13 +34,13 @@ const GITHUB_SHOWS = new Map<string, string>(GITHUB_LINK_FORMS);
  */
 const RENDERERS_MAY_DIFFER: Array<[name: string, shaped: (label: string, tail: string) => boolean]> = [
   // "[m](<two three>'a title')": Bun shows a link, GitHub shows the text as written.
-  ["a title straight after a destination in angle brackets, with no space between", (_label, tail) => /^\s*<[^<>]*>["'(]/.test(tail)],
+  ["a title straight after a destination in angle brackets, with no space between", (label, tail) => /^\s*<[^<>]*>["'(]/.test(tail)],
   // "[m](a\ b)": a backslash escapes punctuation alone, so the destination ends at the
   // space and GitHub shows text. Bun reads the space as escaped and carries on.
-  ["a backslash before white space", (_label, tail) => /\\\s/.test(tail)],
+  ["a backslash before white space", (label, tail) => /\\\s/.test(tail)],
   // "[[ [one](\(three]()) ": GitHub ends the first label at its bracket and takes the rest
   // as its destination. Bun pairs the bracket inside the destination with an earlier one.
-  ["a closing bracket and a parenthesis inside a destination", (_label, tail) => tail.includes("](")],
+  ["a closing bracket and a parenthesis inside a destination", (label, tail) => tail.includes("](")],
   // "[[[c](d)]](zed)": a link cannot hold a link, so GitHub shows the outer brackets as
   // text. Bun does the same one bracket deep, and makes a link of the outer pair at two.
   // Anything may stand between the two brackets, as a code span does in "[[`]`[c](d)]](zed)".
@@ -65,16 +65,22 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const read = words(readingText(document));
       if (read === shown) {
         counts.agreeWithBun++;
-        if (html.includes("<a href=")) counts.links++;
-        else counts.text++;
+        if (html.includes("<a href=")) {
+          counts.links++;
+        } else {
+          counts.text++;
+        }
         continue;
       }
       const onGitHub = GITHUB_SHOWS.get(document);
       if (RENDERERS_MAY_DIFFER.some(([, shaped]) => shaped(label, tail)) && onGitHub !== undefined) {
         counts.setAside++;
         answersUsed.add(document);
-        if (read === onGitHub) counts.heldByGitHub++;
-        else differing.push(`${JSON.stringify(document)} is read as ${JSON.stringify(read)} and GitHub showed ${JSON.stringify(onGitHub)}`);
+        if (read === onGitHub) {
+          counts.heldByGitHub++;
+        } else {
+          differing.push(`${JSON.stringify(document)} is read as ${JSON.stringify(read)} and GitHub showed ${JSON.stringify(onGitHub)}`);
+        }
         continue;
       }
       differing.push(`${JSON.stringify(document)} is read as ${JSON.stringify(read)} and shown as ${JSON.stringify(shown)}`);

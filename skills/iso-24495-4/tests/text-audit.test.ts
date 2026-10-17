@@ -414,7 +414,9 @@ describe("text nobody has read, in the printed findings", () => {
         output.writeErr,
       )).toBe(0);
       const printed = output.stdout.join("\n");
-      for (const character of UNREAD_CHARACTERS) expect(printed).not.toContain(character);
+      for (const character of UNREAD_CHARACTERS) {
+        expect(printed).not.toContain(character);
+      }
       const slash = String.fromCharCode(92);
       expect(printed).toContain(
         "| " + String.fromCharCode(96) + `gu${slash}u202eide${slash}u009b.md` + String.fromCharCode(96)

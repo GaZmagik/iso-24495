@@ -16,11 +16,13 @@ test("rendered wording respects delimiter runs, literal escapes and code spans",
     ["**&ast;literal&ast;**", "*literal*"],
     ["foo**bar*baz", "foo**bar*baz"],
     ["*foo _bar* baz_", "foo _bar baz_"],
-  ] satisfies Array<[string, string]>) expect(renderInline(source), source).toBe(expected);
+  ] satisfies Array<[string, string]>) {
+    expect(renderInline(source), source).toBe(expected);
+  }
 });
 
 test("paired emphasis marks are removed and every other character stays", () => {
-  const SLASH = String.fromCharCode(92);
+  const slash = String.fromCharCode(92);
   for (const [source, expected] of [
     ["in **order** to", "in order to"],
     ["in *order* to, in _order_ to, in __order__ to", "in order to, in order to, in order to"],
@@ -32,7 +34,7 @@ test("paired emphasis marks are removed and every other character stays", () => 
     ["foo**bar*baz", "foo**bar*baz"],
     ["*foo _bar* baz_", "foo _bar baz_"],
     // Escapes, code spans and character references are left exactly as written.
-    [`${SLASH}*shall${SLASH}* and ${SLASH}_shall${SLASH}_`, `${SLASH}*shall${SLASH}* and ${SLASH}_shall${SLASH}_`],
+    [`${slash}*shall${slash}* and ${slash}_shall${slash}_`, `${slash}*shall${slash}* and ${slash}_shall${slash}_`],
     ["`in *order* to` and *out*", "`in *order* to` and out"],
     ["`` *a* ` *b* `` *c*", "`` *a* ` *b* `` c"],
     ["&amp; **x** &#42;y&#42;", "&amp; x &#42;y&#42;"],
@@ -43,7 +45,9 @@ test("paired emphasis marks are removed and every other character stays", () => 
     ["**a ~~b** c~~ and ~~**shall**~~", "a ~~b c~~ and shall"],
     ["\u{1F600}*a*\u{1F600} \u00e9_b_\u00e9 \u3002*c*", "\u{1F600}a\u{1F600} \u00e9_b_\u00e9 \u3002c"],
     ["", ""],
-  ] satisfies Array<[string, string]>) expect(withoutEmphasis(source), source).toBe(expected);
+  ] satisfies Array<[string, string]>) {
+    expect(withoutEmphasis(source), source).toBe(expected);
+  }
 });
 
 test("the offsets name each removed mark, in order", () => {

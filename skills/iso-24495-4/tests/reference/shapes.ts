@@ -110,7 +110,9 @@ const extras: Array<[string, string[]]> = [
   ["multiline code span", ["Example `starts", "[](ignored)", "ends` here."]],
   ["unmatched code across paragraphs", ["Opening `", "", "[](https://example.com)", "", "Closing`"]],
 ];
-for (const [name, lines] of extras) MATRIX_SHAPES.push({ name, lines });
+for (const [name, lines] of extras) {
+  MATRIX_SHAPES.push({ name, lines });
+}
 
 
 // A seeded generator, so the corpus is the same every time it is built.
@@ -161,7 +163,9 @@ const seen = new Set<string>();
 for (let n = 0; n < 500 && GENERATED_SHAPES.length < 120; n++) {
   const count = 2 + next(4);
   const lines: string[] = [];
-  for (let i = 0; i < count; i++) lines.push(pick(PREFIXES) + pick(BODIES));
+  for (let i = 0; i < count; i++) {
+    lines.push(pick(PREFIXES) + pick(BODIES));
+  }
   const key = lines.join(BREAK);
   if (seen.has(key)) continue;
   seen.add(key);

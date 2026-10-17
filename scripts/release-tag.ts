@@ -31,7 +31,9 @@ export function runTagCheck(
   }
   const report = checkVersionSites(root);
   const problems = [...report.problems, ...tagProblems(tag, report.version)];
-  for (const problem of problems) stderr(`release tag: ${problem}`);
+  for (const problem of problems) {
+    stderr(`release tag: ${problem}`);
+  }
   if (problems.length > 0) return 1;
   stdout(`release tag: ${tag} names the version every site declares.`);
   return 0;

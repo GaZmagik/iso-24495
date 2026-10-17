@@ -98,7 +98,9 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   try { (dependencies.client?.validate ?? validateCalibration)(); } catch { stderr("Calibration integrity failed. Nothing was sent."); return 3; }
   let selection: Selection;
   try { selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter); } catch { stderr("The selected path could not be read or is not a supported document."); return 1; }
-  for (const path of selection.skipped) stderr(skippedEntryWarning(path));
+  for (const path of selection.skipped) {
+    stderr(skippedEntryWarning(path));
+  }
   for (const document of selection.documents) {
     if (document.refusal !== undefined) stderr(`warning: not sent: ${safePath(document.file)}: ${document.refusal}`);
   }
@@ -210,7 +212,9 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
     if (mode === "text") {
       const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter, markdown });
       selection.mechanical.files[file] = { violations };
-      for (const finding of violations) selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
+      for (const finding of violations) {
+        selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
+      }
     }
     if (markdown && hasUnrecognisedFrontMatter(text)) {
       selection.documents.push({ file, path, plan: { candidates: [], findings: [] }, refusal: UNRECOGNISED_FRONT_MATTER });
@@ -300,14 +304,20 @@ export function formatFindings(report: JevReport): string {
     ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
     "|------|------|------|-------|------|-------|---------|---------|"];
-  for (const finding of report.localFindings) lines.push(`| ${safePathCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
+  for (const finding of report.localFindings) {
+    lines.push(`| ${safePathCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
+  }
   for (const result of report.results.filter(result => result.band !== "pass")) {
     const diagnosis = result.diagnosisGate;
     const refinement = diagnosis === undefined ? "" : ` neither score ${diagnosis.score}, cut-off ${diagnosis.cutOff}, prerequisite ${diagnosis.prerequisite}.`;
     lines.push(`| ${safePathCell(result.file)} | ${result.line} | ${result.id} | ${result.rule} | ${result.band} | ${result.score} | ${result.cutOff} | ${safeCell(result.detail)}${refinement} Excerpt: ${safeCell(result.excerpt)} |`);
   }
   lines.push("| File | Check | Assessed | Pass | Fail | Unsure | Skipped |", "|------|-------|----------|------|------|--------|---------|");
-  for (const coverage of report.coverage) for (const [check, counts] of Object.entries(coverage.checks)) lines.push(`| ${safePathCell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
+  for (const coverage of report.coverage) {
+    for (const [check, counts] of Object.entries(coverage.checks)) {
+      lines.push(`| ${safePathCell(coverage.file)} | ${check} | ${counts.assessed} | ${counts.pass} | ${counts.fail} | ${counts.unsure} | ${counts.skipped} |`);
+    }
+  }
   lines.push("Colour passes appear only in counts and never approve a document. Unsure asserts no fault. Findings are proxies, not an ISO judgement.");
   return lines.join("\n");
 }
@@ -336,7 +346,9 @@ function fillCoverage(report: JevReport): void {
       const counts = coverage.checks[check];
       counts.assessed = results.length;
       counts.skipped -= results.length;
-      for (const result of results) counts[result.band]++;
+      for (const result of results) {
+        counts[result.band]++;
+      }
     }
   }
 }
@@ -372,8 +384,14 @@ function readArguments(mode: "text" | "design", argv: string[]): Arguments {
     else if (option === "--json" || option === "--project-dir") {
       const value = argv[++index];
       if (!value || value.startsWith("--")) throw new Error();
-      if (option === "--json") args.json = value; else args.projectDir = value;
-    } else throw new Error();
+      if (option === "--json") {
+        args.json = value;
+      } else {
+        args.projectDir = value;
+      }
+    } else {
+      throw new Error();
+    }
   }
   if (!args.frontMatter || (args.yes && !args.send) || (args.includeText && args.json === undefined)
     || (mode === "text" && ((!args.preview && !args.send) || (args.send && !seen.has("--jev")) || (seen.has("--jev-preview") && (args.send || seen.has("--jev")))))) throw new Error();

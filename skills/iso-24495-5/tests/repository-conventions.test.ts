@@ -442,7 +442,7 @@ describe("repository writing conventions", () => {
   // So these three blocks are the expectation as whole text. Editing a rule,
   // the worked example or the checklist means editing this list in the same
   // commit, which is the point rather than a cost.
-  const PART_2_DOCUMENT_RULES = [
+  const part2DocumentRules = [
     "4. **Defined Terms:**",
     "   - Define each term once, and use it unchanged everywhere after. Two words for one concept invite an argument that they mean two things.",
     "   - Put the definition where the reader first meets the term. Where a term appears in more than one section, collect the definitions in one section and point the first use at it.",
@@ -471,7 +471,7 @@ describe("repository writing conventions", () => {
     "   - A contract's section names are the reference case Part 5 already allows, and not a new exception. A reader jumps to Payment, Termination or Liability by subject, so each keeps its subject as its name.",
   ];
 
-  const PART_2_SUMMARY_EXAMPLE = [
+  const part2SummaryExample = [
     "### Example 2: The Summary Layer",
     "* ❌ **Not aligned (the summary drops conditions in the source clause):**",
     "  ```text",
@@ -498,7 +498,7 @@ describe("repository writing conventions", () => {
     "  > ```",
   ];
 
-  const PART_2_CHECKLIST = [
+  const part2Checklist = [
     "- [ ] **No legalese:** Are terms like *\"shall\"*, *\"hereinafter\"*, and *\"hereby\"* eliminated?",
     "- [ ] **Modal verbs:** Are obligations expressed using only *must*, *must not*, or *may*?",
     "- [ ] **Explicit subjects:** Is every obligation attached to a clearly named actor?",
@@ -521,9 +521,9 @@ describe("repository writing conventions", () => {
       expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
       return legal.slice(from, to).trimEnd().split(/\r?\n/);
     };
-    expect(between("4. **Defined Terms:**", "\n---")).toEqual(PART_2_DOCUMENT_RULES);
+    expect(between("4. **Defined Terms:**", "\n---")).toEqual(part2DocumentRules);
     const example = between("### Example 2:", "\n---");
-    expect(example).toEqual(PART_2_SUMMARY_EXAMPLE);
+    expect(example).toEqual(part2SummaryExample);
     const sourceStart = example.findIndex((line) => line.startsWith("  9.1 "));
     const operativeStart = example.findIndex((line) => line.startsWith("  > 9.1 "));
     const operativeEnd = example.findIndex((line, index) => index > operativeStart && line === "  > ```");
@@ -539,7 +539,7 @@ describe("repository writing conventions", () => {
     expect(operativeClause, "the operative text must preserve its governing source")
       .toBe(sourceClause);
     const checklist = legal.slice(legal.indexOf("- [ ] **No legalese:**"));
-    expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_2_CHECKLIST);
+    expect(checklist.trimEnd().split(/\r?\n/)).toEqual(part2Checklist);
   });
 
   // Both skills load on a contract, so their limits have to agree in writing.
@@ -629,21 +629,21 @@ describe("repository writing conventions", () => {
   //
   // These are whole lines and whole blocks. Editing one means editing it here
   // in the same commit, which is the point rather than a cost.
-  const PART_2_SCOPE_BOUNDARY = [
+  const part2ScopeBoundary = [
     "3. **Document Design Applies Here Too:**",
     "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
     "   - Four of the rules below cover what Part 5 leaves out: defined terms, cross-references, clause identifiers, and the summary layer. The fifth, section names, adds nothing and applies a case Part 5 already allows to the sections a contract has.",
     "   - Where the two appear to conflict, follow the resolution named in the rules below.",
   ];
 
-  const PART_3_SCOPE_BOUNDARY = [
+  const part3ScopeBoundary = [
     "3. **Document Design Applies Here Too:**",
     "   - A technical document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
     "   - It loads for a document, not for every explanation. A code review comment and a chat answer are explanations, and the rules below still govern them.",
     "   - Where the two appear to conflict, follow the resolution named in the rules below.",
   ];
 
-  const PART_3_RULES = [
+  const part3Rules = [
     "1. **Progressive Disclosure Ordering:**",
     "   Structure every technical explanation in these stages, in this order:",
     "   1. **System Purpose:** High-level operational intent (1 sentence).",
@@ -670,7 +670,7 @@ describe("repository writing conventions", () => {
     "   - A Mermaid diagram reaches a listener as its source text, which is not an explanation. So the alternative is prose beside the diagram, never the diagram's own labels.",
   ];
 
-  const PART_3_EXAMPLE = [
+  const part3Example = [
     "### Example 1: Concurrency Control Explanation",
     "* ❌ **Not aligned (Dense & Abstract):**",
     "  ```text",
@@ -690,7 +690,7 @@ describe("repository writing conventions", () => {
     "  > ```",
   ];
 
-  const PART_3_CHECKLIST = [
+  const part3Checklist = [
     "- [ ] **Progressive structure:** Is system purpose stated before architecture and code?",
     "- [ ] **Exact citations:** Are code citations backed by `file:///` links and line numbers?",
     "- [ ] **Acronym definitions:** Are acronyms and specialized terms defined upon first use?",
@@ -701,7 +701,7 @@ describe("repository writing conventions", () => {
     "- [ ] **Design applied:** Did `iso-24495-5` run over the document as well as this skill?",
   ];
 
-  const PART_5_TOUCHED_LINES = [
+  const part5TouchedLines = [
     "   - **Sequences:** Use a numbered list for steps that must happen in order. Keep it an ordered list rather than numbers typed into a paragraph, so the sequence survives when the document is heard. A legal document's clause identifiers are the one exception, because no ordered list renders a compound identifier such as 4.2.1, and `iso-24495-2` governs them.",
     "   - **Options and collections:** Use a bulleted list for unordered sets of 3 or more items. Keep each bullet to one paragraph carrying one idea, and nest bulleted lists no deeper than 2 levels. Promote longer material to a subsection.",
     "- [ ] **Restraint:** Is every bulleted item one paragraph on one idea, nested no deeper than 2 levels, with longer material promoted to a subsection?",
@@ -712,11 +712,11 @@ describe("repository writing conventions", () => {
     "- [ ] **Overview label and detail:** Is the label a heading rather than bold text alone, and has the detail moved to footnotes, an appendix or a collapsible block?",
   ];
 
-  const PROXY_NOTE_LINES = [
+  const proxyNoteLines = [
     "> **Proxy status:** These rules are this project's own proxies for the standard's principles, not its text. Following them is never a claim of ISO conformance.",
   ];
 
-  const CORE_ROUTING_LINES = [
+  const coreRoutingLines = [
     "- **`iso-24495-2` (Legal & Compliance):** Activate when handling contracts, licenses, terms of service, privacy policies, or statutory rules. Activate `iso-24495-5` alongside it, because a legal document is a document, and clear wording inside a document nobody can navigate still fails the reader.",
     "- **`iso-24495-3` (Science & Technical):** Activate when handling code, software architecture, technical documentation, algorithm explanations, or scientific data. Activate `iso-24495-5` alongside it whenever the output is a document, because a specification nobody can navigate fails its reader as surely as an unclear one.",
     "- **`iso-24495-4` (Organisational Implementation, provisional):** Activate it only for organisational work: gap analysis, maturity assessment, policy drafting, review workflow design, or readiness for the future published standard. Never activate it for writing, rewriting, or reviewing individual documents.",
@@ -724,7 +724,7 @@ describe("repository writing conventions", () => {
     "- **`iso-24495-text-audit` (Text Audit):** Never activate automatically. The user invokes it to audit one selected text file or directory.",
   ];
 
-  const STYLE_ROUTING_LINES = [
+  const styleRoutingLines = [
     "- **`iso-24495-1`:** The core standard; governs every response.",
     "- **`iso-24495-2`:** Legal writing: contracts, licences, compliance text. Invoke `iso-24495-5` with it, because a legal document must be navigable as well as readable.",
     "- **`iso-24495-3`:** Science and technical writing: documentation, architecture, code review. Invoke `iso-24495-5` with it whenever the output is a document.",
@@ -733,7 +733,7 @@ describe("repository writing conventions", () => {
     "- **`iso-24495-text-audit`:** User-invoked text audit. Never invoke it automatically.",
   ];
 
-  const README_LINES = [
+  const readmeLines = [
     "| `iso-24495-2` | **Legal writing.** Extends the core skill for contracts, licences, and compliance text: standardised modal verbs, no legalese, named actors, structured conditional clauses, defined terms, cross-references that name what they point at, stable clause identifiers, a summary layer over the operative text, and section names a reader can navigate by. |",
     "| `iso-24495-3` | **Science and technical writing.** Extends the core skill for documentation, architecture, and code review: progressive disclosure, exact file citations, defined acronyms, text alternatives for diagrams, and the stages placed inside the document levels of `iso-24495-5`. |",
     "The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.",
@@ -749,40 +749,40 @@ describe("repository writing conventions", () => {
 
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
     expect(blockOf(legal, "3. **Document Design Applies Here Too:**", "\n---", "iso-24495-2"))
-      .toEqual(PART_2_SCOPE_BOUNDARY);
+      .toEqual(part2ScopeBoundary);
 
     // Part 3 is held to the same standard from its first commit, rather than
     // after a review demonstrates the hole. Nine rounds on Part 2 earned that.
     const tech = readFileSync(join(SKILLS_ROOT, "iso-24495-3", "SKILL.md"), "utf8");
     expect(blockOf(tech, "3. **Document Design Applies Here Too:**", "\n---", "iso-24495-3"))
-      .toEqual(PART_3_SCOPE_BOUNDARY);
+      .toEqual(part3ScopeBoundary);
     expect(blockOf(tech, "1. **Progressive Disclosure Ordering:**", "\n---", "iso-24495-3"))
-      .toEqual(PART_3_RULES);
+      .toEqual(part3Rules);
     // The rule was relaxed because this example was compliant, so the
     // justification for that change rests on the example staying as it is.
     expect(blockOf(tech, "### Example 1: Concurrency Control Explanation", "\n---",
-      "iso-24495-3")).toEqual(PART_3_EXAMPLE);
+      "iso-24495-3")).toEqual(part3Example);
     const checklist = tech.slice(tech.indexOf("- [ ] **Progressive structure:**"));
-    expect(checklist.trimEnd().split(/\r?\n/)).toEqual(PART_3_CHECKLIST);
+    expect(checklist.trimEnd().split(/\r?\n/)).toEqual(part3Checklist);
 
     // Both skills whose title names a published standard carry the same note,
     // because a title read alone can look like the standard itself.
     for (const skill of ["iso-24495-2", "iso-24495-3"]) {
       const lines = readFileSync(join(SKILLS_ROOT, skill, "SKILL.md"), "utf8").split(/\r?\n/);
-      for (const line of PROXY_NOTE_LINES) {
+      for (const line of proxyNoteLines) {
         expect(lines, `${skill} must keep its proxy note`).toContain(line);
       }
     }
 
     const design = readFileSync(join(SKILLS_ROOT, "iso-24495-5", "SKILL.md"), "utf8")
       .split(/\r?\n/);
-    for (const line of PART_5_TOUCHED_LINES) {
+    for (const line of part5TouchedLines) {
       expect(design, `Part 5 must keep this line unchanged: ${line.slice(0, 40)}`)
         .toContain(line);
     }
 
     const readme = readFileSync(join(REPOSITORY_ROOT, "README.md"), "utf8").split(/\r?\n/);
-    for (const line of README_LINES) {
+    for (const line of readmeLines) {
       expect(readme, `the README must keep this line unchanged: ${line.slice(0, 40)}`)
         .toContain(line);
     }
@@ -793,7 +793,7 @@ describe("repository writing conventions", () => {
     // first, so the reason is part of the line.
     const core = readFileSync(join(SKILLS_ROOT, "iso-24495-1", "SKILL.md"), "utf8")
       .split(/\r?\n/);
-    for (const line of CORE_ROUTING_LINES) {
+    for (const line of coreRoutingLines) {
       expect(core, `the core skill must keep this trigger unchanged: ${line.slice(0, 40)}`)
         .toContain(line);
     }
@@ -805,7 +805,7 @@ describe("repository writing conventions", () => {
       join(CODEX_SKILLS_ROOT, "iso-24495-style", "SKILL.md"),
     ]) {
       const lines = readFileSync(file, "utf8").split(/\r?\n/);
-      for (const line of STYLE_ROUTING_LINES) {
+      for (const line of styleRoutingLines) {
         expect(lines, `${relative(REPOSITORY_ROOT, file)} must keep: ${line.slice(0, 40)}`)
           .toContain(line);
       }
@@ -1023,8 +1023,8 @@ describe("repository writing conventions", () => {
     // destination anyone routes to. The design audit sends a document to an
     // outside service, so it runs only when the user invokes it by name, and
     // no routing list names it.
-    const UNROUTED = new Set(["iso-24495-code", "iso-24495-design-audit", "iso-24495-style"]);
-    const HOSTS_THE_LIST = "iso-24495-1";
+    const unrouted = new Set(["iso-24495-code", "iso-24495-design-audit", "iso-24495-style"]);
+    const hostsTheList = "iso-24495-1";
 
     // A skill is any directory holding a SKILL.md under either root, which is
     // how the frontmatter suite finds them. Two narrower guesses shipped a
@@ -1034,23 +1034,23 @@ describe("repository writing conventions", () => {
     const shipped = [SKILLS_ROOT, CODEX_SKILLS_ROOT]
       .flatMap((root) => readdirSync(root)
         .filter((entry) => existsSync(join(root, entry, "SKILL.md"))))
-      .filter((entry) => !UNROUTED.has(entry))
+      .filter((entry) => !unrouted.has(entry))
       .sort();
     expect(shipped.length, "there must be skills to route").toBeGreaterThan(0);
 
-    const core = CORE_ROUTING_LINES.join(String.fromCharCode(10));
-    const style = STYLE_ROUTING_LINES.join(String.fromCharCode(10));
+    const core = coreRoutingLines.join(String.fromCharCode(10));
+    const style = styleRoutingLines.join(String.fromCharCode(10));
 
     for (const skill of shipped) {
       expect(style, `the output style must route ${skill}`)
         .toContain(`\`${skill}\``);
-      if (skill === HOSTS_THE_LIST) continue;
+      if (skill === hostsTheList) continue;
       expect(core, `the core skill must route ${skill}`)
         .toContain(`\`${skill}\``);
     }
 
     // And nothing routes what is deliberately unrouted.
-    for (const skill of UNROUTED) {
+    for (const skill of unrouted) {
       expect(core, `${skill} must stay out of the core routing list`)
         .not.toContain(`\`${skill}\``);
       expect(style, `${skill} must stay out of the style routing list`)
@@ -1205,9 +1205,9 @@ describe("repository writing conventions", () => {
     // with a clean TMPDIR. The stage passed, and this test failed, because it
     // had its own idea of a clean place: beside the repository. It now asks
     // the stage's one search.
-    const AWKWARD_NAME = "owner's $tmp dir ";
+    const awkwardName = "owner's $tmp dir ";
     /** The one line ending a script puts after a path it prints. */
-    const LINE_ENDING = /\r?\n$/;
+    const lineEnding = /\r?\n$/;
 
     test("the run with nothing installed works, and cleans up, under an awkward temporary path", () => {
       const search = Bun.spawnSync(["bash", "scripts/check-without-packages.sh", "--clean-parent"], {
@@ -1219,9 +1219,9 @@ describe("repository writing conventions", () => {
       expect(search.exitCode, search.stderr.toString()).toBe(0);
       // The path is kept exactly as printed, less the one line ending. A name
       // may end in a space, and trimming the output once lost that space.
-      const holder = mkdtempSync(join(search.stdout.toString().replace(LINE_ENDING, ""), "iso-24495-odd-"));
+      const holder = mkdtempSync(join(search.stdout.toString().replace(lineEnding, ""), "iso-24495-odd-"));
       try {
-        const awkward = join(holder, AWKWARD_NAME);
+        const awkward = join(holder, awkwardName);
         mkdirSync(awkward);
         const run = Bun.spawnSync(["bash", "scripts/check-without-packages.sh"], {
           cwd: REPOSITORY_ROOT,
@@ -1237,7 +1237,7 @@ describe("repository writing conventions", () => {
         });
         expect(run.exitCode, run.stderr.toString()).toBe(0);
         // It must have used that directory, not passed it over for another.
-        expect(run.stdout.toString()).toContain(`${AWKWARD_NAME}/iso-24495-bare.`);
+        expect(run.stdout.toString()).toContain(`${awkwardName}/iso-24495-bare.`);
         expect(readdirSync(awkward), "the copy must be gone").toEqual([]);
       } finally {
         rmSync(holder, { recursive: true, force: true });
@@ -1285,7 +1285,7 @@ describe("repository writing conventions", () => {
       });
       expect(search.exitCode, search.stderr.toString()).toBe(0);
       // A holder of this test's own, because the directory will be left in it.
-      const holder = mkdtempSync(join(search.stdout.toString().replace(LINE_ENDING, ""), "iso-24495-kept-"));
+      const holder = mkdtempSync(join(search.stdout.toString().replace(lineEnding, ""), "iso-24495-kept-"));
       try {
         const stubs = join(holder, "stubs");
         const place = join(holder, "place");
@@ -1367,11 +1367,11 @@ describe("repository writing conventions", () => {
       // named as github.ref or github.sha; any other ref or repository is
       // refused.
       test("every checkout takes the commit the pushed tag names", () => {
-        type Workflow = {
+        interface Workflow {
           jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
-        };
-        const TRIGGERING_REF = /^\$\{\{\s*github\.(?:ref|sha)\s*\}\}$/;
-        const TRIGGERING_REPOSITORY = /^\$\{\{\s*github\.repository\s*\}\}$/;
+        }
+        const triggeringRef = /^\$\{\{\s*github\.(?:ref|sha)\s*\}\}$/;
+        const triggeringRepository = /^\$\{\{\s*github\.repository\s*\}\}$/;
         /** Every checkout step's problem with what it checks out, if any. */
         const wrongCheckouts = (text: string): string[] => {
           const parsed = Bun.YAML.parse(text) as Workflow;
@@ -1382,8 +1382,8 @@ describe("repository writing conventions", () => {
             const ref = step.with?.ref;
             const repository = step.with?.repository;
             return [
-              ...(ref === undefined || TRIGGERING_REF.test(String(ref)) ? [] : [`ref: ${ref}`]),
-              ...(repository === undefined || TRIGGERING_REPOSITORY.test(String(repository))
+              ...(ref === undefined || triggeringRef.test(String(ref)) ? [] : [`ref: ${ref}`]),
+              ...(repository === undefined || triggeringRepository.test(String(repository))
                 ? []
                 : [`repository: ${repository}`]),
             ];
@@ -1397,7 +1397,7 @@ describe("repository writing conventions", () => {
         const checkoutWith = (lines: string[]): string => {
           const edited = workflow.replace(
             /^( *)- uses: actions\/checkout@(\S+)\n/m,
-            (_, indent: string, version: string) =>
+            (match, indent: string, version: string) =>
               [`${indent}- uses: actions/checkout@${version}`, `${indent}  with:`,
                 ...lines.map((line) => `${indent}    ${line}`), ""].join("\n"),
           );
@@ -1493,7 +1493,7 @@ describe("repository writing conventions", () => {
 
       // Every pass says what a pass means, so nobody reads a green tick as a
       // judgement that the description is clear.
-      const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
+      const passMeaning = "A pass means the audit ran on a description that is not empty.";
 
       // The script once did the work itself: three reads, three programs and two
       // temporary files, each a place to fail in another program's words. Three
@@ -1522,7 +1522,7 @@ describe("repository writing conventions", () => {
         for (const ending of ["\n", "\r\n"]) {
           const result = audit(lines.join(ending) + ending);
           expect(result.status, `${JSON.stringify(ending)} gave: ${result.output}`).toBe(0);
-          expect(result.output).toContain(PASS_MEANING);
+          expect(result.output).toContain(passMeaning);
         }
       });
 
@@ -1535,7 +1535,7 @@ describe("repository writing conventions", () => {
         // themselves have to reach the log.
         expect(result.output, "the log must name the rule").toContain("sentence-length");
         expect(result.output).toContain("The audit reported 1 finding. It is advice");
-        expect(result.output).toContain(PASS_MEANING);
+        expect(result.output).toContain(passMeaning);
         const two = audit(`${"word ".repeat(40)}stop.\n\nWe shall pay.\n`);
         expect(two.status, two.output).toBe(0);
         expect(two.output).toContain("The audit reported 2 findings. They are advice");
@@ -1597,7 +1597,7 @@ describe("repository writing conventions", () => {
           expect(written, "the summary is appended to, never replaced").toStartWith("Earlier step.\n");
           expect(written).toContain("sentence-length");
           expect(written).toContain("| Line | Rule |");
-          expect(written).toContain(PASS_MEANING);
+          expect(written).toContain(passMeaning);
 
           const blocked = audit(" \n", "description.md", { GITHUB_STEP_SUMMARY: forBash(summary) });
           expect(blocked.status).toBe(1);
@@ -2238,7 +2238,9 @@ function writtenImports(source: string, fileName = "source.ts"): string[] {
   };
   visit(file);
   const loader = fileName.endsWith(".ts") ? "ts" : "js";
-  for (const found of new Bun.Transpiler({ loader }).scanImports(source)) modules.add(found.path);
+  for (const found of new Bun.Transpiler({ loader }).scanImports(source)) {
+    modules.add(found.path);
+  }
   return [...modules].sort();
 }
 
