@@ -5,14 +5,27 @@ import type { RequestBody, RequestKind } from "./catalogue.ts";
 
 export { buildRequest } from "./catalogue.ts";
 
+/**
+ * One request a Jev audit would send, and the line of the document it is
+ * about.
+ */
 export interface Candidate {
   id: string;
   line: number;
   kind: RequestKind;
   body: RequestBody;
 }
+/** A finding the engine makes without asking Jev. */
 export interface LocalFinding { line: number; rule: string; detail: string }
+/**
+ * What a Jev audit would do with one document: the requests it would send,
+ * and the findings it made without sending anything.
+ */
 export interface DocumentPlan { candidates: Candidate[]; findings: LocalFinding[] }
+/**
+ * A calibrated verdict on one request. `score` and `cutOff` are decimal
+ * text with their exact digits. A band of "unsure" asserts no fault.
+ */
 export interface Decision {
   rule: "opening-purpose" | "colour-only";
   band: "pass" | "fail" | "unsure";
@@ -21,6 +34,10 @@ export interface Decision {
   diagnosis?: "neither";
   diagnosisGate?: { id: "purpose:diagnosis:neither"; score: string; cutOff: "0.83"; prerequisite: "purpose:fail" };
 }
+/**
+ * Jev's answers by question, each number read exactly from the digits Jev
+ * sent.
+ */
 export type ExactAnswers = Record<string, Decimal | Record<string, Decimal>>;
 
 /**

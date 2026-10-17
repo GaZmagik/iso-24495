@@ -304,7 +304,7 @@ A lint that finds nothing proves little when a rule is switched off or weakened 
 
 The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.
 
-As configured, a comment in a file cannot change a rule or switch one off, and the gate fails on a warning. The testing policy above says what these guards do not defend against. Rules of the guide that no tool here checks are left to review.
+A test holds the rules about comments, which a linter cannot see. Every top-level export needs a JSDoc comment, and no JSDoc comment may state a type. As configured, a comment in a file cannot change a rule or switch one off, and the gate fails on a warning. The testing policy above says what these guards do not defend against. Rules of the guide that no tool here checks are left to review.
 
 ## Why this project holds itself to these rules
 

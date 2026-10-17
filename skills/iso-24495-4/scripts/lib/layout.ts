@@ -8,6 +8,10 @@ const OVERVIEW_LABEL = /^(?:overview|summary)$/i;
 const VERSION = /^(?:Version|Revision)\s*:?\s*v?\d+(?:\.\d+)+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
 const DATE_FIELD = /^(?:Date|Updated|Last updated|Reviewed)\s*:?\s*(.+)$/i;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/**
+ * What `layoutViolations` may be told besides the text. `fileName` exempts
+ * a file such as a README from the edition advisory.
+ */
 export interface LayoutOptions extends Reading { fileName?: string }
 
 /**

@@ -202,30 +202,54 @@ export async function runCli(
   return 0;
 }
 
+/**
+ * One day of a series. `timestamp` is the date alone, as YYYY-MM-DD, cut
+ * from the time GitHub gives.
+ */
 export interface DailyPoint {
   timestamp: string;
   count: number;
   uniques: number;
 }
 
+/**
+ * One of GitHub's two series, clones or views, over its rolling window.
+ * `count` and `uniques` are GitHub's totals for the window. GitHub counts a
+ * visitor who returns on another day once there, so the window's uniques
+ * are not the sum of the days.
+ */
 export interface Series {
   count: number;
   uniques: number;
   days: DailyPoint[];
 }
 
+/**
+ * One site that sent visitors during the window, with GitHub's counts. The
+ * name is GitHub's text and nobody here has read it, so a printed name goes
+ * through `safeText`.
+ */
 export interface Referrer {
   referrer: string;
   count: number;
   uniques: number;
 }
 
+/**
+ * The repository's totals when the snapshot is taken. GitHub calls the
+ * watchers subscribers.
+ */
 export interface RepoCounts {
   stars: number;
   forks: number;
   watchers: number;
 }
 
+/**
+ * What one run records, as `parseSnapshot` reads it from the four
+ * responses. Every count is a whole number from 0 up to the largest exact
+ * one.
+ */
 export interface Snapshot {
   clones: Series;
   views: Series;
@@ -233,6 +257,11 @@ export interface Snapshot {
   repo: RepoCounts;
 }
 
+/**
+ * What `parseSnapshot` gives: the snapshot, or a problem that names the
+ * first response of the wrong shape. The problem is worded here and never
+ * taken from a response, so it is safe to print.
+ */
 export type ParseResult = { ok: true; snapshot: Snapshot } | { ok: false; problem: string };
 
 /**
@@ -288,6 +317,10 @@ export class MalformedTable extends Error {
   }
 }
 
+/**
+ * Everything `runCli` reaches outside itself. The command line shim passes
+ * the file system and the network, and a test passes stand-ins.
+ */
 export interface Deps {
   /** The text of a file, null where there is no such file. Throws for a file that cannot be read. */
   readText(path: string): string | null;

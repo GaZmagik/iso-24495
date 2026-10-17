@@ -2,11 +2,37 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+/**
+ * The two places in a document Jev is asked about: the opening under the
+ * title, and a block of prose.
+ */
 export type RequestKind = "opening" | "block";
+/**
+ * One question of a request, worded as the calibration fixed it. `type`
+ * decides the form its answer takes.
+ */
 export interface Question { type: "choice" | "noul"; instructions: string | string[]; criteria: Record<string, string> }
+/**
+ * One request, as `buildRequest` makes it. The calibration fixed its
+ * wording, so a body is sent as built.
+ */
 export interface RequestBody { model: string; state: Record<string, string | number>; questions: Record<string, Question> }
+/**
+ * The recorded evidence for one calibrated gate: its cut-off, and the lower
+ * bound on agreement measured over `clusters` clusters with `wrong`
+ * disagreements. The figures are decimal text, which keeps their exact
+ * digits.
+ */
 export interface GateEvidence { id: string; cutOff: string; dependencies: string[]; clusters: number; wrong: number; bound: string }
+/**
+ * The Jev model the calibration was measured on. Every request names it,
+ * and an answer from another model is refused.
+ */
 export const MODEL = "jev-1.13.0";
+/**
+ * The SHA-256 digest of the reviewed calibration catalogue.
+ * `validateCalibration` refuses a catalogue that does not match it.
+ */
 export const CATALOGUE_DIGEST = "264f2270f881d99751ef13085f70da7f8a8917caa63abb859b38a7582674d538";
 const TEMPLATE_DIGESTS = { opening: "ecf372a1dafdb7a00c97ddb823e4f5e4a6ed06ddd8ba7cea51542f7c984b0399", block: "c25950fd65014487a54c35050da0e60d6fc0b3307d3f6664b44207e74b3872bf" };
 

@@ -127,6 +127,10 @@ export function runCli(
   }
 }
 
+/**
+ * What the text audit finds in a selection: the mechanical findings, and
+ * the entries it passed over.
+ */
 export interface TextAuditResult extends Findings {
   skipped: string[];
 }

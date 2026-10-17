@@ -8,33 +8,59 @@
 
 import type { Shape } from "./json-shape.ts";
 
+/**
+ * One mechanical finding: the rule that found it, its line counted from 1,
+ * and what was found.
+ */
 export interface Violation {
   rule: string;
   line: number;
   detail: string;
 }
 
+/**
+ * Every mechanical finding of one audit, as `audit-corpus-cli.ts --json`
+ * writes it. `files` is keyed by path, `totals` counts each rule over
+ * every file, and `configHash` names the thresholds the engine ran with.
+ */
 export interface Findings {
   configHash: string;
   files: Record<string, { violations: Violation[] }>;
   totals: Record<string, number>;
 }
 
+/**
+ * Which process artefacts an audit found, by category, as
+ * `audit-evidence-cli.ts --json` writes it.
+ */
 export interface Evidence {
   artefacts: Record<string, { found: boolean; paths: string[] }>;
 }
 
+/**
+ * The level each dimension reached and the criteria it lacks, as
+ * `score-maturity-cli.ts --json` writes it. `overall` is the lowest level
+ * of any dimension.
+ */
 export interface Maturity {
   dimensions: Record<string, { level: number; missing: string[] }>;
   overall: number;
 }
 
+/**
+ * One earlier audit, as the audit state keeps it: when it ran, its totals
+ * and its overall level.
+ */
 export interface Snapshot {
   timestamp: string;
   totals: Record<string, number>;
   overall: number;
 }
 
+/**
+ * What the gap report keeps from one audit to the next: a snapshot of each
+ * audit, in the order they ran.
+ */
 export interface AuditState {
   snapshots: Snapshot[];
 }

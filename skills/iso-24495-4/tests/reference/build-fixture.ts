@@ -207,6 +207,10 @@ const header = `// Block structure for ${rows.length} documents, checked against
 //
 // Never edit an expectation by hand to make a test pass.
 
+/**
+ * One document of the corpus, and the lines, paragraphs and headings this
+ * engine reads in it.
+ */
 export interface ReferenceShape {
   name: string;
   lines: string[];
@@ -216,6 +220,10 @@ export interface ReferenceShape {
   differsFromReference?: string;
 }
 
+/**
+ * Every document of the corpus, with the block structure the reference
+ * agreed to, or the reason this engine differs.
+ */
 export const REFERENCE_SHAPES: ReferenceShape[] = `;
 
 const target = join(import.meta.dir, "..", "fixtures", "reference-blocks.ts");

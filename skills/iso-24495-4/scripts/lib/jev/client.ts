@@ -3,12 +3,28 @@ import { add, compare, ONE, parseDecimal, subtract, ZERO, type Decimal } from ".
 import { parseExactJson } from "./exact-json.ts";
 import type { ExactAnswers } from "./engine.ts";
 
+/** Where every request is posted. Document text leaves the machine there. */
 export const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+/** The most attempts one request is given, the first included. */
 export const MAX_ATTEMPTS = 6;
+/** The most requests one sender has in flight at once. */
 export const MAX_IN_FLIGHT = 4;
+/** How long one attempt may take, in milliseconds, before it is abandoned. */
 export const TIMEOUT_MS = 30000;
+/**
+ * The part of the platform's `fetch` the client calls. A test passes a
+ * stand-in.
+ */
 export type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<Response>;
+/**
+ * Starts a timer and returns the function that cancels it. The client
+ * times each attempt with one.
+ */
 export interface Clock { schedule: (callback: () => void, ms: number) => () => void }
+/**
+ * Stand-ins for what `createAsk` reaches outside itself, and a signal that
+ * cancels its requests. A member left out is the real one.
+ */
 export interface ClientOptions {
   fetch?: Fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -16,12 +32,17 @@ export interface ClientOptions {
   signal?: AbortSignal;
   validate?: () => void;
 }
+/**
+ * A failure of a Jev audit whose message is safe to print as it stands,
+ * with the exit code the command ends with.
+ */
 export class JevError extends Error {
   constructor(message: string, readonly exitCode = 3) { super(message); this.name = "JevError"; }
 }
 class TransportError extends Error {
   constructor() { super("The transport attempt timed out."); }
 }
+/** Sends one request and resolves with its checked answers. */
 export type Ask = (body: RequestBody) => Promise<ExactAnswers>;
 
 /**
@@ -159,6 +180,10 @@ function isExactProbability(value: unknown): value is Decimal {
  * the wait `createAsk` uses between attempts unless it is given another.
  */
 export function wait(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
+/**
+ * The clock `createAsk` uses unless it is given another: the platform's
+ * own timers.
+ */
 export const systemClock: Clock = { schedule: (callback, ms) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); } };
 
 function limitInFlight(most: number): <T>(task: () => Promise<T>) => Promise<T> {

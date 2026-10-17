@@ -159,6 +159,11 @@ export function auditCorpus(
   return findings;
 }
 
+/**
+ * What `auditText` may be told besides the text. Every member is optional.
+ * A caller that passes none gets the rules for plain text, with a leading
+ * "---" block read as front matter.
+ */
 export interface AuditOptions extends Reading {
   /** The selected file name supplies document-specific scope exemptions. */
   fileName?: string;

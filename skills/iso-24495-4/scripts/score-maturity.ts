@@ -70,6 +70,10 @@ export function runCli(
   return 0;
 }
 
+/**
+ * An answers file, as `scoreMaturity` reads it: for each dimension, whether
+ * each criterion is met. A criterion left out counts as not met.
+ */
 export interface Answers {
   organisation?: string;
   dimensions: Record<string, Record<string, boolean>>;

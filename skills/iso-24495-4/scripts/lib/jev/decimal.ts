@@ -73,7 +73,9 @@ export function parseDecimal(token: string): Decimal {
   return scale >= 0 ? { units, scale } : { units: units * power(-scale), scale: 0 };
 }
 
+/** Zero, as an exact decimal. */
 export const ZERO: Decimal = { units: 0n, scale: 0 };
+/** One, as an exact decimal. */
 export const ONE: Decimal = { units: 1n, scale: 0 };
 
 /** The exact sum, held at the larger of the two scales. */

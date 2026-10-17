@@ -34,6 +34,7 @@ export function readDocument(text: string, reading: Reading = {}): Document {
   };
 }
 
+/** One block of prose, as a reader sees it. */
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
@@ -41,6 +42,7 @@ export interface ProseBlock {
   lines: string[];
 }
 
+/** One heading of either form, with its text as a reader sees it. */
 export interface Heading {
   level: number;
   line: number;
@@ -62,6 +64,11 @@ export interface Reading {
   frontMatter?: boolean;
 }
 
+/**
+ * A text as the rules read it, from `readDocument`. `lines` and
+ * `markupLines` hold one entry for each line of the source, so an index is
+ * a source line.
+ */
 export interface Document {
   lines: string[];
   /** Reader-visible markup retained for rules about links and images. */
@@ -1305,6 +1312,7 @@ const INLINE_ABBREVIATIONS = new Set([
 const DOTTED_FORM = /^[^A-Za-z]*(?:[A-Za-z]\.){2,}$/;
 const SINGLE_INITIAL = /^[^A-Za-z]*[A-Z]\.$/;
 
+/** What `classifyBoundary` decides about the stop between two fragments. */
 export type Boundary = "merge" | "split" | "ambiguous";
 
 const WHITESPACE = /\s/;

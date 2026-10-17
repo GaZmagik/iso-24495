@@ -7,6 +7,10 @@
 //
 // The seed is fixed, so the same corpus is produced every time.
 
+/**
+ * One document of the corpus: a name that says what it holds, and its
+ * lines.
+ */
 export interface Shape {
   name: string;
   lines: string[];
@@ -15,6 +19,10 @@ export interface Shape {
 const TAB = String.fromCharCode(9);
 const BREAK = String.fromCharCode(10);
 
+/**
+ * Every container prefix applied to every leaf block, and the transitions
+ * between them.
+ */
 export const MATRIX_SHAPES: Shape[] = [];
 
 const containers: Array<[string, string[]]> = [
@@ -158,6 +166,7 @@ const BODIES = [
 ];
 
 
+/** Documents from the seeded grammar, the same on every run. */
 export const GENERATED_SHAPES: Shape[] = [];
 const seen = new Set<string>();
 for (let n = 0; n < 500 && GENERATED_SHAPES.length < 120; n++) {

@@ -98,6 +98,10 @@ export function checkVersionSites(root: string): VersionReport {
   return { version, skills, problems };
 }
 
+/**
+ * What `checkVersionSites` found in one checkout. A release may go ahead
+ * only when `problems` is empty.
+ */
 export interface VersionReport {
   /** The version the Claude manifest declares, which every other site must match. */
   version: string;
@@ -107,7 +111,12 @@ export interface VersionReport {
   problems: string[];
 }
 
+/**
+ * A version as every site states it: three whole numbers joined by full
+ * stops, with nothing before or after.
+ */
 export const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
+/** A release tag: a "v", then a version. The first group is the version. */
 export const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/;
 const CHANGELOG_HEADING = /^## \[([^\]]+)\]/gm;
 const SKILL_ROOTS = ["skills", "codex-skills"];

@@ -2,6 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 
+/** The terminal agreement is read from, as `controllingTerminal` gives it. */
 export interface Terminal { inputIsTTY: boolean; outputIsTTY: boolean; prompt: () => Promise<string> }
 
 /**

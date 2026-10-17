@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/** The skill directories a checkout holds, from its root. */
 export const SKILLS = ["skills/iso-24495-1", "skills/iso-24495-text-audit", "codex-skills/iso-24495-style"];
 
 /**
@@ -45,6 +46,10 @@ export function capture(): { out: string[]; err: string[]; stdout: (t: string) =
   return { out, err, stdout: (text) => out.push(text), stderr: (text) => err.push(text) };
 }
 
+/**
+ * Runs `body` on a fresh checkout whose every version site names
+ * `version`, then removes the checkout, whether or not `body` throws.
+ */
 export function withCheckout(version: string, body: (root: string) => void): void {
   const root = makeCheckout(version);
   try {
