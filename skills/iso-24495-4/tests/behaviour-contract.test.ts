@@ -90,12 +90,12 @@ function nestedLinkDocument(size: number): string {
 
 /** Acronym candidates that are all discounted. */
 function discountedAcronymDocument(size: number): string {
-  return Array(size).fill("A.A.A. (").join(" ") + " and).";
+  return Array.from<string>({ length: size }).fill("A.A.A. (").join(" ") + " and).";
 }
 
 /** Acronym definitions, one after another. */
 function acronymDefinitionDocument(size: number): string {
-  return Array(size).fill("Alpha Beta (AB)").join(" ") + ".";
+  return Array.from<string>({ length: size }).fill("Alpha Beta (AB)").join(" ") + ".";
 }
 
 /** The 31-word sentence the paragraph guard repeats. */
@@ -103,7 +103,7 @@ const LONG_SENTENCE = Array.from({ length: 31 }, (slot, index) => `word${index}`
 
 /** One paragraph of long sentences. */
 function longParagraphDocument(size: number): string {
-  return Array(size).fill(LONG_SENTENCE).join(" ");
+  return Array.from<string>({ length: size }).fill(LONG_SENTENCE).join(" ");
 }
 
 describe("reader-facing behaviour contracts", () => {
@@ -416,8 +416,8 @@ describe("reader-facing behaviour contracts", () => {
       expect(splitSentences(text), text).toHaveLength(2);
       expect(mergedSentences(text), text).toHaveLength(2);
     }
-    const left = `First ${Array(16).fill("alpha").join(" ")}`;
-    const right = `Next ${Array(16).fill("beta").join(" ")}`;
+    const left = `First ${Array.from<string>({ length: 16 }).fill("alpha").join(" ")}`;
+    const right = `Next ${Array.from<string>({ length: 16 }).fill("beta").join(" ")}`;
     expect(auditText(`${left}.\` ${right}.`).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
   });
 
@@ -494,8 +494,8 @@ describe("reader-facing behaviour contracts", () => {
     expect(splitSentences("Dr" + slash + ") Smith explains it.")).toHaveLength(1);
 
     // The harm as a reader meets it: two sixteen-word sentences reported as one long one.
-    const text = Array(16).fill("alpha").join(" ") + slash + "! Beta "
-      + Array(15).fill("beta").join(" ") + ".";
+    const text = Array.from<string>({ length: 16 }).fill("alpha").join(" ") + slash + "! Beta "
+      + Array.from<string>({ length: 15 }).fill("beta").join(" ") + ".";
     expect(splitSentences(text)).toHaveLength(2);
     expect(auditText(text).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
   });
@@ -514,8 +514,8 @@ describe("reader-facing behaviour contracts", () => {
     expect(splitSentences(tick + "foo" + escapedTick + "bar. Next." + tick)).toHaveLength(2);
 
     // The same defect seen as a reader sees it: two short sentences reported as one long.
-    const left = Array(15).fill("alpha").join(" ");
-    const right = Array(15).fill("beta").join(" ");
+    const left = Array.from<string>({ length: 15 }).fill("alpha").join(" ");
+    const right = Array.from<string>({ length: 15 }).fill("beta").join(" ");
     const closed = tick + "code" + escapedTick + " " + left + ". " + right + tick + ".";
     expect(auditText(closed).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
 
@@ -718,12 +718,12 @@ ${sentence}`)
     // A definition is spelled by the words that carry initials, and the ignored words
     // between them are unlimited. Bounding the lookahead by a token count therefore cut
     // valid expansions short and reported an acronym that the text defines on the spot.
-    const padded = `ABCDEF (Alpha ${Array(30).fill("and").join(" ")} `
+    const padded = `ABCDEF (Alpha ${Array.from<string>({ length: 30 }).fill("and").join(" ")} `
       + "Beta Charlie Delta Echo Foxtrot) works.";
     expect(auditText(padded).map((v) => v.rule)).not.toContain("acronym-undefined");
 
     // Just outside: the expansion no longer spells the acronym, so it is undefined.
-    const wrong = `ABCDEF (Alpha ${Array(30).fill("and").join(" ")} Beta Charlie) works.`;
+    const wrong = `ABCDEF (Alpha ${Array.from<string>({ length: 30 }).fill("and").join(" ")} Beta Charlie) works.`;
     expect(auditText(wrong).map((v) => v.rule)).toContain("acronym-undefined");
 
     // A parenthesis that never closes cannot define anything, and must not be searched
@@ -751,7 +751,7 @@ ${sentence}`)
     paragraphs(3_000);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
-    const long = Array(500).fill(LONG_SENTENCE).join(" ");
+    const long = Array.from<string>({ length: 500 }).fill(LONG_SENTENCE).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
   }, HOSTILE_TIMEOUT_MS);
 
@@ -816,8 +816,8 @@ ${sentence}`)
       expect(rulesFor(sentence).filter((rule) => rule === "sentence-length"), sentence).toHaveLength(1);
     }
 
-    const firstHalf = `${Array(15).fill("alpha").join(" ")} etc.`;
-    const secondHalf = `Customers ${Array(15).fill("beta").join(" ")}.`;
+    const firstHalf = `${Array.from<string>({ length: 15 }).fill("alpha").join(" ")} etc.`;
+    const secondHalf = `Customers ${Array.from<string>({ length: 15 }).fill("beta").join(" ")}.`;
     expect(wordCount(`${firstHalf} ${secondHalf}`)).toBe(32);
     expect(rulesFor(`${firstHalf} ${secondHalf}`)).not.toContain("sentence-length");
 
@@ -828,8 +828,8 @@ ${sentence}`)
 
     const average = [
       ...Array.from({ length: 8 }, () => sentenceOf(21)),
-      `${Array(20).fill("alpha").join(" ")} etc.`,
-      `Customers ${Array(20).fill("beta").join(" ")}.`,
+      `${Array.from<string>({ length: 20 }).fill("alpha").join(" ")} etc.`,
+      `Customers ${Array.from<string>({ length: 20 }).fill("beta").join(" ")}.`,
     ].join(" ");
     expect(splitSentences(average)).toHaveLength(10);
     expect(mergedSentences(average)).toHaveLength(9);
@@ -1876,7 +1876,7 @@ ${sentence}`)
   // Every complex-word suggestion must be no longer than the word it replaces,
   // or taking the advice pushes a sentence at the cap over it.
   test("complex-word advice never creates a longer sentence", () => {
-    const padding = Array(27).fill("word").join(" ");
+    const padding = Array.from<string>({ length: 27 }).fill("word").join(" ");
     for (const [word, plain] of COMPLEX_WORDS) {
       expect(plain.split(" ").length, `${word} -> ${plain}`).toBe(1);
     }
@@ -1939,7 +1939,7 @@ ${sentence}`)
 
     // The advice must not create the next violation. "ascertain" suggests
     // "find", which is shorter, so a sentence at the cap stays at the cap.
-    const padding = Array(27).fill("word").join(" ");
+    const padding = Array.from<string>({ length: 27 }).fill("word").join(" ");
     expect(rulesFor(`We must ascertain ${padding}.`)).toEqual(["complex-word"]);
     expect(rulesFor(`We must check ${padding}.`)).toEqual([]);
 
@@ -2015,7 +2015,7 @@ ${sentence}`)
     const table = [
       "| Term | Explanation |",
       "| --- | --- |",
-      `| Record | The supplier shall ${Array(31).fill("word").join(" ")} |`,
+      `| Record | The supplier shall ${Array.from<string>({ length: 31 }).fill("word").join(" ")} |`,
     ].join("\n");
     // A quotation is prose a reader reads, and Markdown cannot prove who wrote
     // it. GitHub renders an alert with this syntax, and the plugin's own
@@ -2107,8 +2107,8 @@ ${sentence}`)
 
   test("encoding, typography, and English variety do not change advice", () => {
     for (const separator of [" ", "\u00a0"]) {
-      const thirty = Array(30).fill("word").join(separator) + ".";
-      const thirtyOne = Array(31).fill("word").join(separator) + ".";
+      const thirty = Array.from<string>({ length: 30 }).fill("word").join(separator) + ".";
+      const thirtyOne = Array.from<string>({ length: 31 }).fill("word").join(separator) + ".";
       expect(wordCount(thirty), JSON.stringify(separator)).toBe(30);
       expect(rulesFor(thirty)).not.toContain("sentence-length");
       expect(wordCount(thirtyOne), JSON.stringify(separator)).toBe(31);
@@ -2165,7 +2165,7 @@ ${sentence}`)
 
     const positiveAndNegative: Record<string, [string, string]> = {
       "sentence-length": [sentenceOf(31), sentenceOf(30)],
-      "sentence-average": [Array(10).fill(sentenceOf(21)).join(" "), Array(10).fill(sentenceOf(20)).join(" ")],
+      "sentence-average": [Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join(" "), Array.from<string>({ length: 10 }).fill(sentenceOf(20)).join(" ")],
       "paragraph-length": ["One. Two. Three. Four. Five. Six.", "One. Two. Three. Four. Five."],
       legalese: ["The supplier shall respond.", "The supplier must respond."],
       "heading-depth": ["##### Deep", "#### Permitted"],

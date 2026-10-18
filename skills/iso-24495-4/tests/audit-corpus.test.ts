@@ -154,21 +154,21 @@ describe("auditCorpus", () => {
     Array.from({ length: n }, (slot, i) => `word${i}`).join(" ") + ".";
 
   test("the average fires at exactly ten sentences and not at 20.0 exactly", () => {
-    const tenAt21 = Array(10).fill(sentenceOf(21)).join(" ");
+    const tenAt21 = Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join(" ");
     const fired = auditText(tenAt21).filter((x) => x.rule === "sentence-average");
     expect(fired).toHaveLength(1);
     expect(fired[0]?.detail).toContain("21.0");
     expect(fired[0]?.detail).toContain("10 sentences");
 
-    const nineAt21 = Array(9).fill(sentenceOf(21)).join(" ");
+    const nineAt21 = Array.from<string>({ length: 9 }).fill(sentenceOf(21)).join(" ");
     expect(auditText(nineAt21).filter((x) => x.rule === "sentence-average")).toHaveLength(0);
 
-    const tenAt20 = Array(10).fill(sentenceOf(20)).join(" ");
+    const tenAt20 = Array.from<string>({ length: 10 }).fill(sentenceOf(20)).join(" ");
     expect(auditText(tenAt20).filter((x) => x.rule === "sentence-average")).toHaveLength(0);
   });
 
   test("the average accumulates across separate prose blocks", () => {
-    const spread = Array(10).fill(sentenceOf(21)).join("\n\n");
+    const spread = Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join("\n\n");
     expect(auditText(spread).filter((x) => x.rule === "sentence-average")).toHaveLength(1);
   });
 

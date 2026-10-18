@@ -112,6 +112,13 @@ export const GUIDE_SYNTAX = [
     message: "guide: an else body is a braced block",
   },
   {
+    // The guide bans the Array constructor, with or without new. The rule
+    // no-array-constructor below allows one argument and a type argument,
+    // so this selector takes exactly those forms.
+    selector: ":matches(NewExpression, CallExpression)[callee.type='Identifier'][callee.name='Array']:matches([arguments.length=1], [typeArguments])",
+    message: "guide: no Array constructor, with one argument or a type",
+  },
+  {
     // Not a rule of the guide. With noUncheckedIndexedAccess on, an indexed
     // read may be undefined, and a cast there tells the compiler it is not.
     selector: "TSAsExpression > MemberExpression.expression[computed=true], TSAsExpression > ChainExpression.expression > MemberExpression.expression[computed=true]",
