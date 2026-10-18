@@ -809,7 +809,7 @@ function acronymViolations(
     const tokens = unmarkedTokens(block, written);
     // The words that carry an initial, in order, and how many precede each token. An
     // expansion is judged against these rather than against the text it came from.
-    const carried: number[] = new Array(tokens.length + 1);
+    const carried = Array.from<number>({ length: tokens.length + 1 }).fill(0);
     const initials: string[] = [];
     carried[0] = 0;
     for (let at = 0; at < tokens.length; at++) {
@@ -819,7 +819,7 @@ function acronymViolations(
 
     // The first token at or after each position that holds a closing bracket, built once
     // for the block so no acronym has to search forward for one.
-    const nextClose: number[] = new Array(tokens.length);
+    const nextClose = Array.from<number>({ length: tokens.length }).fill(0);
     for (let at = tokens.length - 1, closing = tokens.length; at >= 0; at--) {
       if (itemAt(tokens, at).raw.includes(")")) closing = at;
       nextClose[at] = closing;

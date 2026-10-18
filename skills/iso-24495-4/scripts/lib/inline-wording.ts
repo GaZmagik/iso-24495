@@ -200,7 +200,7 @@ function pairedMarks(runs: Run[]): number[] {
   const marks: number[] = [];
   // For each run, the nearest earlier run still in play. A run leaves play when a pair
   // closes around it, or takes its last mark.
-  const earlier: number[] = new Array(runs.length);
+  const earlier = Array.from<number>({ length: runs.length }).fill(0);
   // For each kind of closer, the run at or before which it has no opener. Without this
   // a text of closers alone would search back to its start from every one of them.
   const searched = new Map<string, number>();
