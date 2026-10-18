@@ -140,6 +140,14 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(shimEntryPoint("probe-cli.ts", "runCli(process.argv);")).toBeNull();
   });
 
+  test("a shim's entry point is named as its module exports it, through an import alias", () => {
+    expect(shimEntryPoint("probe-cli.ts", "import { runCli as main } from \"./probe.ts\";\nprocess.exit(main(process.argv));"))
+      .toBe("runCli");
+    // An alias of another function still names that function, so a mismatch still shows.
+    expect(shimEntryPoint("probe-cli.ts", "import { auditText as main, runCli } from \"./probe.ts\";\nprocess.exit(main(process.argv));"))
+      .toBe("auditText");
+  });
+
   test("a documented function that throws and does not say so is reported", () => {
     const missing = ["probe.ts:2: the comment on f does not say what it throws"];
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { throw new Error(\"no size\"); }"))
@@ -269,7 +277,8 @@ function exportedByList(source: ts.SourceFile): Set<string> {
  * The function a command shim runs: the one whose result, awaited or not, it
  * passes to `process.exit` at the top level.
  *
- * @returns The function's name, or null when no such call is found.
+ * @returns The function's name as its module exports it, through any import
+ *     alias, or null when no such call is found.
  */
 function shimEntryPoint(file: string, text: string): string | null {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -279,9 +288,25 @@ function shimEntryPoint(file: string, text: string): string | null {
     if (exit.expression.getText(source) !== "process.exit") continue;
     const argument = exit.arguments[0];
     const call = argument !== undefined && ts.isAwaitExpression(argument) ? argument.expression : argument;
-    if (call !== undefined && ts.isCallExpression(call) && ts.isIdentifier(call.expression)) return call.expression.text;
+    if (call !== undefined && ts.isCallExpression(call) && ts.isIdentifier(call.expression)) {
+      const local = call.expression.text;
+      return importedNames(source).get(local) ?? local;
+    }
   }
   return null;
+}
+
+/** Each local name a module imports by name, mapped to the name it is exported under. */
+function importedNames(source: ts.SourceFile): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const statement of source.statements) {
+    const bindings = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : undefined;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      names.set(element.name.text, (element.propertyName ?? element.name).text);
+    }
+  }
+  return names;
 }
 
 /** What the throws check found in one file. */
