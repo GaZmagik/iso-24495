@@ -136,6 +136,28 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 1, problems: [] });
   });
 
+  test("a documented arrow held by an object property or a class field, that throws and does not say so, is reported", () => {
+    const thrower = "(): number => {\n    throw new RangeError(\"x\");\n  }";
+    const forms: Array<[form: string, text: string]> = [
+      ["an object property", `export const reader = {\n  /** Reads a size. */\n  read: ${thrower},\n};`],
+      ["an object property in parentheses", `export const reader = {\n  /** Reads a size. */\n  read: (${thrower}),\n};`],
+      ["an object property holding a function expression", "export const reader = {\n  /** Reads a size. */\n  read: function (): number {\n    throw new RangeError(\"x\");\n  },\n};"],
+      ["a class field", `export class Reader {\n  /** Reads a size. */\n  read = ${thrower};\n}`],
+    ];
+    for (const [form, text] of forms) {
+      expect(undocumentedThrows("probe.ts", text), form)
+        .toEqual({ read: 1, problems: ["probe.ts:3: the comment on read does not say what it throws"] });
+    }
+  });
+
+  test("a documented arrow held by an object property or a class field, that says what it throws, is accepted", () => {
+    const comment = "  /**\n   * Reads a size.\n   * @throws A `RangeError` always.\n   */";
+    const thrower = "(): number => {\n    throw new RangeError(\"x\");\n  }";
+    for (const text of [`export const reader = {\n${comment}\n  read: ${thrower},\n};`, `export class Reader {\n${comment}\n  read = ${thrower};\n}`]) {
+      expect(undocumentedThrows("probe.ts", text), text).toEqual({ read: 1, problems: [] });
+    }
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -259,8 +281,8 @@ interface ThrowsCount {
  * comment carries no `@throws` tag.
  *
  * A function here is a function declaration, a method, a constructor, an
- * accessor, or a variable whose value is an arrow function or a function
- * expression. A throw counts when it can leave the function: not inside a
+ * accessor, or a variable, an object property or a class field whose value
+ * is an arrow function or a function expression. A throw counts when it can leave the function: not inside a
  * nested function, and not inside a `try` block whose `catch` takes it.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
@@ -306,10 +328,15 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
   }
   if (ts.isVariableStatement(node)) {
     const declaration = node.declarationList.declarations[0];
-    const value = declaration?.initializer;
-    if (declaration !== undefined && value !== undefined && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))) {
+    const value = functionValue(declaration?.initializer);
+    if (declaration !== undefined && value !== null) {
       return { name: declaration.name.getText(source), commented: node, body: value.body };
     }
+  }
+  // An object property or a class field whose value is a function.
+  if (ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node)) {
+    const value = functionValue(node.initializer);
+    if (value !== null) return { name: node.name.getText(source), commented: node, body: value.body };
   }
   return null;
 }
