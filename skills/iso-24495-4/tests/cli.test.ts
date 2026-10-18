@@ -323,21 +323,8 @@ describe("command line entry files", () => {
   // busy.
   const entryTimeoutMs = 20_000;
 
-  async function runScript(script: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
-    const proc = Bun.spawn(["bun", script, ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const stdout = await new Response(proc.stdout).text();
-    return { stdout, exitCode: await proc.exited };
-  }
-
-  function run(entry: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
-    return runScript(join(SCRIPTS, entry), args);
-  }
-
   test("audit-corpus-cli reports the fixture corpus", async () => {
-    const { stdout, exitCode } = await run("audit-corpus-cli.ts", [CORPUS]);
+    const { stdout, exitCode } = await runEntryFile("audit-corpus-cli.ts", [CORPUS]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Total: 11 across 7 files.");
   }, entryTimeoutMs);
@@ -351,13 +338,13 @@ describe("command line entry files", () => {
   }, entryTimeoutMs);
 
   test("audit-evidence-cli reports the fixture repository", async () => {
-    const { stdout, exitCode } = await run("audit-evidence-cli.ts", [REPOSITORY]);
+    const { stdout, exitCode } = await runEntryFile("audit-evidence-cli.ts", [REPOSITORY]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("| policy | yes | `docs/plain-language-policy.md` |");
   }, entryTimeoutMs);
 
   test("score-maturity-cli reports the sample answers", async () => {
-    const { stdout, exitCode } = await run("score-maturity-cli.ts", [ANSWERS]);
+    const { stdout, exitCode } = await runEntryFile("score-maturity-cli.ts", [ANSWERS]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Overall (weakest dimension): 0");
   });
@@ -368,10 +355,10 @@ describe("command line entry files", () => {
       const findings = join(temp, "findings.json");
       const evidence = join(temp, "evidence.json");
       const maturity = join(temp, "maturity.json");
-      await run("audit-corpus-cli.ts", [CORPUS, "--json", findings]);
-      await run("audit-evidence-cli.ts", [REPOSITORY, "--json", evidence]);
-      await run("score-maturity-cli.ts", [ANSWERS, "--json", maturity]);
-      const { stdout, exitCode } = await run("generate-report-cli.ts", [findings, evidence, maturity]);
+      await runEntryFile("audit-corpus-cli.ts", [CORPUS, "--json", findings]);
+      await runEntryFile("audit-evidence-cli.ts", [REPOSITORY, "--json", evidence]);
+      await runEntryFile("score-maturity-cli.ts", [ANSWERS, "--json", maturity]);
+      const { stdout, exitCode } = await runEntryFile("generate-report-cli.ts", [findings, evidence, maturity]);
       expect(exitCode).toBe(0);
       expect(stdout).toContain("# Plain Language Gap Analysis");
     } finally {
@@ -417,9 +404,6 @@ describe("command line entry files", () => {
       // category but one, emptying the dimensions, renaming the file a
       // finding belonged to, and keeping only the first finding of each. A
       // check that walks what survived cannot see what did not.
-      const rows = (text: string): string[] => text.split(/\r?\n/)
-        .filter((line) => line.startsWith("| ") && !line.startsWith("|--"));
-
       const findingsPath = join(workspace, "findings.json");
       const printedCorpus = capture();
       runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findingsPath],
@@ -599,26 +583,7 @@ describe("a command never passes on what the runtime said about a failure", () =
   const marker = "hunter2";
   const nul = String.fromCharCode(0);
 
-  /** Runs `check` with a fresh directory, and removes it afterwards. */
-  function withWorkspace(check: (workspace: string) => void): void {
-    const workspace = mkdtempSync(join(tmpdir(), "iso-relay-"));
-    try {
-      check(workspace);
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  }
-
-  /** Requires one command to fail with exactly `message`, and with the marker nowhere in its output. */
-  function expectFixedFailure(
-    run: (stdout: (text: string) => number, stderr: (text: string) => number) => number,
-    message: string,
-  ): void {
-    const output = capture();
-    expect(run(output.writeOut, output.writeErr)).toBe(1);
-    expect(output.stderr).toEqual([message]);
-    expect([...output.stdout, ...output.stderr].join("\n")).not.toContain(marker);
-  }
+  const expectFixedFailure = fixedFailureCheck(marker);
 
   test("audit-corpus", () => {
     withWorkspace((workspace) => {
@@ -700,30 +665,27 @@ describe("a command never passes on what the runtime said about a failure", () =
       runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", findings], () => {}, () => {});
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidence], () => {}, () => {});
       runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", maturity], () => {}, () => {});
-      const report = (...rest: string[]) =>
-        (out: (text: string) => number, err: (text: string) => number) =>
-          runReportCli(["bun", "generate-report-cli.ts", ...rest], out, err, () => "2026-10-06T12:00:00.000Z");
 
       // Each input is named by its own argument, so the user knows which to fix.
       const absent = join(workspace, `${marker}.json`);
       expectFixedFailure(
-        report(absent, evidence, maturity),
+        reportRun(absent, evidence, maturity),
         `generate-report: <findings.json> names a path of ${absent.length} characters that cannot be read: `
           + "no such file or directory",
       );
       const broken = join(workspace, "broken.json");
       writeFileSync(broken, `[${marker}]`);
       expectFixedFailure(
-        report(findings, broken, maturity),
+        reportRun(findings, broken, maturity),
         "generate-report: <evidence.json> names a file of 9 characters that is not valid JSON",
       );
       expectFixedFailure(
-        report(findings, evidence, workspace),
+        reportRun(findings, evidence, workspace),
         `generate-report: <maturity.json> names a path of ${workspace.length} characters that cannot be read: `
           + "a directory where a file was expected",
       );
       expectFixedFailure(
-        report(findings, evidence, maturity, "--state", broken),
+        reportRun(findings, evidence, maturity, "--state", broken),
         "generate-report: --state names a file of 9 characters that is not valid JSON",
       );
 
@@ -731,18 +693,18 @@ describe("a command never passes on what the runtime said about a failure", () =
       const shapeless = join(workspace, "empty.json");
       writeFileSync(shapeless, "{}");
       expectFixedFailure(
-        report(shapeless, shapeless, shapeless),
+        reportRun(shapeless, shapeless, shapeless),
         'generate-report: <findings.json>, "configHash" must be a string; got nothing',
       );
 
       const lost = join(workspace, marker, "out");
       expectFixedFailure(
-        report(findings, evidence, maturity, "--state", lost),
+        reportRun(findings, evidence, maturity, "--state", lost),
         `generate-report: --state names a path of ${lost.length} characters that cannot be written: `
           + "no such file or directory",
       );
       expectFixedFailure(
-        report(findings, evidence, maturity, "--out", lost),
+        reportRun(findings, evidence, maturity, "--out", lost),
         `generate-report: --out names a path of ${lost.length} characters that cannot be written: `
           + "no such file or directory",
       );
@@ -789,23 +751,13 @@ describe("a command never passes on what the runtime said about a failure", () =
   // added "overall: 99" to the audit history.
   test("generate-report refuses an input of the wrong shape, and leaves the history alone", () => {
     withWorkspace((workspace) => {
-      const write = (name: string, value: unknown): string => {
-        const path = join(workspace, name);
-        writeFileSync(path, JSON.stringify(value));
-        return path;
-      };
-      const levels = (level: unknown) => Object.fromEntries(
-        ["governance", "capability", "process", "measurement", "culture"]
-          .map((dimension) => [dimension, { level, missing: [] }]),
-      );
+      const write = jsonWriterIn(workspace);
       const findings = write("findings.json", { configHash: "abcd1234", files: {}, totals: { legalese: 2 } });
       const evidence = write("evidence.json", { artefacts: { policy: { found: true, paths: ["policy.md"] } } });
       const maturity = write("maturity.json", { dimensions: levels(2), overall: 2 });
       const state = join(workspace, "state.json");
-      const run = (...inputs: string[]) =>
-        (out: (text: string) => number, err: (text: string) => number) => runReportCli(
-          ["bun", "generate-report-cli.ts", ...inputs, "--state", state], out, err, () => "2026-10-06T12:00:00.000Z");
-      const bad = (value: unknown): string => write("bad.json", value);
+      const run = reportRunsWithState(state);
+      const bad = badInputWriter(write);
 
       // The three files the reviewer used, together and then one at a time.
       expectFixedFailure(
@@ -873,11 +825,7 @@ describe("a command never passes on what the runtime said about a failure", () =
   // and the command replaced it and the report beside it and exited 0.
   test("generate-report refuses a state file that holds null, and leaves it and the report alone", () => {
     withWorkspace((workspace) => {
-      const write = (name: string, value: unknown): string => {
-        const path = join(workspace, name);
-        writeFileSync(path, JSON.stringify(value));
-        return path;
-      };
+      const write = jsonWriterIn(workspace);
       const level = { level: 2, missing: [] };
       const inputs = [
         write("findings.json", { configHash: "abcd1234", files: {}, totals: { legalese: 2 } }),
@@ -889,9 +837,7 @@ describe("a command never passes on what the runtime said about a failure", () =
       ];
       const state = join(workspace, "state.json");
       const report = join(workspace, "report.md");
-      const run = (out: (text: string) => number, err: (text: string) => number) => runReportCli(
-        ["bun", "generate-report-cli.ts", ...inputs, "--state", state, "--out", report], out, err,
-        () => "2026-10-07T12:00:00.000Z");
+      const run = reportRunWith(inputs, state, report);
       for (const [written, found] of [
         ["null", "null"],
         ["  null\n", "null"],
@@ -950,26 +896,9 @@ describe("a command never passes on what the runtime said about a failure", () =
 // shows here that each command cleans the path it prints.
 describe("a skipped entry is printed with its path cleaned", () => {
   const rightToLeftOverride = String.fromCharCode(0x202e);
-  /** The link as a command prints it: forward slashes, and the mark as its code. */
-  const printedLink = (directory: string): string =>
-    `${join(directory, "report").split(String.fromCharCode(92)).join("/")}${String.fromCharCode(92)}u202edm.exe`;
-
-  /** A directory holding one link that an audit skips, whose name reverses text direction. */
-  function withReversingLink(run: (directory: string) => void): void {
-    const directory = mkdtempSync(join(tmpdir(), "iso-skip-clean-"));
-    try {
-      const target = join(directory, "target");
-      mkdirSync(target);
-      symlinkSync(target, join(directory, `report${rightToLeftOverride}dm.exe`), "junction");
-      rmSync(target, { recursive: true, force: true });
-      run(directory);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  }
 
   test("audit-corpus", () => {
-    withReversingLink((directory) => {
+    withReversingLink(rightToLeftOverride, (directory) => {
       const output = capture();
       expect(runCorpusCli(["bun", "audit-corpus-cli.ts", directory], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stderr).toEqual([`warning: skipped unreadable entry: ${printedLink(directory)}`]);
@@ -977,7 +906,7 @@ describe("a skipped entry is printed with its path cleaned", () => {
   });
 
   test("audit-text", () => {
-    withReversingLink((directory) => {
+    withReversingLink(rightToLeftOverride, (directory) => {
       const output = capture();
       expect(runTextAuditCli(
         ["bun", "audit-text-cli.ts", directory, "--project-dir", directory],
@@ -1018,3 +947,124 @@ describe("audit-evidence prints a path nobody has read", () => {
     }
   });
 });
+
+/** Runs one script in a Bun process of its own, and gives what it printed and its exit code. */
+async function runScript(script: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+  const proc = Bun.spawn(["bun", script, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = await new Response(proc.stdout).text();
+  return { stdout, exitCode: await proc.exited };
+}
+
+/** Runs one shipped entry file, and gives what it printed and its exit code. */
+function runEntryFile(entry: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
+  return runScript(join(SCRIPTS, entry), args);
+}
+
+/** Runs `check` with a fresh directory, and removes it afterwards. */
+function withWorkspace(check: (workspace: string) => void): void {
+  const workspace = mkdtempSync(join(tmpdir(), "iso-relay-"));
+  try {
+    check(workspace);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A check that one command fails with exactly the message given, and that
+ * the marker appears nowhere in what it printed.
+ *
+ * @returns The check. It returns nothing, and fails the test that calls it
+ *     when the command does otherwise.
+ */
+function fixedFailureCheck(marker: string): (
+  run: (stdout: (text: string) => number, stderr: (text: string) => number) => number,
+  message: string,
+) => void {
+  return (run, message) => {
+    const output = capture();
+    expect(run(output.writeOut, output.writeErr)).toBe(1);
+    expect(output.stderr).toEqual([message]);
+    expect([...output.stdout, ...output.stderr].join("\n")).not.toContain(marker);
+  };
+}
+
+/** The table rows of printed text: every line that opens a row, less the line under the header. */
+function rows(text: string): string[] {
+  return text.split(/\r?\n/)
+    .filter((line) => line.startsWith("| ") && !line.startsWith("|--"));
+}
+
+/** A run of generate-report on the inputs given, as a function of where it prints. */
+function reportRun(...rest: string[]): (out: (text: string) => number, err: (text: string) => number) => number {
+  return (out, err) =>
+    runReportCli(["bun", "generate-report-cli.ts", ...rest], out, err, () => "2026-10-06T12:00:00.000Z");
+}
+
+/**
+ * A writer of JSON files in one directory.
+ *
+ * @returns A function that writes a value as JSON to the named file, and
+ *     gives the file's path.
+ */
+function jsonWriterIn(workspace: string): (name: string, value: unknown) => string {
+  return (name: string, value: unknown): string => {
+    const path = join(workspace, name);
+    writeFileSync(path, JSON.stringify(value));
+    return path;
+  };
+}
+
+/** The five maturity dimensions, each at the level given and missing nothing. */
+function levels(level: unknown) {
+  return Object.fromEntries(
+    ["governance", "capability", "process", "measurement", "culture"]
+      .map((dimension) => [dimension, { level, missing: [] }]),
+  );
+}
+
+/**
+ * Runs of generate-report that keep their history in one state file.
+ *
+ * @returns A function that takes the inputs, and gives a run of the command
+ *     on them as a function of where it prints.
+ */
+function reportRunsWithState(state: string): (...inputs: string[]) => (out: (text: string) => number, err: (text: string) => number) => number {
+  return (...inputs: string[]) =>
+    (out: (text: string) => number, err: (text: string) => number) => runReportCli(
+      ["bun", "generate-report-cli.ts", ...inputs, "--state", state], out, err, () => "2026-10-06T12:00:00.000Z");
+}
+
+/** A writer of the one input file that is wrong: it gives the path of "bad.json" holding the value. */
+function badInputWriter(write: (name: string, value: unknown) => string): (value: unknown) => string {
+  return (value: unknown): string => write("bad.json", value);
+}
+
+/** A run of generate-report on fixed inputs, with a state file and a report file, as a function of where it prints. */
+function reportRunWith(inputs: string[], state: string, report: string): (out: (text: string) => number, err: (text: string) => number) => number {
+  return (out: (text: string) => number, err: (text: string) => number) => runReportCli(
+    ["bun", "generate-report-cli.ts", ...inputs, "--state", state, "--out", report], out, err,
+    () => "2026-10-07T12:00:00.000Z");
+}
+
+/** The link as a command prints it: forward slashes, and the mark as its code. */
+function printedLink(directory: string): string {
+  return `${join(directory, "report").split(String.fromCharCode(92)).join("/")}${String.fromCharCode(92)}u202edm.exe`;
+}
+
+/** A directory holding one link that an audit skips, whose name holds the mark that reverses text direction. */
+function withReversingLink(rightToLeftOverride: string, run: (directory: string) => void): void {
+  const directory = mkdtempSync(join(tmpdir(), "iso-skip-clean-"));
+  try {
+    const target = join(directory, "target");
+    mkdirSync(target);
+    symlinkSync(target, join(directory, `report${rightToLeftOverride}dm.exe`), "junction");
+    rmSync(target, { recursive: true, force: true });
+    run(directory);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
