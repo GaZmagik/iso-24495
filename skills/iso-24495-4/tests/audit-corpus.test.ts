@@ -46,10 +46,7 @@ describe("listTextFiles", () => {
       symlinkSync(target, dangling, "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      const inspectEntry = (path: string): Stats => {
-        if (path === blocked) throw new Error("entry vanished");
-        return lstatSync(path);
-      };
+      const inspectEntry = entryInspectorFailingAt(blocked);
       expect(listTextFiles(root, (path) => skipped.push(path), readdirSync, inspectEntry))
         .toEqual([join(root, "good.md")]);
       expect(skipped.sort()).toEqual([blocked, dangling].sort());
@@ -68,10 +65,7 @@ describe("listTextFiles", () => {
       const nested = join(root, "nested");
       mkdirSync(nested);
       const skipped: string[] = [];
-      const readDirectory = (path: string): string[] => {
-        if (path === nested) throw new Error("directory vanished");
-        return readdirSync(path);
-      };
+      const readDirectory = directoryReaderFailingAt(nested);
       expect(listTextFiles(root, (path) => skipped.push(path), readDirectory)).toEqual([]);
       expect(skipped).toEqual([nested]);
     } finally {
@@ -92,10 +86,7 @@ describe("auditCorpus skip reporting", () => {
       symlinkSync(target, join(root, "dangling"), "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      const readText = (path: string): string => {
-        if (path === blocked) throw new Error("file became unreadable");
-        return readFileSync(path, "utf8");
-      };
+      const readText = textReaderFailingAt(blocked);
       const findings = auditCorpus(root, (path) => skipped.push(path), readText);
       expect(Object.keys(findings.files)).toEqual(["good.md"]);
       expect(skipped.sort()).toEqual([blocked, join(root, "dangling")].sort());
@@ -148,11 +139,6 @@ describe("auditCorpus", () => {
     expect(auditText(nested)).toEqual([]);
   });
 
-  // A synthetic sentence of exactly n words; programmatic, so the count
-  // cannot be wrong by hand.
-  const sentenceOf = (n: number) =>
-    Array.from({ length: n }, (slot, i) => `word${i}`).join(" ") + ".";
-
   test("the average fires at exactly ten sentences and not at 20.0 exactly", () => {
     const tenAt21 = Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join(" ");
     const fired = auditText(tenAt21).filter((x) => x.rule === "sentence-average");
@@ -202,6 +188,54 @@ describe("auditCorpus", () => {
 
 function violationsFor(text: string, rule: string) {
   return auditText(text).filter((violation) => violation.rule === rule);
+}
+
+/**
+ * A synthetic sentence of exactly n words; programmatic, so the count
+ * cannot be wrong by hand.
+ */
+function sentenceOf(n: number): string {
+  return Array.from({ length: n }, (slot, i) => `word${i}`).join(" ") + ".";
+}
+
+/**
+ * Makes an entry inspector that reads an entry as `lstatSync` does, except at
+ * the one path given, where it throws an `Error` as if the entry had gone.
+ *
+ * @returns The inspector.
+ */
+function entryInspectorFailingAt(blocked: string): (path: string) => Stats {
+  return (path: string): Stats => {
+    if (path === blocked) throw new Error("entry vanished");
+    return lstatSync(path);
+  };
+}
+
+/**
+ * Makes a directory reader that lists a directory as `readdirSync` does,
+ * except at the one path given, where it throws an `Error` as if the
+ * directory had become unreadable.
+ *
+ * @returns The reader.
+ */
+function directoryReaderFailingAt(nested: string): (path: string) => string[] {
+  return (path: string): string[] => {
+    if (path === nested) throw new Error("directory vanished");
+    return readdirSync(path);
+  };
+}
+
+/**
+ * Makes a text reader that reads a file as UTF-8, except at the one path
+ * given, where it throws an `Error` as if the file had become unreadable.
+ *
+ * @returns The reader.
+ */
+function textReaderFailingAt(blocked: string): (path: string) => string {
+  return (path: string): string => {
+    if (path === blocked) throw new Error("file became unreadable");
+    return readFileSync(path, "utf8");
+  };
 }
 
 describe("lucid-inspired advisory rules", () => {
