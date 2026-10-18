@@ -9,11 +9,12 @@
 // expression, the rules of the recommended sets that have found a fault
 // here, and the further rules of the guide that a linter can state.
 //
-// scripts/tests/lint-rules.test.ts imports ENFORCED_RULES, GUIDE_SYNTAX and
-// CODE_SKILL_SYNTAX. It asks ESLint for the configuration that applies to
-// each TypeScript file and requires every rule there to be an error. It also
-// gives the linter one breach of each rule, and of each syntax selector, and
-// requires an error for each. Add a rule and its breach together.
+// scripts/tests/lint-rules.test.ts imports ENFORCED_RULES, GUIDE_SYNTAX,
+// CODE_SKILL_SYNTAX and RULE_EXCEPTIONS. It asks ESLint for the
+// configuration that applies to each TypeScript file and requires every rule
+// there to be an error. It also gives the linter one breach of each rule, and
+// of each syntax selector, and requires an error for each. Add a rule and its
+// breach together.
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
@@ -283,10 +284,11 @@ export const ENFORCED_RULES = {
   "@typescript-eslint/prefer-for-of": "error",
   // Exceptions.
   "no-empty": "error",
-  // A value typed any is no more an Error than a string is: the type check
-  // has given up on it. A value typed unknown may still be thrown, so that a
-  // test can stand in for code outside this project, which may throw anything.
-  "@typescript-eslint/only-throw-error": ["error", { allowThrowingAny: false }],
+  // A value typed any or unknown is no more an Error than a string is: the
+  // type check has given up on it, or never knew. A caught value may still be
+  // thrown on unchanged. RULE_EXCEPTIONS below names the one test file that
+  // may throw a value typed unknown.
+  "@typescript-eslint/only-throw-error": ["error", { allowThrowingAny: false, allowThrowingUnknown: false }],
   "@typescript-eslint/prefer-promise-reject-errors": "error",
   // Disallowed features.
   "semi": ["error", "always"],
@@ -313,6 +315,23 @@ export const ENFORCED_RULES = {
   "multiline-comment-style": ["error", "separate-lines"],
 };
 
+/**
+ * The files where an enforced rule is set otherwise, each with the setting
+ * it has there and the reason. The setting is still an error. The lint test
+ * reads this list, holds each file to the setting given here, and pins the
+ * list itself, so an exception cannot be added without a test changing.
+ */
+export const RULE_EXCEPTIONS = [
+  {
+    // Two tests stand in for code outside this project, which may throw
+    // anything, and check that what it throws is handled. They throw a
+    // value typed unknown on purpose.
+    files: ["scripts/tests/traffic-snapshot.test.ts"],
+    rule: "@typescript-eslint/only-throw-error",
+    setting: ["error", { allowThrowingAny: false, allowThrowingUnknown: true }],
+  },
+];
+
 export default defineConfig([
   // With this setting, a comment in a file cannot change a rule or switch one
   // off. A later block could set it back for some files, and no test here
@@ -336,4 +355,5 @@ export default defineConfig([
       ...ENFORCED_RULES,
     },
   },
+  ...RULE_EXCEPTIONS.map(({ files, rule, setting }) => ({ files, rules: { [rule]: setting } })),
 ]);

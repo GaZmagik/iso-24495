@@ -19,6 +19,9 @@ export declare const GUIDE_SYNTAX: ReadonlyArray<{ readonly selector: string; re
 /** The syntax selectors that state rules of this plugin's code skill, in the same form. */
 export declare const CODE_SKILL_SYNTAX: ReadonlyArray<{ readonly selector: string; readonly message: string }>;
 
+/** The files where an enforced rule is set otherwise, with that setting. */
+export declare const RULE_EXCEPTIONS: ReadonlyArray<{ readonly files: readonly string[]; readonly rule: string; readonly setting: RuleSetting }>;
+
 declare const configuration: readonly unknown[];
 // ESLint requires the configuration as the default export.
 export default configuration;

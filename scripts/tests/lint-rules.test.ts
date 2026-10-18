@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
-import { CODE_SKILL_SYNTAX, ENFORCED_RULES, GUIDE_SYNTAX, type RuleSetting } from "../../eslint.config.mjs";
+import { CODE_SKILL_SYNTAX, ENFORCED_RULES, GUIDE_SYNTAX, RULE_EXCEPTIONS, type RuleSetting } from "../../eslint.config.mjs";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js");
@@ -211,6 +211,17 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "  },"],
   [[], "};"],
   [["brace-style", "@typescript-eslint/only-throw-error"], "export function parsedThrow(): never { throw JSON.parse(\"1\"); }"],
+  // A value typed unknown is refused too, but for the one test file that
+  // stands in for code outside this project. A caught value may be thrown on.
+  [["brace-style", "@typescript-eslint/only-throw-error"], "export function failWith(value: unknown): never { throw value; }"],
+  [[], "export function rethrows(): void {"],
+  [[], "  try {"],
+  [[], "    scoped(true);"],
+  [[], "  } catch (error) {"],
+  [[], "    if (error instanceof RangeError) return;"],
+  [[], "    throw error;"],
+  [[], "  }"],
+  [[], "}"],
 
   // Classes.
   [["brace-style", "@typescript-eslint/explicit-member-accessibility"], "export class Shown { public size = 1; }"],
@@ -284,6 +295,13 @@ describe("the lint rules the gate relies on", () => {
     expect(settings.filter(([, setting]) => !isError(setting)).map(([rule]) => rule)).toEqual([]);
   });
 
+  test("one file alone may throw a value typed unknown, and every exception is still an error", () => {
+    expect(RULE_EXCEPTIONS.map(({ files, rule }) => ({ files, rule }))).toEqual([
+      { files: ["scripts/tests/traffic-snapshot.test.ts"], rule: "@typescript-eslint/only-throw-error" },
+    ]);
+    expect(RULE_EXCEPTIONS.filter(({ setting }) => !isError(setting))).toEqual([]);
+  });
+
   test("every enforced rule is set as stated in every TypeScript file, as ESLint resolves it", async () => {
     expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
     const files = scriptFiles();
@@ -310,6 +328,19 @@ describe("the lint rules the gate relies on", () => {
     for (const rule of Object.keys(ENFORCED_RULES)) {
       expect(resolvedSeverity(stated, rule), `${rule} as stated`).toBe(ERROR);
     }
+    // A file named in RULE_EXCEPTIONS is held to the setting stated there, for
+    // that rule alone, resolved the same way.
+    const statedExceptions = new Map<string, unknown>();
+    for (const { files, rule, setting } of RULE_EXCEPTIONS) {
+      const exception: unknown = await new ESLint({
+        cwd: REPOSITORY_ROOT,
+        overrideConfigFile: true,
+        overrideConfig: [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": tseslint.plugin }, rules: { ...ENFORCED_RULES, [rule]: setting } }],
+      }).calculateConfigForFile("any-name.ts");
+      for (const file of files) {
+        statedExceptions.set(`${file} ${rule}`, exception);
+      }
+    }
 
     const eslint = new ESLint({ cwd: REPOSITORY_ROOT });
     const weak: string[] = [];
@@ -326,7 +357,7 @@ describe("the lint rules the gate relies on", () => {
       const resolved: unknown = await eslint.calculateConfigForFile(file);
       for (const rule of Object.keys(ENFORCED_RULES)) {
         if (resolvedSeverity(resolved, rule) !== ERROR) weak.push(`${file}: ${rule}`);
-        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(stated, rule), true)) {
+        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(statedExceptions.get(`${file} ${rule}`) ?? stated, rule), true)) {
           changed.push(`${file}: ${rule}`);
         }
       }
@@ -355,6 +386,14 @@ describe("the lint rules the gate relies on", () => {
     expect(new Set(selectors).size, "two selectors share a message").toBe(selectors.length);
     const rules = Object.keys(ENFORCED_RULES).filter((rule) => rule !== "no-restricted-syntax");
     expect([...probed].sort()).toEqual([...rules, ...selectors].sort());
+  });
+
+  test("a thrown value typed unknown is refused in shipped code, and allowed only in the traffic snapshot tests", () => {
+    const text = ["export function failWith(value: unknown): never {", "  throw value;", "}", ""].join("\n");
+    const refused = ["2: @typescript-eslint/only-throw-error"];
+    expect(reportsFor(text, join(REPOSITORY_ROOT, "scripts", "traffic-snapshot.ts"))).toEqual(refused);
+    expect(reportsFor(text, join(REPOSITORY_ROOT, "skills", "iso-24495-4", "scripts", "lib", "item-at.ts"))).toEqual(refused);
+    expect(reportsFor(text, join(REPOSITORY_ROOT, "scripts", "tests", "traffic-snapshot.test.ts"))).toEqual([]);
   });
 });
 
@@ -437,9 +476,10 @@ interface LintMessage {
 /**
  * What the linter reports for a text, under this repository's configuration.
  *
- * The text is linted under this file's own name. The typed rules read types
- * from a project, and the project service refuses a name it cannot find on
- * disk.
+ * The text is linted under this file's own name, or under the name of
+ * another file of the repository when one is given. The typed rules read
+ * types from a project, and the project service refuses a name it cannot
+ * find on disk.
  *
  * @returns One "line: rule" entry for each line and rule reported, sorted. A
  *     report that names no rule reads "(no rule)". A report from a syntax
@@ -449,9 +489,9 @@ interface LintMessage {
  * @throws An `Error` when the linter prints anything but its JSON report, or
  *     could not parse the text, which leaves every rule unrun.
  */
-function reportsFor(text: string): string[] {
+function reportsFor(text: string, file = import.meta.path): string[] {
   const run = Bun.spawnSync(
-    ["node", LINTER, "--stdin", "--stdin-filename", import.meta.path, "--format", "json"],
+    ["node", LINTER, "--stdin", "--stdin-filename", file, "--format", "json"],
     { cwd: REPOSITORY_ROOT, stdin: Buffer.from(text, "utf8") },
   );
   const printed = run.stdout.toString();
