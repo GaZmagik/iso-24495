@@ -312,12 +312,12 @@ A test holds the rules about comments, which a linter cannot see. Every top-leve
 
 ## The code skill, applied to this code
 
-The gate also holds this repository's TypeScript to four rules of its own code skill, `iso-24495-code`:
+The gate also holds this repository's TypeScript to four rules taken from its own code skill, `iso-24495-code`:
 
 1. Each shipped module leads with an exported function. A command shim exports nothing, so the function it runs must lead its module instead. `decimal.ts` is listed as having no single entry point.
 2. Every top-level export has a JSDoc comment. A comment on a function that throws says what it throws.
 3. A named helper sits at the top level or in a class, never inside another function.
-4. Only an `Error` is thrown. A value typed `unknown` is still allowed, so that a test can stand in for code outside this project.
+4. Only an `Error` is thrown, as in every example the skill gives. A value typed `unknown` is still allowed, so that a test can stand in for code outside this project.
 
 ESLint states rules 3 and 4. `scripts/tests/code-skill-rules.test.ts` tests rules 1 and 2, and names where each rule is checked.
 

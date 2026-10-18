@@ -18,9 +18,11 @@ const NO_SINGLE_ENTRY_POINT: Readonly<Record<string, string>> = {
     + "It leads with the two private helpers that most of them share.",
 };
 
-// This plugin's own code is held to four rules of its code skill,
-// `iso-24495-code`, by the owner's ruling. Each rule is checked by the tool
-// that states it most simply:
+// This plugin's own code is held to four rules taken from its code skill,
+// `iso-24495-code`, by the owner's ruling. The skill states the first three
+// in words. It states the fourth only by example: every error it shows is an
+// Error, and the Google guide makes that a rule. Each rule is checked by the
+// tool that states it most simply:
 //
 // 1. Entry point first: tested here.
 // 2. Interface comment present: every top-level export has a JSDoc comment,
