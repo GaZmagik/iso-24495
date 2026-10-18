@@ -1,9 +1,14 @@
-// Rebuild `../fixtures/pinned-documents.ts` from the documents themselves.
+// The command that regenerates `../fixtures/pinned-documents.ts`:
 //
 //   bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts
 //
-// It prints the line counts and rewrites the fixture in place. Run it from the
-// repository root, in the same commit as any edit to a document it covers.
+// The fixture holds every line of each document `shipped-documents.ts` lists,
+// README.md among them, and a test in repository-conventions.test.ts fails
+// when a line of one changes and the fixture does not. The command is for
+// that edit: it reads each document and writes the fixture again from them,
+// in place, and prints the line counts. Run it from the repository root, in
+// the same commit as any edit to a document it covers. The test names this
+// command in its failure message. The README does not.
 //
 // The fixture holds these documents whole rather than in pieces. Reviews taught
 // that lesson twice over. First inside the text: a pinned phrase leaves every
