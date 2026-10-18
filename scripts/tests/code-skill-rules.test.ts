@@ -18,22 +18,38 @@ const NO_SINGLE_ENTRY_POINT: Readonly<Record<string, string>> = {
     + "It leads with the two private helpers that most of them share.",
 };
 
-// This plugin's own code is held to four rules taken from its code skill,
-// `iso-24495-code`, by the owner's ruling. The skill states the first three
-// in words. It states the fourth only by example: every error it shows is an
-// Error, and the Google guide makes that a rule. Each rule is checked by the
-// tool that states it most simply:
+// This file is the record of the four rules this plugin's own TypeScript is
+// held to, taken from its code skill, `iso-24495-code`, by the owner's
+// ruling. The skill states the first three in words. It states the fourth
+// only by example: every error it shows is an Error, and the Google guide
+// makes that a rule. Each rule is checked by the tool that states it most
+// simply.
 //
-// 1. Entry point first: tested here.
-// 2. Interface comment present: every top-level export has a JSDoc comment,
-//    tested in source-comments.test.ts. A comment on a function that throws
-//    says what it throws, tested here.
-// 3. Helpers at top level: the "code skill" syntax selector in
-//    eslint.config.mjs, probed in lint-rules.test.ts.
-// 4. Throw only Error: the lint rule "@typescript-eslint/only-throw-error",
-//    probed in lint-rules.test.ts. A value typed `unknown` may still be
-//    thrown, as the rule allows by default: two tests stand in for code
-//    outside this project, which may throw anything.
+// 1. Entry point first. A reader opening a module meets what it does before
+//    the detail. The first function of each shipped module is exported, and
+//    a command shim's module leads with the function the shim runs. Tests are
+//    not held to it, by the owner's ruling. decimal.ts is listed below with
+//    its reason. Tested here.
+// 2. Interface comment present. A caller learns what a function does without
+//    reading its body. Every top-level export has a JSDoc comment, tested in
+//    source-comments.test.ts. A comment on a function that throws says what
+//    it throws, tested here.
+// 3. Helpers at top level. A reader cannot reach a closure without reading
+//    its container first. A function declaration, a variable holding a
+//    function, or an object method or accessor inside a function is refused
+//    by the "code skill" syntax selector in eslint.config.mjs, probed in
+//    lint-rules.test.ts. A property holding an arrow is left alone: it is a
+//    value handed on, most often a stand-in for a dependency.
+// 4. Throw only Error. A value that is not an Error carries no message and no
+//    stack to the person who meets it. The lint rule
+//    "@typescript-eslint/only-throw-error" refuses a thrown value typed any or
+//    unknown, and a caught value may still be thrown on. RULE_EXCEPTIONS in
+//    eslint.config.mjs names the one file that may throw a value typed
+//    unknown: scripts/tests/traffic-snapshot.test.ts, whose tests stand in
+//    for code outside this project. Probed in lint-rules.test.ts.
+//
+// eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
+// removes, beside the rules themselves.
 //
 // As with the lint rules, these checks catch accidents. A comment that names
 // what a function throws and is wrong is left to review.
