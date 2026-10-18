@@ -26,7 +26,7 @@ describe("calibrated engine", () => {
   }, 60000);
   test("classifies exact boundaries without rounding or normalisation", () => {
     const probability = parseDecimal;
-    const purpose = (both: string, task: string, scope: string, neither: string) => classify("opening", { purpose: { both: probability(both), task_only: probability(task), scope_only: probability(scope), neither: probability(neither) } });
+    const purpose = purposeClassifier(probability);
     expect(purpose("0.13", "0.02", "0.02", "0.83")).toMatchObject({ band: "fail", diagnosis: "neither", score: "0.87", cutOff: "0.87" });
     expect(purpose("0.13000000000000001", "0.02", "0.02", "0.83").band).toBe("unsure");
     expect(purpose("0.12", "0.83", "0.02", "0.83").diagnosis).toBeUndefined();
@@ -47,3 +47,13 @@ describe("calibrated engine", () => {
     expect(() => classify("block", {})).toThrow(TypeError);
   });
 });
+
+/**
+ * Makes a function that classifies an opening from the four purpose
+ * probabilities, each written as text and read by the given reader.
+ *
+ * @returns The classifying function.
+ */
+function purposeClassifier(probability: typeof parseDecimal): (both: string, task: string, scope: string, neither: string) => ReturnType<typeof classify> {
+  return (both: string, task: string, scope: string, neither: string) => classify("opening", { purpose: { both: probability(both), task_only: probability(task), scope_only: probability(scope), neither: probability(neither) } });
+}
