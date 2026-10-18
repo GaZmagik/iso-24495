@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 
@@ -88,13 +89,68 @@ describe("every statement that only TypeScript has ends with a semicolon", () =>
     expect(unendedStatements("probe.ts", ended)).toEqual({ checked, missing: [] });
   });
 
+  // A property signature in a multi-line interface, type literal or ambient
+  // interface, the optional form among them.
+  test.each([
+    ["a property signature", "export interface I {\n  x: number\n}", 1],
+    ["a property signature", "export interface I {\n  x?: number\n}", 1],
+    ["a property signature", "export type T = {\n  x: number\n};", 2],
+    ["a property signature", "export declare interface I {\n  x: number\n}", 1],
+    ["a property signature", "export function f(shape: {\n  x: number\n}): number {\n  return shape.x;\n}", 1],
+  ])("%s, in %p, is reported with no semicolon, and not with one", (kind, unended, checked) => {
+    const ended = unended.replace("number\n}", "number;\n}");
+    expect(unendedStatements("probe.ts", unended)).toEqual({ checked, missing: [`probe.ts:2: ${kind} has no semicolon`] });
+    expect(unendedStatements("probe.ts", ended)).toEqual({ checked, missing: [] });
+  });
+
+  test("in a multi-line interface or type literal, every member needs its semicolon, the last included", () => {
+    expect(unendedStatements("probe.ts", "export interface I {\n  host: string;\n  port: number;\n}")).toEqual({ checked: 2, missing: [] });
+    expect(unendedStatements("probe.ts", "export interface I {\n  host: string;\n  port: number\n}"))
+      .toEqual({ checked: 2, missing: ["probe.ts:3: a property signature has no semicolon"] });
+    // Braces on different lines make the body multi-line, even with a member beside the first.
+    expect(unendedStatements("probe.ts", "export interface I { host: string\n}"))
+      .toEqual({ checked: 1, missing: ["probe.ts:1: a property signature has no semicolon"] });
+  });
+
+  test("a comma between members of a multi-line type literal is reported", () => {
+    expect(unendedStatements("probe.ts", "export type T = {\n  host: string,\n  port: number;\n};"))
+      .toEqual({ checked: 3, missing: ["probe.ts:2: a property signature has no semicolon"] });
+  });
+
+  test("an inline literal may separate its members with commas or semicolons, and end its last with nothing", () => {
+    const inline = [
+      "export interface I { host: string, port: number }",
+      "export interface I { host: string; port: number }",
+      "export interface I { host: string, port: number, }",
+      "export interface I { host: string; port: number; }",
+      "export declare interface I { x?: number }",
+      "export interface I { f(): void, (): void, new(): object, [key: string]: unknown }",
+      "export function f(address: string): { host: string, port: number } {\n  return { host: address, port: 1 };\n}",
+    ];
+    for (const text of inline) {
+      expect(unendedStatements("probe.ts", text), text).toEqual({ checked: 0, missing: [] });
+    }
+    // The alias around an inline literal still needs its own semicolon.
+    expect(unendedStatements("probe.ts", "export type T = { host: string, port: number };")).toEqual({ checked: 1, missing: [] });
+    expect(unendedStatements("probe.ts", "export type T = { host: string, port: number }"))
+      .toEqual({ checked: 1, missing: ["probe.ts:1: a type alias has no semicolon"] });
+  });
+
+  test("an inline literal inside a multi-line one is read by its own braces", () => {
+    expect(unendedStatements("probe.ts", "export interface I {\n  address: { host: string, port: number };\n}")).toEqual({ checked: 1, missing: [] });
+    expect(unendedStatements("probe.ts", "export interface I {\n  address: { host: string, port: number }\n}"))
+      .toEqual({ checked: 1, missing: ["probe.ts:2: a property signature has no semicolon"] });
+  });
+
   test("a mapped type with no semicolon before its closing brace is reported, and with one is not", () => {
     const unended = "export type T = {\n  [K in \"x\"]: number\n};";
     expect(unendedStatements("probe.ts", unended)).toEqual({ checked: 2, missing: ["probe.ts:1: a mapped type has no semicolon"] });
     expect(unendedStatements("probe.ts", unended.replace("number\n", "number;\n"))).toEqual({ checked: 2, missing: [] });
   });
 
-  test("a member that ends in a comma is reported, as the guide asks for a semicolon", () => {
+  // By the owner's ruling, a comma is reported only in a multi-line interface
+  // or type literal. This test once said a comma was always reported.
+  test("a member of a multi-line interface that ends in a comma is reported", () => {
     const comma = "export interface I {\n  f(): void,\n  g(): void;\n}";
     expect(unendedStatements("probe.ts", comma)).toEqual({ checked: 2, missing: ["probe.ts:2: a method signature has no semicolon"] });
   });
@@ -148,8 +204,11 @@ function kindOf(node: ts.Node): string | null {
   if (ts.isModuleDeclaration(node) && node.body === undefined) return "a module with no body";
   if (ts.isImportEqualsDeclaration(node)) return "an import alias";
   // Members of an interface or a type literal. The compiler takes a comma
-  // after one as well as a semicolon, and the guide's rule is a semicolon, so
-  // a member that ends in a comma is reported too.
+  // after one as well as a semicolon. By the owner's ruling, a member of a
+  // multi-line interface or type literal ends in a semicolon, and a comma
+  // there is reported, while an inline literal is not read: see
+  // inInlineLiteral.
+  if (ts.isPropertySignature(node)) return "a property signature";
   if (ts.isMethodSignature(node)) return "a method signature";
   if (ts.isCallSignatureDeclaration(node)) return "a call signature";
   if (ts.isConstructSignatureDeclaration(node)) return "a construct signature";
@@ -157,6 +216,25 @@ function kindOf(node: ts.Node): string | null {
   // The one member of a mapped type ends before its closing brace.
   if (ts.isMappedTypeNode(node)) return "a mapped type";
   return null;
+}
+
+/**
+ * Whether a node is a member of an inline literal: an interface or type
+ * literal whose opening and closing braces are on one line, as in
+ * `{host: string, port: number}`. The guide writes such members with commas,
+ * and with nothing after the last, so by the owner's ruling none needs a
+ * semicolon and the check passes them over.
+ */
+function inInlineLiteral(node: ts.Node, source: ts.SourceFile): boolean {
+  const container = node.parent;
+  if (!ts.isTypeElement(node) || !(ts.isInterfaceDeclaration(container) || ts.isTypeLiteralNode(container))) {
+    return false;
+  }
+  const braces = container.getChildren(source).filter((child) => child.kind === ts.SyntaxKind.OpenBraceToken || child.kind === ts.SyntaxKind.CloseBraceToken);
+  // A type literal is its braces; an interface holds them as two of its tokens.
+  const open = ts.isTypeLiteralNode(container) ? container.getStart(source) : itemAt(braces, 0).getStart(source);
+  const close = ts.isTypeLiteralNode(container) ? container.getEnd() - 1 : itemAt(braces, braces.length - 1).getStart(source);
+  return source.getLineAndCharacterOfPosition(open).line === source.getLineAndCharacterOfPosition(close).line;
 }
 
 /**
@@ -180,7 +258,7 @@ function unendedStatements(file: string, text: string): SemicolonCount {
   let checked = 0;
   const visit = (node: ts.Node): void => {
     const kind = kindOf(node);
-    if (kind !== null) {
+    if (kind !== null && !inInlineLiteral(node, source)) {
       checked += 1;
       if (!endsInSemicolon(node, source)) {
         const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
