@@ -1,9 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
+
+/** The compiler options of this repository, as its tsconfig.json states them. */
+const COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
+  ts.readConfigFile(join(REPOSITORY_ROOT, "tsconfig.json"), ts.sys.readFile).config,
+  ts.sys,
+  REPOSITORY_ROOT,
+).options;
+
+/**
+ * Every source file the compiler has read from disk for a type check here,
+ * by its name. The libraries are read once and shared by every check.
+ */
+const SHARED_SOURCES = new Map<string, ts.SourceFile>();
+
+const BACKSLASH = String.fromCharCode(92);
 
 /** How the name of a command shim ends. A shim runs one function of the module named without it. */
 const SHIM_ENDING = "-cli.ts";
@@ -54,6 +69,12 @@ const NO_SINGLE_ENTRY_POINT: Readonly<Record<string, string>> = {
 // As with the lint rules, these checks catch accidents. A comment that names
 // what a function throws and is wrong is left to review.
 describe("the code skill's rules for this repository's own code", () => {
+  // The first type check reads the libraries, which takes seconds. The later
+  // ones share them.
+  beforeAll(() => {
+    typedSource("probe.ts", "");
+  }, 60_000);
+
   test("every shipped module leads with an exported function", () => {
     let checked = 0;
     const problems: string[] = [];
@@ -81,7 +102,8 @@ describe("the code skill's rules for this repository's own code", () => {
     for (const shim of shims) {
       const module = shim.slice(0, -SHIM_ENDING.length) + ".ts";
       const run = shimEntryPoint(shim, readFileSync(join(REPOSITORY_ROOT, shim), "utf8"));
-      const first = firstFunction(ts.createSourceFile(module, readFileSync(join(REPOSITORY_ROOT, module), "utf8"), ts.ScriptTarget.Latest, true));
+      const typed = typedSource(module, readFileSync(join(REPOSITORY_ROOT, module), "utf8"));
+      const first = firstFunction(typed.source, typed.checker);
       if (run === null || first === null || run !== first.name) {
         problems.push(`${shim} runs ${run ?? "(no exit call)"}, but ${module} leads with ${first?.name ?? "(no function)"}`);
       }
@@ -131,6 +153,20 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(entryPointProblem("probe.ts", `const helper = ${value};${caller}`), value).toEqual(reported);
     }
     expect(entryPointProblem("probe.ts", `export const helper = ((x: number): number => x);${caller}`))
+      .toEqual({ checked: true, problem: null });
+  });
+
+  test("a first function that a call wraps or returns is read as the function it is", () => {
+    const reported = { checked: true, problem: "probe.ts:1: the first function, helper, is not exported" };
+    const caller = "\nexport function main(): number { return helper(1); }";
+    for (const value of [
+      "Object.freeze<(x: number) => number>((x) => x)",
+      "((): ((x: number) => number) => (x) => x)()",
+    ]) {
+      expect(entryPointProblem("probe.ts", `const helper = ${value};${caller}`), value).toEqual(reported);
+    }
+    // A value that a call builds with a callback is not a function.
+    expect(entryPointProblem("probe.ts", "const NAMES = [\"a\"].map((name) => name.toUpperCase());\nexport function main(): string[] { return NAMES; }"))
       .toEqual({ checked: true, problem: null });
   });
 
@@ -217,12 +253,13 @@ interface EntryPoint {
 /**
  * Whether a module's first top-level function is exported.
  *
- * A function is a function declaration, or a constant whose value is an arrow
- * function or a function expression.
+ * A function is a function declaration, or a top-level variable whose type
+ * can be called: an arrow, a function expression, or a function that a call
+ * wraps or returns. A value a call builds with a callback is not one.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const first = firstFunction(source);
+  const { source, checker } = typedSource(file, text);
+  const first = firstFunction(source, checker);
   if (first === null) return { checked: false, problem: null };
   if (first.exported || exportedByList(source).has(first.name)) return { checked: true, problem: null };
   const line = source.getLineAndCharacterOfPosition(first.statement.getStart(source)).line + 1;
@@ -237,7 +274,7 @@ interface FirstFunction {
 }
 
 /** The first top-level function of a module, or null when it holds none. */
-function firstFunction(source: ts.SourceFile): FirstFunction | null {
+function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFunction | null {
   for (const statement of source.statements) {
     const exported = ts.canHaveModifiers(statement)
       && (ts.getModifiers(statement) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
@@ -246,7 +283,7 @@ function firstFunction(source: ts.SourceFile): FirstFunction | null {
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && functionValue(declaration.initializer) !== null) {
+      if (ts.isIdentifier(declaration.name) && checker.getTypeAtLocation(declaration.name).getCallSignatures().length > 0) {
         return { name: declaration.name.text, exported, statement };
       }
     }
@@ -268,6 +305,47 @@ function functionValue(expression: ts.Expression | undefined): ts.ArrowFunction 
     inner = inner.expression;
   }
   return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) ? inner : null;
+}
+
+/** A source file with the type checker of the program that read it. */
+interface TypedSource {
+  source: ts.SourceFile;
+  checker: ts.TypeChecker;
+}
+
+/**
+ * A source file read by the compiler under this repository's options, so
+ * that the type of what it declares can be asked. The file's text is given,
+ * and anything it imports is read from disk.
+ *
+ * @param file The path from the repository root. The file need not exist.
+ * @throws An `Error` when the compiler did not read the file.
+ */
+function typedSource(file: string, text: string): TypedSource {
+  const fileName = join(REPOSITORY_ROOT, file).split(BACKSLASH).join("/");
+  const host = ts.createCompilerHost(COMPILER_OPTIONS, true);
+  host.getSourceFile = sourceReader(host.getSourceFile, fileName, text);
+  const program = ts.createProgram([fileName], COMPILER_OPTIONS, host);
+  const source = program.getSourceFile(fileName);
+  if (source === undefined) throw new Error(`The compiler did not read ${file}.`);
+  return { source, checker: program.getTypeChecker() };
+}
+
+/**
+ * A compiler host's reader that gives one file the text given, and reads
+ * every other file from disk once, through SHARED_SOURCES.
+ *
+ * @returns The reader.
+ */
+function sourceReader(read: ts.CompilerHost["getSourceFile"], fileName: string, text: string): ts.CompilerHost["getSourceFile"] {
+  return (name, version, onError) => {
+    if (name === fileName) return ts.createSourceFile(name, text, version, true);
+    const kept = SHARED_SOURCES.get(name);
+    if (kept !== undefined) return kept;
+    const made = read(name, version, onError);
+    if (made !== undefined) SHARED_SOURCES.set(name, made);
+    return made;
+  };
 }
 
 /** The local names a module exports through `export { name }` lists. */
