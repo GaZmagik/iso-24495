@@ -182,6 +182,17 @@ describe("the code skill's rules for this repository's own code", () => {
     }
   });
 
+  test("a documented function held in an array, that throws and does not say so, is reported, and one that says so is accepted", () => {
+    const missing = ["probe.ts:3: the comment on an array item does not say what it throws"];
+    for (const item of ["(): never => {", "((): never => {", "function (): never {"]) {
+      const close = item.startsWith("((") ? "})," : "},";
+      const text = `export const readers = [\n  /** Reads size. */\n  ${item}\n    throw new Error("size");\n  ${close}\n];`;
+      expect(undocumentedThrows("probe.ts", text), item).toEqual({ read: 1, problems: missing });
+    }
+    const said = "export const readers = [\n  /**\n   * Reads size.\n   * @throws An `Error` always.\n   */\n  (): never => {\n    throw new Error(\"size\");\n  },\n];";
+    expect(undocumentedThrows("probe.ts", said)).toEqual({ read: 1, problems: [] });
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -322,9 +333,11 @@ interface ThrowsCount {
  * comment carries no `@throws` tag.
  *
  * A function here is a function declaration, a method, a constructor, an
- * accessor, or a variable, an object property or a class field whose value
- * is an arrow function or a function expression. A throw counts when it can leave the function: not inside a
- * nested function, and not inside a `try` block whose `catch` takes it.
+ * accessor, a variable, an object property or a class field whose value
+ * is an arrow function or a function expression, or such a function held
+ * directly in an array. A throw counts when it can leave the function: not
+ * inside a nested function, and not inside a `try` block whose `catch`
+ * takes it.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -378,6 +391,11 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
   if (ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node)) {
     const value = functionValue(node.initializer);
     if (value !== null) return { name: node.name.getText(source), commented: node, body: value.body };
+  }
+  // A function held directly in an array, whose comment sits on the item.
+  if (ts.isArrayLiteralExpression(node.parent) && ts.isExpression(node)) {
+    const value = functionValue(node);
+    if (value !== null) return { name: "an array item", commented: node, body: value.body };
   }
   return null;
 }
