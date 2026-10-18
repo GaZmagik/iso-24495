@@ -7,142 +7,17 @@ import { ENFORCED_RULES, GUIDE_SYNTAX, type RuleSetting } from "../../eslint.con
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js");
-
-// The gate's lint passes when it finds nothing, and a rule that is switched
-// off, weakened to a warning, or overridden for some files also finds nothing
-// that fails it. Three checks answer that, and none reads the configuration
-// as text. The rules this project enforces are one value,
-// ENFORCED_RULES, which the configuration is built from and these tests
-// import.
-//
-// 1. Every setting in that value is an error.
-// 2. ESLint is asked for the configuration that applies to each TypeScript
-//    file, after every block and override. Each rule's entry there, severity
-//    and options, must equal the entry ESLint resolves from that value alone.
-// 3. The linter is given one breach of each rule and must report each as an
-//    error. That proves the rule fires, which a setting alone does not.
-//
-// The breaches are text in this file, never a file of their own: the gate
-// lints and type checks every TypeScript file in the repository.
-//
-// The scope, in the words the README uses:
-//
-// These guards catch accidents. The gate catches a package import written by
-// name in shipped code. It also catches any shipped command that fails to load
-// or run with nothing installed, in its documented offline modes.
-//
-// It does not defend against a deliberate evasion, of which there are three
-// kinds. A name can be computed while the code runs. A failure can be caught
-// and hidden by the code. An edit to the lint configuration can change what a
-// rule does without changing its entry, through inline configuration or a
-// processor.
-//
-// The person who reviews the diff covers those, because each is visible in the
-// change that introduces it.
-//
-// So the second check compares rule entries and nothing else. A block that
-// switches inline configuration back on for some files, or adds a processor,
-// leaves every entry equal and passes it.
-describe("the lint rules the gate relies on", () => {
-  test("every enforced rule is set to an error", () => {
-    const settings = Object.entries(ENFORCED_RULES);
-    expect(settings.length).toBeGreaterThanOrEqual(20);
-    expect(settings.filter(([, setting]) => !isError(setting)).map(([rule]) => rule)).toEqual([]);
-  });
-
-  test("every enforced rule is set as stated in every TypeScript file, as ESLint resolves it", async () => {
-    expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
-    const files = scriptFiles();
-    const typescript = files.filter((file) => file.endsWith(".ts"));
-    // The rules apply to TypeScript. Any other script is named here, so that a
-    // new one cannot arrive unenforced without this line changing. The first
-    // only declares types for the second, and ESLint requires the second to
-    // have a default export, which the rules forbid.
-    expect(files.filter((file) => !file.endsWith(".ts"))).toEqual(["eslint.config.d.mts", "eslint.config.mjs"]);
-    expect(typescript).toContain("skills/iso-24495-4/scripts/audit-corpus.ts");
-    expect(typescript).toContain("scripts/tests/lint-rules.test.ts");
-
-    // ESLint rewrites an entry as it resolves it: the severity becomes a
-    // number, and a rule may fill in the options it was not given. So the
-    // stated side is resolved by ESLint as well, from a configuration that
-    // holds ENFORCED_RULES and nothing else. It never reads
-    // eslint.config.mjs, so no block or override there can move both sides
-    // together, and the test above ties its severities to errors.
-    const stated: unknown = await new ESLint({
-      cwd: REPOSITORY_ROOT,
-      overrideConfigFile: true,
-      overrideConfig: [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": tseslint.plugin }, rules: ENFORCED_RULES }],
-    }).calculateConfigForFile("any-name.ts");
-    for (const rule of Object.keys(ENFORCED_RULES)) {
-      expect(resolvedSeverity(stated, rule), `${rule} as stated`).toBe(ERROR);
-    }
-
-    const eslint = new ESLint({ cwd: REPOSITORY_ROOT });
-    const weak: string[] = [];
-    const changed: string[] = [];
-    const ignored: string[] = [];
-    let checked = 0;
-    for (const file of typescript) {
-      // A file ESLint passes over has no configuration to read, and must not
-      // pass by its absence.
-      if (await eslint.isPathIgnored(file)) {
-        ignored.push(file);
-        continue;
-      }
-      const resolved: unknown = await eslint.calculateConfigForFile(file);
-      for (const rule of Object.keys(ENFORCED_RULES)) {
-        if (resolvedSeverity(resolved, rule) !== ERROR) weak.push(`${file}: ${rule}`);
-        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(stated, rule), true)) {
-          changed.push(`${file}: ${rule}`);
-        }
-      }
-      checked += 1;
-    }
-    expect(ignored).toEqual([]);
-    expect(weak, "rules that are not an error").toEqual([]);
-    expect(changed, "rules whose options are not the ones stated").toEqual([]);
-    expect(checked).toBeGreaterThan(0);
-    expect(checked).toBe(typescript.length);
-  });
-
-  test("each rule reports its breach as an error, and nothing else is reported", () => {
-    expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
-
-    const expected = PROBE.flatMap(([rules], index) => rules.map((rule) => `${index + 1}: ${rule}`));
-    expect(reportsFor(PROBE.map(([, line]) => line).join("\n"))).toEqual(expected.sort());
-
-    // The probe holds a breach of every enforced rule and of no other, so a
-    // rule cannot join or leave the set without its breach. Each syntax
-    // selector is a rule of its own here, named by its message, so a selector
-    // cannot join the set without its breach either.
-    const probed = new Set(PROBE.flatMap(([rules]) => rules));
-    probed.delete(INERT_COMMENT);
-    const selectors = GUIDE_SYNTAX.map(({ message }) => restricted(message));
-    expect(new Set(selectors).size, "two selectors share a message").toBe(selectors.length);
-    const rules = Object.keys(ENFORCED_RULES).filter((rule) => rule !== "no-restricted-syntax");
-    expect([...probed].sort()).toEqual([...rules, ...selectors].sort());
-  });
-});
-
-/**
- * How a report from one syntax selector reads, given its message. All the
- * selectors share one rule, so the message tells them apart.
- */
-function restricted(message: string): string {
-  return `no-restricted-syntax (${message})`;
-}
-
 /** The severity the linter gives a report that makes it exit with a failure. */
 const ERROR = 2;
+const TRAILING_SPACE = " ";
+const BACKSLASH = String.fromCharCode(92);
 /**
  * What the linter says of a comment that tries to set or switch off a rule.
  * Such a comment has no effect here, and the report is a warning that names
  * no rule. The gate fails on a warning.
  */
 const INERT_COMMENT = "(no rule) (severity 1, not an error)";
-const TRAILING_SPACE = " ";
 const NO_BREAK_SPACE = String.fromCharCode(160);
-const BACKSLASH = String.fromCharCode(92);
 const TAB = String.fromCharCode(9);
 
 /**
@@ -283,6 +158,18 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [["brace-style", restricted("guide: an optional destructured parameter defaults to an empty literal")], "export function defaulted({ size }: { size?: number } = { size: 1 }): number { return size ?? 0; }"],
   [["brace-style"], "export function optional({ size = 1 }: { size?: number } = {}): number { return size; }"],
   [["@typescript-eslint/no-use-before-define"], "export const early = later; export const later = 1;"],
+  // A function that reads a constant declared below it is reported too.
+  [[], "export function readsEarly(): number {"],
+  [["@typescript-eslint/no-use-before-define"], "  return laterValue;"],
+  [[], "}"],
+  [[], "export const laterValue = 1;"],
+  // A function declaration may be called above its definition.
+  [[], "export function callsEarly(): number {"],
+  [[], "  return calledLater();"],
+  [[], "}"],
+  [[], "export function calledLater(): number {"],
+  [[], "  return 1;"],
+  [[], "}"],
 
   // Classes.
   [["brace-style", "@typescript-eslint/explicit-member-accessibility"], "export class Shown { public size = 1; }"],
@@ -313,6 +200,130 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [["brace-style", "@typescript-eslint/prefer-for-of"], "for (let index = 0; index < items.length; index++) { scoped(items[index] === 1); }"],
   [["eol-last"], "export const last = 1;"],
 ];
+
+// The gate's lint passes when it finds nothing, and a rule that is switched
+// off, weakened to a warning, or overridden for some files also finds nothing
+// that fails it. Three checks answer that, and none reads the configuration
+// as text. The rules this project enforces are one value,
+// ENFORCED_RULES, which the configuration is built from and these tests
+// import.
+//
+// 1. Every setting in that value is an error.
+// 2. ESLint is asked for the configuration that applies to each TypeScript
+//    file, after every block and override. Each rule's entry there, severity
+//    and options, must equal the entry ESLint resolves from that value alone.
+// 3. The linter is given one breach of each rule and must report each as an
+//    error. That proves the rule fires, which a setting alone does not.
+//
+// The breaches are text in this file, never a file of their own: the gate
+// lints and type checks every TypeScript file in the repository.
+//
+// The scope, in the words the README uses:
+//
+// These guards catch accidents. The gate catches a package import written by
+// name in shipped code. It also catches any shipped command that fails to load
+// or run with nothing installed, in its documented offline modes.
+//
+// It does not defend against a deliberate evasion, of which there are three
+// kinds. A name can be computed while the code runs. A failure can be caught
+// and hidden by the code. An edit to the lint configuration can change what a
+// rule does without changing its entry, through inline configuration or a
+// processor.
+//
+// The person who reviews the diff covers those, because each is visible in the
+// change that introduces it.
+//
+// So the second check compares rule entries and nothing else. A block that
+// switches inline configuration back on for some files, or adds a processor,
+// leaves every entry equal and passes it.
+describe("the lint rules the gate relies on", () => {
+  test("every enforced rule is set to an error", () => {
+    const settings = Object.entries(ENFORCED_RULES);
+    expect(settings.length).toBeGreaterThanOrEqual(20);
+    expect(settings.filter(([, setting]) => !isError(setting)).map(([rule]) => rule)).toEqual([]);
+  });
+
+  test("every enforced rule is set as stated in every TypeScript file, as ESLint resolves it", async () => {
+    expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
+    const files = scriptFiles();
+    const typescript = files.filter((file) => file.endsWith(".ts"));
+    // The rules apply to TypeScript. Any other script is named here, so that a
+    // new one cannot arrive unenforced without this line changing. The first
+    // only declares types for the second, and ESLint requires the second to
+    // have a default export, which the rules forbid.
+    expect(files.filter((file) => !file.endsWith(".ts"))).toEqual(["eslint.config.d.mts", "eslint.config.mjs"]);
+    expect(typescript).toContain("skills/iso-24495-4/scripts/audit-corpus.ts");
+    expect(typescript).toContain("scripts/tests/lint-rules.test.ts");
+
+    // ESLint rewrites an entry as it resolves it: the severity becomes a
+    // number, and a rule may fill in the options it was not given. So the
+    // stated side is resolved by ESLint as well, from a configuration that
+    // holds ENFORCED_RULES and nothing else. It never reads
+    // eslint.config.mjs, so no block or override there can move both sides
+    // together, and the test above ties its severities to errors.
+    const stated: unknown = await new ESLint({
+      cwd: REPOSITORY_ROOT,
+      overrideConfigFile: true,
+      overrideConfig: [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": tseslint.plugin }, rules: ENFORCED_RULES }],
+    }).calculateConfigForFile("any-name.ts");
+    for (const rule of Object.keys(ENFORCED_RULES)) {
+      expect(resolvedSeverity(stated, rule), `${rule} as stated`).toBe(ERROR);
+    }
+
+    const eslint = new ESLint({ cwd: REPOSITORY_ROOT });
+    const weak: string[] = [];
+    const changed: string[] = [];
+    const ignored: string[] = [];
+    let checked = 0;
+    for (const file of typescript) {
+      // A file ESLint passes over has no configuration to read, and must not
+      // pass by its absence.
+      if (await eslint.isPathIgnored(file)) {
+        ignored.push(file);
+        continue;
+      }
+      const resolved: unknown = await eslint.calculateConfigForFile(file);
+      for (const rule of Object.keys(ENFORCED_RULES)) {
+        if (resolvedSeverity(resolved, rule) !== ERROR) weak.push(`${file}: ${rule}`);
+        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(stated, rule), true)) {
+          changed.push(`${file}: ${rule}`);
+        }
+      }
+      checked += 1;
+    }
+    expect(ignored).toEqual([]);
+    expect(weak, "rules that are not an error").toEqual([]);
+    expect(changed, "rules whose options are not the ones stated").toEqual([]);
+    expect(checked).toBeGreaterThan(0);
+    expect(checked).toBe(typescript.length);
+  });
+
+  test("each rule reports its breach as an error, and nothing else is reported", () => {
+    expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
+
+    const expected = PROBE.flatMap(([rules], index) => rules.map((rule) => `${index + 1}: ${rule}`));
+    expect(reportsFor(PROBE.map(([, line]) => line).join("\n"))).toEqual(expected.sort());
+
+    // The probe holds a breach of every enforced rule and of no other, so a
+    // rule cannot join or leave the set without its breach. Each syntax
+    // selector is a rule of its own here, named by its message, so a selector
+    // cannot join the set without its breach either.
+    const probed = new Set(PROBE.flatMap(([rules]) => rules));
+    probed.delete(INERT_COMMENT);
+    const selectors = GUIDE_SYNTAX.map(({ message }) => restricted(message));
+    expect(new Set(selectors).size, "two selectors share a message").toBe(selectors.length);
+    const rules = Object.keys(ENFORCED_RULES).filter((rule) => rule !== "no-restricted-syntax");
+    expect([...probed].sort()).toEqual([...rules, ...selectors].sort());
+  });
+});
+
+/**
+ * How a report from one syntax selector reads, given its message. All the
+ * selectors share one rule, so the message tells them apart.
+ */
+function restricted(message: string): string {
+  return `no-restricted-syntax (${message})`;
+}
 
 /** Whether a rule setting, as written in a configuration, is an error. */
 function isError(setting: RuleSetting): boolean {

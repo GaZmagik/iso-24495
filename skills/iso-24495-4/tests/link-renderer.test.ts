@@ -47,6 +47,23 @@ const RENDERERS_MAY_DIFFER: Array<[name: string, shaped: (label: string, tail: s
   // Anything may stand between the two brackets, as a code span does in "[[`]`[c](d)]](zed)".
   ["a link two brackets deep in a label", (label) => /\[[^]*\[c\]\(d\)\]/.test(label)],
 ];
+/**
+ * Characters that are no word and that a count of places can go wrong on: one outside
+ * the basic plane, which is two UTF-16 units and one code point; a combining mark; the
+ * euro sign, which is three bytes in UTF-8; a no-break space; and each half of a
+ * surrogate pair alone, which side by side make a whole character.
+ */
+const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
+
+const ODD = [String.fromCodePoint(0x1f600), String.fromCodePoint(0x301), String.fromCodePoint(0x20ac), NO_BREAK_SPACE,
+  String.fromCharCode(0xd83d), String.fromCharCode(0xde00)];
+
+const LABEL = ["management", "one", " ", " ", "[b]", "[", "]", `${SLASH}[`, `${SLASH}]`, BREAK, "[c](d)", "![e](f)", "*", `${TICK}g${TICK}`,
+  // A bracket inside a code span, a tag, an autolink and a comment, and a code span that ends in a backslash.
+  `${TICK}[${TICK}`, `${TICK}]${TICK}`, `${TICK}${SLASH}${TICK}`, '<i title="[">', '<i title="]">', "<https://e.com/[>", "<https://e.com/]>", "<!-- ] -->",
+  ...ODD];
+const TAIL = ["two", "three", "x", " ", " ", BREAK, "<", ">", "<two three>", "<four>", '"a title"', "'a title'", "(a title)", "(", ")", "()",
+  `${SLASH}(`, `${SLASH})`, `${SLASH}_`, `${SLASH}<`, `${SLASH}>`, `${SLASH}"`, `${SLASH} `, '"', "'", "", "", "[", "]", TICK, ...ODD];
 
 describe("what the acronym rule takes for a link is what a renderer shows as one", () => {
   test("in generated forms of a label and what follows it", () => {
@@ -295,22 +312,6 @@ function lettersShown(html: string): string {
 function words(text: string): string {
   return text.replace(/[^A-Za-z]/g, "");
 }
-
-/**
- * Characters that are no word and that a count of places can go wrong on: one outside
- * the basic plane, which is two UTF-16 units and one code point; a combining mark; the
- * euro sign, which is three bytes in UTF-8; a no-break space; and each half of a
- * surrogate pair alone, which side by side make a whole character.
- */
-const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
-const ODD = [String.fromCodePoint(0x1f600), String.fromCodePoint(0x301), String.fromCodePoint(0x20ac), NO_BREAK_SPACE,
-  String.fromCharCode(0xd83d), String.fromCharCode(0xde00)];
-const LABEL = ["management", "one", " ", " ", "[b]", "[", "]", `${SLASH}[`, `${SLASH}]`, BREAK, "[c](d)", "![e](f)", "*", `${TICK}g${TICK}`,
-  // A bracket inside a code span, a tag, an autolink and a comment, and a code span that ends in a backslash.
-  `${TICK}[${TICK}`, `${TICK}]${TICK}`, `${TICK}${SLASH}${TICK}`, '<i title="[">', '<i title="]">', "<https://e.com/[>", "<https://e.com/]>", "<!-- ] -->",
-  ...ODD];
-const TAIL = ["two", "three", "x", " ", " ", BREAK, "<", ">", "<two three>", "<four>", '"a title"', "'a title'", "(a title)", "(", ")", "()",
-  `${SLASH}(`, `${SLASH})`, `${SLASH}_`, `${SLASH}<`, `${SLASH}>`, `${SLASH}"`, `${SLASH} `, '"', "'", "", "", "[", "]", TICK, ...ODD];
 
 /** A few pieces of generated text, joined with nothing between them. */
 function pieces(random: () => number, from: readonly string[], most: number): string {
