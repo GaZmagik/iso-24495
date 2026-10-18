@@ -102,6 +102,22 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(entryPointProblem("probe.ts", "export const LIMIT = 1;")).toEqual({ checked: false, problem: null });
   });
 
+  test("a first function in parentheses, or under a type assertion, is read as the bare one is", () => {
+    const reported = { checked: true, problem: "probe.ts:1: the first function, helper, is not exported" };
+    const caller = "\nexport function main(): number { return helper(1); }";
+    for (const value of [
+      "((x: number): number => x)",
+      "(function (x: number): number { return x; })",
+      "(((x: number): number => x))",
+      "((x: number): number => x) satisfies (x: number) => number",
+      "((x: number): number => x) as (x: number) => number",
+    ]) {
+      expect(entryPointProblem("probe.ts", `const helper = ${value};${caller}`), value).toEqual(reported);
+    }
+    expect(entryPointProblem("probe.ts", `export const helper = ((x: number): number => x);${caller}`))
+      .toEqual({ checked: true, problem: null });
+  });
+
   test("a shim's entry point is the function whose result it exits with", () => {
     expect(shimEntryPoint("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli(process.argv));")).toBe("runCli");
     expect(shimEntryPoint("probe-cli.ts", "process.exit(await runCli(process.argv));")).toBe("runCli");
@@ -173,13 +189,28 @@ function firstFunction(source: ts.SourceFile): FirstFunction | null {
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      const value = declaration.initializer;
-      if (value !== undefined && ts.isIdentifier(declaration.name) && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))) {
+      if (ts.isIdentifier(declaration.name) && functionValue(declaration.initializer) !== null) {
         return { name: declaration.name.text, exported, statement };
       }
     }
   }
   return null;
+}
+
+/**
+ * The function an expression holds, looking through parentheses, a type
+ * assertion and `satisfies`, which change nothing that runs.
+ *
+ * @returns The arrow function or function expression, or null when the
+ *     expression holds neither, or is undefined.
+ */
+function functionValue(expression: ts.Expression | undefined): ts.ArrowFunction | ts.FunctionExpression | null {
+  let inner = expression;
+  while (inner !== undefined && (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner)
+    || ts.isSatisfiesExpression(inner) || ts.isTypeAssertionExpression(inner) || ts.isNonNullExpression(inner))) {
+    inner = inner.expression;
+  }
+  return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) ? inner : null;
 }
 
 /** The local names a module exports through `export { name }` lists. */
