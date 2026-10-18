@@ -49,6 +49,24 @@ describe("every statement that only TypeScript has ends with a semicolon", () =>
     }
   });
 
+  test.each([
+    ["a constructor with no body", "export declare class A {\n  constructor(size: number)\n}"],
+    ["a getter with no body", "export declare class A {\n  get value(): string\n}"],
+    ["a setter with no body", "export declare class A {\n  set value(text: string)\n}"],
+    ["a getter with no body", "export abstract class A {\n  abstract get value(): string\n}"],
+    ["a setter with no body", "export abstract class A {\n  abstract set value(text: string)\n}"],
+  ])("%s, in %p, is reported with no semicolon, and not with one", (kind, unended) => {
+    const ended = unended.replace("\n}", ";\n}");
+    expect(unendedStatements("probe.ts", unended)).toEqual({ checked: 1, missing: [`probe.ts:2: ${kind} has no semicolon`] });
+    expect(unendedStatements("probe.ts", ended)).toEqual({ checked: 1, missing: [] });
+  });
+
+  test("a constructor, getter or setter with a body needs none, and is not counted", () => {
+    const withBodies = "export class A {\n  constructor() {\n    this.size = 1;\n  }\n\n  size: number;\n\n  get value(): number {\n    return this.size;\n  }\n\n  set value(size: number) {\n    this.size = size;\n  }\n}";
+    // Only the property counts: it is the one member here that needs a semicolon.
+    expect(unendedStatements("probe.ts", withBodies)).toEqual({ checked: 1, missing: [] });
+  });
+
   test("a function or method with a body needs none, and is not counted", () => {
     expect(unendedStatements("probe.ts", "export function made(): number {\n  return 1;\n}")).toEqual({ checked: 0, missing: [] });
     expect(unendedStatements("probe.ts", "export class A {\n  make(): number {\n    return 1;\n  }\n}")).toEqual({ checked: 0, missing: [] });
@@ -68,6 +86,11 @@ function kindOf(node: ts.Node): string | null {
   if (ts.isTypeAliasDeclaration(node)) return "a type alias";
   if (ts.isPropertyDeclaration(node)) return "a class property";
   if (ts.isMethodDeclaration(node) && node.body === undefined) return "a method with no body";
+  // A class that is declared, or an abstract member, may also leave out the
+  // body of a constructor, a getter or a setter.
+  if (ts.isConstructorDeclaration(node) && node.body === undefined) return "a constructor with no body";
+  if (ts.isGetAccessorDeclaration(node) && node.body === undefined) return "a getter with no body";
+  if (ts.isSetAccessorDeclaration(node) && node.body === undefined) return "a setter with no body";
   if (ts.isFunctionDeclaration(node) && node.body === undefined) return "a function with no body";
   if (ts.isIndexSignatureDeclaration(node) && ts.isClassLike(node.parent)) return "a class index signature";
   if (ts.isExportAssignment(node)) return "an export assignment";
