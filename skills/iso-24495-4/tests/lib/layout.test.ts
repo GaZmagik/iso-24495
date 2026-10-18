@@ -8,8 +8,12 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const sections = (count = 6) => Array.from({ length: count }, (_, index) => `## Section ${index + 1}\n\nText.\n`).join("\n");
-const rules = (text: string) => layoutViolations(text).map(finding => finding.rule);
+function sections(count = 6): string {
+  return Array.from({ length: count }, (slot, index) => `## Section ${index + 1}\n\nText.\n`).join("\n");
+}
+function rules(text: string): string[] {
+  return layoutViolations(text).map(finding => finding.rule);
+}
 describe("layout rules", () => {
   const editionFinding = { rule: "opening-version-date", line: 1, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" };
   for (const depth of ["root", "metadata"]) {
@@ -38,7 +42,9 @@ describe("layout rules", () => {
       const parser = spyOn(Bun.YAML, "parse").mockImplementation(() => depth === "root" ? fields : { metadata: fields });
       try {
         expect(layoutViolations("---\ndate: 2026-10-04\n---\n# Guide\n\nInstructions.")).toEqual([]);
-      } finally { parser.mockRestore(); }
+      } finally {
+        parser.mockRestore();
+      }
     });
     for (const form of ["next-line", "comment", "flow", "tab"]) {
       test(`A7 retains ${form} declarations at ${depth}`, () => {
@@ -49,7 +55,7 @@ describe("layout rules", () => {
     }
   }
   test("A7 ignores nested release history before a declared metadata version", () => {
-    const history = Array.from({ length: 16 }, (_, index) => `  edition${index}: {version: 1.0}`).join("\n");
+    const history = Array.from({ length: 16 }, (slot, index) => `  edition${index}: {version: 1.0}`).join("\n");
     expect(layoutViolations(`---\nhistory:\n${history}\nmetadata: {version: 2.0}\n---\n# Guide\n\nInstructions.`)).toEqual([]);
   });
   test("A7 rejects unrelated and deeper declarations", () => {
@@ -64,14 +70,16 @@ describe("layout rules", () => {
     expect(layoutViolations("---\nversion: 1.0\n# Guide\n\nInstructions.")).toEqual([{ ...editionFinding, line: 3 }]);
   });
   test("A7 parses front matter exactly once, including large documents", () => {
-    const unrelated = Array.from({ length: 5000 }, (_, index) => `k${index}: 1.0`).join("\n");
+    const unrelated = Array.from({ length: 5000 }, (slot, index) => `k${index}: 1.0`).join("\n");
     for (const source of ["version: 1.0", "release: &release 1.0\nmetadata: {version: *release}", `version: 1\n${unrelated}`]) {
       const parser = spyOn(Bun.YAML, "parse");
       try {
         const findings = layoutViolations(`---\n${source}\n---\n# Guide\n\nInstructions.`);
         expect(parser.mock.calls.length).toBe(1);
         expect(findings).toEqual([]);
-      } finally { parser.mockRestore(); }
+      } finally {
+        parser.mockRestore();
+      }
     }
   });
   test("A7 leaves visible-opening format recognition strict", () => {
@@ -86,7 +94,9 @@ describe("layout rules", () => {
     });
   }
   test("A6 skips untitled documents", () => {
-    for (const text of ["Text only.", "## Section\n\nText.", "> # Quoted title\n\nText.", "- # List title\n\nText."]) expect(layoutViolations(text)).toEqual([]);
+    for (const text of ["Text only.", "## Section\n\nText.", "> # Quoted title\n\nText.", "- # List title\n\nText."]) {
+      expect(layoutViolations(text)).toEqual([]);
+    }
   });
   for (const base of ["README", "CONTRIBUTING", "SECURITY"]) {
     for (const name of [base, base.toLowerCase(), `${base}.markdown`, `${base.toLowerCase()}.MARKDOWN`]) {
@@ -114,7 +124,9 @@ describe("layout rules", () => {
         const findings = route === "corpus" ? auditCorpus(directory) : route === "text" ? auditTarget(directory, directory) : selectDocuments(directory, directory, "text").mechanical;
         expect(findings.totals["opening-version-date"]).toBe(1);
         expect(Object.entries(findings.files).filter(([, file]) => file.violations.some(finding => finding.rule === "opening-version-date")).map(([name]) => name)).toEqual(["policy.md"]);
-      } finally { rmSync(directory, { recursive: true, force: true }); }
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     });
   }
   test("review 1: contents entries follow Markdown blocks rather than blank lines", () => {
@@ -132,6 +144,12 @@ describe("layout rules", () => {
     expect(headingIds(["foo_bar_baz"])).toEqual(["foo_bar_baz"]);
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n## Over_view_\n\n" + sections(4))).toEqual(["overview-label"]);
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[Incorrect](#foo_bar_baz)\n\n### Overview\n\n## foo_bar_baz\n\n" + sections(4))).toEqual(["contents-list"]);
+  });
+  test("a contents link whose fragment cannot be decoded is passed over", () => {
+    const passedOver = ["Add contents or navigation for six or more root H2 sections."];
+    for (const fragment of ["#%", "#%E0%A4%A"]) {
+      expect(layoutViolations(`# Title\n\nVersion 1.0\n\n## Contents\n\n[Incorrect](${fragment})\n\n### Overview\n\n## foo_bar_baz\n\n` + sections(4)).map(finding => finding.detail), fragment).toEqual(passedOver);
+    }
   });
   test("review 3: metadata requires a parsed table and correct cell boundaries", () => {
     expect(rules("# Title\n\nVersion | 2.1\n")).toEqual(["opening-version-date"]);
@@ -173,11 +191,13 @@ describe("layout rules", () => {
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n[A!](#a-1)\n\n### Overview\n\n## A!\n\n## A!\n\n" + sections(3))).toEqual([]);
   });
   test("requires version or calendar-valid date in a document field in the opening", () => {
-    for (const field of ["Version: v2.1", "Revision 2.1.0-rc.1+build.2", "Date 2024-02-29", "Updated: 29 Feb 2024", "Last updated October 3, 2026", "Reviewed: 03/10/2026", "Date: 12/31/2026", "Date 10/2026", "Date Q4 2026", "![Version: 2.1](badge.svg)", "| Field | Value |\n|---|---|\n| Version | 2.1 |", "| Field | Value |\n|---|---|\n| Date | March 2026 |"])
+    for (const field of ["Version: v2.1", "Revision 2.1.0-rc.1+build.2", "Date 2024-02-29", "Updated: 29 Feb 2024", "Last updated October 3, 2026", "Reviewed: 03/10/2026", "Date: 12/31/2026", "Date 10/2026", "Date Q4 2026", "![Version: 2.1](badge.svg)", "| Field | Value |\n|---|---|\n| Version | 2.1 |", "| Field | Value |\n|---|---|\n| Date | March 2026 |"]) {
       expect(rules("# Title\n\n" + field + "\n"), field).toEqual([]);
+    }
     expect(rules("# Title (Version: 2.1)\n")).toEqual([]);
-    for (const field of ["v2.1", "Requires v2.1", "Updated targets for Q3 2026", "Reviewed the policy in March 2026", "Version 2.1 is required", "Date 2023-02-29", "Date 2026-13-01", "Date 13/2026", "Date 13/13/2026", "Date Q5 2026", "Date 2026-04-31", "Date 00/2026", "Version 2", "Date 3 Smarch 2026", "![Updated targets for Q3 2026](badge.svg)"])
+    for (const field of ["v2.1", "Requires v2.1", "Updated targets for Q3 2026", "Reviewed the policy in March 2026", "Version 2.1 is required", "Date 2023-02-29", "Date 2026-13-01", "Date 13/2026", "Date 13/13/2026", "Date Q5 2026", "Date 2026-04-31", "Date 00/2026", "Version 2", "Date 3 Smarch 2026", "![Updated targets for Q3 2026](badge.svg)"]) {
       expect(rules("# Title\n\n" + field + "\n"), field).toEqual(["opening-version-date"]);
+    }
     expect(rules("---\nversion: 2.1\n---\n# Title\n\n## Footer\n\nDate 2026-10-03\n")).toEqual([]);
   });
   test("counts unordered ancestry alone, including task items and mixed containers", () => {
@@ -188,8 +208,12 @@ describe("layout rules", () => {
     expect(rules("# T\n\nVersion 1.0\n\n1. One\n   10. Two\n       - Bullet\n")).toEqual([]);
   });
   test("requires an overview heading before the first content H2, at any root heading level", () => {
-    for (const overview of ["### Overview", "## **1. Summary**", "Overview\n========", "Overview\n--------"]) expect(rules("# Title\n\nVersion 1.0\n\n" + overview + "\n\n## Contents\n\n- Section 1\n\n" + sections())).toEqual([]);
-    for (const overview of ["**Overview**", "> ### Overview", "- ### Overview", "[Overview](#overview)"]) expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n" + overview + "\n\n" + sections())).toEqual(["overview-label"]);
+    for (const overview of ["### Overview", "## **1. Summary**", "Overview\n========", "Overview\n--------"]) {
+      expect(rules("# Title\n\nVersion 1.0\n\n" + overview + "\n\n## Contents\n\n- Section 1\n\n" + sections())).toEqual([]);
+    }
+    for (const overview of ["**Overview**", "> ### Overview", "- ### Overview", "[Overview](#overview)"]) {
+      expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n" + overview + "\n\n" + sections())).toEqual(["overview-label"]);
+    }
     expect(rules("# Title\n\nVersion 1.0\n\n## Contents\n\n- Section 1\n\n" + sections() + "\n### Overview\n")).toEqual(["overview-label"]);
     expect(rules("# Title\n\nVersion 1.0\n\n## First\n\n### Overview\n\n" + sections())).toEqual(["contents-list", "overview-label"]);
   });

@@ -321,7 +321,7 @@ describe("command line entry files", () => {
   // second limit turns that cost into a random failure, so each test states its
   // own budget: a timeout here means the entry file hung, not that the box was
   // busy.
-  const ENTRY_TIMEOUT_MS = 20_000;
+  const entryTimeoutMs = 20_000;
 
   async function runScript(script: string, args: string[]): Promise<{ stdout: string; exitCode: number }> {
     const proc = Bun.spawn(["bun", script, ...args], {
@@ -340,7 +340,7 @@ describe("command line entry files", () => {
     const { stdout, exitCode } = await run("audit-corpus-cli.ts", [CORPUS]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Total: 11 across 7 files.");
-  }, ENTRY_TIMEOUT_MS);
+  }, entryTimeoutMs);
 
   test("audit-text-cli reports one selected file", async () => {
     const file = join(CORPUS, "legalese-sample.md");
@@ -348,13 +348,13 @@ describe("command line entry files", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("| `legalese-sample.md` | 3 | legalese |");
     expect(stdout).toContain("The user decides whether the text suits its readers and purpose.");
-  }, ENTRY_TIMEOUT_MS);
+  }, entryTimeoutMs);
 
   test("audit-evidence-cli reports the fixture repository", async () => {
     const { stdout, exitCode } = await run("audit-evidence-cli.ts", [REPOSITORY]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("| policy | yes | `docs/plain-language-policy.md` |");
-  }, ENTRY_TIMEOUT_MS);
+  }, entryTimeoutMs);
 
   test("score-maturity-cli reports the sample answers", async () => {
     const { stdout, exitCode } = await run("score-maturity-cli.ts", [ANSWERS]);
@@ -377,7 +377,7 @@ describe("command line entry files", () => {
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
-  }, ENTRY_TIMEOUT_MS);
+  }, entryTimeoutMs);
 
   // Spawned concurrently: four cold Bun starts in sequence outrun the default
   // per-test timeout on a loaded machine.
@@ -391,7 +391,7 @@ describe("command line entry files", () => {
     ];
     const results = await Promise.all(entries.map((entry) => runScript(entry, [])));
     expect(results.map((result) => result.exitCode)).toEqual(entries.map(() => 2));
-  }, ENTRY_TIMEOUT_MS);
+  }, entryTimeoutMs);
 
   // What a command saves must be what it would have shown.
   //
@@ -448,7 +448,7 @@ describe("command line entry files", () => {
       const evidencePath = join(workspace, "evidence.json");
       const printedEvidence = capture();
       // The table writes each path as a code span, and none of these holds a backtick.
-      const TICK = String.fromCharCode(96);
+      const tick = String.fromCharCode(96);
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", evidencePath],
         () => {}, () => {});
       runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY],
@@ -463,7 +463,7 @@ describe("command line entry files", () => {
           found: boolean; paths: string[];
         }>).map(([category, record]) =>
           `| ${category} | ${record.found ? "yes" : "no"} | `
-          + `${record.paths.map((path) => `${TICK}${path}${TICK}`).join("<br>") || "-"} |`),
+          + `${record.paths.map((path) => `${tick}${path}${tick}`).join("<br>") || "-"} |`),
       ]);
 
       const maturityPath = join(workspace, "maturity.json");
@@ -596,8 +596,8 @@ describe("command line entry files", () => {
 // names the offending token, and a missing file's error names its whole path.
 // Every failing input here carries one word, and no command may repeat it.
 describe("a command never passes on what the runtime said about a failure", () => {
-  const MARKER = "hunter2";
-  const NUL = String.fromCharCode(0);
+  const marker = "hunter2";
+  const nul = String.fromCharCode(0);
 
   /** Runs `check` with a fresh directory, and removes it afterwards. */
   function withWorkspace(check: (workspace: string) => void): void {
@@ -617,25 +617,25 @@ describe("a command never passes on what the runtime said about a failure", () =
     const output = capture();
     expect(run(output.writeOut, output.writeErr)).toBe(1);
     expect(output.stderr).toEqual([message]);
-    expect([...output.stdout, ...output.stderr].join("\n")).not.toContain(MARKER);
+    expect([...output.stdout, ...output.stderr].join("\n")).not.toContain(marker);
   }
 
   test("audit-corpus", () => {
     withWorkspace((workspace) => {
-      const absent = join(workspace, MARKER);
+      const absent = join(workspace, marker);
       expectFixedFailure(
         (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", absent], out, err),
         `audit-corpus: <corpus-dir> names a path of ${absent.length} characters that cannot be listed: `
           + "no such file or directory",
       );
-      const report = join(workspace, MARKER, "findings.json");
+      const report = join(workspace, marker, "findings.json");
       expectFixedFailure(
         (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", report], out, err),
         `audit-corpus: --json names a path of ${report.length} characters that cannot be written: `
           + "no such file or directory",
       );
       expectFixedFailure(
-        (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", `${MARKER}${NUL}`], out, err),
+        (out, err) => runCorpusCli(["bun", "audit-corpus-cli.ts", `${marker}${nul}`], out, err),
         "audit-corpus: stopped by an unexpected TypeError",
       );
     });
@@ -643,20 +643,20 @@ describe("a command never passes on what the runtime said about a failure", () =
 
   test("audit-evidence", () => {
     withWorkspace((workspace) => {
-      const absent = join(workspace, MARKER);
+      const absent = join(workspace, marker);
       expectFixedFailure(
         (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", absent], out, err),
         `audit-evidence: <workspace-dir> names a path of ${absent.length} characters that cannot be read in full: `
           + "no such file or directory",
       );
-      const report = join(workspace, MARKER, "evidence.json");
+      const report = join(workspace, marker, "evidence.json");
       expectFixedFailure(
         (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", report], out, err),
         `audit-evidence: --json names a path of ${report.length} characters that cannot be written: `
           + "no such file or directory",
       );
       expectFixedFailure(
-        (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", `${MARKER}${NUL}`], out, err),
+        (out, err) => runEvidenceCli(["bun", "audit-evidence-cli.ts", `${marker}${nul}`], out, err),
         "audit-evidence: stopped by an unexpected TypeError",
       );
     });
@@ -664,14 +664,14 @@ describe("a command never passes on what the runtime said about a failure", () =
 
   test("score-maturity", () => {
     withWorkspace((workspace) => {
-      const absent = join(workspace, `${MARKER}.json`);
+      const absent = join(workspace, `${marker}.json`);
       expectFixedFailure(
         (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", absent], out, err),
         `score-maturity: <answers.json> names a path of ${absent.length} characters that cannot be read: `
           + "no such file or directory",
       );
       const broken = join(workspace, "broken.json");
-      writeFileSync(broken, `{"dimensions": ${MARKER}}`);
+      writeFileSync(broken, `{"dimensions": ${marker}}`);
       expectFixedFailure(
         (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", broken], out, err),
         "score-maturity: <answers.json> names a file of 23 characters that is not valid JSON",
@@ -683,7 +683,7 @@ describe("a command never passes on what the runtime said about a failure", () =
         (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", shapeless], out, err),
         "score-maturity: <answers.json> must be an object; got null",
       );
-      const report = join(workspace, MARKER, "maturity.json");
+      const report = join(workspace, marker, "maturity.json");
       expectFixedFailure(
         (out, err) => runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", report], out, err),
         `score-maturity: --json names a path of ${report.length} characters that cannot be written: `
@@ -705,14 +705,14 @@ describe("a command never passes on what the runtime said about a failure", () =
           runReportCli(["bun", "generate-report-cli.ts", ...rest], out, err, () => "2026-10-06T12:00:00.000Z");
 
       // Each input is named by its own argument, so the user knows which to fix.
-      const absent = join(workspace, `${MARKER}.json`);
+      const absent = join(workspace, `${marker}.json`);
       expectFixedFailure(
         report(absent, evidence, maturity),
         `generate-report: <findings.json> names a path of ${absent.length} characters that cannot be read: `
           + "no such file or directory",
       );
       const broken = join(workspace, "broken.json");
-      writeFileSync(broken, `[${MARKER}]`);
+      writeFileSync(broken, `[${marker}]`);
       expectFixedFailure(
         report(findings, broken, maturity),
         "generate-report: <evidence.json> names a file of 9 characters that is not valid JSON",
@@ -735,7 +735,7 @@ describe("a command never passes on what the runtime said about a failure", () =
         'generate-report: <findings.json>, "configHash" must be a string; got nothing',
       );
 
-      const lost = join(workspace, MARKER, "out");
+      const lost = join(workspace, marker, "out");
       expectFixedFailure(
         report(findings, evidence, maturity, "--state", lost),
         `generate-report: --state names a path of ${lost.length} characters that cannot be written: `
@@ -758,13 +758,13 @@ describe("a command never passes on what the runtime said about a failure", () =
       const scores = join(workspace, "scores.json");
       const refused: Array<[text: string, problem: string]> = [
         ["42", "<answers.json> must be an object; got a number"],
-        [`"${MARKER}"`, "<answers.json> must be an object; got a string"],
+        [`"${marker}"`, "<answers.json> must be an object; got a string"],
         ["[]", "<answers.json> must be an object; got an array"],
         ["{}", '<answers.json>, "dimensions" must be an object; got nothing'],
-        [`{"dimensions": ["${MARKER}"]}`, '<answers.json>, "dimensions" must be an object; got an array'],
-        [`{"dimensions": {"governance": {}, "${MARKER}": 1}}`,
+        [`{"dimensions": ["${marker}"]}`, '<answers.json>, "dimensions" must be an object; got an array'],
+        [`{"dimensions": {"governance": {}, "${marker}": 1}}`,
           '<answers.json>, "dimensions", entry 2 must be an object; got a number'],
-        [`{"dimensions": {"governance": {"policy-documented": "${MARKER}"}}}`,
+        [`{"dimensions": {"governance": {"policy-documented": "${marker}"}}}`,
           '<answers.json>, "dimensions", entry 1, entry 1 must be true or false; got a string'],
         ['{"organisation": 7, "dimensions": {}}', '<answers.json>, "organisation" must be a string; got a number'],
       ];
@@ -815,9 +815,9 @@ describe("a command never passes on what the runtime said about a failure", () =
       expect(existsSync(state), "a refused audit must not start a history").toBe(false);
       const refused: Array<[which: number, value: unknown, problem: string]> = [
         [0, 42, "<findings.json> must be an object; got a number"],
-        [0, { configHash: "c", files: {}, totals: { legalese: MARKER } },
+        [0, { configHash: "c", files: {}, totals: { legalese: marker } },
           '<findings.json>, "totals", entry 1 must be a whole number of 0 or more; got a string'],
-        [0, { configHash: "c", files: { [MARKER]: { violations: [{ rule: "r", line: 1 }] } }, totals: {} },
+        [0, { configHash: "c", files: { [marker]: { violations: [{ rule: "r", line: 1 }] } }, totals: {} },
           '<findings.json>, "files", entry 1, "violations", entry 1, "detail" must be a string; got nothing'],
         [1, {}, '<evidence.json>, "artefacts" must be an object; got nothing'],
         [1, { artefacts: { policy: { found: "yes", paths: [] } } },
@@ -831,7 +831,7 @@ describe("a command never passes on what the runtime said about a failure", () =
           '<maturity.json>, "dimensions", "governance", "level" must be a whole number from 0 to 4; got a whole number outside that range'],
         [2, { dimensions: levels(2.5), overall: 2 },
           '<maturity.json>, "dimensions", "governance", "level" must be a whole number from 0 to 4; got a number that is not whole'],
-        [2, { dimensions: { ...levels(2), [MARKER]: { level: 1, missing: [] } }, overall: 2 },
+        [2, { dimensions: { ...levels(2), [marker]: { level: 1, missing: [] } }, overall: 2 },
           '<maturity.json>, "dimensions" must hold no member but those its shape names; got 1 more'],
         [2, { dimensions: levels(2), overall: 3 },
           '<maturity.json>, "overall" must be the lowest level of any dimension; got another whole number'],
@@ -856,7 +856,7 @@ describe("a command never passes on what the runtime said about a failure", () =
 
       // The history is an input too, and is refused the same way without being replaced.
       for (const [value, problem] of [
-        [{ snapshots: MARKER }, '--state, "snapshots" must be an array; got a string'],
+        [{ snapshots: marker }, '--state, "snapshots" must be an array; got a string'],
         [{ snapshots: [{ timestamp: "t", totals: {}, overall: 99 }] },
           '--state, "snapshots", entry 1, "overall" must be a whole number from 0 to 4; got a whole number outside that range'],
       ] as Array<[unknown, string]>) {
@@ -918,7 +918,7 @@ describe("a command never passes on what the runtime said about a failure", () =
 
   test("audit-text", () => {
     withWorkspace((workspace) => {
-      const absent = join(workspace, `${MARKER}.md`);
+      const absent = join(workspace, `${marker}.md`);
       expectFixedFailure(
         (out, err) => runTextAuditCli(["bun", "audit-text-cli.ts", absent], out, err) as number,
         `audit-text: <file-or-directory> names a path of ${absent.length} characters that cannot be read: `
@@ -926,7 +926,7 @@ describe("a command never passes on what the runtime said about a failure", () =
       );
       const document = join(workspace, "plain.md");
       writeFileSync(document, "# Plain\n\nA short sentence.\n");
-      const report = join(workspace, MARKER, "findings.json");
+      const report = join(workspace, marker, "findings.json");
       expectFixedFailure(
         (out, err) => runTextAuditCli(
           ["bun", "audit-text-cli.ts", document, "--project-dir", workspace, "--json", report],
@@ -937,7 +937,7 @@ describe("a command never passes on what the runtime said about a failure", () =
           + "no such file or directory",
       );
       expectFixedFailure(
-        (out, err) => runTextAuditCli(["bun", "audit-text-cli.ts", `${MARKER}${NUL}.md`], out, err) as number,
+        (out, err) => runTextAuditCli(["bun", "audit-text-cli.ts", `${marker}${nul}.md`], out, err) as number,
         "audit-text: stopped by an unexpected TypeError",
       );
     });
@@ -949,7 +949,7 @@ describe("a command never passes on what the runtime said about a failure", () =
 // cleaned by the same function and is a legal name on every platform, so it
 // shows here that each command cleans the path it prints.
 describe("a skipped entry is printed with its path cleaned", () => {
-  const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
+  const rightToLeftOverride = String.fromCharCode(0x202e);
   /** The link as a command prints it: forward slashes, and the mark as its code. */
   const printedLink = (directory: string): string =>
     `${join(directory, "report").split(String.fromCharCode(92)).join("/")}${String.fromCharCode(92)}u202edm.exe`;
@@ -960,7 +960,7 @@ describe("a skipped entry is printed with its path cleaned", () => {
     try {
       const target = join(directory, "target");
       mkdirSync(target);
-      symlinkSync(target, join(directory, `report${RIGHT_TO_LEFT_OVERRIDE}dm.exe`), "junction");
+      symlinkSync(target, join(directory, `report${rightToLeftOverride}dm.exe`), "junction");
       rmSync(target, { recursive: true, force: true });
       run(directory);
     } finally {

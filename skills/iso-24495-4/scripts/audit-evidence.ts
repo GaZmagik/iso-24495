@@ -66,6 +66,7 @@ export function runCli(
   }
 }
 
+/** The kinds of process artefact the sweep looks for. */
 export const CATEGORIES = [
   "policy",
   "review-workflow",

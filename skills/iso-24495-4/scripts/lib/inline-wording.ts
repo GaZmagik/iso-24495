@@ -1,5 +1,6 @@
 import { codeSpanEnds, inlineText, tickRun } from "./parse.ts";
 import entities from "./html-entities.json";
+import { itemAt } from "./item-at.ts";
 
 /** A run of one mark, and the part of it that no pair has taken yet. */
 interface Run {
@@ -148,7 +149,9 @@ function delimiterRuns(text: string, markers: string): Run[] {
 function runAt(text: string, start: number): Run {
   const marker = text.charAt(start);
   let end = start + 1;
-  while (text[end] === marker) end++;
+  while (text[end] === marker) {
+    end++;
+  }
   const before = characterBefore(text, start);
   const after = end < text.length ? asShown(String.fromCodePoint(text.codePointAt(end) as number)) : " ";
   const left = !/\s/.test(after) && (!PUNCTUATION.test(after) || /\s/.test(before) || PUNCTUATION.test(before));
@@ -197,16 +200,16 @@ function pairedMarks(runs: Run[]): number[] {
   const marks: number[] = [];
   // For each run, the nearest earlier run still in play. A run leaves play when a pair
   // closes around it, or takes its last mark.
-  const earlier: number[] = new Array(runs.length);
+  const earlier = Array.from<number>({ length: runs.length }).fill(0);
   // For each kind of closer, the run at or before which it has no opener. Without this
   // a text of closers alone would search back to its start from every one of them.
   const searched = new Map<string, number>();
   let last = -1;
   for (let closing = 0; closing < runs.length; closing++) {
-    const closer = runs[closing] as Run;
+    const closer = itemAt(runs, closing);
     earlier[closing] = last;
     if (closer.close) pairCloser(runs, closing, earlier, searched, marks);
-    last = closer.start < closer.end ? closing : earlier[closing] as number;
+    last = closer.start < closer.end ? closing : itemAt(earlier, closing);
   }
   return marks;
 }
@@ -219,26 +222,26 @@ function pairCloser(
   searched: Map<string, number>,
   marks: number[],
 ): void {
-  const closer = runs[closing] as Run;
+  const closer = itemAt(runs, closing);
   const kind = `${closer.marker}${closer.open}${closer.original % 3}`;
   const floor = searched.get(kind) ?? -1;
   while (closer.start < closer.end) {
-    let opening = earlier[closing] as number;
-    while (opening > floor && !canPair(runs[opening] as Run, closer)) {
-      opening = earlier[opening] as number;
+    let opening = itemAt(earlier, closing);
+    while (opening > floor && !canPair(itemAt(runs, opening), closer)) {
+      opening = itemAt(earlier, opening);
     }
     if (opening <= floor) {
-      searched.set(kind, earlier[closing] as number);
+      searched.set(kind, itemAt(earlier, closing));
       return;
     }
-    const opener = runs[opening] as Run;
+    const opener = itemAt(runs, opening);
     const strong = opener.end - opener.start >= 2 && closer.end - closer.start >= 2;
     for (let taken = 0; taken < (strong ? 2 : 1); taken++) {
       opener.end--;
       marks.push(opener.end, closer.start);
       closer.start++;
     }
-    earlier[closing] = opener.start < opener.end ? opening : earlier[opening] as number;
+    earlier[closing] = opener.start < opener.end ? opening : itemAt(earlier, opening);
   }
 }
 

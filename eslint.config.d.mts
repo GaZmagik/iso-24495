@@ -13,6 +13,9 @@ export type RuleSetting = Linter.RuleEntry;
  */
 export declare const ENFORCED_RULES: Record<string, RuleSetting>;
 
+/** The syntax selectors of the "no-restricted-syntax" rule, each with the message that names it. */
+export declare const GUIDE_SYNTAX: ReadonlyArray<{ readonly selector: string; readonly message: string }>;
+
 declare const configuration: readonly unknown[];
 // ESLint requires the configuration as the default export.
 export default configuration;

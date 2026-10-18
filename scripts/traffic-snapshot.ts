@@ -15,6 +15,33 @@
 import { join } from "node:path";
 import { pathFailure, unexpectedKind } from "../skills/iso-24495-4/scripts/lib/failure.ts";
 import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
+import { itemAt } from "../skills/iso-24495-4/scripts/lib/item-at.ts";
+
+const USAGE = [
+  "Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]",
+  "",
+  "Reads this repository's GitHub traffic and merges it into daily.csv,",
+  "windows.csv and referrers.csv inside the data directory.",
+].join("\n");
+const DAILY_HEADER = ["date", "clones", "clone_uniques", "views", "view_uniques"];
+const WINDOW_HEADER = [
+  "snapshot_date",
+  "window_days",
+  "clones",
+  "clone_uniques",
+  "views",
+  "view_uniques",
+  "stars",
+  "forks",
+  "watchers",
+];
+const REFERRER_HEADER = ["snapshot_date", "referrer", "views", "uniques"];
+
+const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
+  ["daily.csv", DAILY_HEADER],
+  ["windows.csv", WINDOW_HEADER],
+  ["referrers.csv", REFERRER_HEADER],
+];
 
 /**
  * Takes one traffic snapshot and merges it into the three CSV files.
@@ -60,8 +87,13 @@ export async function runCli(
   let directory = "";
   let fromFile = "";
   let dryRun = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] as string;
+  // The value after --from-file is read with it, so its own turn is passed over.
+  let valueRead = false;
+  for (const [index, arg] of args.entries()) {
+    if (valueRead) {
+      valueRead = false;
+      continue;
+    }
     if (arg === "--dry-run") {
       dryRun = true;
       continue;
@@ -75,7 +107,7 @@ export async function runCli(
         return 2;
       }
       fromFile = value;
-      index += 1;
+      valueRead = true;
       continue;
     }
     directory = arg;
@@ -202,30 +234,54 @@ export async function runCli(
   return 0;
 }
 
+/**
+ * One day of a series. `timestamp` is the date alone, as YYYY-MM-DD, cut
+ * from the time GitHub gives.
+ */
 export interface DailyPoint {
   timestamp: string;
   count: number;
   uniques: number;
 }
 
+/**
+ * One of GitHub's two series, clones or views, over its rolling window.
+ * `count` and `uniques` are GitHub's totals for the window. GitHub counts a
+ * visitor who returns on another day once there, so the window's uniques
+ * are not the sum of the days.
+ */
 export interface Series {
   count: number;
   uniques: number;
   days: DailyPoint[];
 }
 
+/**
+ * One site that sent visitors during the window, with GitHub's counts. The
+ * name is GitHub's text and nobody here has read it, so a printed name goes
+ * through `safeText`.
+ */
 export interface Referrer {
   referrer: string;
   count: number;
   uniques: number;
 }
 
+/**
+ * The repository's totals when the snapshot is taken. GitHub calls the
+ * watchers subscribers.
+ */
 export interface RepoCounts {
   stars: number;
   forks: number;
   watchers: number;
 }
 
+/**
+ * What one run records, as `parseSnapshot` reads it from the four
+ * responses. Every count is a whole number from 0 up to the largest exact
+ * one.
+ */
 export interface Snapshot {
   clones: Series;
   views: Series;
@@ -233,6 +289,11 @@ export interface Snapshot {
   repo: RepoCounts;
 }
 
+/**
+ * What `parseSnapshot` gives: the snapshot, or a problem that names the
+ * first response of the wrong shape. The problem is worded here and never
+ * taken from a response, so it is safe to print.
+ */
 export type ParseResult = { ok: true; snapshot: Snapshot } | { ok: false; problem: string };
 
 /**
@@ -288,6 +349,10 @@ export class MalformedTable extends Error {
   }
 }
 
+/**
+ * Everything `runCli` reaches outside itself. The command line shim passes
+ * the file system and the network, and a test passes stand-ins.
+ */
 export interface Deps {
   /** The text of a file, null where there is no such file. Throws for a file that cannot be read. */
   readText(path: string): string | null;
@@ -321,35 +386,9 @@ const ENDPOINT_NAMES: ReadonlyMap<string, string> = new Map([
   ["/traffic/popular/referrers", "the referrers endpoint"],
   ["", "the repository endpoint"],
 ]);
-
-const DAILY_HEADER = ["date", "clones", "clone_uniques", "views", "view_uniques"];
-const WINDOW_HEADER = [
-  "snapshot_date",
-  "window_days",
-  "clones",
-  "clone_uniques",
-  "views",
-  "view_uniques",
-  "stars",
-  "forks",
-  "watchers",
-];
-const REFERRER_HEADER = ["snapshot_date", "referrer", "views", "uniques"];
 // What a cell must match, by its column. `MalformedTable` says which column holds what.
 const A_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const A_WHOLE_NUMBER = /^\d+$/;
-const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
-  ["daily.csv", DAILY_HEADER],
-  ["windows.csv", WINDOW_HEADER],
-  ["referrers.csv", REFERRER_HEADER],
-];
-
-const USAGE = [
-  "Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]",
-  "",
-  "Reads this repository's GitHub traffic and merges it into daily.csv,",
-  "windows.csv and referrers.csv inside the data directory.",
-].join("\n");
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   const isRecord = typeof value === "object" && value !== null && !Array.isArray(value);
@@ -466,7 +505,7 @@ function splitCsvLine(row: string): string[] | null {
   // Whether the cell was in quotes and its closing quote has been read.
   let closed = false;
   for (let index = 0; index < row.length; index += 1) {
-    const character = row[index] as string;
+    const character = itemAt(row, index);
     if (quoted) {
       if (character !== '"') {
         cell += character;
@@ -546,7 +585,7 @@ function readTable(existing: string | null, header: string[]): { rows: string[][
       const held = cells.length === 1 ? "1 cell" : cells.length + " cells";
       return { fault: "the row on line " + line + " has " + held + " where the header has " + header.length };
     }
-    const wrong = header.findIndex((column, at) => !holdsItsKind(column, at, cells[at] as string));
+    const wrong = header.findIndex((column, at) => !holdsItsKind(column, at, itemAt(cells, at)));
     if (wrong !== -1) {
       const kind = wrong === 0 ? "a date" : "a whole number";
       return { fault: "the row on line " + line + " does not hold " + kind + " under " + header[wrong] };

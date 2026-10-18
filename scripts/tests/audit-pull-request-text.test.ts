@@ -3,6 +3,7 @@ import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, syml
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
+import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
@@ -30,10 +31,10 @@ function run(path: string, contents: string[], replace: Partial<Dependencies> = 
     // Each read gives the next of the contents, so a second read would see a changed file.
     readText: (asked) => {
       result.read.push(asked);
-      return contents[result.read.length - 1] as string;
+      return itemAt(contents, result.read.length - 1);
     },
     audit: real.audit,
-    appendText: (_path, text) => {
+    appendText: (path, text) => {
       result.summary.push(text);
     },
     summaryPath: undefined,
@@ -101,7 +102,7 @@ describe("the file is read once, and that reading is what is judged", () => {
 // asked for white space, and that character is none. A description is empty when it
 // holds nothing a reader can see. Issue 47.
 describe("a description that holds nothing a reader can see is empty", () => {
-  const EMPTY = "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.";
+  const empty = "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.";
   const unseen: Array<[name: string, text: string]> = [
     ["a zero width space", String.fromCodePoint(0x200b)],
     ["a word joiner", String.fromCodePoint(0x2060)],
@@ -114,10 +115,10 @@ describe("a description that holds nothing a reader can see is empty", () => {
     ["several of them among spaces, tabs and line breaks", ` ${String.fromCodePoint(0x200b)}${String.fromCharCode(9, 10)} ${String.fromCodePoint(0x2060, 0xfeff)}${String.fromCharCode(13, 10)}${String.fromCodePoint(0xa0, 0x200b)} `],
   ];
 
-  test.each(unseen)("%s", (_name, text) => {
+  test.each(unseen)("%s", (name, text) => {
     const result = run("description.md", [text]);
     expect(result.exit).toBe(1);
-    expect(result.stdout).toEqual([EMPTY]);
+    expect(result.stdout).toEqual([empty]);
     expect(result.stderr).toEqual([]);
   });
 
@@ -137,7 +138,7 @@ describe("a path that is not a file to read is a wrong argument", () => {
     ["a symbolic link", { isFile: () => false, isSymbolicLink: () => true }, "names a symbolic link, which this check does not follow."],
     ["a pipe or a device", { isFile: () => false }, "names something that is not a regular file."],
   ];
-  test.each(kinds)("%s is refused before anything is read", (_name, kind, words) => {
+  test.each(kinds)("%s is refused before anything is read", (name, kind, words) => {
     const path = "some/PRIVATE/description.md";
     const result = run(path, ["Plain words.\n"], { inspect: () => ({ ...FILE, ...kind }) });
     expect(result.exit).toBe(2);
@@ -305,7 +306,7 @@ describe("the real file system", () => {
 // gets inspected, it is held against what the path names, and the text is read from
 // that handle. So the thing inspected is the thing read.
 describe("the file is opened once, and what was opened is what is read", () => {
-  const REFUSED = "what was opened is not the regular file the path names";
+  const refused = "what was opened is not the regular file the path names";
   interface Kind { isFile(): boolean; isSymbolicLink(): boolean; dev: bigint; ino: bigint }
   const kind = (ino: number, dev = 1, file = true, link = false): Kind =>
     ({ isFile: () => file, isSymbolicLink: () => link, dev: BigInt(dev), ino: BigInt(ino) });
@@ -362,7 +363,7 @@ describe("the file is opened once, and what was opened is what is read", () => {
       ["something that is no file", kind(5, 1, false), kind(5)],
     ] as Array<[string, Kind, Kind]>) {
       const result = reading(handle, path);
-      expect(message(result.thrown), name).toBe(REFUSED);
+      expect(message(result.thrown), name).toBe(refused);
       expect(result.text, name).toBeNull();
       expect(result.calls.some((call) => call.startsWith("read")), name).toBe(false);
       expect(result.calls.at(-1), name).toBe("close 7");
@@ -376,7 +377,7 @@ describe("the file is opened once, and what was opened is what is read", () => {
         throw failure("ELOOP");
       },
     });
-    expect(message(loop.thrown)).toBe(REFUSED);
+    expect(message(loop.thrown)).toBe(refused);
     expect(loop.calls).toEqual([]);
     const missing = reading(kind(5), kind(5), {
       open: () => {
@@ -414,8 +415,8 @@ describe("the file is opened once, and what was opened is what is read", () => {
       mkdirSync(join(workspace, "a-directory"));
       // A directory can be opened, so it is the handle that says it is no file. The
       // command reads through the same function, and so says the same.
-      expect(() => readRegularFile(join(workspace, "a-directory"))).toThrow(REFUSED);
-      expect(() => realDependencies(ROOT, undefined).readText(join(workspace, "a-directory"))).toThrow(REFUSED);
+      expect(() => readRegularFile(join(workspace, "a-directory"))).toThrow(refused);
+      expect(() => realDependencies(ROOT, undefined).readText(join(workspace, "a-directory"))).toThrow(refused);
       expect(realDependencies(ROOT, undefined).readText(file)).toBe(readRegularFile(file));
       expect(() => readRegularFile(join(workspace, "nothing.md"))).toThrow();
       // The command says the same of a file replaced under it as of one it cannot read.
@@ -432,7 +433,7 @@ describe("the file is opened once, and what was opened is what is read", () => {
       } catch {
         return;
       }
-      expect(() => readRegularFile(join(workspace, "link.md"))).toThrow(REFUSED);
+      expect(() => readRegularFile(join(workspace, "link.md"))).toThrow(refused);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

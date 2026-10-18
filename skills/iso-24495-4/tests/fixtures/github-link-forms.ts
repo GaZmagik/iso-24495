@@ -19,6 +19,10 @@
 // Each entry is the document, and then every letter GitHub showed for it, in order,
 // with nothing between. An image counts as its alternative text.
 
+/**
+ * Each form on which this engine and Bun's renderer differ, beside the
+ * letters GitHub showed for it.
+ */
 export const GITHUB_LINK_FORMS: ReadonlyArray<readonly [document: string, lettersShown: string]> = [
   ["identity and access [\\]`]`](two\\ >\\_>) here.", "identityandaccesstwohere"],
   ["identity and access [ ](x\ud83d\\ ') here.", "identityandaccessxhere"],

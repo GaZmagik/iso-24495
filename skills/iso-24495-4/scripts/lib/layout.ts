@@ -8,6 +8,10 @@ const OVERVIEW_LABEL = /^(?:overview|summary)$/i;
 const VERSION = /^(?:Version|Revision)\s*:?\s*v?\d+(?:\.\d+)+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
 const DATE_FIELD = /^(?:Date|Updated|Last updated|Reviewed)\s*:?\s*(.+)$/i;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/**
+ * What `layoutViolations` may be told besides the text. `fileName` exempts
+ * a file such as a README from the edition advisory.
+ */
 export interface LayoutOptions extends Reading { fileName?: string }
 
 /**
@@ -47,7 +51,9 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     && !fields.some(isDocumentField) && !isDocumentField(titleSuffix ?? "")) {
     findings.push({ rule: "opening-version-date", line: start, detail: "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?" });
   }
-  for (const item of parsed.items) if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
+  for (const item of parsed.items) {
+    if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
+  }
   const sections = parsed.headings.filter(heading => heading.level === 2);
   if (sections.length < SECTION_LIMIT) return findings;
   findings.push(...contentsFindings(parsed, sections, end));
@@ -90,13 +96,18 @@ export function headingIds(wordings: readonly string[]): string[] {
     const base = normaliseWording(wording).toLowerCase().replace(/[^\p{L}\p{N}\p{M} _-]/gu, "").replace(/ /g, "-");
     let id = base;
     let suffix = 0;
-    while (used.has(id)) { suffix++; id = `${base}-${suffix}`; }
+    while (used.has(id)) {
+      suffix++;
+      id = `${base}-${suffix}`;
+    }
     used.add(id);
     return id;
   });
 }
 
-function label(text: string): string { return normaliseWording(text).replace(/^\d+(?:\.\d+)*\.?\s+/, ""); }
+function label(text: string): string {
+  return normaliseWording(text).replace(/^\d+(?:\.\d+)*\.?\s+/, "");
+}
 function recognisedFrontMatter(text: string): boolean {
   const lines = toLines(text);
   // This rule validates YAML itself. Keep the calibrated extraction guard
@@ -108,7 +119,9 @@ function recognisedFrontMatter(text: string): boolean {
   let metadata: unknown;
   try {
     metadata = Bun.YAML.parse(source);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
   return declaredEditionFields(metadata) || declaredEditionFields((metadata as Record<string, unknown>).metadata);
 }
@@ -134,8 +147,10 @@ function validDate(text: string): boolean {
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (iso !== null) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   const numeric = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(text);
-  if (numeric !== null) return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
-    || calendarDate(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
+  if (numeric !== null) {
+    return calendarDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
+      || calendarDate(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
+  }
   const parts = text.toLowerCase().replace(/[,-]/g, " ").split(/\s+/);
   const month = MONTHS.findIndex(name => parts.includes(name) || parts.includes(name.slice(0, 3)));
   if (month < 0) return false;
@@ -158,7 +173,9 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
   const labelled = new Set<number>();
   for (const heading of parsed.headings.filter(heading => CONTENTS_LABEL.test(label(heading.text)))) {
     const next = parsed.headings.find(candidate => candidate.line > heading.line && candidate.level <= heading.level);
-    for (let index = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0); index < (next?.line ?? parsed.lines.length + 1) - 1; index++) labelled.add(index);
+    for (let index = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0); index < (next?.line ?? parsed.lines.length + 1) - 1; index++) {
+      labelled.add(index);
+    }
   }
   const findings: Violation[] = [];
   let labelledEntries = false;
@@ -184,7 +201,11 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
       const destination = link.kind === "inline" ? link.target.trim().replace(/^<|>$/g, "") : parsed.destinations.get(normaliseReference(link.target || link.label));
       if (destination === undefined || !destination.startsWith("#")) continue;
       let fragment: string;
-      try { fragment = decodeURIComponent(destination.slice(1)); } catch { continue; }
+      try {
+        fragment = decodeURIComponent(destination.slice(1));
+      } catch {
+        continue;
+      }
       const heading = targets.get(fragment);
       if (labelled.has(index)) {
         labelledEntries = true;
@@ -198,7 +219,9 @@ function contentsFindings(parsed: ReturnType<typeof structure>, sections: readon
     groups.set(link.block, [...(groups.get(link.block) ?? []), link]);
   }
   const navigation = [...groups.values()].filter(group => group.length >= 2).flat();
-  for (const link of navigation) if (link.heading?.level === 2 && sections.includes(link.heading) && normaliseWording(link.label) !== normaliseWording(link.heading.text)) findings.push({ rule: "contents-list", line: link.line, detail: "Use the target section's exact wording in this navigation link." });
+  for (const link of navigation) {
+    if (link.heading?.level === 2 && sections.includes(link.heading) && normaliseWording(link.label) !== normaliseWording(link.heading.text)) findings.push({ rule: "contents-list", line: link.line, detail: "Use the target section's exact wording in this navigation link." });
+  }
   if (!labelledEntries && navigation.length === 0) findings.unshift({ rule: "contents-list", line: 1, detail: "Add contents or navigation for six or more root H2 sections." });
   return findings;
 }

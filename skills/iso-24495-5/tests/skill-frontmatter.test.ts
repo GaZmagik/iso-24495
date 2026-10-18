@@ -16,6 +16,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { itemAt } from "../../iso-24495-4/scripts/lib/item-at.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const ROOTS = ["skills", "codex-skills"];
@@ -48,7 +49,7 @@ function frontmatter(relativePath: string): string {
   const text = readFileSync(join(ROOT, relativePath), "utf8");
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
   if (match === null) throw new Error(`${relativePath}: no frontmatter fence`);
-  return match[1] as string;
+  return itemAt(match, 1);
 }
 
 describe("every skill's frontmatter", () => {

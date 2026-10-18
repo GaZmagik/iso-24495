@@ -9,6 +9,7 @@
 // columns in. This is the algorithm those scanners were approximating.
 
 import { EXCLUSIVE_STARTERS, LOWERCASE_NAMES } from "./lexicon.ts";
+import { itemAt } from "./item-at.ts";
 
 /**
  * Read a document once, for the rules that work line by line.
@@ -34,6 +35,7 @@ export function readDocument(text: string, reading: Reading = {}): Document {
   };
 }
 
+/** One block of prose, as a reader sees it. */
 export interface ProseBlock {
   /** 1-indexed line number of the block's first line. */
   line: number;
@@ -41,6 +43,7 @@ export interface ProseBlock {
   lines: string[];
 }
 
+/** One heading of either form, with its text as a reader sees it. */
 export interface Heading {
   level: number;
   line: number;
@@ -62,6 +65,11 @@ export interface Reading {
   frontMatter?: boolean;
 }
 
+/**
+ * A text as the rules read it, from `readDocument`. `lines` and
+ * `markupLines` hold one entry for each line of the source, so an index is
+ * a source line.
+ */
 export interface Document {
   lines: string[];
   /** Reader-visible markup retained for rules about links and images. */
@@ -91,6 +99,7 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // which is why its label starts with "^" and it is not here.
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 
 /**
  * A conservative single-line link reference definition.
@@ -119,7 +128,9 @@ function isLinkDefinition(line: string): boolean {
   if (line[index] !== "]" || line[index + 1] !== ":") return false;
   if (label.trim() === "" || label.startsWith("^") || label.length > 999) return false;
   index += 2;
-  while (line[index] === " ") index++;
+  while (line[index] === " ") {
+    index++;
+  }
 
   if (line[index] === "<") {
     index++;
@@ -156,17 +167,23 @@ function isLinkDefinition(line: string): boolean {
 
   if (index === line.length) return true;
   if (line[index] !== " ") return false;
-  while (line[index] === " ") index++;
+  while (line[index] === " ") {
+    index++;
+  }
   if (index === line.length) return true;
 
   const opening = line[index];
   const closing = opening === "(" ? ")" : opening;
   if (opening !== "\"" && opening !== "'" && opening !== "(") return false;
   index++;
-  while (index < line.length && line[index] !== closing) index++;
+  while (index < line.length && line[index] !== closing) {
+    index++;
+  }
   if (line[index] !== closing) return false;
   index++;
-  while (line[index] === " ") index++;
+  while (line[index] === " ") {
+    index++;
+  }
   return index === line.length;
 }
 
@@ -274,7 +291,9 @@ export function tableCells(row: string): string[] {
   return cells;
 }
 
-function cellCount(row: string): number { return tableCells(row).length; }
+function cellCount(row: string): number {
+  return tableCells(row).length;
+}
 
 /** True when every divider cell is hyphens, with optional colons. */
 function isDividerRow(row: string): boolean {
@@ -652,7 +671,9 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         setext: true,
       });
       paragraphs.splice(paragraphs.indexOf(paragraph), 1);
-      for (let row = paragraph.line - 1; row < i; row++) blocks.delete(row);
+      for (let row = paragraph.line - 1; row < i; row++) {
+        blocks.delete(row);
+      }
       paragraph = null;
       continue;
     }
@@ -701,8 +722,14 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         if (stack.length === 0) rootLines.add(row);
         if (!stack.some(container => container.kind === "quote")) navigationLines.add(row);
       }
-      if (stack.length === 0) { rootLines.add(i); rootLines.add(i + 1); }
-      if (!stack.some(container => container.kind === "quote")) { navigationLines.add(i); navigationLines.add(i + 1); }
+      if (stack.length === 0) {
+        rootLines.add(i);
+        rootLines.add(i + 1);
+      }
+      if (!stack.some(container => container.kind === "quote")) {
+        navigationLines.add(i);
+        navigationLines.add(i + 1);
+      }
       tableUntil = row - 1;
       continue;
     }
@@ -724,8 +751,12 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     const forLineRules = visibleInline(source, false).split("\n");
     const withTags = visibleInline(source, false, true).split("\n");
     // Both readings keep every line ending of the source, so they hold the same lines.
-    for (const [offset, shown] of forLineRules.entries()) readable[block.line - 1 + offset] = shown;
-    for (const [offset, shown] of withTags.entries()) markup[block.line - 1 + offset] = shown;
+    for (const [offset, shown] of forLineRules.entries()) {
+      readable[block.line - 1 + offset] = shown;
+    }
+    for (const [offset, shown] of withTags.entries()) {
+      markup[block.line - 1 + offset] = shown;
+    }
     block.lines = visibleInline(source).split("\n");
   }
   for (const heading of found) {
@@ -834,8 +865,6 @@ function withoutInvisible(
   if (closing === null) return { text: before, until: close };
   return { text: before + " " + text.slice(closing.at + closing.length), until: null };
 }
-
-const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
 
 function abruptCommentClose(afterOpening: string): number {
@@ -868,7 +897,9 @@ function closingMarkup(
  */
 export function tickRun(text: string, start: number): number {
   let end = start;
-  while (text[end] === "`") end++;
+  while (text[end] === "`") {
+    end++;
+  }
   return end - start;
 }
 
@@ -1080,7 +1111,9 @@ export function markdownLinks(text: string): MarkdownLink[] {
       index = closing === undefined ? index + tickRun(text, index) : closing;
       continue;
     }
-    while (withinAlt.length > 0 && (withinAlt.at(-1) as number) <= index) withinAlt.pop();
+    while (withinAlt.length > 0 && (withinAlt.at(-1) as number) <= index) {
+      withinAlt.pop();
+    }
     const rendered = withinAlt.length === 0;
     const image = text[index] === "!" && text[index + 1] === "[";
     const opens = image ? index + 1 : index;
@@ -1206,8 +1239,11 @@ interface Flattening {
 /** Adds text to the innermost open label, or to the result where no label is open. */
 function writeFragment(flattening: Flattening, fragment: string): void {
   const inner = flattening.open.at(-1);
-  if (inner === undefined) flattening.flattened += fragment;
-  else inner.label += fragment;
+  if (inner === undefined) {
+    flattening.flattened += fragment;
+  } else {
+    inner.label += fragment;
+  }
 }
 
 /** Ends the innermost open label and writes what a reader sees in its place. */
@@ -1218,7 +1254,6 @@ function closeLabel(flattening: Flattening, text: string, references?: ReadonlyS
   writeFragment(flattening,
     flattenedLink(inner.link, text.slice(inner.link.start, flattening.at), inner.label, references));
 }
-
 
 function visibleText(text: string, references?: ReadonlySet<string>): string {
   return flattenLinks(visibleInline(text), references);
@@ -1284,6 +1319,7 @@ const INLINE_ABBREVIATIONS = new Set([
 const DOTTED_FORM = /^[^A-Za-z]*(?:[A-Za-z]\.){2,}$/;
 const SINGLE_INITIAL = /^[^A-Za-z]*[A-Z]\.$/;
 
+/** What `classifyBoundary` decides about the stop between two fragments. */
 export type Boundary = "merge" | "split" | "ambiguous";
 
 const WHITESPACE = /\s/;
@@ -1297,9 +1333,13 @@ const WHITESPACE = /\s/;
  */
 function lastToken(fragment: string): string {
   let end = fragment.length;
-  while (end > 0 && WHITESPACE.test(fragment[end - 1] as string)) end -= 1;
+  while (end > 0 && WHITESPACE.test(itemAt(fragment, end - 1))) {
+    end -= 1;
+  }
   let start = end;
-  while (start > 0 && !WHITESPACE.test(fragment[start - 1] as string)) start -= 1;
+  while (start > 0 && !WHITESPACE.test(itemAt(fragment, start - 1))) {
+    start -= 1;
+  }
   return fragment.slice(start, end);
 }
 
@@ -1442,14 +1482,17 @@ export function codeSpanEnds(text: string): Map<number, number> {
   const byLength = new Map<number, number[]>();
   runs.forEach((run, position) => {
     const list = byLength.get(run.length);
-    if (list === undefined) byLength.set(run.length, [position]);
-    else list.push(position);
+    if (list === undefined) {
+      byLength.set(run.length, [position]);
+    } else {
+      list.push(position);
+    }
   });
   const cursors = new Map<number, number>();
   const ends = new Map<number, number>();
   let position = 0;
   while (position < runs.length) {
-    const run = runs[position] as { start: number; length: number; escaped: boolean };
+    const run = itemAt(runs, position);
     // An escaped backslash consumes the first backtick only, so a longer run still
     // opens a span, one backtick shorter and one offset later.
     const openLength = run.escaped ? run.length - 1 : run.length;
@@ -1460,15 +1503,17 @@ export function codeSpanEnds(text: string): Map<number, number> {
     }
     const candidates = byLength.get(openLength) ?? [];
     let cursor = cursors.get(openLength) ?? 0;
-    while (cursor < candidates.length && (candidates[cursor] as number) <= position) cursor += 1;
+    while (cursor < candidates.length && itemAt(candidates, cursor) <= position) {
+      cursor += 1;
+    }
     cursors.set(openLength, cursor);
     if (cursor >= candidates.length) {
       position += 1;
       continue;
     }
-    const closing = runs[candidates[cursor] as number] as { start: number; length: number };
+    const closing = itemAt(runs, itemAt(candidates, cursor));
     ends.set(openStart, closing.start + closing.length);
-    position = (candidates[cursor] as number) + 1;
+    position = itemAt(candidates, cursor) + 1;
   }
   spanCacheText = text;
   spanCacheEnds = ends;
@@ -1501,12 +1546,12 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
   let terminated = false;
   let index = 0;
   while (index < text.length) {
-    const character = text[index] as string;
-    if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(text[index + 1] as string)) {
+    const character = itemAt(text, index);
+    if (character === "\\" && index + 1 < text.length && ESCAPABLE.test(itemAt(text, index + 1))) {
       // The escape renders as the bare character, so the reader sees a terminator or a
       // closing marker and the state must follow it. Clearing the state outright was
       // right only for an escaped backtick, and it lost every other boundary.
-      terminated = readTerminatorState(text[index + 1] as string, terminated);
+      terminated = readTerminatorState(itemAt(text, index + 1), terminated);
       index += 2;
       continue;
     }
@@ -1523,7 +1568,9 @@ function boundarySpans(text: string): Array<{ at: number; length: number }> {
     }
     if (/\s/.test(character)) {
       let end = index;
-      while (end < text.length && /\s/.test(text[end] as string)) end++;
+      while (end < text.length && /\s/.test(itemAt(text, end))) {
+        end++;
+      }
       if (terminated) spans.push({ at: index, length: end - index });
       terminated = false;
       index = end;

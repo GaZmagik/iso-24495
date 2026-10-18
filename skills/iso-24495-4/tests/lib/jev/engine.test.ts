@@ -9,7 +9,9 @@ describe("calibrated engine", () => {
   test("reproduces every manifest request byte for byte", () => {
     const fixtures = JSON.parse(readFileSync(join(FIXTURES, "requests.json"), "utf8"));
     expect(fixtures.length).toBe(1613);
-    for (const fixture of fixtures) expect(JSON.stringify(buildRequest(fixture.kind, fixture.state))).toBe(fixture.body);
+    for (const fixture of fixtures) {
+      expect(JSON.stringify(buildRequest(fixture.kind, fixture.state))).toBe(fixture.body);
+    }
   });
   test("preserves all corpus extraction states and source locations", () => {
     const fixtures = JSON.parse(readFileSync(join(FIXTURES, "extraction.json"), "utf8"));

@@ -3,7 +3,9 @@ import {
   add, ceilToPlaces, compare, decimalText, maximum, minimum, ONE, parseDecimal, subtract, toNumber, ZERO, type Decimal,
 } from "../../../scripts/lib/jev/decimal.ts";
 
-const show = (value: Decimal) => `${value.units}e-${value.scale}`;
+function show(value: Decimal): string {
+  return `${value.units}e-${value.scale}`;
+}
 
 describe("reading a number token exactly as it is written", () => {
   test("keeps every digit, beyond what a double holds", () => {
@@ -57,8 +59,8 @@ describe("refusing a number too large to hold cheaply", () => {
   // One call per size against a fixed budget. Before the bound, ten million as
   // an exponent cost about 600 ms: inside parseDecimal when positive, and in
   // the first comparison when negative. A refusal costs microseconds.
-  const BUDGET_MS = 100;
-  const TEST_TIMEOUT_MS = 60_000;
+  const budgetMs = 100;
+  const testTimeoutMs = 60_000;
 
   test("refuses an exponent outside the bound before any arithmetic, whatever its sign", () => {
     for (const [token, digits] of [["1e1000000", 7], ["1e10000000", 8], ["1e-10000000", 8], ["-2.5E+10000000", 8]] as const) {
@@ -69,9 +71,9 @@ describe("refusing a number too large to hold cheaply", () => {
       expect(message, token).toBe(
         `Expected a JSON number with an exponent from -2000 to 2000; got an exponent of ${digits} digits.`,
       );
-      expect(took, token).toBeLessThan(BUDGET_MS);
+      expect(took, token).toBeLessThan(budgetMs);
     }
-  }, TEST_TIMEOUT_MS);
+  }, testTimeoutMs);
 
   test("refuses an exponent one past the bound and one too long to be a double", () => {
     for (const [token, digits] of [["1e2001", 4], ["1e-2001", 4], ["1e+02001", 5], [`1e${"9".repeat(400)}`, 400]] as const) {
@@ -93,9 +95,9 @@ describe("refusing a number too large to hold cheaply", () => {
       expect(message, `${token.length} characters`).toBe(
         `Expected a JSON number of at most 2000 characters; got ${token.length}.`,
       );
-      expect(took, `${token.length} characters`).toBeLessThan(BUDGET_MS);
+      expect(took, `${token.length} characters`).toBeLessThan(budgetMs);
     }
-  }, TEST_TIMEOUT_MS);
+  }, testTimeoutMs);
 
   test("still reads a number at the bound, and arithmetic on it stays cheap", () => {
     expect(parseDecimal("1e2000")).toEqual({ units: 10n ** 2_000n, scale: 0 });
@@ -110,8 +112,8 @@ describe("refusing a number too large to hold cheaply", () => {
       expect(compare(add(smallest, parseDecimal("9e2000")), ONE)).toBe(1);
       expect(decimalText(ceilToPlaces(smallest, 2))).toBe("0.01");
     });
-    expect(took).toBeLessThan(BUDGET_MS);
-  }, TEST_TIMEOUT_MS);
+    expect(took).toBeLessThan(budgetMs);
+  }, testTimeoutMs);
 });
 
 describe("exact arithmetic", () => {

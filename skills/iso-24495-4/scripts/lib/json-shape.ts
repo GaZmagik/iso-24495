@@ -43,6 +43,9 @@ export type Shape =
  * @returns The first problem found, reading the value in the order the shape
  *     and the file give. It names the place, what was expected there and the
  *     kind of value found, and is safe to print. Null when the value fits.
+ * @throws A `TypeError` when the shape, or a shape the value reaches inside
+ *     it, has a kind the type does not admit. Only a shape built outside the
+ *     type can have one.
  */
 export function shapeProblem(value: unknown, shape: Shape, where: string): string | null {
   switch (shape.kind) {
@@ -61,6 +64,10 @@ export function shapeProblem(value: unknown, shape: Shape, where: string): strin
     case "object":
       if (!isObject(value)) return mismatch(where, "an object", value);
       return objectProblem(value, shape.required, shape.optional ?? {}, shape.closed ?? false, where);
+    default:
+      // The type admits no other kind, so only a shape built outside it gets
+      // here. Its kind is not printed: it is whatever that code wrote.
+      throw new TypeError("The shape has no kind this reader knows.");
   }
 }
 

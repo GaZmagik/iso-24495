@@ -43,7 +43,9 @@ export function runPreflight(
   }
   const report = checkVersionSites(root);
   const problems = [...report.problems, ...preflightProblems(report.version, released)];
-  for (const problem of problems) stderr(`release preflight: ${problem}`);
+  for (const problem of problems) {
+    stderr(`release preflight: ${problem}`);
+  }
   if (problems.length > 0) return 1;
   stdout(
     `release preflight: every site declares ${report.version}, which is later than every release, `
@@ -110,8 +112,9 @@ function runToEnd(command: string[], options: { cwd: string }): ReturnType<RunCo
 export function releasedVersions(listing: string): string[] {
   return listing.split(/\r?\n/).flatMap((line) => {
     const name = line.split("\trefs/tags/")[1];
-    const match = name === undefined ? null : RELEASE_TAG.exec(name);
-    return match === null ? [] : [match[1] as string];
+    // The pattern's one group takes part in every match, so a match holds a version.
+    const version = name === undefined ? undefined : RELEASE_TAG.exec(name)?.[1];
+    return version === undefined ? [] : [version];
   });
 }
 
@@ -155,7 +158,10 @@ export function compareVersions(left: string, right: string): number {
   const a = left.split(".").map(Number);
   const b = right.split(".").map(Number);
   for (let part = 0; part < 3; part += 1) {
-    if (a[part] !== b[part]) return (a[part] as number) - (b[part] as number);
+    // A version with fewer parts has none here, which gives NaN as it always has.
+    const earlier = a[part] ?? Number.NaN;
+    const later = b[part] ?? Number.NaN;
+    if (a[part] !== b[part]) return earlier - later;
   }
   return 0;
 }

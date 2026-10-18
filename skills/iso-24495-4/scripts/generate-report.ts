@@ -171,6 +171,10 @@ function maturityProblem(maturity: unknown): string | null {
     : '<maturity.json>, "overall" must be the lowest level of any dimension; got another whole number';
 }
 
+/**
+ * What `generateReport` merges: the three results of one audit, the state
+ * kept from earlier audits, and the time of this one.
+ */
 export interface ReportInput {
   findings: Findings;
   evidence: Evidence;

@@ -8,6 +8,18 @@ import { readJsonFile, writeTextFile } from "./lib/failure.ts";
 import { shapeProblem, type Shape } from "./lib/json-shape.ts";
 
 /**
+ * The shape of an answers file. A dimension may be left out, and one the
+ * catalogue does not list is passed over, as `scoreMaturity` describes. Each
+ * dimension that is there must hold true or false for every criterion it
+ * names.
+ */
+export const ANSWERS_SHAPE: Shape = {
+  kind: "object",
+  required: { dimensions: { kind: "map", member: { kind: "map", member: { kind: "flag" } } } },
+  optional: { organisation: { kind: "text" } },
+};
+
+/**
  * Scores an answers file and prints the level of each dimension.
  *
  *   bun score-maturity-cli.ts <answers.json> [--json <out-file>]
@@ -70,22 +82,14 @@ export function runCli(
   return 0;
 }
 
+/**
+ * An answers file, as `scoreMaturity` reads it: for each dimension, whether
+ * each criterion is met. A criterion left out counts as not met.
+ */
 export interface Answers {
   organisation?: string;
   dimensions: Record<string, Record<string, boolean>>;
 }
-
-/**
- * The shape of an answers file. A dimension may be left out, and one the
- * catalogue does not list is passed over, as `scoreMaturity` describes. Each
- * dimension that is there must hold true or false for every criterion it
- * names.
- */
-export const ANSWERS_SHAPE: Shape = {
-  kind: "object",
-  required: { dimensions: { kind: "map", member: { kind: "map", member: { kind: "flag" } } } },
-  optional: { organisation: { kind: "text" } },
-};
 
 /**
  * Scores an organisation against the maturity catalogue.

@@ -298,13 +298,17 @@ Every new test receives a mutation check. The implementation is deliberately bro
 
 This project follows the [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html). It uses kebab-case filenames instead of snake_case and double quotes instead of single quotes. Both deviations match the wider ecosystem.
 
-Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. It also has `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and a few more.
+Two tools in the gate enforce the guide. The TypeScript compiler checks every file with `strict` on. It also has `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `noImplicitOverride` on. ESLint applies the rules in `eslint.config.mjs`: those Google's own `gts` package switches on, less its formatter, and each further rule of the guide that a linter can state. These cover names, braces, switch statements, assertions, exceptions and the disallowed features.
+
+ESLint also refuses a cast on a read by index, because the cast would undo `noUncheckedIndexedAccess`.
+
+Eight of these ESLint rules are deprecated, and ESLint 11.0.0 removes them: `eol-last`, `no-trailing-spaces`, `no-tabs`, `new-parens`, `no-extra-semi`, `brace-style`, `semi` and `multiline-comment-style`. No installed package replaces them, so they stay until that upgrade.
 
 A lint that finds nothing proves little when a rule is switched off or weakened by mistake. So `eslint.config.mjs` states the enforced rules once, and a test reads that list.
 
 The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.
 
-As configured, a comment in a file cannot change a rule or switch one off, and the gate fails on a warning. The testing policy above says what these guards do not defend against. Rules of the guide that no tool here checks are left to review.
+A test holds the rules about comments, which a linter cannot see. Every top-level export needs a JSDoc comment, and no JSDoc comment may state a type. As configured, a comment in a file cannot change a rule or switch one off, and the gate fails on a warning. The testing policy above says what these guards do not defend against. Rules of the guide that no tool here checks are left to review.
 
 ## Why this project holds itself to these rules
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { acronymReading, auditText, linkSyntaxIn } from "../scripts/audit-corpus.ts";
 import { proseBlocks } from "../scripts/lib/parse.ts";
 import { GITHUB_LINK_FORMS } from "./fixtures/github-link-forms.ts";
+import { itemAt } from "../scripts/lib/item-at.ts";
 
 // Whether brackets form a link, held against what a renderer shows.
 //
@@ -34,18 +35,35 @@ const GITHUB_SHOWS = new Map<string, string>(GITHUB_LINK_FORMS);
  */
 const RENDERERS_MAY_DIFFER: Array<[name: string, shaped: (label: string, tail: string) => boolean]> = [
   // "[m](<two three>'a title')": Bun shows a link, GitHub shows the text as written.
-  ["a title straight after a destination in angle brackets, with no space between", (_label, tail) => /^\s*<[^<>]*>["'(]/.test(tail)],
+  ["a title straight after a destination in angle brackets, with no space between", (label, tail) => /^\s*<[^<>]*>["'(]/.test(tail)],
   // "[m](a\ b)": a backslash escapes punctuation alone, so the destination ends at the
   // space and GitHub shows text. Bun reads the space as escaped and carries on.
-  ["a backslash before white space", (_label, tail) => /\\\s/.test(tail)],
+  ["a backslash before white space", (label, tail) => /\\\s/.test(tail)],
   // "[[ [one](\(three]()) ": GitHub ends the first label at its bracket and takes the rest
   // as its destination. Bun pairs the bracket inside the destination with an earlier one.
-  ["a closing bracket and a parenthesis inside a destination", (_label, tail) => tail.includes("](")],
+  ["a closing bracket and a parenthesis inside a destination", (label, tail) => tail.includes("](")],
   // "[[[c](d)]](zed)": a link cannot hold a link, so GitHub shows the outer brackets as
   // text. Bun does the same one bracket deep, and makes a link of the outer pair at two.
   // Anything may stand between the two brackets, as a code span does in "[[`]`[c](d)]](zed)".
   ["a link two brackets deep in a label", (label) => /\[[^]*\[c\]\(d\)\]/.test(label)],
 ];
+/**
+ * Characters that are no word and that a count of places can go wrong on: one outside
+ * the basic plane, which is two UTF-16 units and one code point; a combining mark; the
+ * euro sign, which is three bytes in UTF-8; a no-break space; and each half of a
+ * surrogate pair alone, which side by side make a whole character.
+ */
+const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
+
+const ODD = [String.fromCodePoint(0x1f600), String.fromCodePoint(0x301), String.fromCodePoint(0x20ac), NO_BREAK_SPACE,
+  String.fromCharCode(0xd83d), String.fromCharCode(0xde00)];
+
+const LABEL = ["management", "one", " ", " ", "[b]", "[", "]", `${SLASH}[`, `${SLASH}]`, BREAK, "[c](d)", "![e](f)", "*", `${TICK}g${TICK}`,
+  // A bracket inside a code span, a tag, an autolink and a comment, and a code span that ends in a backslash.
+  `${TICK}[${TICK}`, `${TICK}]${TICK}`, `${TICK}${SLASH}${TICK}`, '<i title="[">', '<i title="]">', "<https://e.com/[>", "<https://e.com/]>", "<!-- ] -->",
+  ...ODD];
+const TAIL = ["two", "three", "x", " ", " ", BREAK, "<", ">", "<two three>", "<four>", '"a title"', "'a title'", "(a title)", "(", ")", "()",
+  `${SLASH}(`, `${SLASH})`, `${SLASH}_`, `${SLASH}<`, `${SLASH}>`, `${SLASH}"`, `${SLASH} `, '"', "'", "", "", "[", "]", TICK, ...ODD];
 
 describe("what the acronym rule takes for a link is what a renderer shows as one", () => {
   test("in generated forms of a label and what follows it", () => {
@@ -65,16 +83,22 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const read = words(readingText(document));
       if (read === shown) {
         counts.agreeWithBun++;
-        if (html.includes("<a href=")) counts.links++;
-        else counts.text++;
+        if (html.includes("<a href=")) {
+          counts.links++;
+        } else {
+          counts.text++;
+        }
         continue;
       }
       const onGitHub = GITHUB_SHOWS.get(document);
       if (RENDERERS_MAY_DIFFER.some(([, shaped]) => shaped(label, tail)) && onGitHub !== undefined) {
         counts.setAside++;
         answersUsed.add(document);
-        if (read === onGitHub) counts.heldByGitHub++;
-        else differing.push(`${JSON.stringify(document)} is read as ${JSON.stringify(read)} and GitHub showed ${JSON.stringify(onGitHub)}`);
+        if (read === onGitHub) {
+          counts.heldByGitHub++;
+        } else {
+          differing.push(`${JSON.stringify(document)} is read as ${JSON.stringify(read)} and GitHub showed ${JSON.stringify(onGitHub)}`);
+        }
         continue;
       }
       differing.push(`${JSON.stringify(document)} is read as ${JSON.stringify(read)} and shown as ${JSON.stringify(shown)}`);
@@ -162,7 +186,7 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       let tagged = false;
       written.forEach((line, index) => {
         const cut = line.length - line.trimStart().length;
-        const places = placesOf(parsed[index] as string, line.slice(cut));
+        const places = placesOf(itemAt(parsed, index), line.slice(cut));
         if (places === null) {
           setAside ||= "notFollowedBack";
           return;
@@ -171,7 +195,7 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
         places.forEach(([from, to], at) => {
           const inSyntax = mask.subarray(start + cut + from, start + cut + to).reduce((sum, entry) => sum + entry, 0);
           if (inSyntax === 0) {
-            text += (parsed[index] as string)[at];
+            text += itemAt(parsed, index)[at];
           } else if (inSyntax < to - from) {
             setAside ||= "aLinkTookPartOfATag";
           }
@@ -232,8 +256,8 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
       const mark = pick(random, marks);
       const from = Math.floor(random() * words.length);
       const to = from + Math.floor(random() * (words.length - from));
-      words[from] = pick(random, [mark + words[from], (words[from] as string).slice(0, 3) + mark + (words[from] as string).slice(3)]);
-      words[to] = pick(random, [words[to] + mark, words[to] + mark, (words[to] as string).slice(0, -1) + mark + (words[to] as string).slice(-1)]);
+      words[from] = pick(random, [mark + words[from], itemAt(words, from).slice(0, 3) + mark + itemAt(words, from).slice(3)]);
+      words[to] = pick(random, [words[to] + mark, words[to] + mark, itemAt(words, to).slice(0, -1) + mark + itemAt(words, to).slice(-1)]);
       const line = words.join(pick(random, [" ", " ", BREAK]));
       expect(/[[<]|:\/\/|www\./.test(line)).toBe(false);
       // A mark that opens a line can open emphasis. With a character straight before it
@@ -289,22 +313,6 @@ function words(text: string): string {
   return text.replace(/[^A-Za-z]/g, "");
 }
 
-/**
- * Characters that are no word and that a count of places can go wrong on: one outside
- * the basic plane, which is two UTF-16 units and one code point; a combining mark; the
- * euro sign, which is three bytes in UTF-8; a no-break space; and each half of a
- * surrogate pair alone, which side by side make a whole character.
- */
-const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
-const ODD = [String.fromCodePoint(0x1f600), String.fromCodePoint(0x301), String.fromCodePoint(0x20ac), NO_BREAK_SPACE,
-  String.fromCharCode(0xd83d), String.fromCharCode(0xde00)];
-const LABEL = ["management", "one", " ", " ", "[b]", "[", "]", `${SLASH}[`, `${SLASH}]`, BREAK, "[c](d)", "![e](f)", "*", `${TICK}g${TICK}`,
-  // A bracket inside a code span, a tag, an autolink and a comment, and a code span that ends in a backslash.
-  `${TICK}[${TICK}`, `${TICK}]${TICK}`, `${TICK}${SLASH}${TICK}`, '<i title="[">', '<i title="]">', "<https://e.com/[>", "<https://e.com/]>", "<!-- ] -->",
-  ...ODD];
-const TAIL = ["two", "three", "x", " ", " ", BREAK, "<", ">", "<two three>", "<four>", '"a title"', "'a title'", "(a title)", "(", ")", "()",
-  `${SLASH}(`, `${SLASH})`, `${SLASH}_`, `${SLASH}<`, `${SLASH}>`, `${SLASH}"`, `${SLASH} `, '"', "'", "", "", "[", "]", TICK, ...ODD];
-
 /** A few pieces of generated text, joined with nothing between them. */
 function pieces(random: () => number, from: readonly string[], most: number): string {
   let text = "";
@@ -316,7 +324,7 @@ function pieces(random: () => number, from: readonly string[], most: number): st
 }
 
 function pick(random: () => number, choices: readonly string[]): string {
-  return choices[Math.floor(random() * choices.length)] as string;
+  return itemAt(choices, Math.floor(random() * choices.length));
 }
 
 /** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */

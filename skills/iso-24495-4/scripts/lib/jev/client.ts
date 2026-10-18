@@ -3,12 +3,28 @@ import { add, compare, ONE, parseDecimal, subtract, ZERO, type Decimal } from ".
 import { parseExactJson } from "./exact-json.ts";
 import type { ExactAnswers } from "./engine.ts";
 
+/** Where every request is posted. Document text leaves the machine there. */
 export const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+/** The most attempts one request is given, the first included. */
 export const MAX_ATTEMPTS = 6;
+/** The most requests one sender has in flight at once. */
 export const MAX_IN_FLIGHT = 4;
+/** How long one attempt may take, in milliseconds, before it is abandoned. */
 export const TIMEOUT_MS = 30000;
+/**
+ * The part of the platform's `fetch` the client calls. A test passes a
+ * stand-in.
+ */
 export type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<Response>;
+/**
+ * Starts a timer and returns the function that cancels it. The client
+ * times each attempt with one.
+ */
 export interface Clock { schedule: (callback: () => void, ms: number) => () => void }
+/**
+ * Stand-ins for what `createAsk` reaches outside itself, and a signal that
+ * cancels its requests. A member left out is the real one.
+ */
 export interface ClientOptions {
   fetch?: Fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -16,13 +32,31 @@ export interface ClientOptions {
   signal?: AbortSignal;
   validate?: () => void;
 }
+/**
+ * A failure of a Jev audit whose message is safe to print as it stands,
+ * with the exit code the command ends with.
+ */
 export class JevError extends Error {
-  constructor(message: string, readonly exitCode = 3) { super(message); this.name = "JevError"; }
+  constructor(message: string, readonly exitCode = 3) {
+    super(message);
+    this.name = "JevError";
+  }
 }
 class TransportError extends Error {
-  constructor() { super("The transport attempt timed out."); }
+  constructor() {
+    super("The transport attempt timed out.");
+  }
 }
+/** Sends one request and resolves with its checked answers. */
 export type Ask = (body: RequestBody) => Promise<ExactAnswers>;
+/**
+ * The clock `createAsk` uses unless it is given another: the platform's
+ * own timers.
+ */
+export const systemClock: Clock = { schedule: (callback, ms) => {
+  const timer = setTimeout(callback, ms);
+  return () => clearTimeout(timer);
+} };
 
 /**
  * Makes the function that sends one request to TypeSafe and returns its
@@ -55,7 +89,11 @@ export function createAsk(key: string, options: ClientOptions = {}): Ask {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(key)) throw new JevError("TYPESAFE_API_KEY contains a control character. Set it again with the key alone.", 4);
   const trimmed = key.trim();
   if (trimmed === "") throw new JevError("Set TYPESAFE_API_KEY to a TypeSafe API key. Get one from https://docs.typesafe.ai.", 4);
-  try { (options.validate ?? validateCalibration)(); } catch { throw new JevError("Calibration integrity failed. Restore the reviewed catalogue and templates."); }
+  try {
+    (options.validate ?? validateCalibration)();
+  } catch {
+    throw new JevError("Calibration integrity failed. Restore the reviewed catalogue and templates.");
+  }
   const send = options.fetch ?? globalThis.fetch;
   const sleep = options.sleep ?? wait;
   const clock = options.clock ?? systemClock;
@@ -89,13 +127,19 @@ export function createAsk(key: string, options: ClientOptions = {}): Ask {
  *     returned as a value.
  */
 export function readAnswers(text: string, questions: RequestBody["questions"]): ExactAnswers {
-  let payload: { model?: unknown; answers?: Record<string, unknown> };
+  // What JSON.parse returns is not checked against this type; each answer is checked below.
+  let payload: { model?: unknown; answers?: Record<string, Record<string, unknown> | undefined> };
   let exact: { answers: Record<string, Record<string, unknown>> };
-  try { payload = JSON.parse(text); exact = parseExactJson(text) as typeof exact; } catch { throw new JevError("Jev returned malformed JSON."); }
+  try {
+    payload = JSON.parse(text);
+    exact = parseExactJson(text) as typeof exact;
+  } catch {
+    throw new JevError("Jev returned malformed JSON.");
+  }
   if (payload?.model !== MODEL) throw new JevError("Jev returned a wrong or missing model. Expected jev-1.13.0.");
   const answers: ExactAnswers = {};
   for (const [id, question] of Object.entries(questions)) {
-    const answer = payload.answers?.[id] as Record<string, unknown> | undefined;
+    const answer = payload.answers?.[id];
     const precise = exact.answers?.[id];
     if (question.type === "noul") {
       if (answer?.type !== "noul" || !isProbability(answer.noul) || !isExactProbability(precise?.noul)) throw new JevError("Jev returned an invalid probability.");
@@ -124,8 +168,12 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
     if (attempt > 1) await sleep(500 * 2 ** (attempt - 2));
     if (signal?.aborted) throw new JevError("Jev execution was cancelled.");
     let result: { status: number; text: string };
-    try { result = await transport(body, key, send, clock, signal); }
-    catch (error) { if (error instanceof JevError) throw error; continue; }
+    try {
+      result = await transport(body, key, send, clock, signal);
+    } catch (error) {
+      if (error instanceof JevError) throw error;
+      continue;
+    }
     if (result.status >= 200 && result.status <= 299) return readAnswers(result.text, questions);
     if (result.status !== 429 && !(result.status >= 500 && result.status <= 599)) throw new JevError(`Jev refused the request with HTTP status ${result.status}.`);
   }
@@ -135,22 +183,34 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
 async function transport(body: string, key: string, send: Fetch, clock: Clock, signal?: AbortSignal): Promise<{ status: number; text: string }> {
   const controller = new AbortController();
   const interrupted = Promise.withResolvers<never>();
-  const cancel = (): void => { interrupted.reject(new JevError("Jev execution was cancelled.")); controller.abort(); };
+  const cancel = (): void => {
+    interrupted.reject(new JevError("Jev execution was cancelled."));
+    controller.abort();
+  };
   // Unset until the timer is made, so that a clock which throws leaves nothing to cancel.
   let cancelTimer: (() => void) | undefined;
   signal?.addEventListener("abort", cancel, { once: true });
   // Everything after the listener is added sits inside the try, so the clean-up below is always reached.
   try {
-    cancelTimer = clock.schedule(() => { interrupted.reject(new TransportError()); controller.abort(); }, TIMEOUT_MS);
+    cancelTimer = clock.schedule(() => {
+      interrupted.reject(new TransportError());
+      controller.abort();
+    }, TIMEOUT_MS);
     return await Promise.race([interrupted.promise, send(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body, signal: controller.signal }).then(async response => ({ status: response.status, text: await response.text() }))]);
   } finally {
     // The removal has a finally of its own, so it happens even when cancelling the timer throws.
     // That error is not caught here: it surfaces in place of the answer, as it did before.
-    try { cancelTimer?.(); } finally { signal?.removeEventListener("abort", cancel); }
+    try {
+      cancelTimer?.();
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
   }
 }
 
-function isProbability(value: unknown): value is number { return typeof value === "number" && value >= 0 && value <= 1; }
+function isProbability(value: unknown): value is number {
+  return typeof value === "number" && value >= 0 && value <= 1;
+}
 function isExactProbability(value: unknown): value is Decimal {
   return typeof value === "object" && value !== null && typeof (value as Decimal).units === "bigint" && compare(value as Decimal, ZERO) >= 0 && compare(value as Decimal, ONE) <= 0;
 }
@@ -158,14 +218,28 @@ function isExactProbability(value: unknown): value is Decimal {
  * A promise that resolves after `ms` milliseconds and never rejects. It is
  * the wait `createAsk` uses between attempts unless it is given another.
  */
-export function wait(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
-export const systemClock: Clock = { schedule: (callback, ms) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); } };
+export function wait(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function limitInFlight(most: number): <T>(task: () => Promise<T>) => Promise<T> {
   let active = 0;
   const waiting: Array<() => void> = [];
   return async task => {
-    if (active < most) active++; else await new Promise<void>(resolve => waiting.push(resolve));
-    try { return await task(); } finally { const next = waiting.shift(); if (next === undefined) active--; else next(); }
+    if (active < most) {
+      active++;
+    } else {
+      await new Promise<void>(resolve => waiting.push(resolve));
+    }
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next === undefined) {
+        active--;
+      } else {
+        next();
+      }
+    }
   };
 }

@@ -24,6 +24,7 @@ import {
   splitSentences,
   wordCount,
 } from "../scripts/lib/parse.ts";
+import { itemAt } from "../scripts/lib/item-at.ts";
 
 const BREAK = String.fromCharCode(10);
 const KNOWN_GOOD = join(import.meta.dir, "fixtures", "known-good");
@@ -53,7 +54,7 @@ function rulesFor(text: string): string[] {
 }
 
 function sentenceOf(words: number, stem = "word"): string {
-  return `${Array.from({ length: words }, (_, index) => `${stem}${index}`).join(" ")}.`;
+  return `${Array.from({ length: words }, (slot, index) => `${stem}${index}`).join(" ")}.`;
 }
 
 /**
@@ -89,20 +90,20 @@ function nestedLinkDocument(size: number): string {
 
 /** Acronym candidates that are all discounted. */
 function discountedAcronymDocument(size: number): string {
-  return Array(size).fill("A.A.A. (").join(" ") + " and).";
+  return Array.from<string>({ length: size }).fill("A.A.A. (").join(" ") + " and).";
 }
 
 /** Acronym definitions, one after another. */
 function acronymDefinitionDocument(size: number): string {
-  return Array(size).fill("Alpha Beta (AB)").join(" ") + ".";
+  return Array.from<string>({ length: size }).fill("Alpha Beta (AB)").join(" ") + ".";
 }
 
 /** The 31-word sentence the paragraph guard repeats. */
-const LONG_SENTENCE = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ") + ".";
+const LONG_SENTENCE = Array.from({ length: 31 }, (slot, index) => `word${index}`).join(" ") + ".";
 
 /** One paragraph of long sentences. */
 function longParagraphDocument(size: number): string {
-  return Array(size).fill(LONG_SENTENCE).join(" ");
+  return Array.from<string>({ length: size }).fill(LONG_SENTENCE).join(" ");
 }
 
 describe("reader-facing behaviour contracts", () => {
@@ -403,7 +404,7 @@ describe("reader-facing behaviour contracts", () => {
 
     // Two halves that are each short must not add up to one over-long sentence.
     const lead = "**A bold lead in sentence of exactly twelve words here now yes.**";
-    const follow = `Then ${Array.from({ length: 21 }, (_, index) => `word${index}`).join(" ")}.`;
+    const follow = `Then ${Array.from({ length: 21 }, (slot, index) => `word${index}`).join(" ")}.`;
     expect(rulesFor(`${lead} ${follow}`).filter((rule) => rule === "sentence-length")).toHaveLength(0);
   });
 
@@ -415,8 +416,8 @@ describe("reader-facing behaviour contracts", () => {
       expect(splitSentences(text), text).toHaveLength(2);
       expect(mergedSentences(text), text).toHaveLength(2);
     }
-    const left = `First ${Array(16).fill("alpha").join(" ")}`;
-    const right = `Next ${Array(16).fill("beta").join(" ")}`;
+    const left = `First ${Array.from<string>({ length: 16 }).fill("alpha").join(" ")}`;
+    const right = `Next ${Array.from<string>({ length: 16 }).fill("beta").join(" ")}`;
     expect(auditText(`${left}.\` ${right}.`).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
   });
 
@@ -493,8 +494,8 @@ describe("reader-facing behaviour contracts", () => {
     expect(splitSentences("Dr" + slash + ") Smith explains it.")).toHaveLength(1);
 
     // The harm as a reader meets it: two sixteen-word sentences reported as one long one.
-    const text = Array(16).fill("alpha").join(" ") + slash + "! Beta "
-      + Array(15).fill("beta").join(" ") + ".";
+    const text = Array.from<string>({ length: 16 }).fill("alpha").join(" ") + slash + "! Beta "
+      + Array.from<string>({ length: 15 }).fill("beta").join(" ") + ".";
     expect(splitSentences(text)).toHaveLength(2);
     expect(auditText(text).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
   });
@@ -513,8 +514,8 @@ describe("reader-facing behaviour contracts", () => {
     expect(splitSentences(tick + "foo" + escapedTick + "bar. Next." + tick)).toHaveLength(2);
 
     // The same defect seen as a reader sees it: two short sentences reported as one long.
-    const left = Array(15).fill("alpha").join(" ");
-    const right = Array(15).fill("beta").join(" ");
+    const left = Array.from<string>({ length: 15 }).fill("alpha").join(" ");
+    const right = Array.from<string>({ length: 15 }).fill("beta").join(" ");
     const closed = tick + "code" + escapedTick + " " + left + ". " + right + tick + ".";
     expect(auditText(closed).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
 
@@ -580,14 +581,16 @@ describe("reader-facing behaviour contracts", () => {
     deep(3_000);
 
     let layered = "innermost";
-    for (let level = 0; level < 400; level++) layered = `[${layered}](/uri)`;
+    for (let level = 0; level < 400; level++) {
+      layered = `[${layered}](/uri)`;
+    }
     expect(() => auditText(layered)).not.toThrow();
   }, HOSTILE_TIMEOUT_MS);
 
   test("an empty link shows a reader nothing, so it measures as nothing", () => {
     // A link with no text still has a destination and a title, and leaving them in place
     // counted hidden markup as prose. A reader sees an empty link and a full stop.
-    const hidden = Array.from({ length: 35 }, (_, index) => `hidden${index}`).join(" ");
+    const hidden = Array.from({ length: 35 }, (slot, index) => `hidden${index}`).join(" ");
     const empty = `[](/uri "${hidden}").`;
     const rules = auditText(empty).map((v) => v.rule);
     expect(rules).toContain("link-text");
@@ -603,12 +606,12 @@ describe("reader-facing behaviour contracts", () => {
     // CommonMark allows balanced brackets inside a link label. Matching the label with a
     // pattern that stopped at the first "]" left the destination and title unflattened, so
     // hidden text was counted as prose and manufactured a sentence-length finding.
-    const hidden = Array.from({ length: 35 }, (_, index) => `hidden${index}`).join(" ");
+    const hidden = Array.from({ length: 35 }, (slot, index) => `hidden${index}`).join(" ");
     const nested = `Read [outer [inner] text](/uri "${hidden}").`;
     expect(auditText(nested).filter((v) => v.rule === "sentence-length")).toHaveLength(0);
 
     // The label itself is still prose, brackets and all.
-    const long = Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ");
+    const long = Array.from({ length: 31 }, (slot, index) => `word${index}`).join(" ");
     expect(auditText(`Read [outer [inner] ${long}](/uri).`)
       .filter((v) => v.rule === "sentence-length")).toHaveLength(1);
 
@@ -667,7 +670,7 @@ ${sentence}`)
     // A link destination or title may hold a line ending. Flattening the link to its
     // label deleted that line ending, so every later sentence in the block was reported
     // one line early and the reader opened an innocent line.
-    const long = `${Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ")}.`;
+    const long = `${Array.from({ length: 31 }, (slot, index) => `word${index}`).join(" ")}.`;
     const cases: Array<[string, number]> = [
       [`Read [the guide](/uri "first\nsecond"). Short.\n${long}`, 3],
       [`Read ![alt](/uri "first\nsecond"). Short.\n${long}`, 3],
@@ -690,7 +693,7 @@ ${sentence}`)
     const words = ["Alpha", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
       "India", "Juliett"];
     for (const size of [3, 6, 7, 8, 9, 10]) {
-      const key = spell(words.slice(0, size).map((word) => word[0] as string));
+      const key = spell(words.slice(0, size).map((word) => itemAt(word, 0)));
       const defined = `${key} (${words.slice(0, size).join(" ")}) works.`;
       expect(auditText(defined).map((v) => v.rule), defined.slice(0, 40))
         .not.toContain("acronym-undefined");
@@ -715,12 +718,12 @@ ${sentence}`)
     // A definition is spelled by the words that carry initials, and the ignored words
     // between them are unlimited. Bounding the lookahead by a token count therefore cut
     // valid expansions short and reported an acronym that the text defines on the spot.
-    const padded = `ABCDEF (Alpha ${Array(30).fill("and").join(" ")} `
+    const padded = `ABCDEF (Alpha ${Array.from<string>({ length: 30 }).fill("and").join(" ")} `
       + "Beta Charlie Delta Echo Foxtrot) works.";
     expect(auditText(padded).map((v) => v.rule)).not.toContain("acronym-undefined");
 
     // Just outside: the expansion no longer spells the acronym, so it is undefined.
-    const wrong = `ABCDEF (Alpha ${Array(30).fill("and").join(" ")} Beta Charlie) works.`;
+    const wrong = `ABCDEF (Alpha ${Array.from<string>({ length: 30 }).fill("and").join(" ")} Beta Charlie) works.`;
     expect(auditText(wrong).map((v) => v.rule)).toContain("acronym-undefined");
 
     // A parenthesis that never closes cannot define anything, and must not be searched
@@ -748,7 +751,7 @@ ${sentence}`)
     paragraphs(3_000);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
-    const long = Array(500).fill(LONG_SENTENCE).join(" ");
+    const long = Array.from<string>({ length: 500 }).fill(LONG_SENTENCE).join(" ");
     expect(auditText(long).filter((v) => v.rule === "sentence-length")).toHaveLength(500);
   }, HOSTILE_TIMEOUT_MS);
 
@@ -782,10 +785,18 @@ ${sentence}`)
     }
   });
 
+  test("a link definition may end in spaces after its title, and nothing else", () => {
+    expect([...readDocument("[a]: /u \"t\"   \n\nText [x][a].\n").references]).toEqual(["a"]);
+    expect([...readDocument("[a]: /u \"t\"   x\n\nText [x][a].\n").references]).toEqual([]);
+  });
+
   test("technical punctuation and ambiguous boundaries cannot invent findings", () => {
     expect(classifyBoundary("packs etc.", "Customers receive them.")).toBe("ambiguous");
     expect(classifyBoundary("Dr.", "Smith explains it.")).toBe("merge");
     expect(classifyBoundary("paper.", "Next section.")).toBe("split");
+    // White space after the stop is read past, to the word that holds it.
+    expect(classifyBoundary("Dr.  ", "Smith explains it.")).toBe("merge");
+    expect(classifyBoundary("paper. ", "Next section.")).toBe("split");
 
     const abbreviations = "Items include e.g. tools, pens, and paper. Next section starts here.";
     expect(splitSentences(abbreviations)).toHaveLength(2);
@@ -799,14 +810,14 @@ ${sentence}`)
     for (const atom of atoms) {
       const short = `${atom.join(" ")}.`;
       expect(splitSentences(short), short).toHaveLength(1);
-      const long = [...atom, ...Array.from({ length: 31 - atom.length }, (_, index) => `word${index}`)];
+      const long = [...atom, ...Array.from({ length: 31 - atom.length }, (slot, index) => `word${index}`)];
       const sentence = `${long.join(" ")}.`;
       expect(wordCount(sentence), sentence).toBe(31);
       expect(rulesFor(sentence).filter((rule) => rule === "sentence-length"), sentence).toHaveLength(1);
     }
 
-    const firstHalf = `${Array(15).fill("alpha").join(" ")} etc.`;
-    const secondHalf = `Customers ${Array(15).fill("beta").join(" ")}.`;
+    const firstHalf = `${Array.from<string>({ length: 15 }).fill("alpha").join(" ")} etc.`;
+    const secondHalf = `Customers ${Array.from<string>({ length: 15 }).fill("beta").join(" ")}.`;
     expect(wordCount(`${firstHalf} ${secondHalf}`)).toBe(32);
     expect(rulesFor(`${firstHalf} ${secondHalf}`)).not.toContain("sentence-length");
 
@@ -817,8 +828,8 @@ ${sentence}`)
 
     const average = [
       ...Array.from({ length: 8 }, () => sentenceOf(21)),
-      `${Array(20).fill("alpha").join(" ")} etc.`,
-      `Customers ${Array(20).fill("beta").join(" ")}.`,
+      `${Array.from<string>({ length: 20 }).fill("alpha").join(" ")} etc.`,
+      `Customers ${Array.from<string>({ length: 20 }).fill("beta").join(" ")}.`,
     ].join(" ");
     expect(splitSentences(average)).toHaveLength(10);
     expect(mergedSentences(average)).toHaveLength(9);
@@ -956,7 +967,7 @@ ${sentence}`)
         .toContain("filler-opening");
     }
     // A break above a sentence must not add a word to it.
-    const thirty = Array.from({ length: 30 }, (_unused, index) => `word${index}`).join(" ");
+    const thirty = Array.from({ length: 30 }, (slot, index) => `word${index}`).join(" ");
     expect(rulesFor(["---", `${thirty}.`].join(BREAK))).toEqual([]);
     // A setext underline is still a heading, not a break.
     expect(headings(["My Heading", "---", "", "Body text."].join(BREAK))).toHaveLength(1);
@@ -979,8 +990,8 @@ ${sentence}`)
   // left the file as one line, and a byte order mark stopped front matter
   // being front matter. Every one of them removed text a reader can see.
   test("code fences, line endings and byte order marks cannot hide text", () => {
-    const CARRIAGE_RETURN = String.fromCharCode(13);
-    const BYTE_ORDER_MARK = String.fromCharCode(65279);
+    const carriageReturn = String.fromCharCode(13);
+    const byteOrderMark = String.fromCharCode(65279);
     const legalese = "The supplier shall hereby comply.";
 
     // A fence opens with at most three leading spaces.
@@ -996,12 +1007,12 @@ ${sentence}`)
     expect(rulesFor(["```js", "code", "```", "", legalese].join(BREAK))).toContain("legalese");
 
     // A bare carriage return separates lines, as CRLF already did.
-    const bareCR = ["##### Deep heading.", legalese].join(CARRIAGE_RETURN);
-    expect(rulesFor(bareCR)).toContain("legalese");
-    expect(headings(bareCR)).toHaveLength(1);
+    const bareCarriageReturn = ["##### Deep heading.", legalese].join(carriageReturn);
+    expect(rulesFor(bareCarriageReturn)).toContain("legalese");
+    expect(headings(bareCarriageReturn)).toHaveLength(1);
 
     // A byte order mark precedes the opening delimiter in many Windows files.
-    const withMark = BYTE_ORDER_MARK
+    const withMark = byteOrderMark
       + ["---", "description: |", "  ```md", "---", legalese].join(BREAK);
     expect(rulesFor(withMark)).toContain("legalese");
   });
@@ -1011,8 +1022,8 @@ ${sentence}`)
   // bare carriage return put the image finding on line 1 rather than line 3,
   // and the table finding vanished. Every encoding must read alike.
   test("line-based rules read the same document as the block scanners", () => {
-    const CARRIAGE_RETURN = String.fromCharCode(13);
-    const BYTE_ORDER_MARK = String.fromCharCode(65279);
+    const carriageReturn = String.fromCharCode(13);
+    const byteOrderMark = String.fromCharCode(65279);
     const document = [
       "[click here](https://example.com)",
       "",
@@ -1029,9 +1040,9 @@ ${sentence}`)
     const found = (text: string): Array<[string, number]> =>
       auditText(text).map((violation) => [violation.rule, violation.line]);
     expect(found(document.join(BREAK))).toEqual(expected);
-    expect(found(document.join(CARRIAGE_RETURN))).toEqual(expected);
-    expect(found(document.join(CARRIAGE_RETURN + BREAK))).toEqual(expected);
-    expect(found(BYTE_ORDER_MARK + document.join(BREAK))).toEqual(expected);
+    expect(found(document.join(carriageReturn))).toEqual(expected);
+    expect(found(document.join(carriageReturn + BREAK))).toEqual(expected);
+    expect(found(byteOrderMark + document.join(BREAK))).toEqual(expected);
 
     // They must honour the shared fence rules too, not their own.
     const fenced = ["````", "~~~", "[click here](https://example.com)", "````"];
@@ -1140,10 +1151,10 @@ ${sentence}`)
 
     // Structure is spelled with ASCII space and tab. A non-breaking space is
     // ordinary text, and copying from a formatted document produces them.
-    const NBSP = String.fromCharCode(160);
-    expect(rulesFor(`${NBSP}> ${legalese}`)).toContain("legalese");
-    expect(rulesFor(`#${NBSP}${legalese}`)).toContain("legalese");
-    expect(headings(`#${NBSP}Heading`)).toHaveLength(0);
+    const nbsp = String.fromCharCode(160);
+    expect(rulesFor(`${nbsp}> ${legalese}`)).toContain("legalese");
+    expect(rulesFor(`#${nbsp}${legalese}`)).toContain("legalese");
+    expect(headings(`#${nbsp}Heading`)).toHaveLength(0);
     // A tab still separates a heading marker from its text.
     expect(headings(`#${String.fromCharCode(9)}Heading`)).toHaveLength(1);
 
@@ -1228,12 +1239,12 @@ ${sentence}`)
   // reports a gap in the heading tree that is not there, and hides one that is.
   test("indented code is code, and a bare heading holds its level", () => {
     const legalese = "The supplier shall hereby comply.";
-    const TAB = String.fromCharCode(9);
+    const tab = String.fromCharCode(9);
 
     // Four spaces, or a tab, after a blank line is a code block.
     expect(rulesFor(["Intro paragraph.", "", `    ${legalese}`, "", "End."].join(BREAK)))
       .toEqual([]);
-    expect(rulesFor(["Intro paragraph.", "", `${TAB}${legalese}`, "", "End."].join(BREAK)))
+    expect(rulesFor(["Intro paragraph.", "", `${tab}${legalese}`, "", "End."].join(BREAK)))
       .toEqual([]);
     // Code cannot interrupt a paragraph, so this is a wrapped line of prose.
     expect(rulesFor(["Intro paragraph", `    ${legalese}`].join(BREAK)))
@@ -1255,7 +1266,7 @@ ${sentence}`)
   // short quoted sentence was mistaken for a term being named.
   test("containers are read in the order they are written", () => {
     const legalese = "The supplier shall hereby comply.";
-    const TAB = String.fromCharCode(9);
+    const tab = String.fromCharCode(9);
     const long = "### A heading of far more than twelve ordinary words written for this test";
 
     // Either nesting order finds the heading.
@@ -1269,11 +1280,11 @@ ${sentence}`)
 
     // A tab is four columns, so a line that starts with one is indented code
     // rather than a fence, and the prose beneath it is still measured.
-    expect(rulesFor([`${TAB}\`\`\`text`, legalese].join(BREAK))).toContain("legalese");
+    expect(rulesFor([`${tab}\`\`\`text`, legalese].join(BREAK))).toContain("legalese");
     // A tab after a marker is four columns, not one, so the fence opens. The
     // second marker starts a new item, which ends the first item and its
     // fence, so its text is prose.
-    expect(rulesFor([`-${TAB}\`\`\`text`, `-${TAB}${legalese}`].join(BREAK)))
+    expect(rulesFor([`-${tab}\`\`\`text`, `-${tab}${legalese}`].join(BREAK)))
       .toContain("legalese");
 
     // The label opens an alert only as a quotation's first line. Elsewhere it
@@ -1768,7 +1779,7 @@ ${sentence}`)
       expect(rulesFor(`## Avoid "${term}"`), rule).toEqual([]);
     }
     // The rules about sentences leave a heading alone: its length is heading-style's.
-    const long = `## ${Array.from({ length: 31 }, (_, index) => `word${index}`).join(" ")}`;
+    const long = `## ${Array.from({ length: 31 }, (slot, index) => `word${index}`).join(" ")}`;
     expect(rulesFor(long)).toEqual(["heading-style"]);
     expect(rulesFor("## First check the logs, second restart it, and third tell the team"))
       .not.toContain("prose-enumeration");
@@ -1778,7 +1789,7 @@ ${sentence}`)
     // Headings never enter the average. Nine long sentences sit under the sample floor,
     // and a long heading beside them must not lift the count to ten.
     const longSentences = Array.from({ length: 9 }, () => sentenceOf(25)).join(BREAK + BREAK);
-    const longHeading = `## ${Array.from({ length: 25 }, (_, word) => `heading${word}`).join(" ")}`;
+    const longHeading = `## ${Array.from({ length: 25 }, (slot, word) => `heading${word}`).join(" ")}`;
     expect(rulesFor([longSentences, longHeading].join(BREAK + BREAK)))
       .not.toContain("sentence-average");
     expect(rulesFor([longSentences, sentenceOf(25)].join(BREAK + BREAK)))
@@ -1865,7 +1876,7 @@ ${sentence}`)
   // Every complex-word suggestion must be no longer than the word it replaces,
   // or taking the advice pushes a sentence at the cap over it.
   test("complex-word advice never creates a longer sentence", () => {
-    const padding = Array(27).fill("word").join(" ");
+    const padding = Array.from<string>({ length: 27 }).fill("word").join(" ");
     for (const [word, plain] of COMPLEX_WORDS) {
       expect(plain.split(" ").length, `${word} -> ${plain}`).toBe(1);
     }
@@ -1928,7 +1939,7 @@ ${sentence}`)
 
     // The advice must not create the next violation. "ascertain" suggests
     // "find", which is shorter, so a sentence at the cap stays at the cap.
-    const padding = Array(27).fill("word").join(" ");
+    const padding = Array.from<string>({ length: 27 }).fill("word").join(" ");
     expect(rulesFor(`We must ascertain ${padding}.`)).toEqual(["complex-word"]);
     expect(rulesFor(`We must check ${padding}.`)).toEqual([]);
 
@@ -2004,7 +2015,7 @@ ${sentence}`)
     const table = [
       "| Term | Explanation |",
       "| --- | --- |",
-      `| Record | The supplier shall ${Array(31).fill("word").join(" ")} |`,
+      `| Record | The supplier shall ${Array.from<string>({ length: 31 }).fill("word").join(" ")} |`,
     ].join("\n");
     // A quotation is prose a reader reads, and Markdown cannot prove who wrote
     // it. GitHub renders an alert with this syntax, and the plugin's own
@@ -2016,7 +2027,7 @@ ${sentence}`)
       .map((violation) => violation.rule)).toEqual(["legalese"]);
     // The alert label is not a sentence, and the quote markers are not words:
     // a thirty-word quotation is thirty words, not thirty-two.
-    const thirtyWords = Array.from({ length: 30 }, (_u, index) => `word${index}`).join(" ");
+    const thirtyWords = Array.from({ length: 30 }, (slot, index) => `word${index}`).join(" ");
     expect(proseBlocks(`> [!WARNING]${BREAK}> ${thirtyWords}.`))
       .toEqual([{ line: 2, lines: [`${thirtyWords}.`] }]);
     expect(rulesFor(`> [!WARNING]${BREAK}> ${thirtyWords}.`)).toEqual([]);
@@ -2050,7 +2061,7 @@ ${sentence}`)
     // paragraph.
     expect(auditText("- Parent\n  - The supplier shall respond.")
       .map((violation) => violation.rule)).toEqual(["legalese"]);
-    const sixItems = Array.from({ length: 6 }, (_unused, index) => `- Item ${index}.`);
+    const sixItems = Array.from({ length: 6 }, (slot, index) => `- Item ${index}.`);
     expect(auditText(sixItems.join("\n"))).toEqual([]);
     // An item holds whole blocks, so a second paragraph inside one is measured
     // rather than read as indented code.
@@ -2062,7 +2073,7 @@ ${sentence}`)
     const nested = ["- Parent.", "  - Child one. Child two. Child three.", "  Parent four. Parent five. Parent six."];
     expect(rulesFor(nested.join("\n"))).toContain("paragraph-length");
     // A task marker is a control, not two words.
-    const twentyNine = Array.from({ length: 29 }, (_unused, index) => `word${index}`).join(" ");
+    const twentyNine = Array.from({ length: 29 }, (slot, index) => `word${index}`).join(" ");
     expect(rulesFor(`- [ ] ${twentyNine}.`)).toEqual([]);
 
     const separated = [
@@ -2096,15 +2107,15 @@ ${sentence}`)
 
   test("encoding, typography, and English variety do not change advice", () => {
     for (const separator of [" ", "\u00a0"]) {
-      const thirty = Array(30).fill("word").join(separator) + ".";
-      const thirtyOne = Array(31).fill("word").join(separator) + ".";
+      const thirty = Array.from<string>({ length: 30 }).fill("word").join(separator) + ".";
+      const thirtyOne = Array.from<string>({ length: 31 }).fill("word").join(separator) + ".";
       expect(wordCount(thirty), JSON.stringify(separator)).toBe(30);
       expect(rulesFor(thirty)).not.toContain("sentence-length");
       expect(wordCount(thirtyOne), JSON.stringify(separator)).toBe(31);
       expect(rulesFor(thirtyOne)).toContain("sentence-length");
     }
 
-    const lines = Array.from({ length: 50 }, (_, index) =>
+    const lines = Array.from({ length: 50 }, (slot, index) =>
       index === 41 ? "The supplier shall respond." : `Line ${index + 1} is short.`);
     const lf = auditText(lines.join("\n"));
     const crlf = auditText(lines.join("\r\n"));
@@ -2130,7 +2141,7 @@ ${sentence}`)
   });
 
   test("rules compose independently and documentation states the capability boundary", () => {
-    const tail = Array.from({ length: 23 }, (_, index) => `item${index}`);
+    const tail = Array.from({ length: 23 }, (slot, index) => `item${index}`);
     const sentence = `The XYZ service shall keep each and every ${tail.join(" ")}.`;
     expect(wordCount(sentence)).toBe(31);
     expect(rulesFor(sentence).sort()).toEqual([
@@ -2154,7 +2165,7 @@ ${sentence}`)
 
     const positiveAndNegative: Record<string, [string, string]> = {
       "sentence-length": [sentenceOf(31), sentenceOf(30)],
-      "sentence-average": [Array(10).fill(sentenceOf(21)).join(" "), Array(10).fill(sentenceOf(20)).join(" ")],
+      "sentence-average": [Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join(" "), Array.from<string>({ length: 10 }).fill(sentenceOf(20)).join(" ")],
       "paragraph-length": ["One. Two. Three. Four. Five. Six.", "One. Two. Three. Four. Five."],
       legalese: ["The supplier shall respond.", "The supplier must respond."],
       "heading-depth": ["##### Deep", "#### Permitted"],
@@ -2378,15 +2389,15 @@ describe("emphasis marks inside or beside a word", () => {
   });
 
   test("a mark with no partner, an escaped mark and code hide nothing new", () => {
-    const SLASH = String.fromCharCode(92);
+    const slash = String.fromCharCode(92);
     for (const text of [
       // No partner, so the reader sees the asterisk.
       "We did this in *order to finish the work.",
       "The tenant sh*all vacate the premises.",
       "We did this in order * to finish, 2 * 3 times.",
       // Escaped, so the reader sees both asterisks.
-      `We did this in ${SLASH}*order${SLASH}* to finish the work.`,
-      `The tenant sh${SLASH}*all${SLASH}* vacate the premises.`,
+      `We did this in ${slash}*order${slash}* to finish the work.`,
+      `The tenant sh${slash}*all${slash}* vacate the premises.`,
       // Code is read as it was before: a span holding the term alone names it.
       "Use the `in order to` phrase here.",
       "Use the `in *order* to` phrase here.",
@@ -2496,16 +2507,16 @@ describe("emphasis marks inside or beside a word", () => {
 });
 
 describe("a filler opening and the marks around it", () => {
-  const TICK = String.fromCharCode(96);
+  const tick = String.fromCharCode(96);
 
   // A code span names a term. The rule removed every backtick before it looked,
   // so a sentence about the word "Certainly" was reported as opening with it.
   test("a term in code marks at the opening is not a filler opening", () => {
     for (const named of [
-      `${TICK}Certainly${TICK} is a word we avoid.`,
-      `${TICK}sure${TICK} thing, the config is fine.`,
-      `${TICK}${TICK}Certainly${TICK}${TICK}, the answer is 42.`,
-      `**${TICK}Certainly${TICK}** is a word we avoid.`,
+      `${tick}Certainly${tick} is a word we avoid.`,
+      `${tick}sure${tick} thing, the config is fine.`,
+      `${tick}${tick}Certainly${tick}${tick}, the answer is 42.`,
+      `**${tick}Certainly${tick}** is a word we avoid.`,
     ]) {
       expect(rulesFor(named), named).not.toContain("filler-opening");
     }
@@ -2518,7 +2529,7 @@ describe("a filler opening and the marks around it", () => {
       "_Certainly_, the answer is 42.",
       "***Certainly***, the answer is 42.",
       "**Certainly,\nthe answer** is 42.",
-      `Certainly, ${TICK}config.json${TICK} is fine.`,
+      `Certainly, ${tick}config.json${tick} is fine.`,
     ]) {
       expect(rulesFor(filler), filler).toContain("filler-opening");
     }
@@ -2531,8 +2542,8 @@ describe("a block that may hold a link keeps its emphasis marks", () => {
   // "www." is now read as it was before emphasis was paired at all. No mark is removed there, and a
   // phrase that emphasis splits in such a block is not found. Every expectation in
   // this group is what the code before the pairing gave for the same text.
-  const TICK = String.fromCharCode(96);
-  const SLASH = String.fromCharCode(92);
+  const tick = String.fromCharCode(96);
+  const slash = String.fromCharCode(92);
   const wordy = (line: number) => [`wordy-phrase at line ${line}: "in order to" says what "to" says`];
   const legal = ['legalese at line 1: banned term "shall"'];
 
@@ -2577,7 +2588,7 @@ describe("a block that may hold a link keeps its emphasis marks", () => {
       "The tenant sh**a*[*ll**](u) vacate.",
       // A backtick in a destination, which closed a code span further on. A browser
       // shows the phrase here, and it is missed: the block holds a link.
-      `in **[order](u${TICK}x)** to go. ${TICK}tail${TICK}`,
+      `in **[order](u${tick}x)** to go. ${tick}tail${tick}`,
       // A mark in an autolink. A browser shows "in or*der to" after the address.
       "<https://e.com/*> in or*der to go.",
     ]) {
@@ -2627,8 +2638,8 @@ describe("a block that may hold a link keeps its emphasis marks", () => {
       "The tenant [sh*all][nowhere] vac*ate.",
       ["The tenant [sh*all] vac*ate.", "", "[sh*all]: https://example.com"].join(BREAK),
       "- [ ] We did this in **order** to finish.",
-      `We did this in **order** to finish ${TICK}list[0]${TICK}.`,
-      `We did this in **order** to finish ${SLASH}[sic${SLASH}].`,
+      `We did this in **order** to finish ${tick}list[0]${tick}.`,
+      `We did this in **order** to finish ${slash}[sic${slash}].`,
       "We did this in **order** to finish when a < b.",
       "We did this in **order** to finish<br>the work.",
       "We did this in **order** to finish, see <https://example.com>.",
@@ -2731,8 +2742,8 @@ describe("a block that may hold a link keeps its emphasis marks", () => {
     expect(findingsIn("[**Certainly**](u), here it is.")).toEqual(filler);
     expect(findingsIn("**Certainly!** The answer is in [the guide](u).")).toEqual(filler);
     expect(findingsIn("*Cert[ainly*](u), here it is.")).toEqual(filler);
-    expect(findingsIn(`${TICK}Certainly${TICK} is a word we avoid, as [the guide](u) says.`)).toEqual(filler);
-    expect(findingsIn(`${TICK}Certainly${TICK} is a word we avoid, as the guide says.`)).toEqual([]);
+    expect(findingsIn(`${tick}Certainly${tick} is a word we avoid, as [the guide](u) says.`)).toEqual(filler);
+    expect(findingsIn(`${tick}Certainly${tick} is a word we avoid, as the guide says.`)).toEqual([]);
   });
 
   test("marks and labels in great number still take time in proportion to the text", () => {
@@ -2802,11 +2813,11 @@ describe("labels nested to great depth", () => {
       ["comments that never close", "<!-- [ ".repeat(count)],
       ["instructions and declarations that never close", "<? [ <!D [ <![CDATA[ ".repeat(count)],
       ["a code span holding a bracket after every link", `[x](u) ${String.fromCharCode(96)}[${String.fromCharCode(96)} `.repeat(count)],
-      ["a code span of its own length for every label", Array.from({ length: 170 }, (_unused, length) =>
+      ["a code span of its own length for every label", Array.from({ length: 170 }, (slot, length) =>
         `[${String.fromCharCode(96).repeat(length + 1)}x${String.fromCharCode(96).repeat(length + 1)}](u) `).join("").repeat(8)],
       ["backticks that close nothing, in every label", `[${String.fromCharCode(96)}x](u) ${String.fromCharCode(96).repeat(2)} `.repeat(count)],
       ["autolinks that never close", "<https://e.com/[ ".repeat(count)],
-      ["backticks of every length", "[".repeat(count) + Array.from({ length: 150 }, (_unused, length) => String.fromCharCode(96).repeat(length + 1)).join(" x](u) ")],
+      ["backticks of every length", "[".repeat(count) + Array.from({ length: 150 }, (slot, length) => String.fromCharCode(96).repeat(length + 1)).join(" x](u) ")],
     ];
     const none = new Set<string>();
     for (const [name, text] of shapes) {
@@ -2958,7 +2969,7 @@ describe("a link between an expansion and its acronym", () => {
       const syntax = linkSyntaxIn(`[${label}]`, new Set([label]));
       expect(syntax).toHaveLength(length + 2);
       expect([...syntax.subarray(1, length + 1)].includes(1)).toBe(false);
-      return [syntax[0] as number, syntax[length + 1] as number];
+      return [itemAt(syntax, 0), itemAt(syntax, length + 1)];
     };
     expect([998, 999, 1_000, 1_001].map(marked)).toEqual([[1, 1], [1, 1], [0, 0], [0, 0]]);
   });
@@ -3124,7 +3135,7 @@ describe("a link between an expansion and its acronym", () => {
     // What only looks like a tag is text, so a link after it is still a link. The text
     // itself holds letters, so the link is looked for and not the acronym.
     for (const before of ["<3 ", "</i ", "< i> ", `<i title=${quote} `, "<i title= > ", "<i/ > ", "<!-- ", "<? ", "<![CDATA[ ", "<!D ", "<a@b ", "<x:y z> "]) {
-      const read = acronymReading(link(before).join(BREAK)).blocks[0]?.lines[0] as string;
+      const read = itemAt(itemAt(acronymReading(link(before).join(BREAK)).blocks, 0).lines, 0);
       expect(read.includes("](guide)"), before).toBe(false);
       expect(read.endsWith("management (IAM)."), before).toBe(true);
     }
@@ -3194,7 +3205,7 @@ describe("a link between an expansion and its acronym", () => {
 // and GitHub carry it on. Issue 42.
 describe("a line that holds only a space Markdown does not count as white space", () => {
   /** Spaces that are text to Markdown, each by its name. */
-  const SPACES: Array<[name: string, space: string]> = [
+  const spaces: Array<[name: string, space: string]> = [
     ["a no-break space", String.fromCodePoint(0xa0)],
     ["three no-break spaces", String.fromCodePoint(0xa0).repeat(3)],
     ["a no-break space between ordinary spaces", ` ${String.fromCodePoint(0xa0)} `],
@@ -3208,7 +3219,7 @@ describe("a line that holds only a space Markdown does not count as white space"
   ];
   const fence = String.fromCharCode(96).repeat(3);
   /** A document of each kind, with a place for one line or one end of a line. */
-  const SHAPES: Array<[name: string, made: (held: string) => string[]]> = [
+  const shapes: Array<[name: string, made: (held: string) => string[]]> = [
     ["a paragraph", (held) => ["one", held, "two"]],
     ["a list item, indented", (held) => ["- one", `  ${held}`, "  two"]],
     ["a list item, not indented", (held) => ["- one", held, "two"]],
@@ -3228,7 +3239,7 @@ describe("a line that holds only a space Markdown does not count as white space"
     const read = readDocument(document);
     return {
       blocks: proseBlocks(document).map((block) => [block.line, block.lines.length]),
-      hidden: lines.map((_line, index) => read.hidden(index)),
+      hidden: lines.map((line, index) => read.hidden(index)),
     };
   };
 
@@ -3239,9 +3250,9 @@ describe("a line that holds only a space Markdown does not count as white space"
     expect(Bun.markdown.html(document).match(/<p>/g)).toHaveLength(1);
   });
 
-  test.each(SHAPES)("in %s, such a line is read as a line that holds a letter is read", (_name, made) => {
+  test.each(shapes)("in %s, such a line is read as a line that holds a letter is read", (shapeName, made) => {
     const letter = shapeOf(made("x"));
-    for (const [name, space] of SPACES) {
+    for (const [name, space] of spaces) {
       expect(shapeOf(made(space)), name).toEqual(letter);
     }
     // And not as a blank line is read, or the test would hold nothing.
@@ -3249,7 +3260,7 @@ describe("a line that holds only a space Markdown does not count as white space"
   });
 
   test("a paragraph, a list item and a quotation stay one block, as Bun shows them", () => {
-    for (const [name, space] of SPACES) {
+    for (const [name, space] of spaces) {
       for (const lines of [["one", space, "two"], ["- one", `  ${space}`, "  two"], ["- one", space, "two"], ["> one", `> ${space}`, "> two"]]) {
         const document = lines.join(BREAK);
         expect(proseBlocks(document).map((block) => [block.line, block.lines.length]), `${name} ${lines[0]}`).toEqual([[1, 3]]);
@@ -3278,7 +3289,7 @@ describe("a line that holds only a space Markdown does not count as white space"
     // A blank line keeps a list item open. This line is not blank and is not indented,
     // so the item has ended and the paragraph that the underline makes a heading of
     // is at the root, as Bun and GitHub show it.
-    for (const [name, space] of SPACES) {
+    for (const [name, space] of spaces) {
       const document = ["- one", "", space, "two", "==="].join(BREAK);
       expect(headings(document).map((heading) => [heading.level, heading.line, heading.text.endsWith("two")]), name).toEqual([[1, 3, true]]);
       expect(Bun.markdown.html(document), name).toContain("<h1>");
@@ -3314,12 +3325,12 @@ describe("a line that holds only a space Markdown does not count as white space"
 // nothing and the phrase a page shows was not read. Issue 43. A file read as UTF-8
 // cannot hold half a pair, so this reaches only a caller that passes a string.
 describe("an emphasis mark beside half a surrogate pair", () => {
-  const HIGH = String.fromCharCode(0xd83d);
-  const LOW = String.fromCharCode(0xde00);
-  const SHOWN = String.fromCharCode(0xfffd);
-  const FACE = String.fromCodePoint(0x1f600);
+  const high = String.fromCharCode(0xd83d);
+  const low = String.fromCharCode(0xde00);
+  const replacementCharacter = String.fromCharCode(0xfffd);
+  const face = String.fromCodePoint(0x1f600);
   /** Lines with a place for one character beside a mark. Each holds a phrase the wordy rule knows. */
-  const BESIDE: Array<[name: string, made: (held: string) => string]> = [
+  const beside: Array<[name: string, made: (held: string) => string]> = [
     ["before an underscore", (held) => `${held}_in_ order to proceed.`],
     ["before two underscores", (held) => `${held}__in__ order to proceed.`],
     ["before an asterisk", (held) => `${held}*in* order to proceed.`],
@@ -3334,44 +3345,44 @@ describe("an emphasis mark beside half a surrogate pair", () => {
   ];
 
   test("the case that was reported", () => {
-    expect(findingsIn(`${HIGH}_in_ order to proceed.`)).toEqual(findingsIn(`${SHOWN}_in_ order to proceed.`));
-    expect(findingsIn(`${HIGH}_in_ order to proceed.`).filter((finding) => finding.startsWith("wordy-phrase"))).toHaveLength(1);
-    expect(withoutEmphasis(`${HIGH}_in_ order to proceed.`)).toBe(`${HIGH}in order to proceed.`);
-    expect(Bun.markdown.html(`${HIGH}_in_ order to proceed.`)).toContain("<em>in</em>");
+    expect(findingsIn(`${high}_in_ order to proceed.`)).toEqual(findingsIn(`${replacementCharacter}_in_ order to proceed.`));
+    expect(findingsIn(`${high}_in_ order to proceed.`).filter((finding) => finding.startsWith("wordy-phrase"))).toHaveLength(1);
+    expect(withoutEmphasis(`${high}_in_ order to proceed.`)).toBe(`${high}in order to proceed.`);
+    expect(Bun.markdown.html(`${high}_in_ order to proceed.`)).toContain("<em>in</em>");
   });
 
-  test.each(BESIDE)("%s, either half is read as U+FFFD is read", (_name, made) => {
-    const shown = made(SHOWN);
-    for (const half of [HIGH, LOW]) {
-      expect(withoutEmphasis(made(half))).toBe(withoutEmphasis(shown).replaceAll(SHOWN, half));
+  test.each(beside)("%s, either half is read as U+FFFD is read", (name, made) => {
+    const shown = made(replacementCharacter);
+    for (const half of [high, low]) {
+      expect(withoutEmphasis(made(half))).toBe(withoutEmphasis(shown).replaceAll(replacementCharacter, half));
       expect(findingsIn(made(half))).toEqual(findingsIn(shown));
     }
     // Two halves that are not a pair are two halves: low then high.
-    expect(withoutEmphasis(made(LOW + HIGH))).toBe(withoutEmphasis(made(SHOWN + SHOWN)).replaceAll(SHOWN + SHOWN, LOW + HIGH));
+    expect(withoutEmphasis(made(low + high))).toBe(withoutEmphasis(made(replacementCharacter + replacementCharacter)).replaceAll(replacementCharacter + replacementCharacter, low + high));
   });
 
   test("the marks are taken wherever U+FFFD would have them taken", () => {
-    const taken = BESIDE.filter(([, made]) => withoutEmphasis(made(SHOWN)) !== made(SHOWN)).map(([name]) => name);
-    expect(taken).toHaveLength(BESIDE.length);
-    for (const [name, made] of BESIDE) {
-      expect(withoutEmphasis(made(HIGH)), name).not.toBe(made(HIGH));
+    const taken = beside.filter(([, made]) => withoutEmphasis(made(replacementCharacter)) !== made(replacementCharacter)).map(([name]) => name);
+    expect(taken).toHaveLength(beside.length);
+    for (const [name, made] of beside) {
+      expect(withoutEmphasis(made(high)), name).not.toBe(made(high));
     }
   });
 
   test("a whole character outside the basic plane beside a mark is read as it was", () => {
     // An emoji is a symbol, and was read as one: the two halves of a pair are one character.
-    expect(BESIDE.map(([, made]) => withoutEmphasis(made(FACE)))).toEqual([
-      `${FACE}in order to proceed.`,
-      `${FACE}in order to proceed.`,
-      `${FACE}in order to proceed.`,
-      `${FACE}in order to proceed.`,
-      `${FACE}in order to proceed.`,
-      `Proceed in order to${FACE} see it.`,
-      `Proceed in order to${FACE} see it.`,
-      `Proceed in order to${FACE} see it.`,
-      `Proceed in order to see ${FACE} here.`,
-      `x${FACE}in order to proceed.`,
-      `Proceed.${BREAK}${FACE}in order to see it.`,
+    expect(beside.map(([, made]) => withoutEmphasis(made(face)))).toEqual([
+      `${face}in order to proceed.`,
+      `${face}in order to proceed.`,
+      `${face}in order to proceed.`,
+      `${face}in order to proceed.`,
+      `${face}in order to proceed.`,
+      `Proceed in order to${face} see it.`,
+      `Proceed in order to${face} see it.`,
+      `Proceed in order to${face} see it.`,
+      `Proceed in order to see ${face} here.`,
+      `x${face}in order to proceed.`,
+      `Proceed.${BREAK}${face}in order to see it.`,
     ]);
     // A letter outside the basic plane is a letter, so an underscore after it opens nothing.
     const letter = String.fromCodePoint(0x10400);
@@ -3379,6 +3390,6 @@ describe("an emphasis mark beside half a surrogate pair", () => {
     expect(withoutEmphasis(`${letter}*in* order to proceed.`)).toBe(`${letter}in order to proceed.`);
     // And a letter in the basic plane is as it was.
     expect(withoutEmphasis("x_in_ order to proceed.")).toBe("x_in_ order to proceed.");
-    expect(withoutEmphasis(`${SHOWN}_in_ order to proceed.`)).toBe(`${SHOWN}in order to proceed.`);
+    expect(withoutEmphasis(`${replacementCharacter}_in_ order to proceed.`)).toBe(`${replacementCharacter}in order to proceed.`);
   });
 });

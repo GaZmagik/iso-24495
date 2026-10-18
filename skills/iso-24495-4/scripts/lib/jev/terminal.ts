@@ -2,6 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 
+/** The terminal agreement is read from, as `controllingTerminal` gives it. */
 export interface Terminal { inputIsTTY: boolean; outputIsTTY: boolean; prompt: () => Promise<string> }
 
 /**
@@ -38,7 +39,10 @@ export function controllingTerminal(
         terminal.once("close", () => reject(new Error("The controlling terminal closed without agreement.")));
         terminal.question("Type yes to send this disclosed snapshot: ").then(resolve, reject);
       });
+    } finally {
+      terminal.close();
+      input.destroy();
+      output.destroy();
     }
-    finally { terminal.close(); input.destroy(); output.destroy(); }
   } };
 }

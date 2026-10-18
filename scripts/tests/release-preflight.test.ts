@@ -29,6 +29,10 @@ describe("version ordering", () => {
     expect(compareVersions("1.0.0", "0.99.99")).toBeGreaterThan(0);
     expect(compareVersions("0.7.1", "0.7.0")).toBeGreaterThan(0);
     expect(compareVersions("0.7.0", "0.7.0")).toBe(0);
+    // Another shape is not refused, and a part it lacks gives NaN.
+    expect(compareVersions("1.2", "1.2.3")).toBeNaN();
+    expect(compareVersions("1.2.3", "1.2")).toBeNaN();
+    expect(compareVersions("1.2", "1.2")).toBe(0);
   });
 
   test("only release tags count, and a peeled tag is not a second release", () => {

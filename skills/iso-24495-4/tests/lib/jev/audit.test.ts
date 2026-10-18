@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, type AuditDependencies } from "../../../scripts/lib/jev/audit.ts";
+import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, type AuditDependencies, type JevReport, type Selection } from "../../../scripts/lib/jev/audit.ts";
 import { MODEL } from "../../../scripts/lib/jev/catalogue.ts";
 import { planDocument } from "../../../scripts/lib/jev/engine.ts";
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
@@ -21,8 +21,16 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     const dependencies: WiredDependencies = {
       env: { TYPESAFE_API_KEY: "key" }, now: () => new Date("2026-10-03T17:00:00Z"),
       terminal: { inputIsTTY: true, outputIsTTY: true, prompt: async () => "yes" },
-      client: { fetch: async (_url, init) => { sent++; const body = JSON.parse(init.body); return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "neither", confidence: 0.86, probabilities: { both: 0.1, task_only: 0.02, scope_only: 0.02, neither: 0.86 } } : { type: "noul", noul: id === "colour_only" ? 0.17 : 0.5 }])) }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
-      writeLog: record => { expect(record.paths).toEqual([file]); expect(record.disclosureVersion).toBeDefined(); expect(record.timestamp).toBe("2026-10-03T17:00:00.000Z"); },
+      client: { fetch: async (url, init) => {
+        sent++;
+        const body = JSON.parse(init.body);
+        return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "neither", confidence: 0.86, probabilities: { both: 0.1, task_only: 0.02, scope_only: 0.02, neither: 0.86 } } : { type: "noul", noul: id === "colour_only" ? 0.17 : 0.5 }])) });
+      }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+      writeLog: record => {
+        expect(record.paths).toEqual([file]);
+        expect(record.disclosureVersion).toBeDefined();
+        expect(record.timestamp).toBe("2026-10-03T17:00:00.000Z");
+      },
     };
     const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...args], text => output.push(text), text => output.push(text), dependencies);
     expect(await run("text", ["--jev-preview"])).toBe(0);
@@ -52,10 +60,15 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
     expect(sent).toBe(before);
     expect(await run("design", ["--send", "--yes", "--include-judged-text"])).toBe(2);
     dependencies.terminal.inputIsTTY = true;
-    dependencies.terminal.prompt = async () => { writeFileSync(file, "# Changed\n\nText."); return "yes"; };
+    dependencies.terminal.prompt = async () => {
+      writeFileSync(file, "# Changed\n\nText.");
+      return "yes";
+    };
     expect(await run("design", ["--send"])).toBe(2);
     expect(sent).toBe(before);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("both wrappers share offline preview and selection warnings", async () => {
@@ -73,14 +86,22 @@ test("both wrappers share offline preview and selection warnings", async () => {
     expect(selected.skipped).toEqual([link]);
     expect(selectDocuments(link, directory).paths).toEqual([]);
     const blocked = join(docs, "two.md");
-    expect(selectDocuments(docs, directory, "text", (path, encoding) => { if (path === blocked) throw new Error(); return readFileSync(path, encoding); }).skipped).toEqual([link, blocked]);
+    expect(selectDocuments(docs, directory, "text", (path, encoding) => {
+      if (path === blocked) throw new Error();
+      return readFileSync(path, encoding);
+    }).skipped).toEqual([link, blocked]);
     const output: string[] = [];
-    const deps: AuditDependencies = { read: (path, encoding) => { if (path === blocked) throw new Error(); return readFileSync(path, encoding); } };
+    const deps: AuditDependencies = { read: (path, encoding) => {
+      if (path === blocked) throw new Error();
+      return readFileSync(path, encoding);
+    } };
     expect(await runTextCli(["bun", "cli", docs, "--jev-preview", "--project-dir", directory], text => output.push(text), text => output.push(text), deps)).toBe(0);
     expect(output.join("\n")).toContain("skipped unreadable entry");
     expect(await runDesignCli(["bun", "cli", docs, "--project-dir", directory], text => output.push(text), text => output.push(text), deps)).toBe(0);
     expect(formatPlan(selected)).toContain("two.md");
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("argument conflicts and local failures are classified without transmission", async () => {
@@ -90,13 +111,24 @@ test("argument conflicts and local failures are classified without transmission"
     writeFileSync(file, "# Title\n\nWords.");
     let calls = 0;
     const out: string[] = [];
-    const dependencies: WiredDependencies = { env: { TYPESAFE_API_KEY: "key" }, terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => { throw new Error(); } }, client: { fetch: async () => { calls++; throw new Error(); }, clock: { schedule: () => () => {} }, sleep: async () => {} }, writeLog: () => {} };
+    const dependencies: WiredDependencies = { env: { TYPESAFE_API_KEY: "key" }, terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => {
+      throw new Error();
+    } }, client: { fetch: async () => {
+      calls++;
+      throw new Error();
+    }, clock: { schedule: () => () => {} }, sleep: async () => {} }, writeLog: () => {} };
     const run = (args: string[], mode: "text" | "design" = "design") => runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
-    for (const args of [["--unknown"], ["--send", "--send"], ["--json"], ["--project-dir", "--send"], ["--yes"], ["--include-judged-text"], ["--no-front-matter"], ["--consent", "file"], ["--jev-preview"]]) expect(await run(args)).toBe(2);
-    for (const args of [["--jev"], ["--jev-preview", "--send"], ["--jev-preview", "--jev"], ["--jev", "--send", "--no-front-matter"]]) expect(await run(args, "text")).toBe(2);
+    for (const args of [["--unknown"], ["--send", "--send"], ["--json"], ["--project-dir", "--send"], ["--yes"], ["--include-judged-text"], ["--no-front-matter"], ["--consent", "file"], ["--jev-preview"]]) {
+      expect(await run(args)).toBe(2);
+    }
+    for (const args of [["--jev"], ["--jev-preview", "--send"], ["--jev-preview", "--jev"], ["--jev", "--send", "--no-front-matter"]]) {
+      expect(await run(args, "text")).toBe(2);
+    }
     expect(await runAuditCli("design", ["bun", "cli", "--send"], () => {}, () => {}, dependencies)).toBe(2);
     expect(await run(["--json", join(directory, "missing/report.json")])).toBe(1);
-    dependencies.client.validate = () => { throw new Error("secret"); };
+    dependencies.client.validate = () => {
+      throw new Error("secret");
+    };
     expect(await run([])).toBe(3);
     delete dependencies.client.validate;
     dependencies.terminal.inputIsTTY = true;
@@ -125,7 +157,9 @@ test("argument conflicts and local failures are classified without transmission"
     expect(safeText("ab\u001b\u202ecd\n")).toBe("ab cd");
     expect(formatPlan(selectDocuments(directory, directory, "text"))).toContain("Selected");
     expect(formatFindings({ complete: true, limitation: "test", evidence: [], results: [], localFindings: [], coverage: [] })).toContain("Only purpose and colour");
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("complete exports, local title findings, unsure decisions and log failures stay distinct", async () => {
@@ -133,7 +167,10 @@ test("complete exports, local title findings, unsure decisions and log failures 
   try {
     const file = join(directory, "doc.md");
     writeFileSync(file, "# Title\n\nVersion 1.0\n\nWords.");
-    const dependencies: AuditDependencies = { env: { TYPESAFE_API_KEY: "key" }, terminal: { inputIsTTY: false, outputIsTTY: true, prompt: async () => "no" }, client: { fetch: async (_url, init) => { const body = JSON.parse(init.body); return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "both", confidence: 0.8, probabilities: { both: 0.8, task_only: 0.1, scope_only: 0.05, neither: 0.05 } } : { type: "noul", noul: 0.5 }])) }); }, clock: { schedule: () => () => {} }, sleep: async () => {} } };
+    const dependencies: AuditDependencies = { env: { TYPESAFE_API_KEY: "key" }, terminal: { inputIsTTY: false, outputIsTTY: true, prompt: async () => "no" }, client: { fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "both", confidence: 0.8, probabilities: { both: 0.8, task_only: 0.1, scope_only: 0.05, neither: 0.05 } } : { type: "noul", noul: 0.5 }])) });
+    }, clock: { schedule: () => () => {} }, sleep: async () => {} } };
     const out: string[] = [];
     const run = (args: string[]) => runAuditCli("text", ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
     const reportFile = join(directory, "report.json");
@@ -147,16 +184,23 @@ test("complete exports, local title findings, unsure decisions and log failures 
     expect(log.complete).toBe(true);
     expect(log.digest).toMatch(/^[a-f0-9]{64}$/);
     expect(out.join("\n")).toContain("saves full judged document text locally");
-    dependencies.writeLog = () => { throw new Error("private"); };
+    dependencies.writeLog = () => {
+      throw new Error("private");
+    };
     expect(await run(["--jev", "--send", "--yes"])).toBe(1);
     delete dependencies.writeLog;
     expect(await run(["--jev", "--send", "--yes", "--json", join(directory, "missing/report.json")])).toBe(1);
     writeFileSync(file, "Words.\n");
     expect(await run(["--jev-preview", "--json", reportFile])).toBe(0);
     expect(JSON.parse(readFileSync(reportFile, "utf8")).jev.localFindings[0].rule).toBe("opening-title");
-    dependencies.terminal = { inputIsTTY: true, outputIsTTY: true, prompt: async () => { rmSync(file); return "yes"; } };
+    dependencies.terminal = { inputIsTTY: true, outputIsTTY: true, prompt: async () => {
+      rmSync(file);
+      return "yes";
+    } };
     expect(await run(["--jev", "--send"])).toBe(1);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // Two functions decide what front matter is. The calibrated guard that the plan
@@ -173,7 +217,11 @@ function recordingDependencies(bodies: string[]): AuditDependencies {
   return {
     env: { TYPESAFE_API_KEY: "key" }, now: () => new Date("2026-10-06T12:00:00Z"),
     terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
-    client: { fetch: async (_url, init) => { bodies.push(init.body); const body = JSON.parse(init.body); return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "both", confidence: 0.8, probabilities: { both: 0.8, task_only: 0.1, scope_only: 0.05, neither: 0.05 } } : { type: "noul", noul: 0.5 }])) }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+    client: { fetch: async (url, init) => {
+      bodies.push(init.body);
+      const body = JSON.parse(init.body);
+      return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "both", confidence: 0.8, probabilities: { both: 0.8, task_only: 0.1, scope_only: 0.05, neither: 0.05 } } : { type: "noul", noul: 0.5 }])) });
+    }, clock: { schedule: () => () => {} }, sleep: async () => {} },
     writeLog: () => {},
   };
 }
@@ -213,7 +261,9 @@ test("a leading block the calibrated guard does not recognise is refused in the 
     const sent = bodies.join("\n");
     expect(sent).toContain("Space instructions.");
     expect(sent).toContain("Plain instructions.");
-    for (const withheld of ["PRIVATE_SENTINEL", "api_key", "Tab instructions", "Tab guide", "SPACE_SENTINEL"]) expect(sent).not.toContain(withheld);
+    for (const withheld of ["PRIVATE_SENTINEL", "api_key", "Tab instructions", "Tab guide", "SPACE_SENTINEL"]) {
+      expect(sent).not.toContain(withheld);
+    }
     const report = JSON.parse(readFileSync(reportFile, "utf8"));
     expect(report.jev.notSent).toEqual([{ file: "tab.md", reason: REFUSAL }]);
     expect(report.jev.complete).toBe(true);
@@ -224,7 +274,9 @@ test("a leading block the calibrated guard does not recognise is refused in the 
     expect(await run("text", ["--jev-preview"])).toBe(0);
     expect(out.join("\n")).toContain("| `tab.md` | 8 | legalese | banned term \"shall\" |");
     expect(bodies).toHaveLength(4);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("a refused document selected alone completes with nothing sent", async () => {
@@ -236,13 +288,17 @@ test("a refused document selected alone completes with nothing sent", async () =
     const out: string[] = [];
     const logged: string[][] = [];
     const dependencies = recordingDependencies(bodies);
-    dependencies.writeLog = record => { logged.push(record.paths); };
+    dependencies.writeLog = record => {
+      logged.push(record.paths);
+    };
     expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], text => out.push(text), text => out.push(text), dependencies)).toBe(0);
     expect(bodies).toHaveLength(0);
     expect(out.join("\n")).toContain("Total: 0 requests, 0 questions.");
     expect(out.join("\n")).toContain("Documents not sent: 1 of 1.");
     expect(logged).toEqual([[file]]);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("the refusal covers any closed leading block the guard rejects, and nothing else", () => {
@@ -278,7 +334,9 @@ test("the refusal covers any closed leading block the guard rejects, and nothing
 
     expect(formatFindings({ complete: true, limitation: "test", evidence: [], results: [], localFindings: [], coverage: [], notSent: [{ file: `a${String.fromCharCode(27)}[2Jb.md`, reason: REFUSAL }] }))
       .toContain("Not sent: " + String.fromCharCode(96) + `a${String.fromCharCode(92)}u001b[2Jb.md` + String.fromCharCode(96) + `, because its ${REFUSAL}.`);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // This one confirms what the Jev audit already did, so it passed on its first
@@ -297,7 +355,9 @@ test("the Jev audit prints a file name, a finding and an excerpt without control
     expect(await run("text", ["--jev", "--send", "--yes"])).toBe(0);
     expect(await run("design", ["--send", "--yes"])).toBe(0);
     const printed = out.join("\n");
-    for (const character of [escape, control, override]) expect(printed).not.toContain(character);
+    for (const character of [escape, control, override]) {
+      expect(printed).not.toContain(character);
+    }
     // The file name is a path, so each character is shown as its code. A finding and an
     // excerpt are quoted wording, where it becomes a space.
     const slash = String.fromCharCode(92);
@@ -309,7 +369,9 @@ test("the Jev audit prints a file name, a finding and an excerpt without control
     expect(printed).toContain("Excerpt: # Title [2J Use [here](https://x.invalid/ [2J ) for the guid |");
     expect(printed).toContain("Excerpt: Use here for the guide. |");
     expect(bodies.length).toBeGreaterThan(0);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // Four workers share one queue. A worker that meets a failure sets a flag, and
@@ -320,7 +382,7 @@ test("once a reply fails, no request that is still queued is sent", async () => 
   const directory = mkdtempSync(join(tmpdir(), "jev-stop-"));
   try {
     const file = join(directory, "doc.md");
-    const paragraphs = Array.from({ length: 20 }, (_, index) => `Paragraph number ${index + 1} of the guide.`);
+    const paragraphs = Array.from({ length: 20 }, (slot, index) => `Paragraph number ${index + 1} of the guide.`);
     writeFileSync(file, `# Title\n\n${paragraphs.join("\n\n")}\n`);
     expect(selectDocuments(file, directory).documents[0]?.plan.candidates).toHaveLength(21);
     let sent = 0;
@@ -330,8 +392,13 @@ test("once a reply fails, no request that is still queued is sent", async () => 
       env: { TYPESAFE_API_KEY: "key" },
       terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
       // HTTP 400 is refused at once and never tried again, so each request is one call.
-      client: { fetch: async () => { sent++; return new Response("refused", { status: 400 }); }, clock: { schedule: () => () => {} }, sleep: async () => {} },
-      writeLog: record => { logged = record; },
+      client: { fetch: async () => {
+        sent++;
+        return new Response("refused", { status: 400 });
+      }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+      writeLog: record => {
+        logged = record;
+      },
     };
     const reportFile = join(directory, "report.json");
     expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => out.push(text), text => out.push(text), dependencies)).toBe(3);
@@ -347,7 +414,9 @@ test("once a reply fails, no request that is still queued is sent", async () => 
     const bodies: string[] = [];
     expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], () => {}, () => {}, recordingDependencies(bodies))).toBe(0);
     expect(bodies).toHaveLength(21);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // A file name was cleaned like quoted wording: a control character became a space and
@@ -362,13 +431,16 @@ test("every line of the Jev audit that names a file prints it as a path", async 
   // A table cell and a line of the report are rendered, so each holds a code span.
   const cell = `${tick}a  ${slash}u202eb${slash}|c.md${tick}`;
 
-  const findings = formatFindings({
+  // The formatter is given a rule name and coverage the type does not admit,
+  // to show that whatever reaches it still prints safely.
+  const report: unknown = {
     complete: true, limitation: "test", evidence: [],
     notSent: [{ file: name, reason: REFUSAL }],
     localFindings: [{ file: name, line: 1, rule: "missing-title", detail: "No  title." }],
     results: [{ file: name, line: 2, id: "block-1", rule: "purpose", band: "fail", score: "0.9", cutOff: "0.87", detail: "Unclear.", excerpt: "Words.", stateHash: "h" }],
     coverage: [{ file: name, checks: { purpose: { assessed: 1, pass: 0, fail: 1, unsure: 0, skipped: 0 } } }],
-  } as never);
+  };
+  const findings = formatFindings(report as JevReport);
   expect(findings).not.toContain(override);
   expect(findings).toContain(`Not sent: ${tick}${shown}${tick}, because its ${REFUSAL}.`);
   // A detail is quoted wording, so its two spaces still become one.
@@ -377,10 +449,11 @@ test("every line of the Jev audit that names a file prints it as a path", async 
   expect(findings).toContain(`| ${cell} | purpose | 1 | 0 | 1 | 0 | 0 |`);
 
   const empty = { candidates: [], findings: [] };
-  const plan = formatPlan({
+  const selection: Selection = {
     documents: [{ file: name, path: "p", plan: empty, refusal: REFUSAL }, { file: `${name}2`, path: "q", plan: empty }],
     mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [`docs/${name}`],
-  } as never, true, `out  ${override}.json`);
+  };
+  const plan = formatPlan(selection, true, `out  ${override}.json`);
   expect(plan).not.toContain(override);
   expect(plan).toContain(`Selected: docs/${shown}`);
   expect(plan).toContain(`- ${shown}: not sent, because its ${REFUSAL}.`);
@@ -399,7 +472,9 @@ test("every line of the Jev audit that names a file prints it as a path", async 
       text => out.push(text), text => warnings.push(text), recordingDependencies([]))).toBe(0);
     expect(warnings).toEqual([`warning: not sent: ta  ${slash}u202eb.md: ${REFUSAL}`]);
     expect(out.join("\n")).toContain(`| ${tick}ta  ${slash}u202eb.md${tick} | 8 | legalese | banned term "shall" |`);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // Stopping at a hole ended the options early, so the command ran and exited 0
@@ -422,5 +497,7 @@ test("a hole in the argument list is refused, and so is what follows it", async 
       expect(stderr[0]).toStartWith("Invalid audit arguments.");
       expect(stdout).toEqual([]);
     }
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
