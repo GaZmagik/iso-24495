@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
-import { ENFORCED_RULES, GUIDE_SYNTAX, type RuleSetting } from "../../eslint.config.mjs";
+import { CODE_SKILL_SYNTAX, ENFORCED_RULES, GUIDE_SYNTAX, type RuleSetting } from "../../eslint.config.mjs";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js");
@@ -174,6 +174,23 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "  return 1;"],
   [[], "}"],
 
+  // The code skill's helpers: a named helper sits at the top level, or is a
+  // class member. A callback passed to a call is not a helper.
+  [[], "export function outer(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  function inner(): number {"],
+  [[], "    return 1;"],
+  [[], "  }"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const arrowed = (): number => inner();"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const typed: () => number = () => arrowed();"],
+  [[], "  return [1].map((value) => value + typed()).length;"],
+  [[], "}"],
+  [[], "export class Helped {"],
+  [[], "  size(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "    const inner = (): number => 1;"],
+  [[], "    return inner();"],
+  [[], "  }"],
+  [[], "}"],
+
   // Classes.
   [["brace-style", "@typescript-eslint/explicit-member-accessibility"], "export class Shown { public size = 1; }"],
   [["brace-style", "@typescript-eslint/prefer-readonly"], "export class Kept { private size = 1; read(): number { return this.size; } }"],
@@ -313,7 +330,7 @@ describe("the lint rules the gate relies on", () => {
     // cannot join the set without its breach either.
     const probed = new Set(PROBE.flatMap(([rules]) => rules));
     probed.delete(INERT_COMMENT);
-    const selectors = GUIDE_SYNTAX.map(({ message }) => restricted(message));
+    const selectors = [...GUIDE_SYNTAX, ...CODE_SKILL_SYNTAX].map(({ message }) => restricted(message));
     expect(new Set(selectors).size, "two selectors share a message").toBe(selectors.length);
     const rules = Object.keys(ENFORCED_RULES).filter((rule) => rule !== "no-restricted-syntax");
     expect([...probed].sort()).toEqual([...rules, ...selectors].sort());

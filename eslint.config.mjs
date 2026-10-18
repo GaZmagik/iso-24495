@@ -9,11 +9,11 @@
 // expression, the rules of the recommended sets that have found a fault
 // here, and the further rules of the guide that a linter can state.
 //
-// scripts/tests/lint-rules.test.ts imports ENFORCED_RULES and GUIDE_SYNTAX. It
-// asks ESLint for the configuration that applies to each TypeScript file and
-// requires every rule there to be an error. It also gives the linter one
-// breach of each rule, and of each syntax selector, and requires an error for
-// each. Add a rule and its breach together.
+// scripts/tests/lint-rules.test.ts imports ENFORCED_RULES, GUIDE_SYNTAX and
+// CODE_SKILL_SYNTAX. It asks ESLint for the configuration that applies to
+// each TypeScript file and requires every rule there to be an error. It also
+// gives the linter one breach of each rule, and of each syntax selector, and
+// requires an error for each. Add a rule and its breach together.
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
@@ -126,6 +126,21 @@ export const GUIDE_SYNTAX = [
   },
 ];
 
+/**
+ * The rules of this plugin's own code skill, `iso-24495-code`, that a syntax
+ * selector can state. Each works as the entries above do, and the lint test
+ * probes each the same way. The skill's other rules that this repository
+ * holds its code to are tested in scripts/tests/code-skill-rules.test.ts.
+ */
+export const CODE_SKILL_SYNTAX = [
+  {
+    // Rule 2 of the skill: a reader cannot reach a closure without reading
+    // its container first. A class member is allowed, as the skill allows it.
+    selector: ":function FunctionDeclaration, :function VariableDeclarator > :matches(ArrowFunctionExpression, FunctionExpression).init",
+    message: "code skill: a named helper is declared at the top level, not inside a function",
+  },
+];
+
 /** Every name selector forbids a leading or trailing underscore, as the guide does. */
 const NO_UNDERSCORE = { leadingUnderscore: "forbid", trailingUnderscore: "forbid" };
 
@@ -188,7 +203,7 @@ export const ENFORCED_RULES = {
 
   // Group 2: the other rules of the hand-written test.
   "one-var": ["error", "never"],
-  "no-restricted-syntax": ["error", ...GUIDE_SYNTAX],
+  "no-restricted-syntax": ["error", ...GUIDE_SYNTAX, ...CODE_SKILL_SYNTAX],
   "@typescript-eslint/no-explicit-any": "error",
   "@typescript-eslint/no-namespace": "error",
   // The recommended set allows a "lib" reference and, where the module is
