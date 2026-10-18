@@ -6,6 +6,60 @@ import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 
+/** Every kind of statement or member the check reads, as its reports name it. */
+const KINDS = [
+  "a type alias",
+  "a class property",
+  "a method with no body",
+  "a constructor with no body",
+  "a getter with no body",
+  "a setter with no body",
+  "a function with no body",
+  "a class index signature",
+  "an export assignment",
+  "a global export of a module",
+  "a module with no body",
+  "an import alias",
+  "a property signature",
+  "a method signature",
+  "a call signature",
+  "a construct signature",
+  "an index signature",
+  "a mapped type",
+];
+
+/**
+ * A pinned text that leaves out the semicolon of each kind in `KINDS` once.
+ * The repository holds no example of some kinds, so the walk of its files
+ * alone would pass with their detectors broken.
+ */
+const SWEEP_BREACHES = [
+  "type Alias = number",
+  "declare class Declared {",
+  "  size: number",
+  "  [key: string]: unknown",
+  "  constructor(size: number)",
+  "  get value(): string",
+  "  set value(text: string)",
+  "  make(): number",
+  "}",
+  "declare function made(): number",
+  "interface Members {",
+  "  x: number",
+  "  f(): void",
+  "  (): void",
+  "  new(): object",
+  "  [key: string]: unknown",
+  "}",
+  "type Mapped = {",
+  "  [K in \"x\"]: number",
+  "};",
+  "declare module \"example\"",
+  "import fs = require(\"node:fs\")",
+  "export as namespace Library",
+  "export = fs",
+].join("\n");
+
 // The guide says to end every statement with a semicolon. The lint rule
 // "semi" holds that for the statements JavaScript has, and passes over the
 // ones only TypeScript has: it accepts "export type Value = number" with none.
@@ -29,6 +83,12 @@ describe("every statement that only TypeScript has ends with a semicolon", () =>
     // A walk that read nothing would find nothing missing, so the count must
     // be the size a walk of this repository gives.
     expect(checked).toBeGreaterThanOrEqual(14);
+
+    // The same reading of a pinned text must report every kind, so a detector
+    // that stops working fails this walk and names its kind.
+    const reported = unendedStatements("breaches.ts", SWEEP_BREACHES).missing
+      .map((entry) => entry.replace(/^breaches\.ts:\d+: (.+) has no semicolon$/, "$1"));
+    expect([...new Set(reported)].sort()).toEqual([...KINDS].sort());
   });
 
   test("each kind with no semicolon is reported, and with one is not", () => {
@@ -117,7 +177,7 @@ describe("every statement that only TypeScript has ends with a semicolon", () =>
       .toEqual({ checked: 3, missing: ["probe.ts:2: a property signature has no semicolon"] });
   });
 
-  test("an inline literal may separate its members with commas or semicolons, and end its last with nothing", () => {
+  test("an inline literal is not reported, whatever separates its members, and the alias around it still needs its semicolon", () => {
     const inline = [
       "export interface I { host: string, port: number }",
       "export interface I { host: string; port: number }",
