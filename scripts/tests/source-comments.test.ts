@@ -169,18 +169,7 @@ const KEYWORD_TAG = /^\s*(?:\/\*\*|\*)?\s*@(private|protected|public|readonly|ov
 function jsdocProblems(file: string, text: string): JsdocCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const starts = new Set<number>();
-  const visit = (node: ts.Node): void => {
-    for (const range of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) {
-      starts.add(range.pos);
-    }
-    for (const range of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) {
-      starts.add(range.pos);
-    }
-    for (const child of node.getChildren(source)) {
-      visit(child);
-    }
-  };
-  visit(source);
+  addCommentStarts(source, text, source, starts);
   const problems: string[] = [];
   let read = 0;
   for (const start of [...starts].sort((a, b) => a - b)) {
@@ -193,6 +182,22 @@ function jsdocProblems(file: string, text: string): JsdocCount {
     if (keyword !== null) problems.push(`${file}:${line}: a JSDoc comment carries @${keyword[1]}, which a keyword states`);
   }
   return { read, problems };
+}
+
+/**
+ * Adds to `starts` where each comment before or after one node, or any node
+ * below it, begins.
+ */
+function addCommentStarts(node: ts.Node, text: string, source: ts.SourceFile, starts: Set<number>): void {
+  for (const range of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) {
+    starts.add(range.pos);
+  }
+  for (const range of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) {
+    starts.add(range.pos);
+  }
+  for (const child of node.getChildren(source)) {
+    addCommentStarts(child, text, source, starts);
+  }
 }
 
 /** Whether bytes read as UTF-8 without a malformed sequence. */
