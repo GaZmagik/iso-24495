@@ -22,7 +22,7 @@ import { formatFindings } from "../skills/iso-24495-text-audit/scripts/audit-tex
 /** What the check needs from outside itself, so a test can stand in for each. */
 export interface Dependencies {
   /** Says what kind of thing a path names, without following a symbolic link. Throws when nothing is there. */
-  inspect: (path: string) => { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean };
+  inspect: (path: string) => { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean; };
   /**
    * Reads a file as UTF-8 text. Throws when it cannot, and when what it opened is
    * not the regular file the path names, as `readRegularFile` decides.
