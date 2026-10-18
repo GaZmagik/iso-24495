@@ -33,6 +33,19 @@ const NO_SINGLE_ENTRY_POINT: Readonly<Record<string, string>> = {
     + "It leads with the two private helpers that most of them share.",
 };
 
+/** The one file allowed to throw a value typed unknown, as RULE_EXCEPTIONS says. */
+const FOREIGN_THROWS_FILE = "scripts/tests/traffic-snapshot.test.ts";
+
+/**
+ * The throws of a value typed unknown that FOREIGN_THROWS_FILE may hold, each
+ * as the declaration of the value and the throw statement. Two tests there
+ * stand in for code outside this project, which may throw anything.
+ */
+const APPROVED_UNKNOWN_THROWS = [
+  "foreign: unknown = \"a bare string\" / throw foreign;",
+  "foreign: unknown = \"ENOENT\" / throw foreign;",
+];
+
 // This file is the record of the four rules this plugin's own TypeScript is
 // held to, taken from its code skill, `iso-24495-code`, by the owner's
 // ruling. The skill states the first three in words. It states the fourth
@@ -61,7 +74,9 @@ const NO_SINGLE_ENTRY_POINT: Readonly<Record<string, string>> = {
 //    unknown, and a caught value may still be thrown on. RULE_EXCEPTIONS in
 //    eslint.config.mjs names the one file that may throw a value typed
 //    unknown: scripts/tests/traffic-snapshot.test.ts, whose tests stand in
-//    for code outside this project. Probed in lint-rules.test.ts.
+//    for code outside this project. Probed in lint-rules.test.ts. A linter
+//    cannot tell two statements of a file apart, so a test here holds that
+//    file to its two approved throws, by their text.
 //
 // eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
 // removes, beside the rules themselves.
@@ -174,6 +189,21 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(shimEntryPoint("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli(process.argv));")).toBe("runCli");
     expect(shimEntryPoint("probe-cli.ts", "process.exit(await runCli(process.argv));")).toBe("runCli");
     expect(shimEntryPoint("probe-cli.ts", "runCli(process.argv);")).toBeNull();
+  });
+
+  test("the file allowed to throw a value typed unknown holds the two approved throws and no others", () => {
+    expect(unknownThrows(FOREIGN_THROWS_FILE, readFileSync(join(REPOSITORY_ROOT, FOREIGN_THROWS_FILE), "utf8")))
+      .toEqual(APPROVED_UNKNOWN_THROWS);
+  });
+
+  test("a third throw of a value typed unknown, or of one typed any, is found beside the two", () => {
+    const text = readFileSync(join(REPOSITORY_ROOT, FOREIGN_THROWS_FILE), "utf8");
+    const third = "\nexport function third(value: unknown): never {\n  throw value;\n}\n";
+    expect(unknownThrows(FOREIGN_THROWS_FILE, text + third)).toEqual([...APPROVED_UNKNOWN_THROWS, "value: unknown / throw value;"]);
+    const parsed = "\nexport function parsed(): never {\n  throw JSON.parse(\"1\");\n}\n";
+    expect(unknownThrows(FOREIGN_THROWS_FILE, text + parsed)).toEqual([...APPROVED_UNKNOWN_THROWS, "(no declaration) / throw JSON.parse(\"1\");"]);
+    // A value typed as an Error is not one of them.
+    expect(unknownThrows("probe.ts", "export function fail(): never {\n  throw new Error(\"x\");\n}\n")).toEqual([]);
   });
 
   test("a shim's entry point is named as its module exports it, through an import alias", () => {
@@ -396,6 +426,28 @@ function importedNames(source: ts.SourceFile): Map<string, string> {
     }
   }
   return names;
+}
+
+/**
+ * Every throw in a file whose value is typed unknown or any, each as the
+ * declaration of the value and the throw statement, in the order they appear.
+ *
+ * @returns One "declaration / statement" entry for each. A value that is not
+ *     a declared name reads "(no declaration)".
+ */
+function unknownThrows(file: string, text: string): string[] {
+  const { source, checker } = typedSource(file, text);
+  const found: string[] = [];
+  const pending: ts.Node[] = [source];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    pending.push(...[...node.getChildren(source)].reverse());
+    if (!ts.isThrowStatement(node)) continue;
+    const flags = checker.getTypeAtLocation(node.expression).flags;
+    if ((flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) === 0) continue;
+    const declaration = checker.getSymbolAtLocation(node.expression)?.valueDeclaration;
+    found.push(`${declaration?.getText(source) ?? "(no declaration)"} / ${node.getText(source)}`);
+  }
+  return found;
 }
 
 /** What the throws check found in one file. */
