@@ -190,6 +190,26 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "    return inner();"],
   [[], "  }"],
   [[], "}"],
+  // An object method or accessor declares a named function as a declaration
+  // does. A property whose value is an arrow is a value handed on, most often
+  // a stand-in for a dependency, and is left alone.
+  [[], "export function holdsHelpers(): number {"],
+  [[], "  const helpers = {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "    value(): number {"],
+  [[], "      return 1;"],
+  [[], "    },"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "    get size(): number {"],
+  [[], "      return 2;"],
+  [[], "    },"],
+  [[], "    handed: (): number => 3,"],
+  [[], "  };"],
+  [[], "  return helpers.value() + helpers.size + helpers.handed();"],
+  [[], "}"],
+  [[], "export const topLevelHelpers = {"],
+  [[], "  value(): number {"],
+  [[], "    return 1;"],
+  [[], "  },"],
+  [[], "};"],
   [["brace-style", "@typescript-eslint/only-throw-error"], "export function parsedThrow(): never { throw JSON.parse(\"1\"); }"],
 
   // Classes.

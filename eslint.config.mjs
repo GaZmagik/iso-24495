@@ -136,7 +136,14 @@ export const CODE_SKILL_SYNTAX = [
   {
     // Rule 2 of the skill: a reader cannot reach a closure without reading
     // its container first. A class member is allowed, as the skill allows it.
-    selector: ":function FunctionDeclaration, :function VariableDeclarator > :matches(ArrowFunctionExpression, FunctionExpression).init",
+    // An object method or accessor inside a function is a named helper too.
+    // A property whose value is an arrow is not: it is a value handed on,
+    // most often a stand-in for a dependency.
+    selector: [
+      ":function FunctionDeclaration",
+      ":function VariableDeclarator > :matches(ArrowFunctionExpression, FunctionExpression).init",
+      ":function Property:matches([method=true], [kind='get'], [kind='set'])",
+    ].join(", "),
     message: "code skill: a named helper is declared at the top level, not inside a function",
   },
 ];
