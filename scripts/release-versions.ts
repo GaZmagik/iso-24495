@@ -29,6 +29,14 @@ import { join } from "node:path";
 import { safePath } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 
 /**
+ * A version as every site states it: three whole numbers joined by full
+ * stops, with nothing before or after.
+ */
+export const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
+const SKILL_ROOTS = ["skills", "codex-skills"];
+const CHANGELOG_HEADING = /^## \[([^\]]+)\]/gm;
+
+/**
  * Whether every version site in a checkout agrees, and the changelog records the
  * version. A site that is missing or malformed is a problem, never an exception,
  * so one report names everything wrong at once.
@@ -110,16 +118,8 @@ export interface VersionReport {
   /** One sentence for each site that disagrees or cannot be read. Empty when all agree. */
   problems: string[];
 }
-
-/**
- * A version as every site states it: three whole numbers joined by full
- * stops, with nothing before or after.
- */
-export const DOTTED_VERSION = /^\d+\.\d+\.\d+$/;
 /** A release tag: a "v", then a version. The first group is the version. */
 export const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/;
-const CHANGELOG_HEADING = /^## \[([^\]]+)\]/gm;
-const SKILL_ROOTS = ["skills", "codex-skills"];
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

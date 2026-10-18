@@ -173,6 +173,35 @@ export interface AuditOptions extends Reading {
   /** File-aware callers enable structural rules for Markdown rather than plain text. */
   markdown?: boolean;
 }
+/**
+ * Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
+ * English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
+ * 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
+ * minimum sample are this project's own proxy choices, informed by local
+ * session measurements that are not part of this repository.
+ */
+export const ENGINE_THRESHOLDS = Object.freeze({
+  sentenceWordLimit: 30,
+  sentenceAverageLimit: 20,
+  averageMinimumSentences: 10,
+  paragraphSentenceLimit: 5,
+  maximumHeadingLevel: 4,
+  headingWordLimit: 12,
+  acronymMinimumLetters: 2,
+  acronymMaximumLetters: 6,
+  acronymDefinitionWindow: 3,
+  enumerationMinimumRanks: 3,
+  layoutRecognitionVersion: 8,
+  contentsMinimumSections: 6,
+  maximumUnorderedDepth: 2,
+});
+
+const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
+const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
+const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
+const SENTENCE_AVERAGE_LIMIT = ENGINE_THRESHOLDS.sentenceAverageLimit;
+const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
+const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
 
 /**
  * Every mechanical finding in one text.
@@ -329,36 +358,6 @@ function sentenceAverage(lengths: number[]): { count: number; average: number } 
     average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
   };
 }
-
-/**
- * Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
- * English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
- * 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
- * minimum sample are this project's own proxy choices, informed by local
- * session measurements that are not part of this repository.
- */
-export const ENGINE_THRESHOLDS = Object.freeze({
-  sentenceWordLimit: 30,
-  sentenceAverageLimit: 20,
-  averageMinimumSentences: 10,
-  paragraphSentenceLimit: 5,
-  maximumHeadingLevel: 4,
-  headingWordLimit: 12,
-  acronymMinimumLetters: 2,
-  acronymMaximumLetters: 6,
-  acronymDefinitionWindow: 3,
-  enumerationMinimumRanks: 3,
-  layoutRecognitionVersion: 8,
-  contentsMinimumSections: 6,
-  maximumUnorderedDepth: 2,
-});
-
-const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
-const SENTENCE_AVERAGE_LIMIT = ENGINE_THRESHOLDS.sentenceAverageLimit;
-const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
-const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
-const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
-const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
 /**
  * Exported so each audit surface and the repository guard read the same list.
  * Separate copies once disagreed about whether a .txt file was covered.
@@ -1041,6 +1040,8 @@ interface OpenBracket {
   /** Whether "!" stands before it, which makes an image. */
   image: boolean;
 }
+// The punctuation a backslash escapes, which is all of it in ASCII.
+const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
 
 /**
  * Where the syntax of each link and image stands in the lines of one block.
@@ -1104,9 +1105,6 @@ export function linkSyntaxIn(source: string, references: ReadonlySet<string>): U
   }
   return syntax;
 }
-
-// The punctuation a backslash escapes, which is all of it in ASCII.
-const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
 
 /**
  * The offset just past the code span that opens with the run of backticks at `at`, or
@@ -1859,8 +1857,6 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
   }
   return [];
 }
-
-
 
 // A listener hears each cell announced against its column name, so a table
 // whose header cells are blank tells them nothing about what they are hearing.

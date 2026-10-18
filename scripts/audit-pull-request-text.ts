@@ -148,6 +148,15 @@ export interface FileCalls {
 }
 
 const NOT_THE_FILE = "what was opened is not the regular file the path names";
+// Linux and macOS can refuse a symbolic link at open, and Windows has no such flag.
+// The comparison in `readRegularFile` is what holds on all three.
+const REAL_FILES: FileCalls = {
+  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)),
+  ofHandle: (handle) => fstatSync(handle, { bigint: true }),
+  ofPath: (path) => lstatSync(path, { bigint: true }),
+  read: (handle) => readFileSync(handle, "utf8"),
+  close: (handle) => closeSync(handle),
+};
 
 /**
  * The text of a regular file, read from the one handle that was inspected.
@@ -200,16 +209,6 @@ function openUnlessLink(path: string, files: FileCalls): number | null {
     throw error;
   }
 }
-
-// Linux and macOS can refuse a symbolic link at open, and Windows has no such flag.
-// The comparison in `readRegularFile` is what holds on all three.
-const REAL_FILES: FileCalls = {
-  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)),
-  ofHandle: (handle) => fstatSync(handle, { bigint: true }),
-  ofPath: (path) => lstatSync(path, { bigint: true }),
-  read: (handle) => readFileSync(handle, "utf8"),
-  close: (handle) => closeSync(handle),
-};
 
 /**
  * Why the path cannot be read as a file, or null when it names a regular file.

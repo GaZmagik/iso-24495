@@ -49,6 +49,14 @@ class TransportError extends Error {
 }
 /** Sends one request and resolves with its checked answers. */
 export type Ask = (body: RequestBody) => Promise<ExactAnswers>;
+/**
+ * The clock `createAsk` uses unless it is given another: the platform's
+ * own timers.
+ */
+export const systemClock: Clock = { schedule: (callback, ms) => {
+  const timer = setTimeout(callback, ms);
+  return () => clearTimeout(timer);
+} };
 
 /**
  * Makes the function that sends one request to TypeSafe and returns its
@@ -213,14 +221,6 @@ function isExactProbability(value: unknown): value is Decimal {
 export function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
-/**
- * The clock `createAsk` uses unless it is given another: the platform's
- * own timers.
- */
-export const systemClock: Clock = { schedule: (callback, ms) => {
-  const timer = setTimeout(callback, ms);
-  return () => clearTimeout(timer);
-} };
 
 function limitInFlight(most: number): <T>(task: () => Promise<T>) => Promise<T> {
   let active = 0;

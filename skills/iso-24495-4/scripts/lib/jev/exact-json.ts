@@ -10,24 +10,6 @@ import { parseDecimal } from "./decimal.ts";
 const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const STRING = /"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/y;
 const SPACE = /[ \t\n\r]*/y;
-
-/**
- * The JSON value in the text, with every number a Decimal.
- *
- * @returns Objects, arrays, strings, booleans and null as `JSON.parse` gives
- *     them. A number at any depth is a `Decimal` and never a `number`. Every
- *     key is an own property of its object, `__proto__` included, and a
- *     repeated key keeps its first place and its last value.
- * @throws An `Error` giving the character offset when the text is not one
- *     JSON value. Empty text is refused that way, and so is anything but
- *     white space after the value. A number that `parseDecimal` refuses as
- *     too long, or for its exponent, throws the `Error` that function gives,
- *     which has no offset. Nothing is returned for bad input.
- */
-export function parseExactJson(text: string): unknown {
-  return new ExactJsonReader(text).document();
-}
-
 /** One reading of a JSON text, holding the place it has reached. */
 class ExactJsonReader {
   private at = 0;
@@ -111,4 +93,21 @@ class ExactJsonReader {
     }
     return parseDecimal(this.take(NUMBER));
   }
+}
+
+/**
+ * The JSON value in the text, with every number a Decimal.
+ *
+ * @returns Objects, arrays, strings, booleans and null as `JSON.parse` gives
+ *     them. A number at any depth is a `Decimal` and never a `number`. Every
+ *     key is an own property of its object, `__proto__` included, and a
+ *     repeated key keeps its first place and its last value.
+ * @throws An `Error` giving the character offset when the text is not one
+ *     JSON value. Empty text is refused that way, and so is anything but
+ *     white space after the value. A number that `parseDecimal` refuses as
+ *     too long, or for its exponent, throws the `Error` that function gives,
+ *     which has no offset. Nothing is returned for bad input.
+ */
+export function parseExactJson(text: string): unknown {
+  return new ExactJsonReader(text).document();
 }

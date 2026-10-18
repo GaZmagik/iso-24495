@@ -14,6 +14,18 @@ import type { Findings } from "../../iso-24495-4/scripts/lib/types.ts";
 import { runAuditCli, type AuditDependencies } from "../../iso-24495-4/scripts/lib/jev/audit.ts";
 
 /**
+ * The selected path names a file the audit does not read. This file writes the
+ * message, from a length and a fixed list of endings, so the message is safe
+ * to print as it stands.
+ */
+export class UnsupportedSelection extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedSelection";
+  }
+}
+
+/**
  * The text audit command.
  *
  *   bun audit-text-cli.ts <file-or-directory> [--project-dir <directory>] [--json <out-file>] [--no-front-matter]
@@ -136,18 +148,6 @@ export interface TextAuditResult extends Findings {
 }
 
 type ReadTextFile = (path: string, encoding: "utf8") => string;
-
-/**
- * The selected path names a file the audit does not read. This file writes the
- * message, from a length and a fixed list of endings, so the message is safe
- * to print as it stands.
- */
-export class UnsupportedSelection extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UnsupportedSelection";
-  }
-}
 
 function displayPath(path: string, projectDir: string): string {
   return relative(projectDir, path).replaceAll("\\", "/");

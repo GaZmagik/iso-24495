@@ -99,6 +99,7 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // which is why its label starts with "^" and it is not here.
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 
 /**
  * A conservative single-line link reference definition.
@@ -864,8 +865,6 @@ function withoutInvisible(
   if (closing === null) return { text: before, until: close };
   return { text: before + " " + text.slice(closing.at + closing.length), until: null };
 }
-
-const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const HTML_TAG_AT_START = /^(?:<\/[A-Za-z][A-Za-z0-9-]*[ \t\n]*>|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t\n]*=[ \t\n]*(?:[^ \t\n"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t\n]*\/?>)/;
 
 function abruptCommentClose(afterOpening: string): number {
@@ -1255,7 +1254,6 @@ function closeLabel(flattening: Flattening, text: string, references?: ReadonlyS
   writeFragment(flattening,
     flattenedLink(inner.link, text.slice(inner.link.start, flattening.at), inner.label, references));
 }
-
 
 function visibleText(text: string, references?: ReadonlySet<string>): string {
   return flattenLinks(visibleInline(text), references);

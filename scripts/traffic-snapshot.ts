@@ -17,6 +17,32 @@ import { pathFailure, unexpectedKind } from "../skills/iso-24495-4/scripts/lib/f
 import { safeText } from "../skills/iso-24495-4/scripts/lib/safe-text.ts";
 import { itemAt } from "../skills/iso-24495-4/scripts/lib/item-at.ts";
 
+const USAGE = [
+  "Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]",
+  "",
+  "Reads this repository's GitHub traffic and merges it into daily.csv,",
+  "windows.csv and referrers.csv inside the data directory.",
+].join("\n");
+const DAILY_HEADER = ["date", "clones", "clone_uniques", "views", "view_uniques"];
+const WINDOW_HEADER = [
+  "snapshot_date",
+  "window_days",
+  "clones",
+  "clone_uniques",
+  "views",
+  "view_uniques",
+  "stars",
+  "forks",
+  "watchers",
+];
+const REFERRER_HEADER = ["snapshot_date", "referrer", "views", "uniques"];
+
+const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
+  ["daily.csv", DAILY_HEADER],
+  ["windows.csv", WINDOW_HEADER],
+  ["referrers.csv", REFERRER_HEADER],
+];
+
 /**
  * Takes one traffic snapshot and merges it into the three CSV files.
  *
@@ -361,35 +387,9 @@ const ENDPOINT_NAMES: ReadonlyMap<string, string> = new Map([
   ["/traffic/popular/referrers", "the referrers endpoint"],
   ["", "the repository endpoint"],
 ]);
-
-const DAILY_HEADER = ["date", "clones", "clone_uniques", "views", "view_uniques"];
-const WINDOW_HEADER = [
-  "snapshot_date",
-  "window_days",
-  "clones",
-  "clone_uniques",
-  "views",
-  "view_uniques",
-  "stars",
-  "forks",
-  "watchers",
-];
-const REFERRER_HEADER = ["snapshot_date", "referrer", "views", "uniques"];
 // What a cell must match, by its column. `MalformedTable` says which column holds what.
 const A_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const A_WHOLE_NUMBER = /^\d+$/;
-const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
-  ["daily.csv", DAILY_HEADER],
-  ["windows.csv", WINDOW_HEADER],
-  ["referrers.csv", REFERRER_HEADER],
-];
-
-const USAGE = [
-  "Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]",
-  "",
-  "Reads this repository's GitHub traffic and merges it into daily.csv,",
-  "windows.csv and referrers.csv inside the data directory.",
-].join("\n");
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   const isRecord = typeof value === "object" && value !== null && !Array.isArray(value);
