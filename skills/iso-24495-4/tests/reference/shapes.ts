@@ -7,6 +7,10 @@
 //
 // The seed is fixed, so the same corpus is produced every time.
 
+/**
+ * One document of the corpus: a name that says what it holds, and its
+ * lines.
+ */
 export interface Shape {
   name: string;
   lines: string[];
@@ -15,6 +19,10 @@ export interface Shape {
 const TAB = String.fromCharCode(9);
 const BREAK = String.fromCharCode(10);
 
+/**
+ * Every container prefix applied to every leaf block, and the transitions
+ * between them.
+ */
 export const MATRIX_SHAPES: Shape[] = [];
 
 const containers: Array<[string, string[]]> = [
@@ -47,18 +55,12 @@ const leaves: Array<[string, string[]]> = [
   ["after break", ["One.", "", "***", "", "Two."]],
 ];
 
-function indentFor(prefixes: string[]): string {
-  return prefixes.map((prefix) => " ".repeat(prefix.length)).join("");
-}
-
-
-
 for (const [containerName, prefixes] of containers) {
   for (const [leafName, body] of leaves) {
     const lines = body.map((line, index) => {
       if (prefixes.length === 0) return line;
       const opener = prefixes.join("");
-      const continuation = prefixes.map((prefix, depth) =>
+      const continuation = prefixes.map((prefix) =>
         prefix.trimEnd() === ">" ? "> " : " ".repeat(prefix.length)).join("");
       return (index === 0 ? opener : continuation) + line;
     });
@@ -116,7 +118,9 @@ const extras: Array<[string, string[]]> = [
   ["multiline code span", ["Example `starts", "[](ignored)", "ends` here."]],
   ["unmatched code across paragraphs", ["Opening `", "", "[](https://example.com)", "", "Closing`"]],
 ];
-for (const [name, lines] of extras) MATRIX_SHAPES.push({ name, lines });
+for (const [name, lines] of extras) {
+  MATRIX_SHAPES.push({ name, lines });
+}
 
 
 // A seeded generator, so the corpus is the same every time it is built.
@@ -126,7 +130,9 @@ function next(limit: number): number {
   return seed % limit;
 }
 function pick<T>(items: T[]): T {
-  return items[next(items.length)];
+  const item = items[next(items.length)];
+  if (item === undefined) throw new Error("pick needs a list that holds an item");
+  return item;
 }
 
 const PREFIXES = ["", "- ", "1. ", "> ", "  ", "    ", TAB, ">", "* ", "2) ", "  - ", "> > ", "- > ", "> - "];
@@ -160,12 +166,15 @@ const BODIES = [
 ];
 
 
+/** Documents from the seeded grammar, the same on every run. */
 export const GENERATED_SHAPES: Shape[] = [];
 const seen = new Set<string>();
 for (let n = 0; n < 500 && GENERATED_SHAPES.length < 120; n++) {
   const count = 2 + next(4);
   const lines: string[] = [];
-  for (let i = 0; i < count; i++) lines.push(pick(PREFIXES) + pick(BODIES));
+  for (let i = 0; i < count; i++) {
+    lines.push(pick(PREFIXES) + pick(BODIES));
+  }
   const key = lines.join(BREAK);
   if (seen.has(key)) continue;
   seen.add(key);

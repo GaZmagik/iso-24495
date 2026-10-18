@@ -1,4 +1,4 @@
-# Code Blocks Are Immune
+# Code Blocks Are Immune (Version: 1.0)
 
 The audit must skip fenced code.
 

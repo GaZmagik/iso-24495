@@ -1,4 +1,4 @@
-# Title
+# Title (Version: 1.0)
 
 ## Section
 

@@ -1,0 +1,24 @@
+{
+  "model": "jev-1.13.0",
+  "state": {
+    "paragraph": "<block text>"
+  },
+  "questions": {
+    "colour_only": {
+      "type": "noul",
+      "instructions": "Does `paragraph` identify something only by its colour, with no word, label or name that also identifies it?",
+      "criteria": {
+        "true": "Something is identified only by colour.",
+        "false": "Nothing is identified only by colour."
+      }
+    },
+    "position_only": {
+      "type": "noul",
+      "instructions": "Does `paragraph` identify something on a page or screen only by its position, such as 'the button on the right', with no name or label?",
+      "criteria": {
+        "true": "Something is identified only by position.",
+        "false": "Nothing is identified only by position."
+      }
+    }
+  }
+}

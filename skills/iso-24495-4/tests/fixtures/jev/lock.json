@@ -1,0 +1,772 @@
+{
+  "borderline": {
+    "purpose:pass": 26,
+    "purpose:fail": 26,
+    "purpose:diagnosis:task_only": 4,
+    "purpose:diagnosis:scope_only": 12,
+    "purpose:diagnosis:neither": 28,
+    "reader:pass": 22,
+    "reader:fail": 22,
+    "message:pass": 24,
+    "message:fail": 24,
+    "message:exemption": 27,
+    "one_idea:pass": 3,
+    "one_idea:fail": 3,
+    "colour_only:pass": 0,
+    "colour_only:fail": 0,
+    "position_only:pass": 3,
+    "position_only:fail": 3
+  },
+  "panels": {
+    "borderline": {
+      "purpose:pass": 26,
+      "purpose:fail": 26,
+      "purpose:diagnosis:task_only": 4,
+      "purpose:diagnosis:scope_only": 12,
+      "purpose:diagnosis:neither": 28,
+      "reader:pass": 22,
+      "reader:fail": 22,
+      "message:pass": 24,
+      "message:fail": 24,
+      "message:exemption": 27,
+      "one_idea:pass": 3,
+      "one_idea:fail": 3,
+      "colour_only:pass": 0,
+      "colour_only:fail": 0,
+      "position_only:pass": 3,
+      "position_only:fail": 3
+    },
+    "questions": {
+      "purpose": {
+        "pass": [
+          "aws_serverless-application-model.CONTRIBUTING.md:1:opening",
+          "microsoft_terminal.CONTRIBUTING.md:1:opening",
+          "NVIDIA_SkillSpector.SECURITY.md:1:opening",
+          "microsoft_vscode.CONTRIBUTING.md:1:opening",
+          "aws_amazon-sagemaker-examples.CONTRIBUTING.md:1:opening",
+          "aws_aws-cdk.CONTRIBUTING.md:1:opening",
+          "anthropics_claude-cookbooks.README.md:1:opening",
+          "google_styleguide.README.md:1:opening",
+          "microsoft_PowerToys.SECURITY.md:3:opening",
+          "microsoft_PowerToys.CONTRIBUTING.md:1:opening"
+        ],
+        "fail": [
+          "coinbase_agentkit.CONTRIBUTING.md:1:opening",
+          "coinbase_coinbase-pro-trading-toolkit.CONTRIBUTING.md:1:opening",
+          "meta-llama_llama-models.CONTRIBUTING.md:1:opening",
+          "microsoft_generative-ai-for-beginners.README.md:45:opening",
+          "anthropics_claude-code.SECURITY.md:1:opening",
+          "github_docs.README.md:1:opening",
+          "huggingface_diffusers.CONTRIBUTING.md:13:opening",
+          "coinbase_terraform-landscape.README.md:1:opening",
+          "openai_openai-cookbook.CONTRIBUTING.md:1:opening",
+          "anthropics_claude-cookbooks.CONTRIBUTING.md:1:opening"
+        ],
+        "decided": true
+      },
+      "reader": {
+        "pass": [
+          "microsoft_terminal.CONTRIBUTING.md:1:opening",
+          "huggingface_diffusers.CONTRIBUTING.md:13:opening",
+          "NVIDIA_SkillSpector.SECURITY.md:1:opening",
+          "openai_gym.CONTRIBUTING.md:1:opening",
+          "aws_aws-sdk-go.CONTRIBUTING.md:1:opening",
+          "huggingface_transformers.CONTRIBUTING.md:17:opening",
+          "vercel_ai.CONTRIBUTING.md:1:opening",
+          "NVIDIA_open-gpu-kernel-modules.SECURITY.md:1:opening",
+          "aws_amazon-sagemaker-examples.CONTRIBUTING.md:1:opening",
+          "huggingface_pytorch-image-models.CONTRIBUTING.md:7:opening"
+        ],
+        "fail": [
+          "coinbase_agentkit.CONTRIBUTING.md:1:opening",
+          "aws_serverless-application-model.CONTRIBUTING.md:1:opening",
+          "coinbase_coinbase-pro-trading-toolkit.CONTRIBUTING.md:1:opening",
+          "meta-llama_llama-models.CONTRIBUTING.md:1:opening",
+          "microsoft_generative-ai-for-beginners.README.md:45:opening",
+          "anthropics_claude-code.SECURITY.md:1:opening",
+          "github_docs.README.md:1:opening",
+          "coinbase_terraform-landscape.README.md:1:opening",
+          "openai_openai-cookbook.CONTRIBUTING.md:1:opening",
+          "anthropics_claude-cookbooks.CONTRIBUTING.md:1:opening"
+        ],
+        "decided": true
+      },
+      "message": {
+        "pass": [
+          "huggingface_diffusers.CONTRIBUTING.md:157:heading",
+          "aws_aws-cli.CONTRIBUTING.md:22:heading",
+          "aws_aws-cdk.README.md:75:heading",
+          "microsoft_vscode.CONTRIBUTING.md:93:heading",
+          "NVIDIA_open-gpu-kernel-modules.README.md:7:heading",
+          "aws_serverless-application-model.README.md:19:heading",
+          "github_github-mcp-server.README.md:275:heading",
+          "microsoft_TypeScript.SECURITY.md:14:heading",
+          "vercel_turborepo.README.md:20:heading",
+          "meta-llama_codellama.README.md:13:heading"
+        ],
+        "fail": [
+          "vercel_turborepo.CONTRIBUTING.md:155:heading",
+          "NVIDIA_SkillSpector.README.md:780:heading",
+          "huggingface_lerobot.CONTRIBUTING.md:53:heading",
+          "openai_gym.README.md:59:heading",
+          "openai_codex-plugin-cc.README.md:271:heading",
+          "vercel_next.js.readme.md:28:heading",
+          "ollama_ollama.README.md:178:heading",
+          "huggingface_transformers.README.md:262:heading",
+          "anthropics_prompt-eng-interactive-tutorial.README.md:25:heading",
+          "google_googletest.CONTRIBUTING.md:47:heading"
+        ],
+        "decided": true
+      },
+      "heading_type": {
+        "pass": [
+          "openai_codex-plugin-cc.README.md:165:heading",
+          "ollama_ollama.README.md:178:heading",
+          "aws_amazon-sagemaker-examples.README.md:95:heading",
+          "coinbase_coinbase-pro-node.README.md:516:heading",
+          "aws_aws-cdk.CONTRIBUTING.md:1219:heading",
+          "google_material-design-icons.README.md:115:heading",
+          "NVIDIA_DeepLearningExamples.README.md:80:heading",
+          "anthropics_claude-plugins-official.README.md:26:heading",
+          "ollama_ollama-js.README.md:145:heading",
+          "microsoft_terminal.README.md:115:heading"
+        ],
+        "fail": [
+          "vercel_turborepo.CONTRIBUTING.md:155:heading",
+          "NVIDIA_SkillSpector.README.md:780:heading",
+          "huggingface_lerobot.CONTRIBUTING.md:53:heading",
+          "openai_gym.README.md:59:heading",
+          "openai_codex-plugin-cc.README.md:271:heading",
+          "huggingface_diffusers.CONTRIBUTING.md:157:heading",
+          "vercel_next.js.readme.md:28:heading",
+          "aws_aws-cli.CONTRIBUTING.md:22:heading",
+          "aws_aws-cdk.README.md:75:heading",
+          "huggingface_transformers.README.md:262:heading"
+        ],
+        "decided": true
+      },
+      "one_idea": {
+        "pass": [
+          "github_github-mcp-server.README.md:890:O",
+          "huggingface_lerobot.SECURITY.md:116:O",
+          "meta-llama_codellama.CONTRIBUTING.md:23:O",
+          "huggingface_smolagents.SECURITY.md:22:O",
+          "google_guava.CONTRIBUTING.md:91:O",
+          "aws_aws-cli.CONTRIBUTING.md:26:O",
+          "NVIDIA_open-gpu-kernel-modules.CONTRIBUTING.md:20:O",
+          "microsoft_markitdown.README.md:171:O",
+          "vercel_pkg.README.md:94:O",
+          "ollama_ollama-python.SECURITY.md:7:O"
+        ],
+        "fail": [
+          "microsoft_terminal.README.md:165:O",
+          "NVIDIA_open-gpu-kernel-modules.README.md:141:O",
+          "openai_CLIP.README.md:61:O",
+          "github_spec-kit.CONTRIBUTING.md:169:O"
+        ],
+        "decided": false
+      },
+      "colour_only": {
+        "pass": [
+          "huggingface_pytorch-image-models.README.md:473:B",
+          "NVIDIA_Megatron-LM.README.md:98:B",
+          "meta-llama_codellama.README.md:117:B",
+          "anthropics_prompt-eng-interactive-tutorial.README.md:41:B",
+          "github_spec-kit.README.md:90:B",
+          "huggingface_diffusers.SECURITY.md:12:B",
+          "vercel_turborepo.CONTRIBUTING.md:199:B",
+          "google_googletest.README.md:25:B",
+          "vercel_hyper.README.md:67:B",
+          "openai_codex-plugin-cc.README.md:300:B"
+        ],
+        "fail": [],
+        "decided": false
+      },
+      "position_only": {
+        "pass": [
+          "huggingface_pytorch-image-models.README.md:473:B",
+          "NVIDIA_Megatron-LM.README.md:98:B",
+          "meta-llama_codellama.README.md:117:B",
+          "anthropics_prompt-eng-interactive-tutorial.README.md:41:B",
+          "github_spec-kit.README.md:90:B",
+          "huggingface_diffusers.SECURITY.md:12:B",
+          "vercel_turborepo.CONTRIBUTING.md:199:B",
+          "google_googletest.README.md:25:B",
+          "vercel_hyper.README.md:67:B",
+          "openai_codex-plugin-cc.README.md:300:B"
+        ],
+        "fail": [
+          "NVIDIA_nvidia-docker.CONTRIBUTING.md:3:B",
+          "github_awesome-copilot.SECURITY.md:15:B",
+          "huggingface_lerobot.SECURITY.md:34:B"
+        ],
+        "decided": false
+      }
+    },
+    "keys": {
+      "opening": [
+        "aws_serverless-application-model.CONTRIBUTING.md:1:opening",
+        "microsoft_terminal.CONTRIBUTING.md:1:opening",
+        "NVIDIA_SkillSpector.SECURITY.md:1:opening",
+        "microsoft_vscode.CONTRIBUTING.md:1:opening",
+        "aws_amazon-sagemaker-examples.CONTRIBUTING.md:1:opening",
+        "aws_aws-cdk.CONTRIBUTING.md:1:opening",
+        "anthropics_claude-cookbooks.README.md:1:opening",
+        "google_styleguide.README.md:1:opening",
+        "microsoft_PowerToys.SECURITY.md:3:opening",
+        "microsoft_PowerToys.CONTRIBUTING.md:1:opening",
+        "coinbase_agentkit.CONTRIBUTING.md:1:opening",
+        "coinbase_coinbase-pro-trading-toolkit.CONTRIBUTING.md:1:opening",
+        "meta-llama_llama-models.CONTRIBUTING.md:1:opening",
+        "microsoft_generative-ai-for-beginners.README.md:45:opening",
+        "anthropics_claude-code.SECURITY.md:1:opening",
+        "github_docs.README.md:1:opening",
+        "huggingface_diffusers.CONTRIBUTING.md:13:opening",
+        "coinbase_terraform-landscape.README.md:1:opening",
+        "openai_openai-cookbook.CONTRIBUTING.md:1:opening",
+        "anthropics_claude-cookbooks.CONTRIBUTING.md:1:opening",
+        "openai_gym.CONTRIBUTING.md:1:opening",
+        "aws_aws-sdk-go.CONTRIBUTING.md:1:opening",
+        "huggingface_transformers.CONTRIBUTING.md:17:opening",
+        "vercel_ai.CONTRIBUTING.md:1:opening",
+        "NVIDIA_open-gpu-kernel-modules.SECURITY.md:1:opening",
+        "huggingface_pytorch-image-models.CONTRIBUTING.md:7:opening"
+      ],
+      "heading_message": [
+        "huggingface_diffusers.CONTRIBUTING.md:157:heading",
+        "aws_aws-cli.CONTRIBUTING.md:22:heading",
+        "aws_aws-cdk.README.md:75:heading",
+        "microsoft_vscode.CONTRIBUTING.md:93:heading",
+        "NVIDIA_open-gpu-kernel-modules.README.md:7:heading",
+        "aws_serverless-application-model.README.md:19:heading",
+        "github_github-mcp-server.README.md:275:heading",
+        "microsoft_TypeScript.SECURITY.md:14:heading",
+        "vercel_turborepo.README.md:20:heading",
+        "meta-llama_codellama.README.md:13:heading",
+        "vercel_turborepo.CONTRIBUTING.md:155:heading",
+        "NVIDIA_SkillSpector.README.md:780:heading",
+        "huggingface_lerobot.CONTRIBUTING.md:53:heading",
+        "openai_gym.README.md:59:heading",
+        "openai_codex-plugin-cc.README.md:271:heading",
+        "vercel_next.js.readme.md:28:heading",
+        "ollama_ollama.README.md:178:heading",
+        "huggingface_transformers.README.md:262:heading",
+        "anthropics_prompt-eng-interactive-tutorial.README.md:25:heading",
+        "google_googletest.CONTRIBUTING.md:47:heading"
+      ],
+      "one_idea": [
+        "github_github-mcp-server.README.md:890:O",
+        "huggingface_lerobot.SECURITY.md:116:O",
+        "meta-llama_codellama.CONTRIBUTING.md:23:O",
+        "huggingface_smolagents.SECURITY.md:22:O",
+        "google_guava.CONTRIBUTING.md:91:O",
+        "aws_aws-cli.CONTRIBUTING.md:26:O",
+        "NVIDIA_open-gpu-kernel-modules.CONTRIBUTING.md:20:O",
+        "microsoft_markitdown.README.md:171:O",
+        "vercel_pkg.README.md:94:O",
+        "ollama_ollama-python.SECURITY.md:7:O",
+        "microsoft_terminal.README.md:165:O",
+        "NVIDIA_open-gpu-kernel-modules.README.md:141:O",
+        "openai_CLIP.README.md:61:O",
+        "github_spec-kit.CONTRIBUTING.md:169:O"
+      ],
+      "block": [
+        "huggingface_pytorch-image-models.README.md:473:B",
+        "NVIDIA_Megatron-LM.README.md:98:B",
+        "meta-llama_codellama.README.md:117:B",
+        "anthropics_prompt-eng-interactive-tutorial.README.md:41:B",
+        "github_spec-kit.README.md:90:B",
+        "huggingface_diffusers.SECURITY.md:12:B",
+        "vercel_turborepo.CONTRIBUTING.md:199:B",
+        "google_googletest.README.md:25:B",
+        "vercel_hyper.README.md:67:B",
+        "openai_codex-plugin-cc.README.md:300:B",
+        "NVIDIA_nvidia-docker.CONTRIBUTING.md:3:B",
+        "github_awesome-copilot.SECURITY.md:15:B",
+        "huggingface_lerobot.SECURITY.md:34:B"
+      ],
+      "heading_type": [
+        "openai_codex-plugin-cc.README.md",
+        "ollama_ollama.README.md",
+        "aws_amazon-sagemaker-examples.README.md",
+        "coinbase_coinbase-pro-node.README.md",
+        "aws_aws-cdk.CONTRIBUTING.md",
+        "google_material-design-icons.README.md",
+        "NVIDIA_DeepLearningExamples.README.md",
+        "anthropics_claude-plugins-official.README.md",
+        "ollama_ollama-js.README.md",
+        "microsoft_terminal.README.md",
+        "vercel_turborepo.CONTRIBUTING.md",
+        "NVIDIA_SkillSpector.README.md",
+        "huggingface_lerobot.CONTRIBUTING.md",
+        "openai_gym.README.md",
+        "huggingface_diffusers.CONTRIBUTING.md",
+        "vercel_next.js.readme.md",
+        "aws_aws-cli.CONTRIBUTING.md",
+        "aws_aws-cdk.README.md",
+        "huggingface_transformers.README.md"
+      ]
+    }
+  },
+  "armTests": {
+    "purpose": {
+      "decided": true,
+      "bBeatsA": false,
+      "bBeatsE": false,
+      "aBeatsB": false,
+      "results": {
+        "BA": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "-8/465",
+          "hundredthSmallest": "-25/534"
+        },
+        "BE": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "13/1860",
+          "hundredthSmallest": "-27/688"
+        },
+        "AB": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "8/465",
+          "hundredthSmallest": "-1/82"
+        }
+      }
+    },
+    "reader": {
+      "decided": true,
+      "bBeatsA": false,
+      "bBeatsE": false,
+      "aBeatsB": false,
+      "results": {
+        "BA": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "17/2340",
+          "hundredthSmallest": "-4/1183"
+        },
+        "BE": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "1/45",
+          "hundredthSmallest": "0"
+        },
+        "AB": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "-17/2340",
+          "hundredthSmallest": "-37/1764"
+        }
+      }
+    },
+    "message": {
+      "decided": true,
+      "bBeatsA": false,
+      "bBeatsE": false,
+      "aBeatsB": false,
+      "results": {
+        "BA": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "-2/10615",
+          "hundredthSmallest": "-179/8325"
+        },
+        "BE": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "-81/21230",
+          "hundredthSmallest": "-176/7693"
+        },
+        "AB": {
+          "decided": true,
+          "beats": false,
+          "valid": 2000,
+          "made": 2000,
+          "fullDifference": "2/10615",
+          "hundredthSmallest": "-145/9052"
+        }
+      }
+    },
+    "one_idea": {
+      "decided": false,
+      "bBeatsA": false,
+      "bBeatsE": false,
+      "aBeatsB": false
+    }
+  },
+  "frozen": {
+    "opening": "A",
+    "heading_message": "A",
+    "one_idea": "A"
+  },
+  "cutOffs": {
+    "opening": {
+      "A": {
+        "purpose:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:fail": {
+          "cutOff": "0.87",
+          "acting": 24
+        },
+        "reader:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "reader:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:diagnosis:task_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:scope_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:neither": {
+          "cutOff": "0.83",
+          "acting": 7
+        }
+      },
+      "B": {
+        "purpose:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:fail": {
+          "cutOff": "1",
+          "acting": 8
+        },
+        "reader:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "reader:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:diagnosis:task_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "no item is eligible"
+        },
+        "purpose:diagnosis:scope_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "no item is eligible"
+        },
+        "purpose:diagnosis:neither": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        }
+      },
+      "C": {
+        "purpose:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:fail": {
+          "cutOff": "0.97",
+          "acting": 18
+        },
+        "reader:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "reader:fail": {
+          "cutOff": "0.95",
+          "acting": 14
+        },
+        "purpose:diagnosis:task_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "no item is eligible"
+        },
+        "purpose:diagnosis:scope_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:neither": {
+          "cutOff": "0.64",
+          "acting": 11
+        }
+      },
+      "D": {
+        "purpose:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:fail": {
+          "cutOff": "0.67",
+          "acting": 22
+        },
+        "reader:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "reader:fail": {
+          "cutOff": "0.85",
+          "acting": 34
+        },
+        "purpose:diagnosis:task_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:scope_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:neither": {
+          "cutOff": "0.61",
+          "acting": 9
+        }
+      },
+      "E": {
+        "purpose:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:fail": {
+          "cutOff": "0.94",
+          "acting": 16
+        },
+        "reader:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "reader:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:diagnosis:task_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "no item is eligible"
+        },
+        "purpose:diagnosis:scope_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:neither": {
+          "cutOff": "0.65",
+          "acting": 8
+        }
+      },
+      "S": {
+        "purpose:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:fail": {
+          "cutOff": "0.81",
+          "acting": 29
+        },
+        "reader:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "reader:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "purpose:diagnosis:task_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "no item is eligible"
+        },
+        "purpose:diagnosis:scope_only": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "purpose:diagnosis:neither": {
+          "cutOff": "0.74",
+          "acting": 11
+        }
+      }
+    },
+    "heading_message": {
+      "A": {
+        "message:pass": {
+          "cutOff": "0.84",
+          "acting": 8
+        },
+        "message:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "message:exemption": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the message fail gate is disabled"
+        }
+      },
+      "B": {
+        "message:pass": {
+          "cutOff": "0.85",
+          "acting": 8
+        },
+        "message:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "message:exemption": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the message fail gate is disabled"
+        }
+      },
+      "E": {
+        "message:pass": {
+          "cutOff": "0.87",
+          "acting": 6
+        },
+        "message:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "message:exemption": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the message fail gate is disabled"
+        }
+      },
+      "S": {
+        "message:pass": {
+          "cutOff": "0.84",
+          "acting": 8
+        },
+        "message:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "message:exemption": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the message fail gate is disabled"
+        }
+      }
+    },
+    "one_idea": {
+      "A": {
+        "one_idea:pass": {
+          "cutOff": null,
+          "acting": 1,
+          "disabled": "acts on 1 development items, fewer than 5"
+        },
+        "one_idea:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        }
+      },
+      "B": {
+        "one_idea:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "one_idea:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        }
+      },
+      "E": {
+        "one_idea:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "one_idea:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        }
+      },
+      "S": {
+        "one_idea:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "one_idea:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        }
+      }
+    },
+    "block": {
+      "A": {
+        "colour_only:pass": {
+          "cutOff": "0.83",
+          "acting": 256
+        },
+        "colour_only:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        },
+        "position_only:pass": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "acts on 0 development items, fewer than 5"
+        },
+        "position_only:fail": {
+          "cutOff": null,
+          "acting": 0,
+          "disabled": "the top item lacks the passing label"
+        }
+      }
+    }
+  }
+}
