@@ -302,6 +302,8 @@ Two tools in the gate enforce the guide. The TypeScript compiler checks every fi
 
 ESLint also refuses a cast on a read by index, because the cast would undo `noUncheckedIndexedAccess`.
 
+Eight of these ESLint rules are deprecated, and ESLint 11.0.0 removes them: `eol-last`, `no-trailing-spaces`, `no-tabs`, `new-parens`, `no-extra-semi`, `brace-style`, `semi` and `multiline-comment-style`. No installed package replaces them, so they stay until that upgrade.
+
 A lint that finds nothing proves little when a rule is switched off or weakened by mistake. So `eslint.config.mjs` states the enforced rules once, and a test reads that list.
 
 The test asks ESLint which configuration applies to each TypeScript file. Every enforced rule must be set there as that list states it: an error, with the same options. It also gives the linter one deliberate breach of each rule, and requires an error for each.

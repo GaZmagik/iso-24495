@@ -155,9 +155,16 @@ const GUIDE_NAMES = [
  * the test reads the same value, so the two cannot part.
  */
 export const ENFORCED_RULES = {
+  // Eight rules here are deprecated in ESLint itself, and ESLint 11.0.0
+  // removes them: "eol-last", "no-trailing-spaces", "no-tabs", "new-parens",
+  // "no-extra-semi", "brace-style", "semi" and "multiline-comment-style". No
+  // installed package replaces them: typescript-eslint 8 dropped its own
+  // formatting rules, and the package that took them is not a dependency.
+  // They stay until that upgrade, and the README records the gap.
+
   // Group 1: what gts 7.0.0 switches on, less "prettier/prettier", "quotes"
-  // and "no-control-regex". The two whitespace rules are deprecated in ESLint
-  // itself.
+  // and "no-control-regex". Its two whitespace rules are among the eight
+  // deprecated rules above.
   "block-scoped-var": "error",
   "eqeqeq": ["error", "always", { null: "ignore" }],
   "no-var": "error",
