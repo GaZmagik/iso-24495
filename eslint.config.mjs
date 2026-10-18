@@ -218,8 +218,12 @@ export const ENFORCED_RULES = {
   "prefer-rest-params": "error",
   "prefer-spread": "error",
   "@typescript-eslint/no-invalid-this": "error",
-  // Variables must not be used before their declaration. A function may call
-  // one declared lower in the file, as the front-loaded entry points do.
+  // A variable or class is reported where it is used before its declaration
+  // in the same scope, which is where the use fails as the code runs. A use
+  // from inside a function body or a class member is not reported, so a
+  // function may still read a constant declared lower in the file. A
+  // function declaration is never reported, so the front-loaded entry points
+  // stay legal.
   "@typescript-eslint/no-use-before-define": [
     "error",
     { functions: false, classes: false, variables: false, enums: false, typedefs: false, ignoreTypeReferences: true },
