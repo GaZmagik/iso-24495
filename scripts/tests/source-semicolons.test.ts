@@ -61,6 +61,20 @@ describe("every statement that only TypeScript has ends with a semicolon", () =>
     expect(unendedStatements("probe.ts", ended)).toEqual({ checked: 1, missing: [] });
   });
 
+  test.each([
+    ["a global export of a module", "export as namespace Library"],
+    ["a module with no body", "declare module \"example\""],
+  ])("%s, in %p, is reported with no semicolon, and not with one", (kind, unended) => {
+    const ended = `${unended};`;
+    expect(unendedStatements("probe.ts", unended)).toEqual({ checked: 1, missing: [`probe.ts:1: ${kind} has no semicolon`] });
+    expect(unendedStatements("probe.ts", ended)).toEqual({ checked: 1, missing: [] });
+  });
+
+  test("a module with a body needs no semicolon, and is not counted", () => {
+    expect(unendedStatements("probe.ts", "declare module \"example\" {\n  export const value: number;\n}")).toEqual({ checked: 0, missing: [] });
+    expect(unendedStatements("probe.ts", "declare namespace Space {\n  const value: number;\n}")).toEqual({ checked: 0, missing: [] });
+  });
+
   test("a constructor, getter or setter with a body needs none, and is not counted", () => {
     const withBodies = "export class A {\n  constructor() {\n    this.size = 1;\n  }\n\n  size: number;\n\n  get value(): number {\n    return this.size;\n  }\n\n  set value(size: number) {\n    this.size = size;\n  }\n}";
     // Only the property counts: it is the one member here that needs a semicolon.
@@ -94,6 +108,9 @@ function kindOf(node: ts.Node): string | null {
   if (ts.isFunctionDeclaration(node) && node.body === undefined) return "a function with no body";
   if (ts.isIndexSignatureDeclaration(node) && ts.isClassLike(node.parent)) return "a class index signature";
   if (ts.isExportAssignment(node)) return "an export assignment";
+  if (ts.isNamespaceExportDeclaration(node)) return "a global export of a module";
+  // The short form of an ambient module, declare module "name", has no body.
+  if (ts.isModuleDeclaration(node) && node.body === undefined) return "a module with no body";
   if (ts.isImportEqualsDeclaration(node)) return "an import alias";
   return null;
 }
