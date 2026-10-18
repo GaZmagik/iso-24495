@@ -127,6 +127,12 @@ export const GUIDE_SYNTAX = [
   },
 ];
 
+/** A node that states a type and changes nothing that runs. */
+const TYPE_WRAPPER = ":matches(TSSatisfiesExpression, TSAsExpression, TSNonNullExpression)";
+
+/** A node whose value is a function. */
+const FUNCTION_VALUE = ":matches(ArrowFunctionExpression, FunctionExpression)";
+
 /**
  * The rules of this plugin's own code skill, `iso-24495-code`, that a syntax
  * selector can state. Each works as the entries above do, and the lint test
@@ -139,10 +145,15 @@ export const CODE_SKILL_SYNTAX = [
     // its container first. A class member is allowed, as the skill allows it.
     // An object method or accessor inside a function is a named helper too.
     // A property whose value is an arrow is not: it is a value handed on,
-    // most often a stand-in for a dependency.
+    // most often a stand-in for a dependency. A type wrapper changes nothing
+    // that runs, so a helper under up to three of them is read as a helper.
+    // The parser keeps no node for parentheses, so they need no selector.
     selector: [
       ":function FunctionDeclaration",
       ":function VariableDeclarator > :matches(ArrowFunctionExpression, FunctionExpression).init",
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FUNCTION_VALUE}.expression`,
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
       ":function Property:matches([method=true], [kind='get'], [kind='set'])",
     ].join(", "),
     message: "code skill: a named helper is declared at the top level, not inside a function",
