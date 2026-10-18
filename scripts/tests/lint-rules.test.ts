@@ -190,6 +190,7 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "    return inner();"],
   [[], "  }"],
   [[], "}"],
+  [["brace-style", "@typescript-eslint/only-throw-error"], "export function parsedThrow(): never { throw JSON.parse(\"1\"); }"],
 
   // Classes.
   [["brace-style", "@typescript-eslint/explicit-member-accessibility"], "export class Shown { public size = 1; }"],

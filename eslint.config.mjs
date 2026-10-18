@@ -276,7 +276,10 @@ export const ENFORCED_RULES = {
   "@typescript-eslint/prefer-for-of": "error",
   // Exceptions.
   "no-empty": "error",
-  "@typescript-eslint/only-throw-error": "error",
+  // A value typed any is no more an Error than a string is: the type check
+  // has given up on it. A value typed unknown may still be thrown, so that a
+  // test can stand in for code outside this project, which may throw anything.
+  "@typescript-eslint/only-throw-error": ["error", { allowThrowingAny: false }],
   "@typescript-eslint/prefer-promise-reject-errors": "error",
   // Disallowed features.
   "semi": ["error", "always"],
