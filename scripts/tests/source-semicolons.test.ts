@@ -70,6 +70,41 @@ describe("every statement that only TypeScript has ends with a semicolon", () =>
     expect(unendedStatements("probe.ts", ended)).toEqual({ checked: 1, missing: [] });
   });
 
+  // A type alias here ends in its own semicolon, so it is counted and passes.
+  test.each([
+    ["a method signature", "export interface I {\n  f(): void\n}", 1],
+    ["a method signature", "export type T = {\n  f(): void\n};", 2],
+    ["a method signature", "export declare interface I {\n  f(): void\n}", 1],
+    ["a call signature", "export interface I {\n  (): void\n}", 1],
+    ["a call signature", "export type T = {\n  (): void\n};", 2],
+    ["a construct signature", "export interface I {\n  new(): object\n}", 1],
+    ["a construct signature", "export type T = {\n  new(): object\n};", 2],
+    ["an index signature", "export interface I {\n  [key: string]: number\n}", 1],
+    ["an index signature", "export type T = {\n  [key: string]: number\n};", 2],
+    ["an index signature", "export declare interface I {\n  [key: string]: number\n}", 1],
+  ])("%s, in %p, is reported with no semicolon, and not with one", (kind, unended, checked) => {
+    const ended = unended.replace("\n}", ";\n}");
+    expect(unendedStatements("probe.ts", unended)).toEqual({ checked, missing: [`probe.ts:2: ${kind} has no semicolon`] });
+    expect(unendedStatements("probe.ts", ended)).toEqual({ checked, missing: [] });
+  });
+
+  test("a mapped type with no semicolon before its closing brace is reported, and with one is not", () => {
+    const unended = "export type T = {\n  [K in \"x\"]: number\n};";
+    expect(unendedStatements("probe.ts", unended)).toEqual({ checked: 2, missing: ["probe.ts:1: a mapped type has no semicolon"] });
+    expect(unendedStatements("probe.ts", unended.replace("number\n", "number;\n"))).toEqual({ checked: 2, missing: [] });
+  });
+
+  test("a member that ends in a comma is reported, as the guide asks for a semicolon", () => {
+    const comma = "export interface I {\n  f(): void,\n  g(): void;\n}";
+    expect(unendedStatements("probe.ts", comma)).toEqual({ checked: 2, missing: ["probe.ts:2: a method signature has no semicolon"] });
+  });
+
+  test("an interface, a type literal or a mapped type ends in a brace, and needs no semicolon itself", () => {
+    expect(unendedStatements("probe.ts", "export interface I {\n  f(): void;\n}")).toEqual({ checked: 1, missing: [] });
+    expect(unendedStatements("probe.ts", "export declare interface I {\n  (): void;\n  new(): object;\n}")).toEqual({ checked: 2, missing: [] });
+    expect(unendedStatements("probe.ts", "export function f(shape: {\n  g(): void;\n}): void {\n  shape.g();\n}")).toEqual({ checked: 1, missing: [] });
+  });
+
   test("a module with a body needs no semicolon, and is not counted", () => {
     expect(unendedStatements("probe.ts", "declare module \"example\" {\n  export const value: number;\n}")).toEqual({ checked: 0, missing: [] });
     expect(unendedStatements("probe.ts", "declare namespace Space {\n  const value: number;\n}")).toEqual({ checked: 0, missing: [] });
@@ -112,7 +147,27 @@ function kindOf(node: ts.Node): string | null {
   // The short form of an ambient module, declare module "name", has no body.
   if (ts.isModuleDeclaration(node) && node.body === undefined) return "a module with no body";
   if (ts.isImportEqualsDeclaration(node)) return "an import alias";
+  // Members of an interface or a type literal. The compiler takes a comma
+  // after one as well as a semicolon, and the guide's rule is a semicolon, so
+  // a member that ends in a comma is reported too.
+  if (ts.isMethodSignature(node)) return "a method signature";
+  if (ts.isCallSignatureDeclaration(node)) return "a call signature";
+  if (ts.isConstructSignatureDeclaration(node)) return "a construct signature";
+  if (ts.isIndexSignatureDeclaration(node)) return "an index signature";
+  // The one member of a mapped type ends before its closing brace.
+  if (ts.isMappedTypeNode(node)) return "a mapped type";
   return null;
+}
+
+/**
+ * Whether a node of a kind the check reads ends in a semicolon. A mapped type
+ * ends in its closing brace, so its semicolon is the one inside the braces.
+ */
+function endsInSemicolon(node: ts.Node, source: ts.SourceFile): boolean {
+  if (ts.isMappedTypeNode(node)) {
+    return node.getChildren(source).some((child) => child.kind === ts.SyntaxKind.SemicolonToken);
+  }
+  return node.getLastToken(source)?.kind === ts.SyntaxKind.SemicolonToken;
 }
 
 /**
@@ -127,7 +182,7 @@ function unendedStatements(file: string, text: string): SemicolonCount {
     const kind = kindOf(node);
     if (kind !== null) {
       checked += 1;
-      if (node.getLastToken(source)?.kind !== ts.SyntaxKind.SemicolonToken) {
+      if (!endsInSemicolon(node, source)) {
         const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
         missing.push(`${file}:${line}: ${kind} has no semicolon`);
       }
