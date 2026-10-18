@@ -1273,6 +1273,8 @@ function sequence(seed: number): () => number {
 /**
  * What a record of tables holds for one table. Every record here names every
  * table, so a missing one is a mistake in the test itself.
+ *
+ * @throws An `Error` when the record does not name the table.
  */
 function forTable<T>(record: Readonly<Record<string, T>>, name: string): T {
   const value = record[name];
