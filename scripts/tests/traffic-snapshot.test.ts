@@ -378,29 +378,40 @@ describe("runCli", () => {
   });
 });
 
-// A list built in code can hold a hole, which no command line does. The hole was
-// read as the data directory, so a hole at the end left the run with none.
+// A list built in code can hold a hole, which no command line does. The command
+// reads a hole as it reads any argument, so it runs as it always has: a hole
+// before the data directory is passed over, and a hole after it leaves the run
+// with no directory, which the first table read refuses. These are the base's
+// results, kept by the owner's ruling.
 describe("an argument list with a hole", () => {
-  test("is a usage error, wherever the hole is, and the network is not asked", async () => {
-    const middle: string[] = ["bun", "cli"];
-    middle.length = 3;
-    middle.push("data");
+  test("runs as it always has, whether the hole is before the directory or after it", async () => {
+    const internal: string[] = ["bun", "cli"];
+    internal.length = 3;
+    internal.push("data");
     const trailing: string[] = ["bun", "cli", "data"];
     trailing.length = 4;
-    for (const argv of [middle, trailing]) {
-      const asked: string[] = [];
-      const { deps, files, stdout, stderr } = harness({
-        fetchSnapshot: async () => {
-          asked.push("the network");
-          return RAW;
-        },
-      });
-      expect(await runCli(argv, (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(2);
-      expect(asked).toEqual([]);
-      expect(stderr).toHaveLength(1);
-      expect(stderr[0]).toStartWith("Usage: bun scripts/traffic-snapshot-cli.ts <data-directory> [--dry-run] [--from-file <path>]");
-      expect([stdout, [...files.keys()]]).toEqual([[], []]);
-    }
+    const asked: string[] = [];
+
+    const before = harness({ fetchSnapshot: async () => {
+      asked.push("the network");
+      return RAW;
+    } });
+    expect(await runCli(internal, (t) => before.stdout.push(t), (t) => before.stderr.push(t), before.deps)).toBe(0);
+    expect(asked).toEqual(["the network"]);
+    expect(before.stdout).toEqual(["2026-08-22: 12 unique cloners and 40 unique visitors across the last 2 days"]);
+    expect(before.stderr).toEqual([]);
+    expect([...before.files.keys()]).toEqual([join("data", "daily.csv"), join("data", "windows.csv"), join("data", "referrers.csv")]);
+
+    asked.length = 0;
+    const after = harness({ fetchSnapshot: async () => {
+      asked.push("the network");
+      return RAW;
+    } });
+    expect(await runCli(trailing, (t) => after.stdout.push(t), (t) => after.stderr.push(t), after.deps)).toBe(1);
+    expect(asked).toEqual(["the network"]);
+    expect(after.stdout).toEqual([]);
+    expect(after.stderr).toEqual(["Could not read daily.csv: stopped by an unexpected TypeError. No table was written, so the history is as it was."]);
+    expect([...after.files.keys()]).toEqual([]);
   });
 });
 

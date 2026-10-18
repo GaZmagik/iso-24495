@@ -66,9 +66,8 @@ const TABLE_HEADERS: ReadonlyArray<[name: string, header: string[]]> = [
  * date or a count that is no whole number is malformed, and a clock that gives
  * no date stops the run. Exit 1 also means a file could not be written. The
  * files are written one after another, so those before it stay written, and
- * the reason names them. Exit 2 means no data directory was given,
- * `--from-file` has no file after it, or the argument list has a hole;
- * nothing is asked of the network then.
+ * the reason names them. Exit 2 means no data directory was given, or
+ * `--from-file` has no file after it; nothing is asked of the network then.
  *
  * @param argv The whole command line, so the arguments start at index 2.
  * @param writeOut Receives the dry-run output and the closing summary line.
@@ -88,12 +87,12 @@ export async function runCli(
   let directory = "";
   let fromFile = "";
   let dryRun = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    // A list built in code can hold a hole, which no command line does.
-    if (arg === undefined) {
-      writeErr(USAGE);
-      return 2;
+  // The value after --from-file is read with it, so its own turn is passed over.
+  let valueRead = false;
+  for (const [index, arg] of args.entries()) {
+    if (valueRead) {
+      valueRead = false;
+      continue;
     }
     if (arg === "--dry-run") {
       dryRun = true;
@@ -108,7 +107,7 @@ export async function runCli(
         return 2;
       }
       fromFile = value;
-      index += 1;
+      valueRead = true;
       continue;
     }
     directory = arg;
