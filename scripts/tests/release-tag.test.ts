@@ -46,32 +46,27 @@ describe("the pushed tag check", () => {
   // and the workflow do, from the root of a checkout.
   test("the shipped commands read the checkout they are run in", () => {
     const scripts = join(import.meta.dir, "..");
-    const run = (cwd: string, ...command: string[]): number | null =>
-      Bun.spawnSync(["bun", ...command], { cwd }).exitCode;
     withCheckout("0.7.0", (root) => {
       expect(run(root, join(scripts, "release-tag-cli.ts"), "v0.7.0")).toBe(0);
       expect(run(root, join(scripts, "release-tag-cli.ts"), "v0.6.2")).toBe(1);
       expect(run(root, join(scripts, "release-tag-cli.ts"))).toBe(2);
 
       // A checkout with no remote cannot read the release history.
-      const git = (...args: string[]): void => {
-        expect(Bun.spawnSync(["git", ...args], { cwd: root }).exitCode, args.join(" ")).toBe(0);
-      };
-      git("init", "--quiet");
+      git(root, "init", "--quiet");
       expect(run(root, join(scripts, "release-preflight-cli.ts"))).toBe(2);
 
       // A bare repository on disk stands in for origin, so this needs no network.
       const remote = `${root}-origin.git`;
       try {
-        git("init", "--quiet", "--bare", remote);
-        git("remote", "add", "origin", remote);
-        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        git(root, "init", "--quiet", "--bare", remote);
+        git(root, "remote", "add", "origin", remote);
+        git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
           "commit", "--quiet", "--allow-empty", "-m", "Start");
-        git("tag", "v0.6.2");
-        git("push", "--quiet", "origin", "--tags");
+        git(root, "tag", "v0.6.2");
+        git(root, "push", "--quiet", "origin", "--tags");
         expect(run(root, join(scripts, "release-preflight-cli.ts"))).toBe(0);
-        git("tag", "v0.7.0");
-        git("push", "--quiet", "origin", "--tags");
+        git(root, "tag", "v0.7.0");
+        git(root, "push", "--quiet", "origin", "--tags");
         expect(run(root, join(scripts, "release-preflight-cli.ts"))).toBe(1);
       } finally {
         rmSync(remote, { recursive: true, force: true });
@@ -84,15 +79,10 @@ describe("the pushed tag check", () => {
   // workflow, so a tag that failed it could still be released.
   test("the release steps wait for the tag workflow before publishing", () => {
     const header = readFileSync(join(import.meta.dir, "..", "release-preflight-cli.ts"), "utf8");
-    const find = (text: string): number => {
-      const at = header.indexOf(text);
-      expect(at, `the header names ${text}`).toBeGreaterThan(-1);
-      return at;
-    };
-    const push = find("git push origin v<version>");
-    const list = find("gh run list --workflow release-tag.yml --commit");
-    const watch = find("gh run watch <run-id> --exit-status");
-    const publish = find("gh release create v<version>");
+    const push = find(header, "git push origin v<version>");
+    const list = find(header, "gh run list --workflow release-tag.yml --commit");
+    const watch = find(header, "gh run watch <run-id> --exit-status");
+    const publish = find(header, "gh release create v<version>");
     expect(push).toBeLessThan(list);
     expect(list).toBeLessThan(watch);
     expect(watch).toBeLessThan(publish);
@@ -104,3 +94,20 @@ describe("the pushed tag check", () => {
     expect(run.err[0]).toStartWith("Usage:");
   });
 });
+
+/** Runs a command with bun in a directory, and gives its exit code. */
+function run(cwd: string, ...command: string[]): number | null {
+  return Bun.spawnSync(["bun", ...command], { cwd }).exitCode;
+}
+
+/** Runs git in a checkout, and fails the test if git fails. */
+function git(root: string, ...args: string[]): void {
+  expect(Bun.spawnSync(["git", ...args], { cwd: root }).exitCode, args.join(" ")).toBe(0);
+}
+
+/** Where a text first appears in the header, which fails the test if it is not there. */
+function find(header: string, text: string): number {
+  const at = header.indexOf(text);
+  expect(at, `the header names ${text}`).toBeGreaterThan(-1);
+  return at;
+}
