@@ -59,10 +59,7 @@ describe("auditTarget", () => {
       symlinkSync(target, join(docs, "dangling"), "junction");
       rmSync(target, { recursive: true, force: true });
 
-      const readText = (path: string): string => {
-        if (path === blocked) throw new Error("file became unreadable");
-        return readFileSync(path, "utf8");
-      };
+      const readText = readerFailingOn(blocked);
       const result = auditTarget(docs, project, readText);
 
       expect(Object.keys(result.files)).toEqual(["docs/clean.md"]);
@@ -446,9 +443,7 @@ describe("options and arguments that are not plain", () => {
     try {
       const file = join(project, "policy.md");
       writeFileSync(file, "");
-      const read = (): string => "---\npolicy: We shall comply.\n---\n";
-      const findings = (reading: object): string[] => Object.values(auditTarget(file, project, read, reading).files)
-        .flatMap((result) => result.violations.map((violation) => `${violation.rule} at line ${violation.line}`)).sort();
+      const findings = findingsWithOptions(file, project);
       const asText = ["heading-style at line 2", "legalese at line 2"];
       expect(findings({ frontMatter: false })).toEqual(asText);
       expect(findings(new ReadingOptions()), "a getter on a class").toEqual(asText);
@@ -483,3 +478,32 @@ describe("options and arguments that are not plain", () => {
     }
   });
 });
+
+/**
+ * A reader of files that fails on one of them, as a file does that becomes
+ * unreadable after the walk has listed it.
+ *
+ * @returns The reader. It throws an `Error` for the blocked path, and gives
+ *     the text of any other.
+ */
+function readerFailingOn(blocked: string): (path: string) => string {
+  return (path: string): string => {
+    if (path === blocked) throw new Error("file became unreadable");
+    return readFileSync(path, "utf8");
+  };
+}
+
+/** The text of a file whose front matter holds a legal sentence. */
+function readLegalFrontMatter(): string {
+  return "---\npolicy: We shall comply.\n---\n";
+}
+
+/**
+ * An audit of one file under the reading options it is given.
+ *
+ * @returns A function that gives each finding as "rule at line n", sorted.
+ */
+function findingsWithOptions(file: string, project: string): (reading: object) => string[] {
+  return (reading: object): string[] => Object.values(auditTarget(file, project, readLegalFrontMatter, reading).files)
+    .flatMap((result) => result.violations.map((violation) => `${violation.rule} at line ${violation.line}`)).sort();
+}
