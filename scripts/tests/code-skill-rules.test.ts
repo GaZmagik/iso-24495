@@ -46,6 +46,21 @@ const APPROVED_UNKNOWN_THROWS = [
   "foreign: unknown = \"ENOENT\" / throw foreign;",
 ];
 
+/**
+ * The rethrows of a caught value typed unknown that this repository holds, by
+ * the owner's ruling, each as "file / function / throw" with the reason it
+ * stays. Each passes on what other code threw, so it cannot know the value is
+ * an Error, and wrapping it would change what its caller receives.
+ */
+const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
+  "scripts/audit-pull-request-text.ts / openUnlessLink / throw error;":
+    "Passes on any failure to open but a refused link, as the open call threw it, which a test holds.",
+  "scripts/traffic-snapshot.ts / textIfPresent / throw error;":
+    "Passes on any read failure but a missing file, as it was thrown; a test throws a string through it and holds it unchanged.",
+  "skills/iso-24495-4/scripts/audit-corpus.ts / walk / throw error;":
+    "Passes on the failure to list the corpus root unchanged, in a calibrated file whose behaviour must not move.",
+};
+
 // This file is the record of the four rules this plugin's own TypeScript is
 // held to, taken from its code skill, `iso-24495-code`, by the owner's
 // ruling. The skill states the first three in words. It states the fourth
@@ -76,7 +91,9 @@ const APPROVED_UNKNOWN_THROWS = [
 //    unknown: scripts/tests/traffic-snapshot.test.ts, whose tests stand in
 //    for code outside this project. Probed in lint-rules.test.ts. A linter
 //    cannot tell two statements of a file apart, so a test here holds that
-//    file to its two approved throws, by their text.
+//    file to its two approved throws, by their text. In the same way, a test
+//    here holds the rethrows of a caught value to the three approved sites,
+//    each with its reason, in APPROVED_RETHROWS.
 //
 // eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
 // removes, beside the rules themselves.
@@ -204,6 +221,34 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(unknownThrows(FOREIGN_THROWS_FILE, text + parsed)).toEqual([...APPROVED_UNKNOWN_THROWS, "(no declaration) / throw JSON.parse(\"1\");"]);
     // A value typed as an Error is not one of them.
     expect(unknownThrows("probe.ts", "export function fail(): never {\n  throw new Error(\"x\");\n}\n")).toEqual([]);
+  });
+
+  test("the only rethrows of a caught value typed unknown are the three approved ones", () => {
+    const found: string[] = [];
+    for (const file of typescriptFiles()) {
+      const text = readFileSync(join(REPOSITORY_ROOT, file), "utf8");
+      if (throwsSomeName(text)) found.push(...rethrows(file, text));
+    }
+    expect(found.sort()).toEqual(Object.keys(APPROVED_RETHROWS).sort());
+    // Each reason is one line.
+    expect(Object.values(APPROVED_RETHROWS).filter((reason) => reason.includes("\n") || reason.trim() === "")).toEqual([]);
+  });
+
+  test("a fourth rethrow of a caught value is found beside the approved one, and a narrowed one is not", () => {
+    const file = "scripts/audit-pull-request-text.ts";
+    const text = readFileSync(join(REPOSITORY_ROOT, file), "utf8");
+    const fourth = "\nexport function fourth(read: () => string): string {\n  try {\n    return read();\n  } catch (failure) {\n"
+      + "    if (failure instanceof RangeError) return \"\";\n    throw failure;\n  }\n}\n";
+    expect(throwsSomeName(text + fourth)).toBe(true);
+    expect(rethrows(file, text + fourth)).toEqual([`${file} / openUnlessLink / throw error;`, `${file} / fourth / throw failure;`]);
+    // A value passed on from a promise's rejection is a rethrow too.
+    const rejected = "export function passOn(read: () => Promise<string>): Promise<string> {\n"
+      + "  return read().catch((failure: unknown) => {\n    throw failure;\n  });\n}\n";
+    expect(rethrows("probe.ts", rejected)).toEqual(["probe.ts / (an unnamed function) / throw failure;"]);
+    // A caught value narrowed to an Error is an Error.
+    const narrowed = "export function narrowed(read: () => string): string {\n  try {\n    return read();\n  } catch (failure) {\n"
+      + "    if (failure instanceof Error) throw failure;\n    return \"\";\n  }\n}\n";
+    expect(rethrows("probe.ts", narrowed)).toEqual([]);
   });
 
   test("a shim's entry point is named as its module exports it, through an import alias", () => {
@@ -448,6 +493,62 @@ function unknownThrows(file: string, text: string): string[] {
     found.push(`${declaration?.getText(source) ?? "(no declaration)"} / ${node.getText(source)}`);
   }
   return found;
+}
+
+/** Whether a file holds a throw of a bare name, the only form a rethrow takes. */
+function throwsSomeName(text: string): boolean {
+  const source = ts.createSourceFile("any-name.ts", text, ts.ScriptTarget.Latest, true);
+  const pending: ts.Node[] = [source];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isThrowStatement(node) && ts.isIdentifier(node.expression)) return true;
+    pending.push(...node.getChildren(source));
+  }
+  return false;
+}
+
+/**
+ * Every throw in a file that passes on a caught value typed unknown or any:
+ * the name a `catch` clause binds, or the parameter of a function handed to a
+ * promise's `catch` or `then`. A value narrowed to an Error is not one.
+ *
+ * @returns One "file / function / throw" entry for each, in the order they
+ *     appear. A throw in an arrow or function expression with no name of its
+ *     own reads "(an unnamed function)".
+ */
+function rethrows(file: string, text: string): string[] {
+  const { source, checker } = typedSource(file, text);
+  const found: string[] = [];
+  const pending: ts.Node[] = [source];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    pending.push(...[...node.getChildren(source)].reverse());
+    if (!ts.isThrowStatement(node) || !ts.isIdentifier(node.expression)) continue;
+    if ((checker.getTypeAtLocation(node.expression).flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) === 0) continue;
+    const declaration = checker.getSymbolAtLocation(node.expression)?.valueDeclaration;
+    if (declaration === undefined || !isCaughtBinding(declaration)) continue;
+    found.push(`${file} / ${enclosingFunctionName(node, source)} / ${node.getText(source)}`);
+  }
+  return found;
+}
+
+/** Whether a declaration binds a caught value: a `catch` clause's name, or a rejection handler's parameter. */
+function isCaughtBinding(declaration: ts.Declaration): boolean {
+  if (ts.isVariableDeclaration(declaration)) return ts.isCatchClause(declaration.parent);
+  if (!ts.isParameter(declaration)) return false;
+  const handler = declaration.parent;
+  const call = handler.parent;
+  return (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) && ts.isCallExpression(call)
+    && ts.isPropertyAccessExpression(call.expression) && ["catch", "then"].includes(call.expression.name.text);
+}
+
+/** The name of the function a node sits in, as a reader would look it up. */
+function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
+  for (let parent = node.parent; !ts.isSourceFile(parent); parent = parent.parent) {
+    if (!ts.isFunctionLike(parent)) continue;
+    if ((ts.isFunctionDeclaration(parent) || ts.isMethodDeclaration(parent)) && parent.name !== undefined) return parent.name.getText(source);
+    if (ts.isVariableDeclaration(parent.parent)) return parent.parent.name.getText(source);
+    return "(an unnamed function)";
+  }
+  return "(the module itself)";
 }
 
 /** What the throws check found in one file. */

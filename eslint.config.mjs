@@ -297,8 +297,10 @@ export const ENFORCED_RULES = {
   "no-empty": "error",
   // A value typed any or unknown is no more an Error than a string is: the
   // type check has given up on it, or never knew. A caught value may still be
-  // thrown on unchanged. RULE_EXCEPTIONS below names the one test file that
-  // may throw a value typed unknown.
+  // thrown on unchanged, as the rule allows by default, but only at the three
+  // sites that scripts/tests/code-skill-rules.test.ts names with their
+  // reasons, by the owner's ruling. RULE_EXCEPTIONS below names the one test
+  // file that may throw a value typed unknown.
   "@typescript-eslint/only-throw-error": ["error", { allowThrowingAny: false, allowThrowingUnknown: false }],
   "@typescript-eslint/prefer-promise-reject-errors": "error",
   // Disallowed features.
