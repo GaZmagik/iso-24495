@@ -405,6 +405,14 @@ describe("the code skill's rules for this repository's own code", () => {
       .toBe("probe-cli.ts runs auditText, but probe.ts leads with runCli");
   });
 
+  test("a shim's entry point is read through parentheses around the namespace", () => {
+    const module = "export function runCli(): number { return 0; }\nexport function auditText(): number { return 1; }\n";
+    expect(shimProblem("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit((cli).runCli());", "probe.ts", module)).toBeNull();
+    expect(shimProblem("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit(((cli)).runCli());", "probe.ts", module)).toBeNull();
+    expect(shimProblem("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit((cli).auditText());", "probe.ts", module))
+      .toBe("probe-cli.ts runs auditText, but probe.ts leads with runCli");
+  });
+
   test("a shim's entry point is named as its module exports it, through an import alias", () => {
     expect(shimEntryPoint("probe-cli.ts", "import { runCli as main } from \"./probe.ts\";\nprocess.exit(main(process.argv));"))
       .toBe("runCli");
@@ -756,7 +764,7 @@ function exportedNames(source: ts.SourceFile, first: FirstFunction): string[] {
  * The function a command shim runs: the one whose result, awaited or not and
  * in parentheses or not, it passes to `process.exit` at the top level. The
  * function is called by its name, or through a namespace import as in
- * `cli.runCli()`, in parentheses or not.
+ * `cli.runCli()`, with the function or the namespace in parentheses or not.
  *
  * @returns The function's name as its module exports it, through any import
  *     alias, or null when no such call is found. A method of anything but a
@@ -778,9 +786,12 @@ function shimEntryPoint(file: string, text: string): string | null {
       callee = callee.expression;
     }
     if (ts.isIdentifier(callee)) return importedNames(source).get(callee.text) ?? callee.text;
-    if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && namespaceImports(source).has(callee.expression.text)) {
-      return callee.name.text;
+    if (!ts.isPropertyAccessExpression(callee)) continue;
+    let namespace: ts.Expression = callee.expression;
+    while (ts.isParenthesizedExpression(namespace)) {
+      namespace = namespace.expression;
     }
+    if (ts.isIdentifier(namespace) && namespaceImports(source).has(namespace.text)) return callee.name.text;
   }
   return null;
 }
