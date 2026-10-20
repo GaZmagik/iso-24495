@@ -471,6 +471,20 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", own)).toEqual({ read: 1, problems: [] });
   });
 
+  test("a constructor declared with overloads is read with the comments of its signatures", () => {
+    const head = "export class Size {\nCOMMENT\n  constructor(size: string);\n  constructor(size: number);\n";
+    const implementation = "  constructor(size: string | number) {\n    throw new RangeError(String(size));\n  }\n}";
+    const said = "  /**\n   * Reads a size.\n   * @throws A `RangeError` always.\n   */";
+    const brief = "  /** Reads either form. */\n";
+    expect(undocumentedThrows("probe.ts", head.replace("COMMENT", said) + brief + implementation)).toEqual({ read: 1, problems: [] });
+    expect(undocumentedThrows("probe.ts", head.replace("COMMENT", said) + implementation)).toEqual({ read: 1, problems: [] });
+    // With no @throws tag anywhere in the group, the report is at the implementation's comment, or else the signature's.
+    expect(undocumentedThrows("probe.ts", head.replace("COMMENT", "  /** Reads a size. */") + brief + implementation))
+      .toEqual({ read: 1, problems: ["probe.ts:6: the comment on constructor does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", head.replace("COMMENT", "  /** Reads a size. */") + implementation))
+      .toEqual({ read: 1, problems: ["probe.ts:3: the comment on constructor does not say what it throws"] });
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -939,15 +953,14 @@ function functionBody(value: ts.Expression | ts.MethodDeclaration | undefined): 
 
 /** The node as a documented function, or null when it is not one. */
 function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedFunction | null {
-  // A function or method is read with the comments of its overload signatures as well as its own.
-  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body !== undefined) {
+  // A function, method or constructor is read with the comments of its overload signatures as well as its own.
+  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)) && node.body !== undefined) {
     const commented = commentRead(node);
     return commented === null ? null : { name: node.name?.getText(source) ?? "constructor", commented, body: node.body };
   }
   if (!hasJsDoc(node)) return null;
-  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)
-    || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined) {
-    return { name: node.name?.getText(source) ?? "constructor", commented: node, body: node.body };
+  if ((ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined) {
+    return { name: node.name.getText(source), commented: node, body: node.body };
   }
   if (ts.isVariableStatement(node)) {
     const declaration = node.declarationList.declarations[0];
@@ -975,15 +988,15 @@ function hasJsDoc(node: ts.Node): boolean {
 }
 
 /**
- * The comment the throws check reads for a function or method with a body.
- * A function declared with overloads has a comment on each signature directly
- * above it that has one, and on itself if it has one. Of those, the first
- * that says what the function throws is read; or else its own; or else the
- * first signature's.
+ * The comment the throws check reads for a function, method or constructor
+ * with a body. One declared with overloads has a comment on each signature
+ * directly above it that has one, and on itself if it has one. Of those, the
+ * first that says what it throws is read; or else its own; or else the first
+ * signature's.
  *
  * @returns The node carrying the comment, or null when none of them has one.
  */
-function commentRead(implementation: ts.FunctionDeclaration | ts.MethodDeclaration): ts.Node | null {
+function commentRead(implementation: ts.FunctionDeclaration | ts.MethodDeclaration | ts.ConstructorDeclaration): ts.Node | null {
   const parent = implementation.parent;
   let siblings: readonly ts.Node[] = [];
   if (ts.isClassLike(parent)) siblings = parent.members;
@@ -993,7 +1006,7 @@ function commentRead(implementation: ts.FunctionDeclaration | ts.MethodDeclarati
   for (let at = siblings.indexOf(implementation) - 1; at >= 0; at -= 1) {
     const signature = siblings[at];
     if (signature === undefined || signature.kind !== implementation.kind) break;
-    if (!ts.isFunctionDeclaration(signature) && !ts.isMethodDeclaration(signature)) break;
+    if (!ts.isFunctionDeclaration(signature) && !ts.isMethodDeclaration(signature) && !ts.isConstructorDeclaration(signature)) break;
     if (signature.body !== undefined || signature.name?.getText() !== name) break;
     if (hasJsDoc(signature)) documented.unshift(signature);
   }
