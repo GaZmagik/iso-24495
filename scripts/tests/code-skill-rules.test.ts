@@ -587,8 +587,8 @@ describe("the code skill's rules for this repository's own code", () => {
       ["[, , helper]", "[...[1, 2] as const, (n: number): number => n + 3] as const", ["probe.ts / main / helper"]],
       ["[, , helper]", "[...[...[1] as const, 2] as const, (n: number): number => n + 3] as const", ["probe.ts / main / helper"]],
       ["[, helper]", "[...Object.freeze([1] as const), (n: number): number => n + 3] as const", ["probe.ts / main / helper"]],
-      // After a spread whose length is not written there, a position is not known, so it is not read.
-      ["[, helper]", "[...made(), (n: number): number => n + 3]", []],
+      // After a spread whose length is not written there, a position is not known, so it is reported as one that cannot be read.
+      ["[, helper]", "[...made(), (n: number): number => n + 3]", [positionNotKnown("helper", "...made()")]],
       ["[helper]", "[(n: number): number => n + 3, ...made()]", ["probe.ts / main / helper"]],
     ];
     for (const [pattern, literal, found] of bound) {
@@ -775,7 +775,38 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
     expect(undocumentedThrows("probe.ts", `/** The size. */\nexport const [, size] = [..."${text}", ${thrower}] as const;`)).toEqual({ read: 0, problems: [] });
   });
+
+  test("a name whose position follows a spread of unknown length is reported, naming the name and the spread", () => {
+    const helper = "(n: number): number => n + 1";
+    const bound: Array<[pattern: string, literal: string, found: string[]]> = [
+      ["[, helper]", `[...made(), ${helper}]`, [positionNotKnown("helper", "...made()")]],
+      ["[first, , third]", "[1, ...made()]", [positionNotKnown("third", "...made()")]],
+      ["[, , helper]", `[...[1, ...made()], ${helper}]`, [positionNotKnown("helper", "...made()")]],
+      ["[, [inner]]", "[...made(), [1]]", [positionNotKnown("inner", "...made()")]],
+      ["[, , helper]", `[...\`a\${other}\`, ${helper}]`, [positionNotKnown("helper", "...`a${other}`")]],
+      ["[, helper]", `flag ? [1, ${helper}] : [...made(), 1]`, ["probe.ts / main / helper", positionNotKnown("helper", "...made()")]],
+      ["{ inner: [, helper] }", `{ inner: [...made(), ${helper}] }`, [positionNotKnown("helper", "...made()")]],
+      ["[, helper = 2]", `[...made(), ${helper}]`, [positionNotKnown("helper", "...made()")]],
+      // A position before the spread is known, and a rest element binds an array, not an item.
+      ["[helper, ...rest]", `[${helper}, ...made()]`, ["probe.ts / main / helper"]],
+    ];
+    for (const [pattern, literal, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(flag: boolean, other: string): number {\n  const ${pattern} = ${literal};\n  return 0;\n}\n`), `${pattern} = ${literal}`).toEqual(found);
+    }
+    expect(boundHelpers("probe.ts", `export function main([, helper] = [...made(), ${helper}]): number {\n  return 0;\n}\n`))
+      .toEqual([positionNotKnown("helper", "...made()")]);
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const [, read] = [...made(), ${thrower}];`))
+      .toEqual({ read: 0, problems: ["probe.ts:2: what read binds cannot be read, as its position follows ...made(), whose length is not known"] });
+    expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\nexport const [, read] = [...made(), ${thrower}];`).problems)
+      .toEqual(["probe.ts:5: what read binds cannot be read, as its position follows ...made(), whose length is not known"]);
+  });
 });
+
+/** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
+function positionNotKnown(name: string, spread: string): string {
+  return `probe.ts / main / ${name}: its position follows ${spread}, whose length is not known, so what it holds cannot be read`;
+}
 
 /** What the entry-point check found in one module. */
 interface EntryPoint {
@@ -1153,10 +1184,12 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
  * helper. A parameter that an `@param` tag of its function's comment, or of
  * one of its overload signatures, names is part of the interface, so its own
  * default is not read; a default inside a destructured parameter is still
- * read.
+ * read. A name whose position follows a spread of unknown length cannot be
+ * read, so it is reported as such, naming the spread.
  *
  * @returns One "file / function / name" entry for each, in the order they
- *     appear.
+ *     appear, then, for each declaration, one entry for each name it
+ *     cannot read, which says why.
  */
 function boundHelpers(file: string, text: string): string[] {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -1164,14 +1197,27 @@ function boundHelpers(file: string, text: string): string[] {
   const pending: ts.Node[] = [source];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     pending.push(...[...node.getChildren(source)].reverse());
-    let names: ts.Identifier[] = [];
-    if (ts.isParameter(node)) names = isDocumentedParameter(node) ? [] : helperNames(node.name, node.initializer);
-    else if (ts.isVariableDeclaration(node) && ts.findAncestor(node, ts.isFunctionLike) !== undefined) names = helperNames(node.name, node.initializer);
-    for (const name of new Set(names)) {
+    const declaration = helperDeclaration(node);
+    if (declaration === null) continue;
+    for (const name of new Set(helperNames(declaration.name, declaration.initializer))) {
       found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}`);
+    }
+    for (const { name, spread } of unknownPositions(declaration.name, declaration.initializer)) {
+      found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}: its position follows ${spread.getText(source)}, whose length is not known, so what it holds cannot be read`);
     }
   }
   return found;
+}
+
+/**
+ * The node as a declaration the nested-helper check reads: a parameter that
+ * no `@param` tag documents, or a variable declared inside a function.
+ *
+ * @returns The declaration, or null when the node is neither.
+ */
+function helperDeclaration(node: ts.Node): ts.ParameterDeclaration | ts.VariableDeclaration | null {
+  if (ts.isParameter(node)) return isDocumentedParameter(node) ? null : node;
+  return ts.isVariableDeclaration(node) && ts.findAncestor(node, ts.isFunctionLike) !== undefined ? node : null;
 }
 
 /**
@@ -1213,16 +1259,64 @@ function helperNames(binding: ts.BindingName, value: ts.Expression | undefined):
   return names;
 }
 
+/** A name whose position in an array literal follows a spread of unknown length, with that spread. */
+interface UnknownPosition {
+  name: ts.Identifier;
+  spread: ts.SpreadElement;
+}
+
+/**
+ * Each name a binding takes from a position of an array literal that
+ * follows a spread of anything but an array or string literal, at any depth,
+ * reading each literal the value may be, as `possibleValues` reads it, and
+ * each default. What such a name holds cannot be known without running the
+ * code, so no rule can read it, and it is reported instead. A rest element
+ * binds an array, not an item, so it is not one.
+ */
+function unknownPositions(binding: ts.BindingName, value: ts.Expression | undefined): UnknownPosition[] {
+  if (ts.isIdentifier(binding)) return [];
+  const literals = possibleValues(value);
+  const found: UnknownPosition[] = [];
+  for (const [at, element] of binding.elements.entries()) {
+    if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
+    for (const literal of literals) {
+      const spread = ts.isArrayBindingPattern(binding) ? unknownSpread(literal, at) : null;
+      if (spread !== null) {
+        found.push(...boundNames(element.name).map((name) => ({ name, spread })));
+        continue;
+      }
+      const held = ts.isObjectBindingPattern(binding) ? keyedProperty(literal, boundKey(element)) : literalItem(literal, at);
+      if (held !== undefined && !ts.isMethodDeclaration(held)) found.push(...unknownPositions(element.name, ts.isPropertyAssignment(held) ? held.initializer : held));
+    }
+    found.push(...unknownPositions(element.name, element.initializer));
+  }
+  return found;
+}
+
 /**
  * The item an array literal holds at one position, counting each item a
  * spread of another array literal, or of a string literal, gives it.
  *
  * @returns The item, or undefined when the literal is not an array literal,
  *     holds a hole or nothing there, or when the position falls after a
- *     spread of anything else, whose length is not written there.
+ *     spread of anything else, whose length is not written there. Such a
+ *     position is not known, and `unknownSpread` names the spread.
  */
 function literalItem(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
   return literal !== undefined && ts.isArrayLiteralExpression(literal) ? spreadItems(literal).items[at] : undefined;
+}
+
+/**
+ * The spread a position of an array literal follows when that spread ends
+ * the positions known, so the item there cannot be read.
+ *
+ * @returns The spread, or null when the position is known or the literal is
+ *     not an array literal.
+ */
+function unknownSpread(literal: ts.Expression, at: number): ts.SpreadElement | null {
+  if (!ts.isArrayLiteralExpression(literal)) return null;
+  const { items, unknownAfter } = spreadItems(literal);
+  return at < items.length ? null : unknownAfter;
 }
 
 /** The items of an array literal, position by position, as far as they are known. */
@@ -1232,8 +1326,8 @@ interface SpreadItems {
    * in place, and each character of a spread string literal held as that literal.
    */
   items: Array<ts.Expression | undefined>;
-  /** False when a spread of anything but an array or string literal ends the list, so no later position is known. */
-  complete: boolean;
+  /** The spread of anything but an array or string literal that ends the list, so no later position is known, or null. */
+  unknownAfter: ts.SpreadElement | null;
 }
 
 /** The items an array literal holds, as far as its spreads let them be known. */
@@ -1254,12 +1348,12 @@ function spreadItems(literal: ts.ArrayLiteralExpression): SpreadItems {
       items.push(...Array.from(spread.text, () => spread));
       continue;
     }
-    if (spread === undefined || !ts.isArrayLiteralExpression(spread)) return { items, complete: false };
+    if (spread === undefined || !ts.isArrayLiteralExpression(spread)) return { items, unknownAfter: element };
     const inner = spreadItems(spread);
     items.push(...inner.items);
-    if (!inner.complete) return { items, complete: false };
+    if (inner.unknownAfter !== null) return { items, unknownAfter: inner.unknownAfter };
   }
-  return { items, complete: true };
+  return { items, unknownAfter: null };
 }
 
 /** What the throws check found in one file. */
@@ -1282,7 +1376,9 @@ interface ThrowsCount {
  * overloads is read with the comments of its signatures as well as its own,
  * so a `@throws` tag on any of them counts. A throw counts when it can leave
  * the function: not inside a nested function, and not inside a `try` block
- * whose `catch` takes it.
+ * whose `catch` takes it. A name a documented statement binds from a
+ * position that follows a spread of unknown length cannot be read, so it is
+ * reported as such, after the others.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -1295,7 +1391,35 @@ function undocumentedThrows(file: string, text: string): ThrowsCount {
     const line = source.getLineAndCharacterOfPosition(unit.commented.getStart(source)).line + 1;
     problems.push(`${file}:${line}: the comment on ${unit.name} does not say what it throws`);
   }
+  for (const { name, spread, commented } of documentedUnknownPositions(source)) {
+    const line = source.getLineAndCharacterOfPosition(commented.getStart(source)).line + 1;
+    problems.push(`${file}:${line}: what ${name.text} binds cannot be read, as its position follows ${spread.getText(source)}, whose length is not known`);
+  }
   return { read, problems };
+}
+
+/** A name a documented statement binds whose position follows a spread of unknown length. */
+interface DocumentedUnknownPosition extends UnknownPosition {
+  /** The statement that carries the comment. */
+  commented: ts.VariableStatement;
+}
+
+/**
+ * Each name a documented variable statement binds whose position follows a
+ * spread of unknown length, so that the throws check cannot read what it
+ * binds.
+ */
+function documentedUnknownPositions(source: ts.SourceFile): DocumentedUnknownPosition[] {
+  const found: DocumentedUnknownPosition[] = [];
+  const pending: ts.Node[] = [source];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    pending.push(...[...node.getChildren(source)].reverse());
+    if (!ts.isVariableStatement(node) || !hasJsDoc(node)) continue;
+    for (const declaration of node.declarationList.declarations) {
+      found.push(...unknownPositions(declaration.name, declaration.initializer).map((position) => ({ ...position, commented: node })));
+    }
+  }
+  return found;
 }
 
 /** A function with a JSDoc comment, as the throws check reads it. */
