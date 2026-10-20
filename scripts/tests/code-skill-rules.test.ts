@@ -145,11 +145,13 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    branch of a conditional, either side of ?? and ||, the right of &&, and
 //    each argument a call may give back by its declared types, as
 //    Object.freeze, Object.assign and an identity function do, or by a body
-//    declared here that returns it. A key is read whatever its spelling:
-//    against an array literal, an index key reads the item there. A name a
-//    spread of unknown extent, or a key not known, may give its value cannot
-//    be read, so it fails the test, naming the name and why; the same holds
-//    for the other two tests. A parameter its function's @param tag
+//    declared here that returns it. A function declared with overloads is
+//    read through its implementation's body. A key is read whatever its
+//    spelling: against an array literal, an index key reads the item there.
+//    A name a spread of unknown extent, or a key not known, may give its
+//    value cannot be read, so it fails the test, naming the name and why;
+//    the same holds for the other two tests. A parameter its function's
+//    @param tag
 //    documents is part of the interface, not a helper, by the owner's ruling
 //    of 2026-10-20, so its default is not reported. Otherwise a property
 //    holding an arrow is left alone: it is a value handed on, most often a
@@ -1206,6 +1208,28 @@ describe("the code skill's rules for this repository's own code", () => {
     // A function stored on a property is handed on.
     expect(boundHelpers("probe.ts", "export function main(reader: { read: () => number }): void {\n  reader.read = (): number => 2;\n}\n")).toEqual([]);
   });
+
+  test("a call of an overloaded function gives back what its implementation returns, and its signatures carry the comment", () => {
+    const keep = "\nfunction keep(reader: (n: number) => number): (n: number) => number;\nfunction keep(reader: (n: number) => number): (n: number) => number {\n  return reader;\n}\n";
+    const helper = "(n: number): number => n + 1";
+    expect(boundHelpers("probe.ts", `export function main(): number {\n  const helper = keep(${helper});\n  return helper(1);\n}\n${keep}`)).toEqual(["probe.ts / main / helper"]);
+    // The implementation's parameters, not the signature's, say which argument it returns.
+    const renamed = "\nfunction pick(reader: (n: number) => number): (n: number) => number;\nfunction pick(first: ((n: number) => number) | number, ...rest: number[]): ((n: number) => number) | number {\n  return rest.length > 0 ? 0 : first;\n}\n";
+    expect(boundHelpers("probe.ts", `export function main(): number {\n  const helper = pick(${helper});\n  return helper(1);\n}\n${renamed}`)).toEqual(["probe.ts / main / helper"]);
+    // A method declared with overloads reads the same way.
+    const keeper = "\nclass Keeper {\n  keep(reader: (n: number) => number): (n: number) => number;\n  keep(reader: (n: number) => number): (n: number) => number {\n    return reader;\n  }\n}\n";
+    expect(boundHelpers("probe.ts", `export function main(keeper: Keeper): number {\n  const helper = keeper.keep(${helper});\n  return helper(1);\n}\n${keeper}`)).toEqual(["probe.ts / main / helper"]);
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = keep(${thrower});${keep}`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\nexport const read = keep(${thrower});${keep}`))
+      .toEqual({ read: 1, problems: [] });
+    // An exported overloaded function is still read with the comments of its signatures.
+    const documented = "/**\n * Keeps a reader.\n * @throws A `RangeError` when no reader is given.\n */\nexport function keep(reader?: () => number): () => number;\n"
+      + "export function keep(reader?: () => number): () => number {\n  if (reader === undefined) throw new RangeError(\"reader\");\n  return reader;\n}\n";
+    expect(undocumentedThrows("probe.ts", documented)).toEqual({ read: 1, problems: [] });
+    expect(unplacedFunctions("probe.ts", documented).problems).toEqual([]);
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1394,7 +1418,8 @@ function singleValue(expression: ts.Expression, checker: ts.TypeChecker): ts.Exp
  * callback. Every value of an argument is given back when the function
  * called is declared here with a body that returns that parameter, generic
  * or not, and when the function called cannot be found, as for a method of
- * a value typed any, since that may give back anything it is given.
+ * a value typed any, since that may give back anything it is given. A
+ * function declared with overloads is read through its implementation.
  *
  * @returns Each value given back, in the order written.
  */
@@ -1415,14 +1440,22 @@ interface CallValues {
   held: ts.Expression[];
 }
 
-/** The values a call, or `new`, may give back, and those its own value may hold, as `givenBack` and CallValues say. */
+/**
+ * The values a call, or `new`, may give back, and those its own value may
+ * hold, as `givenBack` and CallValues say. A call of a function declared
+ * with overloads runs its implementation, so the implementation's body and
+ * parameters say what it returns, while the signature it resolves to gives
+ * the declared types.
+ */
 function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): CallValues {
   const declaration = calledDeclaration(call, checker);
+  const implementation = declaration === undefined ? undefined : implementationOf(declaration);
   const result = checker.getTypeAtLocation(call);
   const found: CallValues = { given: [], held: [] };
   for (const [at, argument] of (call.arguments ?? []).entries()) {
     const parameter = declaration === undefined ? undefined : parameterOf(declaration, call, at);
-    if (declaration === undefined || (parameter !== undefined && returnsParameter(declaration, parameter, checker, following))) {
+    const run = implementation === undefined ? undefined : parameterOf(implementation, call, at);
+    if (declaration === undefined || (implementation !== undefined && run !== undefined && returnsParameter(implementation, run, checker, following))) {
       found.given.push(...possibleValues(argument, checker, following));
     } else if (parameter !== undefined && sharesTypeParameter(declaration, parameter)) {
       for (const value of possibleValues(argument, checker, following)) {
@@ -1438,6 +1471,29 @@ function calledDeclaration(call: ts.CallExpression | ts.NewExpression, checker: 
   // The type says a signature always has a declaration, but one the checker cannot resolve has none.
   const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = checker.getResolvedSignature(call)?.getDeclaration();
   return declaration === undefined || ts.isJSDocSignature(declaration) ? undefined : declaration;
+}
+
+/**
+ * The declaration whose body runs when a signature is called: the
+ * declaration itself when it has a body, or, for an overload signature, the
+ * implementation that follows its group.
+ *
+ * @returns The declaration with a body, or undefined when none is written,
+ *     as for a declared function or a method of an interface.
+ */
+function implementationOf(declaration: ts.SignatureDeclaration): ts.SignatureDeclaration | undefined {
+  if (bodyOf(declaration) !== undefined) return declaration;
+  if (!ts.isFunctionDeclaration(declaration) && !ts.isMethodDeclaration(declaration) && !ts.isConstructorDeclaration(declaration)) return undefined;
+  const siblings = siblingsOf(declaration);
+  const name = declaration.name?.getText();
+  for (let at = siblings.indexOf(declaration) + 1; at < siblings.length; at += 1) {
+    const next = siblings[at];
+    if (next === undefined || next.kind !== declaration.kind) return undefined;
+    if (!ts.isFunctionDeclaration(next) && !ts.isMethodDeclaration(next) && !ts.isConstructorDeclaration(next)) return undefined;
+    if (next.name?.getText() !== name) return undefined;
+    if (next.body !== undefined) return next;
+  }
+  return undefined;
 }
 
 /**
@@ -1533,9 +1589,7 @@ function returnsParameter(declaration: ts.SignatureDeclaration, parameter: ts.Pa
  * @returns Each expression, none when the declaration has no body.
  */
 function returnedExpressions(declaration: ts.SignatureDeclaration): ts.Expression[] {
-  const body = (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration) || ts.isConstructorDeclaration(declaration)
-    || ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration) || ts.isFunctionExpression(declaration)
-    || ts.isArrowFunction(declaration)) ? declaration.body : undefined;
+  const body = bodyOf(declaration);
   if (body === undefined) return [];
   if (!ts.isBlock(body)) return [body];
   const returned: ts.Expression[] = [];
@@ -1547,6 +1601,13 @@ function returnedExpressions(declaration: ts.SignatureDeclaration): ts.Expressio
     });
   }
   return returned;
+}
+
+/** The body of a declaration that is written with one, or undefined for a signature, a declared function or a type. */
+function bodyOf(declaration: ts.SignatureDeclaration): ts.ConciseBody | undefined {
+  return (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration) || ts.isConstructorDeclaration(declaration)
+    || ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration) || ts.isFunctionExpression(declaration)
+    || ts.isArrowFunction(declaration)) ? declaration.body : undefined;
 }
 
 /** A source file with the type checker of the program that read it. */
@@ -2793,10 +2854,7 @@ type OverloadableFunction = ts.FunctionDeclaration | ts.MethodDeclaration | ts.C
 
 /** The overload signatures of the same name directly above an implementation, in the order they appear. */
 function overloadSignatures(implementation: OverloadableFunction): OverloadableFunction[] {
-  const parent = implementation.parent;
-  let siblings: readonly ts.Node[] = [];
-  if (ts.isClassLike(parent)) siblings = parent.members;
-  else if (ts.isSourceFile(parent) || ts.isBlock(parent) || ts.isModuleBlock(parent)) siblings = parent.statements;
+  const siblings = siblingsOf(implementation);
   const name = implementation.name?.getText();
   const signatures: OverloadableFunction[] = [];
   for (let at = siblings.indexOf(implementation) - 1; at >= 0; at -= 1) {
@@ -2807,6 +2865,13 @@ function overloadSignatures(implementation: OverloadableFunction): OverloadableF
     signatures.unshift(signature);
   }
   return signatures;
+}
+
+/** The members of the class, or the statements of the block or file, that a declaration sits among; none elsewhere. */
+function siblingsOf(declaration: OverloadableFunction): readonly ts.Node[] {
+  const parent = declaration.parent;
+  if (ts.isClassLike(parent)) return parent.members;
+  return ts.isSourceFile(parent) || ts.isBlock(parent) || ts.isModuleBlock(parent) ? parent.statements : [];
 }
 
 /** Whether a throw statement in a body can leave the function that owns the body. */
