@@ -437,6 +437,27 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", `/** The size. */\nexport const { size } = { size: 1, read: ${thrower} };`)).toEqual({ read: 0, problems: [] });
   });
 
+  test("a documented destructured method, quoted key, nested binding or default is read as the function it binds", () => {
+    const body = "{\n  throw new RangeError(\"size\");\n}";
+    for (const statement of [
+      `export const { read } = { read(): never ${body} };`,
+      `export const { read } = { "read": (): never => ${body} };`,
+      `export const { "read": read } = { read: (): never => ${body} };`,
+      `export const { 0: read } = { 0: (): never => ${body} };`,
+      `export const { inner: { read } } = { inner: { read: (): never => ${body} } };`,
+      `export const [[read]] = [[(): never => ${body}]] as const;`,
+      `export const { read = (): never => ${body} } = {};`,
+    ]) {
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+      expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: [] });
+    }
+    // A property with a comment of its own is read with that comment alone.
+    const own = `/** Readers. */\nexport const { read } = {\n  /**\n   * Reads a size.\n   * @throws A \`RangeError\` always.\n   */\n  read: (): never => ${body},\n};`;
+    expect(undocumentedThrows("probe.ts", own)).toEqual({ read: 1, problems: [] });
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -806,42 +827,84 @@ function documentedFunctions(source: ts.SourceFile): DocumentedFunction[] {
     pending.push(...node.getChildren(source));
     const unit = asDocumentedFunction(node, source);
     if (unit !== null) found.push(unit);
-    found.push(...destructuredFunctions(node, source));
+    found.push(...destructuredFunctions(node));
   }
   return found;
 }
 
 /**
  * Each function a documented variable statement binds by destructuring an
- * object or array literal, read with the statement's comment. A name bound
- * to an object's key reads the value of that key; a name bound by position
- * reads the item at that position.
+ * object or array literal, read with the statement's comment.
  */
-function destructuredFunctions(node: ts.Node, source: ts.SourceFile): DocumentedFunction[] {
+function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
   if (!ts.isVariableStatement(node) || !hasJsDoc(node)) return [];
+  return node.declarationList.declarations.flatMap((declaration) => ts.isIdentifier(declaration.name) ? []
+    : boundFunctions(declaration.name, heldValue(declaration.initializer), node));
+}
+
+/**
+ * Each function a binding pattern binds from a literal. A name bound to an
+ * object's key reads that key's value or method, whatever the key's
+ * spelling; a name bound by position reads the item there; a nested pattern
+ * reads the nested literal; and a name the literal gives no function reads
+ * its default. A key written as a computed name other than a string is not
+ * read, nor is a property with a comment of its own, which is read with that
+ * comment.
+ */
+function boundFunctions(pattern: ts.BindingPattern, literal: ts.Expression | undefined, commented: ts.Node): DocumentedFunction[] {
   const found: DocumentedFunction[] = [];
-  for (const declaration of node.declarationList.declarations) {
-    const literal = heldValue(declaration.initializer);
-    const pattern = declaration.name;
-    if (literal === undefined || ts.isIdentifier(pattern)) continue;
-    for (const [at, element] of pattern.elements.entries()) {
-      if (ts.isOmittedExpression(element) || !ts.isIdentifier(element.name)) continue;
-      const value = ts.isObjectBindingPattern(pattern) ? keyValue(literal, (element.propertyName ?? element.name).getText(source))
-        : ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
-      const bound = functionValue(value);
-      if (bound !== null) found.push({ name: element.name.text, commented: node, body: bound.body });
+  for (const [at, element] of pattern.elements.entries()) {
+    if (ts.isOmittedExpression(element)) continue;
+    const value = ts.isObjectBindingPattern(pattern) ? keyValue(literal, boundKey(element)) : itemValue(literal, at);
+    if (!ts.isIdentifier(element.name)) {
+      const nested = value === undefined || ts.isMethodDeclaration(value) ? undefined : value;
+      found.push(...boundFunctions(element.name, heldValue(nested ?? element.initializer), commented));
+      continue;
     }
+    const body = functionBody(value) ?? functionBody(element.initializer);
+    if (body !== null) found.push({ name: element.name.text, commented, body });
   }
   return found;
 }
 
-/** The value an object literal gives one key, or undefined when it is not an object literal or has no such key. */
-function keyValue(literal: ts.Expression, key: string): ts.Expression | undefined {
-  if (!ts.isObjectLiteralExpression(literal)) return undefined;
+/** The key a binding element reads from an object, or undefined when it cannot be known without running the code. */
+function boundKey(element: ts.BindingElement): string | undefined {
+  if (element.propertyName !== undefined) return keyText(element.propertyName);
+  return ts.isIdentifier(element.name) ? element.name.text : undefined;
+}
+
+/** The text of a property's key, or undefined when it is computed from anything but a string or number literal. */
+function keyText(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && (ts.isStringLiteral(name.expression) || ts.isNumericLiteral(name.expression))) return name.expression.text;
+  return undefined;
+}
+
+/**
+ * The value or method an object literal gives one key.
+ *
+ * @returns It, or undefined when the literal is not an object literal, has no
+ *     such key, or documents that property with a comment of its own.
+ */
+function keyValue(literal: ts.Expression | undefined, key: string | undefined): ts.Expression | ts.MethodDeclaration | undefined {
+  if (literal === undefined || key === undefined || !ts.isObjectLiteralExpression(literal)) return undefined;
   for (const property of literal.properties) {
-    if (ts.isPropertyAssignment(property) && property.name.getText() === key) return property.initializer;
+    if ((!ts.isPropertyAssignment(property) && !ts.isMethodDeclaration(property)) || keyText(property.name) !== key) continue;
+    if (hasJsDoc(property)) return undefined;
+    return ts.isPropertyAssignment(property) ? property.initializer : property;
   }
   return undefined;
+}
+
+/** The item an array literal holds at one position, or undefined when it is not an array literal or holds none there. */
+function itemValue(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
+  return literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+}
+
+/** The body of the function a value holds, or of a method, or null when it holds no function. */
+function functionBody(value: ts.Expression | ts.MethodDeclaration | undefined): ts.Node | null {
+  if (value !== undefined && ts.isMethodDeclaration(value)) return value.body ?? null;
+  return functionValue(value)?.body ?? null;
 }
 
 /** The node as a documented function, or null when it is not one. */
