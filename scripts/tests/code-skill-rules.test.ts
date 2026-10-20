@@ -159,8 +159,9 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    why; the same holds for the other two tests. A name whose type cannot
 //    be a function, such as a number, a string, an array, or an object that
 //    asks for a property a function lacks, binds no function, so the
-//    nested-helper and throws tests pass it; the entry-point test still
-//    fails it. A parameter its function's @param tag
+//    nested-helper and throws tests pass it; the entry-point test passes it
+//    when a call gives it, and fails it when a spread or a key not known
+//    does. A parameter its function's @param tag
 //    documents is part of the interface, not a helper, by the owner's ruling
 //    of 2026-10-20, so its default is not reported. Otherwise a property
 //    holding an arrow is left alone: it is a value handed on, most often a
@@ -1323,6 +1324,18 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", "declare const readers: Array<() => number>;\n/** The first reader. */\nexport const [first] = [...readers];\n"))
       .toEqual({ read: 0, problems: ["probe.ts:3: what first binds cannot be read, as its position follows ...readers, whose length is not known"] });
   });
+
+  test("a first function is not found in a name a top-level destructuring takes from a call, unless its type may be a function", () => {
+    const declared = "\nexport function main(): number { return 1; }\ninterface Deps {\n  fetch: () => number;\n}\n"
+      + "function harness(overrides: Partial<Deps> = {}): { deps: Deps; files: Map<string, string> } {\n  return { deps: { fetch: () => 1, ...overrides }, files: new Map() };\n}\n"
+      + "function box(reader: () => number): [unknown] {\n  return [reader];\n}\n";
+    const helper = "(): number => 1";
+    expect(entryPointProblem("probe.ts", `const { deps, files } = harness({ fetch: ${helper} });${declared}`)).toEqual({ checked: true, problem: null });
+    expect(entryPointProblem("probe.ts", `const [first] = box(${helper});${declared}`)).toEqual({
+      checked: true,
+      problem: `probe.ts:1: what first holds cannot be read, as it is read from box(${helper}), a call whose value may hold a function, so the first function cannot be found`,
+    });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1352,8 +1365,10 @@ interface EntryPoint {
  * A value a call builds with a callback is not one. A variable is a function
  * too wherever the nested-helper check would find one, through each value
  * it may be and each default, whatever its type says. A name that a spread
- * of unknown extent may give its value may be one, so the first function
- * cannot be found past it, and that is the problem.
+ * of unknown extent, or a key not known, may give its value may be one,
+ * whatever its type says, so the first function cannot be found past it,
+ * and that is the problem. So may a name a destructuring takes from a call
+ * that may hold a function, unless its type cannot be a function.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
   const { source, checker } = typedSource(file, text);
@@ -1396,6 +1411,9 @@ function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFun
           return { name: name.text, exported, statement, unknownAfter: null };
         }
         const position = reading.unknown.find((found) => found.name === name);
+        // A name taken from a call that holds a function is no function when its type cannot be one.
+        const fromCall = position !== undefined && (ts.isCallExpression(position.cause) || ts.isNewExpression(position.cause));
+        if (fromCall && !mayBeFunction(checker.getTypeAtLocation(name), checker, name)) continue;
         if (position !== undefined) return { name: name.text, exported, statement, unknownAfter: position.cause };
       }
     }
