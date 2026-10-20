@@ -291,6 +291,14 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(rethrows("probe.ts", parenthesised)).toEqual(["probe.ts / passOn / throw failure;"]);
   });
 
+  test("a rethrow from a rejection handler in parentheses is a rethrow", () => {
+    for (const handler of ["((failure: unknown) => {\n    throw failure;\n  })", "(((failure: unknown) => {\n    throw failure;\n  }))"]) {
+      const text = `export function passOn(read: () => Promise<string>): Promise<string> {\n  return read().catch(${handler});\n}\n`;
+      expect(throwsSomeName(text)).toBe(true);
+      expect(rethrows("probe.ts", text), handler).toEqual(["probe.ts / (an unnamed function) / throw failure;"]);
+    }
+  });
+
   test("a shim runs its module's first function when the module exports that function under another name", () => {
     const shim = "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli(process.argv));";
     const aliased = "function entry(args: string[]): number { return args.length; }\nexport { entry as runCli };\n";
@@ -681,12 +689,18 @@ function rethrows(file: string, text: string): string[] {
   return found;
 }
 
-/** Whether a declaration binds a caught value: a `catch` clause's name, or a rejection handler's parameter. */
+/**
+ * Whether a declaration binds a caught value: a `catch` clause's name, or a
+ * rejection handler's parameter, with the handler in parentheses or not.
+ */
 function isCaughtBinding(declaration: ts.Declaration): boolean {
   if (ts.isVariableDeclaration(declaration)) return ts.isCatchClause(declaration.parent);
   if (!ts.isParameter(declaration)) return false;
   const handler = declaration.parent;
-  const call = handler.parent;
+  let call = handler.parent;
+  while (ts.isParenthesizedExpression(call)) {
+    call = call.parent;
+  }
   return (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) && ts.isCallExpression(call)
     && ts.isPropertyAccessExpression(call.expression) && ["catch", "then"].includes(call.expression.name.text);
 }
