@@ -131,7 +131,9 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    nearest comment of its own: on it, on a wrapper around it, or on the
 //    property or array item that holds it; failing that, with the comment on
 //    the class field that holds it, or on the statement that binds it to a
-//    name. A rest element with a name binds an array, not a function.
+//    name. A JSDoc comment written just before an array item is the item's
+//    own, as the scanner finds it, whether or not the compiler attaches it.
+//    A rest element with a name binds an array, not a function.
 // 3. Helpers at top level. A reader cannot reach a closure without reading
 //    its container first. A function declaration, a variable holding a
 //    function, or an object method or accessor inside a function is refused
@@ -1284,6 +1286,22 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(boundHelpers("probe.ts", text), body).toEqual(found);
       expect(unplacedFunctions("probe.ts", text).problems, body).toEqual(problems);
     }
+  });
+
+  test("a JSDoc comment written before an array item that no compiler attaches is the item's own", () => {
+    const thrower = "Object.freeze((): never => {\n    throw new Error(\"bad\");\n  })";
+    expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const readers = [\n  /** Throws. */ ${thrower},\n];`))
+      .toEqual({ read: 1, problems: ["probe.ts:3: the comment on an array item does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `export const readers = [\n  1,\n  /** Throws. */\n  ${thrower},\n];`))
+      .toEqual({ read: 1, problems: ["probe.ts:4: the comment on an array item does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `export const readers = [/** Throws. */ ${thrower}];`))
+      .toEqual({ read: 1, problems: ["probe.ts:1: the comment on an array item does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const readers = [\n  /**\n   * Throws.\n   * @throws An \`Error\` always.\n   */ ${thrower},\n];`))
+      .toEqual({ read: 1, problems: [] });
+    expect(undocumentedThrows("probe.ts", `export const [read] = [\n  /** Throws. */ ${thrower},\n];`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on an array item does not say what it throws"] });
+    // A comment that is not JSDoc documents nothing.
+    expect(undocumentedThrows("probe.ts", `export const readers = [\n  /* Throws. */ ${thrower},\n];`)).toEqual({ read: 0, problems: [] });
   });
 
   test("a name whose type cannot be a function is not a possible helper, wherever its position is unknown", () => {
@@ -2768,9 +2786,34 @@ function valueName(climbed: Climb, source: ts.SourceFile): string {
   return ts.isPropertyDeclaration(climbed.sink) ? climbed.sink.name.getText(source) : "an unnamed function";
 }
 
-/** The JSDoc comments attached to a node itself, not those it would inherit from a statement around it. */
+/**
+ * The JSDoc comments attached to a node itself, not those it would inherit
+ * from a statement around it; for an item of an array literal that has none
+ * attached, the comments `itemComments` finds before it.
+ */
 function ownJsDocs(node: ts.Node): ts.JSDoc[] {
-  return ts.getJSDocCommentsAndTags(node).filter((comment): comment is ts.JSDoc => ts.isJSDoc(comment) && comment.parent === node);
+  const attached = ts.getJSDocCommentsAndTags(node).filter((comment): comment is ts.JSDoc => ts.isJSDoc(comment) && comment.parent === node);
+  return attached.length > 0 || !ts.isArrayLiteralExpression(node.parent) ? attached : itemComments(node);
+}
+
+/**
+ * The JSDoc comments written just before an item of an array literal, which
+ * the compiler attaches to none but a function or parentheses: each comment
+ * in the form of JSDoc, opening with two asterisks, that the scanner reports
+ * after the comma or bracket before the item, on that line or the lines
+ * after it, as the compiler finds the comments of a function.
+ */
+function itemComments(item: ts.Node): ts.JSDoc[] {
+  const text = item.getSourceFile().text;
+  const ranges = [...ts.getTrailingCommentRanges(text, item.pos) ?? [], ...ts.getLeadingCommentRanges(text, item.pos) ?? []];
+  return ranges.filter((range) => text.startsWith("/**", range.pos) && !text.startsWith("/**/", range.pos))
+    .flatMap((range) => parsedComment(text.slice(range.pos, range.end)));
+}
+
+/** A JSDoc comment's text parsed as the compiler parses one on a statement, so that its tags can be read. */
+function parsedComment(comment: string): ts.JSDoc[] {
+  const parsed = ts.createSourceFile("comment.ts", `${comment}\nconst documented = 0;\n`, ts.ScriptTarget.Latest, true);
+  return parsed.statements.flatMap((statement) => ts.getJSDocCommentsAndTags(statement).filter(ts.isJSDoc));
 }
 
 /** Whether a node carries a JSDoc comment of its own. */
