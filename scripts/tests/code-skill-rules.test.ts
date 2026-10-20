@@ -704,6 +704,26 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return 0;\n}\n`), body).toEqual(["probe.ts / main / helper"]);
     }
   });
+
+  test("a function default is read when the value given is a literal that is not a function, at every depth", () => {
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    const forms: Array<[pattern: string, literal: string]> = [
+      ["{ NAME = DEFAULT }", "{ NAME: 1 }"],
+      ["[NAME = DEFAULT]", "[1] as const"],
+      ["{ inner: { NAME = DEFAULT } }", "{ inner: { NAME: 1 } }"],
+      ["{ a: { b: { NAME = DEFAULT } } }", "{ a: { b: { NAME: 1 } } }"],
+      ["[[[NAME = DEFAULT]]]", "[[[1]]] as const"],
+    ];
+    for (const [pattern, literal] of forms) {
+      const helper = `const ${pattern.replace("NAME", "helper").replace("DEFAULT", "(n: number): number => n + 1")} = ${literal.replace("NAME", "helper")};`;
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${helper}\n  return 0;\n}\n`), helper).toEqual(["probe.ts / main / helper"]);
+      const read = `export const ${pattern.replace("NAME", "read").replace("DEFAULT", thrower)} = ${literal.replace("NAME", "read")};`;
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${read}`), read)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    }
+    expect(boundHelpers("probe.ts", "export function main({ helper = (n: number): number => n + 1 }: { helper: number | ((n: number) => number) } = { helper: 1 }): number {\n  return 0;\n}\n"))
+      .toEqual(["probe.ts / main / helper"]);
+  });
 });
 
 /** What the entry-point check found in one module. */
