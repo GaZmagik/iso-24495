@@ -724,6 +724,36 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(boundHelpers("probe.ts", "export function main({ helper = (n: number): number => n + 1 }: { helper: number | ((n: number) => number) } = { helper: 1 }): number {\n  return 0;\n}\n"))
       .toEqual(["probe.ts / main / helper"]);
   });
+
+  test("a destructuring reads each literal a conditional or a ?? or || may give it", () => {
+    for (const body of [
+      "const { helper } = flag ? { helper: (n: number): number => n + 1 } : { helper: 1 };",
+      "const { helper } = flag ? { helper: 1 } : { helper: (n: number): number => n + 1 };",
+      "const [helper] = flag ? [1] : [(n: number): number => n + 1];",
+      "const { inner: { helper } } = { inner: flag ? { helper: 1 } : { helper: (n: number): number => n + 1 } };",
+      "const { helper } = other ?? { helper: (n: number): number => n + 1 };",
+      "const { helper } = (flag ? { helper: 1 } : other || { helper: (n: number): number => n + 1 }) as { helper: unknown };",
+      "const { helper } = flag ? { helper(n: number): number { return n + 1; } } : { helper: 1 };",
+    ]) {
+      expect(boundHelpers("probe.ts", `export function main(flag: boolean, other: { helper: number } | undefined): number {\n  ${body}\n  return 0;\n}\n`), body)
+        .toEqual(["probe.ts / main / helper"]);
+    }
+    expect(boundHelpers("probe.ts", "export function main(flag: boolean): number {\n  const { size } = flag ? { size: 1 } : { size: 2 };\n  return size;\n}\n")).toEqual([]);
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    for (const statement of [
+      `export const { read } = flag ? { read: ${thrower} } : { read: (): number => 1 };`,
+      `export const [read] = flag ? [1] : [${thrower}];`,
+      `export const { inner: { read } } = { inner: flag ? { read: 1 } : { read: ${thrower} } };`,
+      `export const { read } = other ?? { read: ${thrower} };`,
+      // A function on both sides is one function to the check, reported once.
+      `export const { read } = flag ? { read: ${thrower} } : { read: ${thrower} };`,
+    ]) {
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+      expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` when the flag is set.\n */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: [] });
+    }
+  });
 });
 
 /** What the entry-point check found in one module. */
@@ -1137,21 +1167,27 @@ function isDocumentedParameter(parameter: ts.ParameterDeclaration): boolean {
   return tags.some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
 }
 
-/** Each name a binding gives a function, reading the value it is given and, below it, each default. */
+/**
+ * Each name a binding gives a function, reading each literal the value
+ * given may be, as `possibleValues` reads it, and, below it, each default.
+ * A default is read whether or not the value given means it never runs,
+ * since a function written there is bound to the name.
+ */
 function helperNames(binding: ts.BindingName, value: ts.Expression | undefined): ts.Identifier[] {
   if (ts.isIdentifier(binding)) return functionValues(value).length === 0 ? [] : [binding];
-  const literal = heldValue(value);
+  const literals = possibleValues(value);
   const names: ts.Identifier[] = [];
   for (const [at, element] of binding.elements.entries()) {
     if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
-    const held = ts.isObjectBindingPattern(binding) ? keyedProperty(literal, boundKey(element)) : literalItem(literal, at);
-    if (held !== undefined && ts.isMethodDeclaration(held)) {
-      if (ts.isIdentifier(element.name)) names.push(element.name);
-      continue;
+    for (const literal of literals) {
+      const held = ts.isObjectBindingPattern(binding) ? keyedProperty(literal, boundKey(element)) : literalItem(literal, at);
+      if (held !== undefined && ts.isMethodDeclaration(held)) {
+        if (ts.isIdentifier(element.name)) names.push(element.name);
+        continue;
+      }
+      names.push(...helperNames(element.name, held !== undefined && ts.isPropertyAssignment(held) ? held.initializer : held));
     }
-    const given = held !== undefined && ts.isPropertyAssignment(held) ? held.initializer : held;
-    names.push(...helperNames(element.name, given ?? element.initializer));
-    if (given !== undefined && element.initializer !== undefined) names.push(...helperNames(element.name, element.initializer));
+    names.push(...helperNames(element.name, element.initializer));
   }
   return names;
 }
@@ -1263,15 +1299,16 @@ function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
   if (!ts.isVariableStatement(node) || !hasJsDoc(node)) return [];
   const bodies = new Map<string, ts.Node[]>();
   for (const declaration of node.declarationList.declarations) {
-    if (!ts.isIdentifier(declaration.name)) boundFunctions(declaration.name, heldValue(declaration.initializer), bodies);
+    if (!ts.isIdentifier(declaration.name)) boundFunctions(declaration.name, declaration.initializer, bodies);
   }
   // A name read from more than one place, such as its value and its default, is one function to the reader.
   return [...bodies].map(([name, held]) => ({ name, commented: node, bodies: held }));
 }
 
 /**
- * Each function a binding pattern binds from a literal, added to the bodies
- * held for each name. A name bound to an object's key reads that key's value
+ * Each function a binding pattern binds from a value, added to the bodies
+ * held for each name. Each literal the value may be, as `possibleValues`
+ * reads it, is read. A name bound to an object's key reads that key's value
  * or method, whatever the key's spelling; a name bound by position reads the
  * item there; a nested pattern reads the nested literal; and every name and
  * nested pattern also reads its default, whether or not the value given
@@ -1280,18 +1317,21 @@ function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
  * read, nor is a property or an array item with a comment of its own, which
  * is read with that comment.
  */
-function boundFunctions(pattern: ts.BindingPattern, literal: ts.Expression | undefined, bodies: Map<string, ts.Node[]>): void {
+function boundFunctions(pattern: ts.BindingPattern, value: ts.Expression | undefined, bodies: Map<string, ts.Node[]>): void {
+  const literals = possibleValues(value);
   for (const [at, element] of pattern.elements.entries()) {
     if (ts.isOmittedExpression(element)) continue;
-    const value = ts.isObjectBindingPattern(pattern) ? keyValue(literal, boundKey(element)) : itemValue(literal, at);
-    if (!ts.isIdentifier(element.name)) {
-      const given = value === undefined || ts.isMethodDeclaration(value) ? undefined : heldValue(value);
-      boundFunctions(element.name, given, bodies);
-      boundFunctions(element.name, heldValue(element.initializer), bodies);
+    const name = element.name;
+    const given = literals.map((literal) => ts.isObjectBindingPattern(pattern) ? keyValue(literal, boundKey(element)) : itemValue(literal, at));
+    if (!ts.isIdentifier(name)) {
+      for (const held of given) {
+        if (held !== undefined && !ts.isMethodDeclaration(held)) boundFunctions(name, held, bodies);
+      }
+      boundFunctions(name, element.initializer, bodies);
       continue;
     }
-    const held = [...functionBodies(value), ...functionBodies(element.initializer)];
-    if (held.length > 0) bodies.set(element.name.text, [...bodies.get(element.name.text) ?? [], ...held]);
+    const held = [...given.flatMap(functionBodies), ...functionBodies(element.initializer)];
+    if (held.length > 0) bodies.set(name.text, [...bodies.get(name.text) ?? [], ...held]);
   }
 }
 
