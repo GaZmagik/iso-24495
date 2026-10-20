@@ -1247,7 +1247,7 @@ describe("the code skill's rules for this repository's own code", () => {
       + "function hold(reader: () => number): [() => number] {\n  const held: [() => number] = [reader];\n  return held;\n}\n"
       + "function freeze(reader: () => number): readonly [() => number] {\n  return Object.freeze([reader] as const);\n}\n"
       + "function measure(reader: () => number): number[] {\n  return [reader()];\n}\n"
-      + "function pick(reader: () => number): () => number {\n  const held = [reader];\n  return held[0] ?? reader;\n}\n";
+      + "function pick(reader: () => number): () => number {\n  const held: [() => number] = [reader];\n  return held[0];\n}\n";
     const unread = "probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read";
     const cases: Array<[body: string, found: string[], problems: string[]]> = [
       [`const [helper] = box(${helper});`, [`probe.ts / main / helper: it is read from box(${helper}), a call whose value may hold a function, so what it holds cannot be read`], [unread]],
