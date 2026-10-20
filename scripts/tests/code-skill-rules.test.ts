@@ -150,7 +150,8 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    declared here that returns it. A function declared with overloads is
 //    read through its implementation's body. A body that passes an argument
 //    on, by any use but calling it, may give it back when the declared
-//    result fits it, or hold it, in a literal, a name or a typed return,
+//    result fits it, unless each value it returns is a function or literal
+//    it writes new, or hold it, in a literal, a name or a typed return,
 //    when the declared result has a place that may hold a function. A key is
 //    read whatever its spelling: against an array literal, an index key
 //    reads the item there. A name a spread of unknown extent, a key not
@@ -1336,6 +1337,29 @@ describe("the code skill's rules for this repository's own code", () => {
       problem: `probe.ts:1: what first holds cannot be read, as it is read from box(${helper}), a call whose value may hold a function, so the first function cannot be found`,
     });
   });
+
+  test("a call whose body returns only values it writes new gives back none of what it passes on", () => {
+    const helper = "(): void => undefined";
+    // Each passes its callback to a timer, which is a use other than calling it.
+    const clocks = "\nconst clock = {\n  schedule: (callback: () => void, ms: number): (() => void) => {\n"
+      + "    const timer = setTimeout(callback, ms);\n    return () => clearTimeout(timer);\n  },\n};\n"
+      + "function later(callback: () => void): () => void {\n  setTimeout(callback, 1);\n  return remembered(callback);\n}\n"
+      + "function relay(callback: () => void, depth: number): () => void {\n  setTimeout(callback, 1);\n"
+      + "  return depth > 0 ? relay(callback, depth - 1) : remembered(callback);\n}\n"
+      + "declare function remembered(callback: () => void): () => void;\n";
+    const cases: Array<[body: string, found: string[]]> = [
+      // The function it returns is written in its body, so it is never the callback.
+      [`const cancel = clock.schedule(${helper}, 1);`, []],
+      // A value returned from elsewhere may be the callback, since its type fits.
+      [`const helper = later(${helper});`, ["probe.ts / main / helper"]],
+      [`const helper = relay(${helper}, 2);`, ["probe.ts / main / helper"]],
+    ];
+    for (const [body, found] of cases) {
+      const text = `export function main(): void {\n  ${body}\n}\n${clocks}`;
+      expect(boundHelpers("probe.ts", text), body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, body).toEqual([]);
+    }
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1543,7 +1567,8 @@ function singleValue(expression: ts.Expression, checker: ts.TypeChecker): ts.Exp
  * a value typed any, since that may give back anything it is given. A
  * function declared with overloads is read through its implementation.
  * When the body passes the parameter on in any other way than calling it,
- * each of the argument's values whose type fits the result is given back.
+ * each of the argument's values whose type fits the result is given back,
+ * unless every value the body returns is one it writes new.
  *
  * @returns Each value given back, in the order written.
  */
@@ -1572,27 +1597,34 @@ interface CallValues {
  * parameters say what it returns, while the signature it resolves to gives
  * the declared types. An argument whose parameter the body passes on, by
  * any use but calling it, may come back however the body passes it: as the
- * value itself, which its declared result says by fitting it, or held in a
- * literal, a name bound to one, or a value built elsewhere, which a result
- * with a place that may hold a function says.
+ * value itself, which its declared result says by fitting it, unless every
+ * value the body returns is a function or literal it writes new; or held
+ * in a literal, a name bound to one, or a value built elsewhere, which a
+ * result with a place that may hold a function says.
  */
 function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): CallValues {
   const declaration = calledDeclaration(call, checker);
-  const implementation = declaration === undefined ? undefined : implementationOf(declaration);
+  const implementations = declaration === undefined ? [] : [implementationOf(declaration)].filter((found) => found !== undefined);
   const result = checker.getTypeAtLocation(call);
   const found: CallValues = { given: [], held: [] };
+  const returned = new Map<ts.SignatureDeclaration, ts.Expression[] | undefined>();
   for (const [at, argument] of (call.arguments ?? []).entries()) {
     const parameter = declaration === undefined ? undefined : parameterOf(declaration, call, at);
-    const run = implementation === undefined ? undefined : parameterOf(implementation, call, at);
-    if (declaration === undefined || (implementation !== undefined && run !== undefined && returnsParameter(implementation, run, checker, following))) {
+    const runs = implementations.flatMap((implementation) => {
+      const run = parameterOf(implementation, call, at);
+      return run === undefined ? [] : [{ run, values: returnedValues(implementation, checker, following, returned), implementation }];
+    });
+    if (declaration === undefined || runs.some(({ run, values }) => returnsParameter(run, values, checker))) {
       found.given.push(...possibleValues(argument, checker, following));
     } else if (parameter !== undefined && sharesTypeParameter(declaration, parameter)) {
       for (const value of possibleValues(argument, checker, following)) {
         (fitsResult(checker.getTypeAtLocation(value), result, checker) ? found.given : found.held).push(value);
       }
-    } else if (implementation !== undefined && run !== undefined && passesOn(implementation, run, checker)) {
+    } else if (runs.some(({ implementation, run }) => passesOn(implementation, run, checker))) {
+      // A body whose every return is a value written there new never gives back what it is given, though that value may hold it.
+      const mayGiveBack = runs.some(({ implementation, run, values }) => passesOn(implementation, run, checker) && !returnsOnlyNewValues(values));
       for (const value of possibleValues(argument, checker, following)) {
-        if (fitsResult(checker.getTypeAtLocation(value), result, checker)) found.given.push(value);
+        if (mayGiveBack && fitsResult(checker.getTypeAtLocation(value), result, checker)) found.given.push(value);
         else if (mayHoldFunction(result, checker, call)) found.held.push(value);
       }
     }
@@ -1820,16 +1852,44 @@ function fitsResult(given: ts.Type, result: ts.Type, checker: ts.TypeChecker): b
 }
 
 /**
- * Whether a function declared here with a body may return one of its
- * parameters: whether a value that one of its return statements, or its
- * expression body, may be is that parameter's name.
+ * Each value a function declared here with a body may return: each value,
+ * as `possibleValues` reads it, of one of its return statements or of its
+ * expression body. Each function is read once for a call, however many of
+ * the call's arguments ask.
+ *
+ * @param read The values read so far for the call, by function, which this adds to.
+ * @returns The values, or undefined when the function's body is being read already, so that a function that calls itself is read once.
  */
-function returnsParameter(declaration: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): boolean {
-  if (!ts.isIdentifier(parameter.name) || following.has(declaration)) return false;
-  const symbol = checker.getSymbolAtLocation(parameter.name);
+function returnedValues(declaration: ts.SignatureDeclaration, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>,
+  read: Map<ts.SignatureDeclaration, ts.Expression[] | undefined>): ts.Expression[] | undefined {
+  if (read.has(declaration)) return read.get(declaration);
   const deeper = new Set([...following, declaration]);
-  return returnedExpressions(declaration).some((returned) => possibleValues(returned, checker, deeper)
-    .some((value) => ts.isIdentifier(value) && checker.getSymbolAtLocation(value) === symbol));
+  const values = following.has(declaration) ? undefined : returnedExpressions(declaration).flatMap((returned) => possibleValues(returned, checker, deeper));
+  read.set(declaration, values);
+  return values;
+}
+
+/**
+ * Whether a function may return one of its parameters: whether one of the
+ * values `returnedValues` found it may return is that parameter's name. A
+ * function whose body is being read already returns none of them.
+ */
+function returnsParameter(parameter: ts.ParameterDeclaration, values: readonly ts.Expression[] | undefined, checker: ts.TypeChecker): boolean {
+  if (values === undefined || !ts.isIdentifier(parameter.name)) return false;
+  const symbol = checker.getSymbolAtLocation(parameter.name);
+  return values.some((value) => ts.isIdentifier(value) && checker.getSymbolAtLocation(value) === symbol);
+}
+
+/**
+ * Whether every value `returnedValues` found a function may return is
+ * written there new: a function, an object literal or an array literal,
+ * none of which is a value its caller gave it. A body with no return gives
+ * back nothing. A function whose body is being read already may return
+ * anything.
+ */
+function returnsOnlyNewValues(values: readonly ts.Expression[] | undefined): boolean {
+  // The values that are never falsy are the values written new.
+  return values !== undefined && values.every(isAlwaysTruthy);
 }
 
 /**
