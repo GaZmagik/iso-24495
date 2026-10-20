@@ -581,6 +581,25 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 0, problems: [] });
   });
 
+  test("a name bound from an array with a spread reads the position the spread gives it", () => {
+    const bound: Array<[pattern: string, literal: string, found: string[]]> = [
+      ["[, size]", "[...[1, 2] as const, (n: number): number => n + 3] as const", []],
+      ["[, , helper]", "[...[1, 2] as const, (n: number): number => n + 3] as const", ["probe.ts / main / helper"]],
+      ["[, , helper]", "[...[...[1] as const, 2] as const, (n: number): number => n + 3] as const", ["probe.ts / main / helper"]],
+      ["[, helper]", "[...Object.freeze([1] as const), (n: number): number => n + 3] as const", ["probe.ts / main / helper"]],
+      // After a spread whose length is not written there, a position is not known, so it is not read.
+      ["[, helper]", "[...made(), (n: number): number => n + 3]", []],
+      ["[helper]", "[(n: number): number => n + 3, ...made()]", ["probe.ts / main / helper"]],
+    ];
+    for (const [pattern, literal, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  const ${pattern} = ${literal};\n  return 0;\n}\n`), `${pattern} = ${literal}`).toEqual(found);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const [, read] = [...[1] as const, ${thrower}] as const;`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/** The size. */\nexport const [, size] = [...[1, 2] as const, ${thrower}] as const;`)).toEqual({ read: 0, problems: [] });
+  });
+
   test("a function a conditional chooses is read as the function it may be", () => {
     for (const value of [
       "flag ? (n: number): number => n + 1 : (n: number): number => n + 2",
@@ -1034,9 +1053,45 @@ function helperNames(binding: ts.BindingName, value: ts.Expression | undefined):
   return names;
 }
 
-/** The item an array literal holds at one position, or undefined when it is not an array literal or holds none there. */
+/**
+ * The item an array literal holds at one position, counting each item a
+ * spread of another array literal gives it.
+ *
+ * @returns The item, or undefined when the literal is not an array literal,
+ *     holds a hole or nothing there, or when the position falls after a
+ *     spread of anything else, whose length is not written there.
+ */
 function literalItem(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
-  return literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+  return literal !== undefined && ts.isArrayLiteralExpression(literal) ? spreadItems(literal).items[at] : undefined;
+}
+
+/** The items of an array literal, position by position, as far as they are known. */
+interface SpreadItems {
+  /** Each item, a hole as undefined, with each spread of an array literal expanded in place. */
+  items: Array<ts.Expression | undefined>;
+  /** False when a spread of anything but an array literal ends the list, so no later position is known. */
+  complete: boolean;
+}
+
+/** The items an array literal holds, as far as its spreads let them be known. */
+function spreadItems(literal: ts.ArrayLiteralExpression): SpreadItems {
+  const items: Array<ts.Expression | undefined> = [];
+  for (const element of literal.elements) {
+    if (ts.isOmittedExpression(element)) {
+      items.push(undefined);
+      continue;
+    }
+    if (!ts.isSpreadElement(element)) {
+      items.push(element);
+      continue;
+    }
+    const spread = heldValue(element.expression);
+    if (spread === undefined || !ts.isArrayLiteralExpression(spread)) return { items, complete: false };
+    const inner = spreadItems(spread);
+    items.push(...inner.items);
+    if (!inner.complete) return { items, complete: false };
+  }
+  return { items, complete: true };
 }
 
 /** What the throws check found in one file. */
