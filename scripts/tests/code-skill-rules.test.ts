@@ -72,7 +72,8 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    the detail. The first function of each shipped module is exported, and
 //    a command shim's module leads with the function the shim runs. Tests are
 //    not held to it, by the owner's ruling. decimal.ts is listed below with
-//    its reason. Tested here.
+//    its reason. A name is a function when its type can be called, or
+//    wherever rule 3's test below would find one. Tested here.
 // 2. Interface comment present. A caller learns what a function does without
 //    reading its body. Every top-level export has a JSDoc comment, tested in
 //    source-comments.test.ts. A comment on a function that throws says what
@@ -85,7 +86,11 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    Object.freeze counts. A selector cannot tell which key of a literal a
 //    name is bound to, so a test here finds every name bound to a function
 //    inside a function by destructuring, at any depth, or by a default, and
-//    every parameter whose default is a function. A parameter its function's
+//    every parameter whose default is a function. It reads every value an
+//    expression may be: each branch of a conditional, either side of ?? and
+//    ||, and the right of &&. A name a spread of unknown extent may give its
+//    value cannot be read, so it fails the test, naming the name and the
+//    spread; the same holds for the other two tests. A parameter its function's
 //    @param tag documents is part of the interface, not a helper, by the
 //    owner's ruling of 2026-10-20, so its default is not reported. Otherwise
 //    a property holding an arrow is left alone: it is a value handed on, most
