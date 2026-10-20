@@ -345,6 +345,19 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", said)).toEqual({ read: 1, problems: [] });
   });
 
+  test("a documented function that Object.freeze wraps is read as the function it holds", () => {
+    const thrower = "Object.freeze<() => number>((): number => {\n  throw new RangeError(\"x\");\n})";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = ${thrower};`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = (${thrower}) as () => number;`).problems)
+      .toEqual(["probe.ts:2: the comment on read does not say what it throws"]);
+    expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\nexport const read = ${thrower};`))
+      .toEqual({ read: 1, problems: [] });
+    // Another call with one callback runs it to build a value, so its throw is not the value's.
+    expect(undocumentedThrows("probe.ts", "/** The sizes. */\nexport const sizes = [1].map((size): number => {\n  throw new RangeError(String(size));\n});"))
+      .toEqual({ read: 0, problems: [] });
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -415,18 +428,33 @@ function boundNames(binding: ts.BindingName): ts.Identifier[] {
 
 /**
  * The function an expression holds, looking through parentheses, a type
- * assertion and `satisfies`, which change nothing that runs.
+ * assertion and `satisfies`, which change nothing that runs, and through a
+ * call of `Object.freeze` on one value, which returns the value it is given.
+ * Any other call with a callback runs it to build a value, so it holds none.
  *
  * @returns The arrow function or function expression, or null when the
  *     expression holds neither, or is undefined.
  */
 function functionValue(expression: ts.Expression | undefined): ts.ArrowFunction | ts.FunctionExpression | null {
   let inner = expression;
-  while (inner !== undefined && (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner)
-    || ts.isSatisfiesExpression(inner) || ts.isTypeAssertionExpression(inner) || ts.isNonNullExpression(inner))) {
-    inner = inner.expression;
+  while (inner !== undefined) {
+    if (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isSatisfiesExpression(inner)
+      || ts.isTypeAssertionExpression(inner) || ts.isNonNullExpression(inner)) {
+      inner = inner.expression;
+    } else if (isFreezeCall(inner)) {
+      inner = inner.arguments[0];
+    } else {
+      break;
+    }
   }
   return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) ? inner : null;
+}
+
+/** Whether an expression calls `Object.freeze` on one value. */
+function isFreezeCall(expression: ts.Expression): expression is ts.CallExpression {
+  return ts.isCallExpression(expression) && expression.arguments.length === 1
+    && ts.isPropertyAccessExpression(expression.expression) && ts.isIdentifier(expression.expression.expression)
+    && expression.expression.expression.text === "Object" && expression.expression.name.text === "freeze";
 }
 
 /** A source file with the type checker of the program that read it. */
@@ -644,8 +672,8 @@ interface ThrowsCount {
  *
  * A function here is a function declaration, a method, a constructor, an
  * accessor, a variable, an object property or a class field whose value
- * is an arrow function or a function expression, or such a function held
- * directly in an array. A throw counts when it can leave the function: not
+ * is an arrow function or a function expression, also through
+ * `Object.freeze`, or such a function held directly in an array. A throw counts when it can leave the function: not
  * inside a nested function, and not inside a `try` block whose `catch`
  * takes it.
  */
