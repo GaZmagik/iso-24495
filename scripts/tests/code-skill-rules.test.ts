@@ -801,6 +801,42 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\nexport const [, read] = [...made(), ${thrower}];`).problems)
       .toEqual(["probe.ts:5: what read binds cannot be read, as its position follows ...made(), whose length is not known"]);
   });
+
+  test("a first function is read wherever the nested-helper check would find one, whatever its type says", () => {
+    const fn = "(x: number): number => x";
+    const text = `a${String.fromCodePoint(0x1f600)}`;
+    // The declarations follow main, so that none of them is the first function.
+    const tail = "\nexport function main(): number { return 1; }\ndeclare const other: number | undefined;\ndeclare const flag: boolean;\ndeclare function made(): number[];\n";
+    for (const statement of [
+      `const helper = other ?? (${fn});`,
+      `const helper = other || (${fn});`,
+      `const helper = other && (${fn});`,
+      `const { helper } = flag ? { helper: ${fn} } : { helper: 1 };`,
+      `const [helper] = flag ? [1] as const : [${fn}] as const;`,
+      `const [, , helper] = [..."${text}", ${fn}] as const;`,
+      `const { inner: { helper } = { helper: ${fn} } } = { inner: { helper: 1 } };`,
+      `const { helper = ${fn} } = { helper: 1 };`,
+      `const [helper = ${fn}] = [1] as const;`,
+      `const { inner: { helper = ${fn} } } = { inner: { helper: 1 } };`,
+      `const { a: { b: { helper = ${fn} } } } = { a: { b: { helper: 1 } } };`,
+    ]) {
+      expect(entryPointProblem("probe.ts", statement + tail), statement)
+        .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
+      expect(entryPointProblem("probe.ts", `export ${statement}${tail}`), statement).toEqual({ checked: true, problem: null });
+    }
+    // A name whose position follows a spread of unknown length may be a function, so the first function cannot be found.
+    expect(entryPointProblem("probe.ts", `const [, helper] = [...made(), ${fn}];${tail}`)).toEqual({
+      checked: true,
+      problem: "probe.ts:1: what helper holds cannot be read, as its position follows ...made(), whose length is not known, so the first function cannot be found",
+    });
+    // A name the literal gives no function, and whose type cannot be called, is not one.
+    for (const statement of [`const [, size] = [..."${text}", ${fn}] as const;`, "const { size } = flag ? { size: 1 } : { size: 2 };", "const size = other ?? 1;"]) {
+      expect(entryPointProblem("probe.ts", statement + tail), statement).toEqual({ checked: true, problem: null });
+    }
+    const module = `const [, helper] = [...made(), ${fn}];\nexport function runCli(): number { return 0; }\ndeclare function made(): number[];\n`;
+    expect(shimProblem("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli());", "probe.ts", module))
+      .toBe("probe-cli.ts runs runCli, but what probe.ts leads with cannot be read: helper's position follows ...made(), whose length is not known");
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -822,14 +858,21 @@ interface EntryPoint {
  * A function is a function declaration, or a top-level variable whose type
  * can be called: an arrow, a function expression, or a function that a call
  * wraps or returns. A name bound by destructuring counts as a variable does.
- * A value a call builds with a callback is not one.
+ * A value a call builds with a callback is not one. A variable is a function
+ * too wherever the nested-helper check would find one, through each value
+ * it may be and each default, whatever its type says. A name whose position
+ * follows a spread of unknown length may be one, so the first function
+ * cannot be found past it, and that is the problem.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
   const { source, checker } = typedSource(file, text);
   const first = firstFunction(source, checker);
   if (first === null) return { checked: false, problem: null };
-  if (exportedNames(source, first).length > 0) return { checked: true, problem: null };
   const line = source.getLineAndCharacterOfPosition(first.statement.getStart(source)).line + 1;
+  if (first.unknownAfter !== null) {
+    return { checked: true, problem: `${file}:${line}: what ${first.name} holds cannot be read, as its position follows ${first.unknownAfter.getText(source)}, whose length is not known, so the first function cannot be found` };
+  }
+  if (exportedNames(source, first).length > 0) return { checked: true, problem: null };
   return { checked: true, problem: `${file}:${line}: the first function, ${first.name}, is not exported` };
 }
 
@@ -838,20 +881,32 @@ interface FirstFunction {
   name: string;
   exported: boolean;
   statement: ts.Statement;
+  /** The spread a destructured name's position follows when what it holds cannot be read, so it may be the first function; or null. */
+  unknownAfter: ts.SpreadElement | null;
 }
 
-/** The first top-level function of a module, or null when it holds none. */
+/**
+ * The first top-level function of a module, or the first name that may be
+ * one but cannot be read, or null when it holds neither.
+ */
 function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFunction | null {
   for (const statement of source.statements) {
     const exported = ts.canHaveModifiers(statement)
       && (ts.getModifiers(statement) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
     if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
-      return { name: statement.name.text, exported, statement };
+      return { name: statement.name.text, exported, statement, unknownAfter: null };
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      const callable = boundNames(declaration.name).find((name) => checker.getTypeAtLocation(name).getCallSignatures().length > 0);
-      if (callable !== undefined) return { name: callable.text, exported, statement };
+      const written = new Set(helperNames(declaration.name, declaration.initializer));
+      const unknown = unknownPositions(declaration.name, declaration.initializer);
+      for (const name of boundNames(declaration.name)) {
+        if (written.has(name) || checker.getTypeAtLocation(name).getCallSignatures().length > 0) {
+          return { name: name.text, exported, statement, unknownAfter: null };
+        }
+        const position = unknown.find((found) => found.name === name);
+        if (position !== undefined) return { name: name.text, exported, statement, unknownAfter: position.spread };
+      }
     }
   }
   return null;
@@ -985,12 +1040,16 @@ function sourceReader(read: ts.CompilerHost["getSourceFile"], fileName: string, 
  * Whether a command shim runs the first function of its module.
  *
  * @returns A sentence naming what the shim runs and what the module leads
- *     with when they differ, or null when they match.
+ *     with when they differ, or why what it leads with cannot be read, or
+ *     null when they match.
  */
 function shimProblem(shim: string, shimText: string, module: string, moduleText: string): string | null {
   const run = shimEntryPoint(shim, shimText);
   const typed = typedSource(module, moduleText);
   const first = firstFunction(typed.source, typed.checker);
+  if (first !== null && first.unknownAfter !== null) {
+    return `${shim} runs ${run ?? "(no exit call)"}, but what ${module} leads with cannot be read: ${first.name}'s position follows ${first.unknownAfter.getText(typed.source)}, whose length is not known`;
+  }
   const exported = first === null ? [] : exportedNames(typed.source, first);
   if (run !== null && exported.includes(run)) return null;
   const alias = first !== null && exported.length > 0 && !exported.includes(first.name) ? `, exported as ${exported.join(" and ")}` : "";
