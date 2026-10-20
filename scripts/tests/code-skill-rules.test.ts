@@ -105,9 +105,11 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    cannot tell two statements of a file apart, so a test here holds that
 //    file to its two approved throws, by their text. In the same way, a test
 //    here holds the rethrows of a caught value to the three approved sites,
-//    each with its reason, in APPROVED_RETHROWS. A rethrow is known by the
-//    name it throws, through parentheses, so `throw (failure);` is found and
-//    a change of layout does not move an approved one.
+//    each with its reason, in APPROVED_RETHROWS. A caught value is a catch
+//    clause's name or any parameter, so no way of writing the call that takes
+//    a rejection handler hides one. A rethrow is known by the name it
+//    throws, through parentheses, so `throw (failure);` is found and a change
+//    of layout does not move an approved one.
 //
 // eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
 // removes, beside the rules themselves.
@@ -894,6 +896,14 @@ describe("the code skill's rules for this repository's own code", () => {
       problem: "probe.ts:1: what helper holds cannot be read, as its key may be given by ...made(), whose keys are not known, so the first function cannot be found",
     });
   });
+
+  test("a rethrow from a rejection handler is found however the method it is handed to is written", () => {
+    for (const call of ["(read().catch)(HANDLER)", "((read()).catch)(HANDLER)", "(read().then)(undefined, HANDLER)", "read()[\"catch\"](HANDLER)", "read().catch(function (failure: unknown): never {\n    throw failure;\n  })"]) {
+      const text = `export function passOn(read: () => Promise<string>): Promise<string> {\n  return ${call.replace("HANDLER", "(failure: unknown) => {\n    throw failure;\n  }")};\n}\n`;
+      expect(throwsSomeName(text), call).toBe(true);
+      expect(rethrows("probe.ts", text), call).toEqual(["probe.ts / (an unnamed function) / throw failure;"]);
+    }
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1244,8 +1254,9 @@ function thrownName(statement: ts.ThrowStatement): ts.Identifier | null {
 
 /**
  * Every throw in a file that passes on a caught value typed unknown or any:
- * the name a `catch` clause binds, or the parameter of a function handed to a
- * promise's `catch` or `then`. A value narrowed to an Error is not one.
+ * the name a `catch` clause binds, or a parameter of any function, which is
+ * how a function handed to a promise's `catch` or `then` receives one. A
+ * value narrowed to an Error is not one.
  *
  * @returns One "file / function / throw" entry for each, in the order they
  *     appear. The throw reads "throw name;" however it is spaced or
@@ -1270,19 +1281,15 @@ function rethrows(file: string, text: string): string[] {
 }
 
 /**
- * Whether a declaration binds a caught value: a `catch` clause's name, or a
- * rejection handler's parameter, with the handler in parentheses or not.
+ * Whether a declaration may bind a caught value: a `catch` clause's name, or
+ * a parameter of any function. The lint rule lets a rejection handler's
+ * parameter be thrown on however the call that takes the handler is written,
+ * and refuses a throw of any other parameter typed unknown, so every
+ * parameter is read here, and no form of that call can hide one.
  */
 function isCaughtBinding(declaration: ts.Declaration): boolean {
   if (ts.isVariableDeclaration(declaration)) return ts.isCatchClause(declaration.parent);
-  if (!ts.isParameter(declaration)) return false;
-  const handler = declaration.parent;
-  let call = handler.parent;
-  while (ts.isParenthesizedExpression(call)) {
-    call = call.parent;
-  }
-  return (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) && ts.isCallExpression(call)
-    && ts.isPropertyAccessExpression(call.expression) && ["catch", "then"].includes(call.expression.name.text);
+  return ts.isParameter(declaration);
 }
 
 /** The name of the function a node sits in, as a reader would look it up. */
