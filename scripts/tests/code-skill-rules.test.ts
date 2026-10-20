@@ -480,6 +480,14 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", own)).toEqual({ read: 1, problems: [] });
   });
 
+  test("a destructured array item with a comment of its own is read with that comment alone", () => {
+    const item = "  (): number => {\n    throw new RangeError(\"size\");\n  },\n] as const;";
+    const said = "  /**\n   * Reads a size.\n   * @throws A `RangeError` always.\n   */\n";
+    expect(undocumentedThrows("probe.ts", `/** Readers. */\nexport const [read] = [\n${said}${item}`)).toEqual({ read: 1, problems: [] });
+    expect(undocumentedThrows("probe.ts", `/** Readers. */\nexport const [read] = [\n  /** Reads a size. */\n${item}`))
+      .toEqual({ read: 1, problems: ["probe.ts:4: the comment on an array item does not say what it throws"] });
+  });
+
   test("a constructor declared with overloads is read with the comments of its signatures", () => {
     const head = "export class Size {\nCOMMENT\n  constructor(size: string);\n  constructor(size: number);\n";
     const implementation = "  constructor(size: string | number) {\n    throw new RangeError(String(size));\n  }\n}";
@@ -904,8 +912,8 @@ function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
  * spelling; a name bound by position reads the item there; a nested pattern
  * reads the nested literal; and a name the literal gives no function reads
  * its default. A key written as a computed name other than a string is not
- * read, nor is a property with a comment of its own, which is read with that
- * comment.
+ * read, nor is a property or an array item with a comment of its own, which
+ * is read with that comment.
  */
 function boundFunctions(pattern: ts.BindingPattern, literal: ts.Expression | undefined, commented: ts.Node): DocumentedFunction[] {
   const found: DocumentedFunction[] = [];
@@ -952,9 +960,15 @@ function keyValue(literal: ts.Expression | undefined, key: string | undefined): 
   return undefined;
 }
 
-/** The item an array literal holds at one position, or undefined when it is not an array literal or holds none there. */
+/**
+ * The item an array literal holds at one position.
+ *
+ * @returns It, or undefined when the literal is not an array literal, holds
+ *     no item there, or documents that item with a comment of its own.
+ */
 function itemValue(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
-  return literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+  const item = literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+  return item === undefined || hasJsDoc(item) ? undefined : item;
 }
 
 /** The body of the function a value holds, or of a method, or null when it holds no function. */
