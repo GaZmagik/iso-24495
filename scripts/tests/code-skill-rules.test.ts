@@ -146,13 +146,17 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    each argument a call may give back by its declared types, as
 //    Object.freeze, Object.assign and an identity function do, or by a body
 //    declared here that returns it. A function declared with overloads is
-//    read through its implementation's body. A key is read whatever its
-//    spelling: against an array literal, an index key reads the item there.
-//    A name a spread of unknown extent, or a key not known, may give its
-//    value cannot be read, so it fails the test, naming the name and why;
-//    the same holds for the other two tests. A name whose type cannot be a
-//    function, such as a number, a string, an array, or an object that asks
-//    for a property a function lacks, binds no function, so the
+//    read through its implementation's body. A body that passes an argument
+//    on, by any use but calling it, may give it back when the declared
+//    result fits it, or hold it, in a literal, a name or a typed return,
+//    when the declared result has a place that may hold a function. A key is
+//    read whatever its spelling: against an array literal, an index key
+//    reads the item there. A name a spread of unknown extent, a key not
+//    known, or a call that may hold a function written in its arguments, may
+//    give its value cannot be read, so it fails the test, naming the name and
+//    why; the same holds for the other two tests. A name whose type cannot
+//    be a function, such as a number, a string, an array, or an object that
+//    asks for a property a function lacks, binds no function, so the
 //    nested-helper and throws tests pass it; the entry-point test still
 //    fails it. A parameter its function's @param tag
 //    documents is part of the interface, not a helper, by the owner's ruling
@@ -1234,6 +1238,54 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(unplacedFunctions("probe.ts", documented).problems).toEqual([]);
   });
 
+  test("a function a call's value may hold, through a literal or a typed return, is followed, and a name destructured from it is reported", () => {
+    const helper = "(): number => 1";
+    const boxes = "\nfunction box(reader: () => number): [() => number] {\n  return [reader];\n}\n"
+      + "function wrap(reader: () => number): { reader: () => number } {\n  return { reader };\n}\n"
+      + "function hold(reader: () => number): [() => number] {\n  const held: [() => number] = [reader];\n  return held;\n}\n"
+      + "function freeze(reader: () => number): readonly [() => number] {\n  return Object.freeze([reader] as const);\n}\n"
+      + "function measure(reader: () => number): number[] {\n  return [reader()];\n}\n"
+      + "function pick(reader: () => number): () => number {\n  const held = [reader];\n  return held[0] ?? reader;\n}\n";
+    const unread = "probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read";
+    const cases: Array<[body: string, found: string[], problems: string[]]> = [
+      [`const [helper] = box(${helper});`, [`probe.ts / main / helper: it is read from box(${helper}), a call whose value may hold a function, so what it holds cannot be read`], [unread]],
+      [`const { reader: helper } = wrap(${helper});`, [`probe.ts / main / helper: it is read from wrap(${helper}), a call whose value may hold a function, so what it holds cannot be read`], [unread]],
+      [`const [helper] = hold(${helper});`, [`probe.ts / main / helper: it is read from hold(${helper}), a call whose value may hold a function, so what it holds cannot be read`], [unread]],
+      [`const [helper] = freeze(${helper});`, [`probe.ts / main / helper: it is read from freeze(${helper}), a call whose value may hold a function, so what it holds cannot be read`], [unread]],
+      [`const helper = box(${helper})[0];`, [], ["probe.ts:2: an arrow function cannot be placed: it is read back out of a value that holds it, which no rule reads"]],
+      // A call whose declared result the function fits may give back the function itself, however its body reaches it.
+      [`const helper = pick(${helper});`, ["probe.ts / main / helper"], []],
+      // A name bound to the value that holds the function binds no function, and a call that only calls what it is given holds none.
+      [`const boxed = box(${helper});`, [], []],
+      [`const [size] = measure(${helper});`, [], []],
+    ];
+    for (const [body, found, problems] of cases) {
+      const text = `export function main(): number {\n  ${body}\n  return 0;\n}\n${boxes}`;
+      expect(boundHelpers("probe.ts", text), body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, body).toEqual(problems);
+    }
+    // A name a destructuring takes from such a call is no helper when its type cannot be a function, and neither is a name passed through.
+    const harness = "\ninterface Deps {\n  fetch: () => number;\n  today: () => string;\n}\n"
+      + "function harness(overrides: Partial<Deps> = {}): { deps: Deps; files: Map<string, string> } {\n"
+      + "  const deps: Deps = { fetch: () => 1, today: () => \"day\", ...overrides };\n  return { deps, files: new Map() };\n}\n"
+      + "async function settle(reader: () => number): Promise<number> {\n  return Promise.resolve(reader).then((given) => given());\n}\n"
+      + "function ask(options: { sleep: () => number }): (size: number) => number {\n  return (size) => size + options.sleep();\n}\n";
+    const valid: Array<[body: string, found: string[], problems: string[]]> = [
+      [`const { deps, files } = harness({ fetch: ${helper} });`, [], []],
+      [`const { files } = harness({ fetch: ${helper} });`, [], []],
+      [`const { deps: { fetch: helper } } = harness({ fetch: ${helper} });`,
+        [`probe.ts / main / helper: it is read from harness({ fetch: ${helper} }), a call whose value may hold a function, so what it holds cannot be read`], [unread]],
+      [`const size = await settle(${helper});`, [], []],
+      [`const size = ask({ sleep: ${helper} })(2);`, [], []],
+      ["const { deps } = harness(given);", [], []],
+    ];
+    for (const [body, found, problems] of valid) {
+      const text = `export async function main(given: Partial<Deps>): Promise<number> {\n  ${body}\n  return 0;\n}\n${harness}`;
+      expect(boundHelpers("probe.ts", text), body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, body).toEqual(problems);
+    }
+  });
+
   test("a name whose type cannot be a function is not a possible helper, wherever its position is unknown", () => {
     // A name bound to an array, or to an object a function could not be, binds no function, whatever the value holds.
     for (const parameter of ["values: number[]", "values: string[]", "values: boolean[]", "values: number[][]", "values: Array<{ size: number }>",
@@ -1352,6 +1404,17 @@ function functionValues(expression: ts.Expression | undefined, checker: ts.TypeC
   return possibleValues(expression, checker).filter(isFunctionValue);
 }
 
+/**
+ * Whether a function is written in a node: the node is an arrow function, a
+ * function expression, or a method or accessor of an object literal, or one
+ * is written anywhere within it. A name, or a call, writes none, since a
+ * function it gives is written, and followed, elsewhere.
+ */
+function writesFunction(node: ts.Node): boolean {
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ((ts.isMethodDeclaration(node) || ts.isAccessor(node)) && ts.isObjectLiteralExpression(node.parent))) return true;
+  return ts.forEachChild(node, writesFunction) ?? false;
+}
+
 /** Whether an expression is an arrow function or a function expression. */
 function isFunctionValue(expression: ts.Expression): expression is ts.ArrowFunction | ts.FunctionExpression {
   return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression);
@@ -1443,6 +1506,8 @@ function singleValue(expression: ts.Expression, checker: ts.TypeChecker): ts.Exp
  * or not, and when the function called cannot be found, as for a method of
  * a value typed any, since that may give back anything it is given. A
  * function declared with overloads is read through its implementation.
+ * When the body passes the parameter on in any other way than calling it,
+ * each of the argument's values whose type fits the result is given back.
  *
  * @returns Each value given back, in the order written.
  */
@@ -1458,7 +1523,8 @@ interface CallValues {
    * Each value its own value may hold instead: a value passed to a parameter
    * that shares a type parameter with the declared result, whose type does
    * not fit the result, as a function given to `Array.of` is held in the
-   * array it returns.
+   * array it returns; or one passed to a parameter its body passes on, whose
+   * type does not fit a result that has a place that may hold a function.
    */
   held: ts.Expression[];
 }
@@ -1468,7 +1534,11 @@ interface CallValues {
  * hold, as `givenBack` and CallValues say. A call of a function declared
  * with overloads runs its implementation, so the implementation's body and
  * parameters say what it returns, while the signature it resolves to gives
- * the declared types.
+ * the declared types. An argument whose parameter the body passes on, by
+ * any use but calling it, may come back however the body passes it: as the
+ * value itself, which its declared result says by fitting it, or held in a
+ * literal, a name bound to one, or a value built elsewhere, which a result
+ * with a place that may hold a function says.
  */
 function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): CallValues {
   const declaration = calledDeclaration(call, checker);
@@ -1483,6 +1553,11 @@ function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Type
     } else if (parameter !== undefined && sharesTypeParameter(declaration, parameter)) {
       for (const value of possibleValues(argument, checker, following)) {
         (fitsResult(checker.getTypeAtLocation(value), result, checker) ? found.given : found.held).push(value);
+      }
+    } else if (implementation !== undefined && run !== undefined && passesOn(implementation, run, checker)) {
+      for (const value of possibleValues(argument, checker, following)) {
+        if (fitsResult(checker.getTypeAtLocation(value), result, checker)) found.given.push(value);
+        else if (mayHoldFunction(result, checker, call)) found.held.push(value);
       }
     }
   }
@@ -1517,6 +1592,36 @@ function implementationOf(declaration: ts.SignatureDeclaration): ts.SignatureDec
     if (next.body !== undefined) return next;
   }
   return undefined;
+}
+
+/**
+ * Whether a function's body, or the default of one of its parameters,
+ * passes on the value of one of its parameters: uses a name the parameter
+ * binds anywhere but as the function a call calls. A use inside a function
+ * nested in the body counts, since that function may pass it on.
+ */
+function passesOn(declaration: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): boolean {
+  const symbols = new Set(boundNames(parameter.name).map((name) => checker.getSymbolAtLocation(name)));
+  const body = bodyOf(declaration);
+  const pending: ts.Node[] = declaration.parameters.flatMap((each) => each.initializer ?? []);
+  if (body !== undefined) pending.push(body);
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isIdentifier(node) && symbols.has(referencedSymbol(node, checker)) && !isCalledWhereWritten(node)) return true;
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+  }
+  return false;
+}
+
+/**
+ * The symbol a name refers to where it is used. The name of a shorthand
+ * property, as in `{ reader }`, refers to the variable whose value it takes,
+ * not to the property it makes.
+ */
+function referencedSymbol(name: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
+  if (ts.isShorthandPropertyAssignment(name.parent) && name.parent.name === name) return checker.getShorthandAssignmentValueSymbol(name.parent);
+  return checker.getSymbolAtLocation(name);
 }
 
 /** The types the checker cannot narrow, so that a value of one may be anything: any, unknown and object. */
@@ -1569,6 +1674,40 @@ function functionMembers(checker: ts.TypeChecker, location: ts.Node): ReadonlySe
   const members = new Set(interfaces.flatMap((symbol) => checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol)).map((property) => property.name)));
   FUNCTION_MEMBERS.set(checker, members);
   return members;
+}
+
+/**
+ * Whether a value of a type may hold a function where a destructuring, a
+ * member or `await` can reach it: a property, an index signature or an item
+ * whose value may be a function or hold one, or what a promise gives. A
+ * call signature makes no such place, so a function holds nothing. A type
+ * the checker cannot narrow may hold anything, so it may; a part of a union
+ * or intersection that may is enough.
+ *
+ * @param seen The types read already, so that a type that holds itself is read once.
+ */
+function mayHoldFunction(type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen = new Set<ts.Type>()): boolean {
+  if (seen.has(type)) return false;
+  seen.add(type);
+  if (type.flags & OPEN_TYPES) return true;
+  if (type.flags & CONSTRAINED_TYPES) {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return constraint === undefined || constraint === type || mayHoldFunction(constraint, checker, location, seen);
+  }
+  if (type.isUnionOrIntersection()) return type.types.some((part) => mayHoldFunction(part, checker, location, seen));
+  if (!(type.flags & ts.TypeFlags.Object)) return false;
+  // A promise's methods belong to every promise; what it gives is what it holds.
+  const awaited = checker.getAwaitedType(type);
+  if (awaited !== undefined && awaited !== type) return mayBeOrHoldFunction(awaited, checker, location, seen);
+  const indexed = checker.getIndexInfosOfType(type).some((index) => mayBeOrHoldFunction(index.type, checker, location, seen));
+  // An array's methods belong to every array; only its items, which its index gives, are what it holds.
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return indexed;
+  return indexed || checker.getPropertiesOfType(type).some((property) => mayBeOrHoldFunction(checker.getTypeOfSymbol(property), checker, location, seen));
+}
+
+/** Whether a value of a type may be a function, as `mayBeFunction` says, or hold one, as `mayHoldFunction` says. */
+function mayBeOrHoldFunction(type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen = new Set<ts.Type>()): boolean {
+  return mayBeFunction(type, checker, location) || mayHoldFunction(type, checker, location, seen);
 }
 
 /**
@@ -2156,6 +2295,13 @@ function valuesOf(value: ts.Expression | ts.MethodDeclaration | undefined, check
 /** Reads what one element of a pattern takes from one literal, adding it to the reading. */
 function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression | ts.MethodDeclaration,
   checker: ts.TypeChecker, reading: Reading, offset: number): void {
+  // A call whose value may hold a function written in its arguments cannot be read as a literal can, so no name it gives can be read,
+  // unless a rest element's name binds what is left.
+  if ((ts.isCallExpression(literal) || ts.isNewExpression(literal)) && (element.dotDotDotToken === undefined || !ts.isIdentifier(element.name))
+    && callValues(literal, checker, NOTHING_FOLLOWED).held.some(writesFunction)) {
+    reading.unknown.push(...boundNames(element.name).map((name) => ({ name, cause: literal })));
+    return;
+  }
   if (element.dotDotDotToken !== undefined) {
     // A rest element with a name binds what is left as an object or array; one with a pattern reads the items left.
     if (!ts.isIdentifier(element.name) && ts.isArrayLiteralExpression(literal)) readBinding(element.name, literal, checker, reading, offset + at);
@@ -2448,6 +2594,7 @@ function unknownReason(cause: UnknownCause, source: ts.SourceFile): string {
   if (ts.isSpreadAssignment(cause)) return `its key may be given by ${text}, whose keys are not known`;
   if (ts.isComputedPropertyName(cause) && ts.isBindingElement(cause.parent)) return `its key, ${text}, is not known`;
   if (ts.isComputedPropertyName(cause)) return `its key may be given by ${text}, whose value is not known`;
+  if (ts.isCallExpression(cause) || ts.isNewExpression(cause)) return `it is read from ${text}, a call whose value may hold a function`;
   if (ts.isObjectLiteralExpression(cause)) return "it is read by position from an object literal";
   return "it is read from a function as though the function were a literal";
 }
@@ -2889,6 +3036,10 @@ function isCalledWhereWritten(written: ts.Node): boolean {
  * The place of a function whose value a declaration or a parameter takes: the
  * name it binds, or the object or array a name binds that holds it, or what
  * `readBinding` finds of the part of a literal a pattern reads that holds it.
+ * A pattern that reads a value that is not a literal, such as a call that
+ * holds the function, cannot tell which name takes it. It fails when a name
+ * it binds may be a function by its type; otherwise the function is held in
+ * a value a name binds, when a name may hold one, or taken by no name.
  */
 function declaredPlace(declaration: ts.VariableDeclaration | ts.ParameterDeclaration, written: ts.FunctionLikeDeclaration, direct: boolean, checker: ts.TypeChecker): Place {
   if (ts.isIdentifier(declaration.name)) return direct ? { kind: "bound", name: declaration.name, declaration } : position("held in a value bound to a name");
@@ -2902,7 +3053,13 @@ function declaredPlace(declaration: ts.VariableDeclaration | ts.ParameterDeclara
     const unread = reading.unread.find((entry) => entry.node === part);
     if (unread !== undefined) return unplaced(`a name may take it, but which one cannot be read, as ${unknownReason(unread.cause, part.getSourceFile())}`);
   }
-  return unplaced("its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read");
+  // A value that is not a literal, such as a call that holds the function, cannot be read, so a name that may be a function may be this one.
+  const names = boundNames(declaration.name);
+  if (names.some((name) => mayBeFunction(checker.getTypeAtLocation(name), checker, name))) {
+    return unplaced("its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read");
+  }
+  const holding = names.some((name) => mayHoldFunction(checker.getTypeAtLocation(name), checker, name));
+  return position(holding ? "held in a value bound to a name" : "a part of a literal no name takes");
 }
 
 /**
