@@ -133,12 +133,8 @@ describe("the code skill's rules for this repository's own code", () => {
     const problems: string[] = [];
     for (const shim of shims) {
       const module = shim.slice(0, -SHIM_ENDING.length) + ".ts";
-      const run = shimEntryPoint(shim, readFileSync(join(REPOSITORY_ROOT, shim), "utf8"));
-      const typed = typedSource(module, readFileSync(join(REPOSITORY_ROOT, module), "utf8"));
-      const first = firstFunction(typed.source, typed.checker);
-      if (run === null || first === null || run !== first.name) {
-        problems.push(`${shim} runs ${run ?? "(no exit call)"}, but ${module} leads with ${first?.name ?? "(no function)"}`);
-      }
+      const found = shimProblem(shim, readFileSync(join(REPOSITORY_ROOT, shim), "utf8"), module, readFileSync(join(REPOSITORY_ROOT, module), "utf8"));
+      if (found !== null) problems.push(found);
     }
     expect(problems).toEqual([]);
     expect(shims.length).toBeGreaterThanOrEqual(10);
@@ -251,6 +247,18 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(rethrows("probe.ts", narrowed)).toEqual([]);
   });
 
+  test("a shim runs its module's first function when the module exports that function under another name", () => {
+    const shim = "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli(process.argv));";
+    const aliased = "function entry(args: string[]): number { return args.length; }\nexport { entry as runCli };\n";
+    expect(shimProblem("probe-cli.ts", shim, "probe.ts", aliased)).toBeNull();
+    // The name the function is exported under is what counts, so a shim that runs its local name does not match.
+    expect(shimProblem("probe-cli.ts", "import { entry } from \"./probe.ts\";\nprocess.exit(entry(process.argv));", "probe.ts", aliased))
+      .toBe("probe-cli.ts runs entry, but probe.ts leads with entry, exported as runCli");
+    // A module whose first function is another one is still a mismatch.
+    const other = "export function auditText(): number { return 1; }\nexport function runCli(): number { return 0; }\n";
+    expect(shimProblem("probe-cli.ts", shim, "probe.ts", other)).toBe("probe-cli.ts runs runCli, but probe.ts leads with auditText");
+  });
+
   test("a shim's entry point is named as its module exports it, through an import alias", () => {
     expect(shimEntryPoint("probe-cli.ts", "import { runCli as main } from \"./probe.ts\";\nprocess.exit(main(process.argv));"))
       .toBe("runCli");
@@ -336,7 +344,7 @@ function entryPointProblem(file: string, text: string): EntryPoint {
   const { source, checker } = typedSource(file, text);
   const first = firstFunction(source, checker);
   if (first === null) return { checked: false, problem: null };
-  if (first.exported || exportedByList(source).has(first.name)) return { checked: true, problem: null };
+  if (exportedNames(source, first).length > 0) return { checked: true, problem: null };
   const line = source.getLineAndCharacterOfPosition(first.statement.getStart(source)).line + 1;
   return { checked: true, problem: `${file}:${line}: the first function, ${first.name}, is not exported` };
 }
@@ -423,15 +431,35 @@ function sourceReader(read: ts.CompilerHost["getSourceFile"], fileName: string, 
   };
 }
 
-/** The local names a module exports through `export { name }` lists. */
-function exportedByList(source: ts.SourceFile): Set<string> {
-  const names = new Set<string>();
+/**
+ * Whether a command shim runs the first function of its module.
+ *
+ * @returns A sentence naming what the shim runs and what the module leads
+ *     with when they differ, or null when they match.
+ */
+function shimProblem(shim: string, shimText: string, module: string, moduleText: string): string | null {
+  const run = shimEntryPoint(shim, shimText);
+  const typed = typedSource(module, moduleText);
+  const first = firstFunction(typed.source, typed.checker);
+  const exported = first === null ? [] : exportedNames(typed.source, first);
+  if (run !== null && exported.includes(run)) return null;
+  const alias = first !== null && exported.length > 0 && !exported.includes(first.name) ? `, exported as ${exported.join(" and ")}` : "";
+  return `${shim} runs ${run ?? "(no exit call)"}, but ${module} leads with ${first?.name ?? "(no function)"}${alias}`;
+}
+
+/**
+ * The names a module exports a top-level function under: its own name when
+ * its declaration is exported, and each name an `export { local as name }`
+ * list gives it.
+ */
+function exportedNames(source: ts.SourceFile, first: FirstFunction): string[] {
+  const names = first.exported ? [first.name] : [];
   for (const statement of source.statements) {
     if (!ts.isExportDeclaration(statement) || statement.moduleSpecifier !== undefined) continue;
     const clause = statement.exportClause;
     if (clause === undefined || !ts.isNamedExports(clause)) continue;
     for (const element of clause.elements) {
-      names.add((element.propertyName ?? element.name).text);
+      if ((element.propertyName ?? element.name).text === first.name) names.push(element.name.text);
     }
   }
   return names;
