@@ -564,6 +564,23 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", own)).toEqual({ read: 1, problems: [] });
   });
 
+  test("a documented destructuring reads a nested default as well as the value it would replace", () => {
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    for (const statement of [
+      `export const { inner: { read } = { read: ${thrower} } } = { inner: undefined };`,
+      `export const [[read] = [${thrower}]] = [undefined];`,
+      `export const { inner: { read } = { read: ${thrower} } } = { inner: made() };`,
+    ]) {
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+      expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: [] });
+    }
+    // A default the literal's own value replaces never runs, so it is not read.
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { inner: { read } = { read: ${thrower} } } = { inner: { read: (): number => 1 } };`))
+      .toEqual({ read: 0, problems: [] });
+  });
+
   test("a destructured array item with a comment of its own is read with that comment alone", () => {
     const item = "  (): number => {\n    throw new RangeError(\"size\");\n  },\n] as const;";
     const said = "  /**\n   * Reads a size.\n   * @throws A `RangeError` always.\n   */\n";
@@ -1070,8 +1087,9 @@ function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
  * Each function a binding pattern binds from a literal. A name bound to an
  * object's key reads that key's value or method, whatever the key's
  * spelling; a name bound by position reads the item there; a nested pattern
- * reads the nested literal; and a name the literal gives no function reads
- * its default. A key written as a computed name other than a string is not
+ * reads the nested literal, or its default when the value it is given is not
+ * a literal, such as `undefined`; and a name the literal gives no function
+ * reads its default. A key written as a computed name other than a string is not
  * read, nor is a property or an array item with a comment of its own, which
  * is read with that comment.
  */
@@ -1081,8 +1099,10 @@ function boundFunctions(pattern: ts.BindingPattern, literal: ts.Expression | und
     if (ts.isOmittedExpression(element)) continue;
     const value = ts.isObjectBindingPattern(pattern) ? keyValue(literal, boundKey(element)) : itemValue(literal, at);
     if (!ts.isIdentifier(element.name)) {
-      const nested = value === undefined || ts.isMethodDeclaration(value) ? undefined : value;
-      found.push(...boundFunctions(element.name, heldValue(nested ?? element.initializer), commented));
+      // The default runs when the value is missing, which a literal value never is.
+      const given = value === undefined || ts.isMethodDeclaration(value) ? undefined : heldValue(value);
+      const known = given !== undefined && (ts.isObjectLiteralExpression(given) || ts.isArrayLiteralExpression(given));
+      found.push(...boundFunctions(element.name, known ? given : heldValue(element.initializer), commented));
       continue;
     }
     const body = functionBody(value) ?? functionBody(element.initializer);
