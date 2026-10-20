@@ -18,6 +18,9 @@ const COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
  */
 const SHARED_SOURCES = new Map<string, ts.SourceFile>();
 
+/** The program of every TypeScript file in the repository, once a test has made it. */
+const REPOSITORY_PROGRAMS: ts.Program[] = [];
+
 const BACKSLASH = String.fromCharCode(92);
 
 /** How the name of a command shim ends. A shim runs one function of the module named without it. */
@@ -61,6 +64,51 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
     "Passes on the failure to list the corpus root unchanged, in a calibrated file whose behaviour must not move.",
 };
 
+/**
+ * The kinds of node the compiler counts as function-like that make a function
+ * with a body, each with how the placement check names one. It follows each
+ * such function to its place. A test fails when the installed compiler counts
+ * a kind as function-like that neither this nor TYPE_KINDS names.
+ */
+const FOLLOWED_KINDS: Readonly<Record<string, string>> = {
+  ArrowFunction: "an arrow function",
+  FunctionExpression: "a function expression",
+  FunctionDeclaration: "a function declaration",
+  MethodDeclaration: "a method",
+  Constructor: "a constructor",
+  GetAccessor: "a get accessor",
+  SetAccessor: "a set accessor",
+};
+
+/** The kinds of node the compiler counts as function-like that make no function, each with why the placement check passes over it. */
+const TYPE_KINDS: Readonly<Record<string, string>> = {
+  MethodSignature: "A method signature in a type describes a method and makes none.",
+  CallSignature: "A call signature in a type describes a call and makes no function.",
+  ConstructSignature: "A construct signature in a type describes new and makes no function.",
+  IndexSignature: "An index signature in a type describes keys and makes no function.",
+  FunctionType: "A function type describes a function and makes none.",
+  ConstructorType: "A constructor type describes a constructor and makes none.",
+  JSDocFunctionType: "A function type in a JSDoc comment describes a function and makes none.",
+  JSDocSignature: "A signature in a JSDoc comment describes a function and makes none.",
+};
+
+/**
+ * The places a function written in this repository may end in without a
+ * name of its own, each with the reason it is safe. The placement check
+ * follows every function written here to its place, and one that ends
+ * anywhere else, or in a place whose reason is missing, fails the test,
+ * naming it, until its place is added here with a reason.
+ */
+const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
+  "a function declaration": "It has a name of its own, where rule 1 orders it, and the lint selector refuses one inside a function.",
+  "a class member": "A method, constructor, accessor or field of a class is a member, which the skill allows.",
+  "an argument to a call that does not give it back": "The call is handed the function as a value; by its declared types, and by its body where it is declared here, the call's value is not that function.",
+  "returned from a function": "It is the value the function's caller receives: handed on, not kept under a name where it is written.",
+  "held in a value bound to a name": "The name binds the object or array that holds the function, not the function, which is a value handed on, most often a stand-in for a dependency.",
+  "a part of a literal no name takes": "A destructuring binds no name to it, so nothing keeps it.",
+  "stored on a property": "An assignment to a property, as a statement of its own, hands it on as a property that holds it does.",
+};
+
 // This file is the record of the four rules this plugin's own TypeScript is
 // held to, taken from its code skill, `iso-24495-code`, by the owner's
 // ruling. The skill states the first three in words. It states the fourth
@@ -77,7 +125,11 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 // 2. Interface comment present. A caller learns what a function does without
 //    reading its body. Every top-level export has a JSDoc comment, tested in
 //    source-comments.test.ts. A comment on a function that throws says what
-//    it throws, tested here.
+//    it throws, tested here. A function written as a value is read with the
+//    nearest comment of its own: on it, on a wrapper around it, or on the
+//    property or array item that holds it; failing that, with the comment on
+//    the class field that holds it, or on the statement that binds it to a
+//    name. A rest element with a name binds an array, not a function.
 // 3. Helpers at top level. A reader cannot reach a closure without reading
 //    its container first. A function declaration, a variable holding a
 //    function, or an object method or accessor inside a function is refused
@@ -85,16 +137,21 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    lint-rules.test.ts. A variable holding a function through
 //    Object.freeze counts. A selector cannot tell which key of a literal a
 //    name is bound to, so a test here finds every name bound to a function
-//    inside a function by destructuring, at any depth, or by a default, and
-//    every parameter whose default is a function. It reads every value an
-//    expression may be: each branch of a conditional, either side of ?? and
-//    ||, and the right of &&. A name a spread of unknown extent may give its
-//    value cannot be read, so it fails the test, naming the name and the
-//    spread; the same holds for the other two tests. A parameter its function's
-//    @param tag documents is part of the interface, not a helper, by the
-//    owner's ruling of 2026-10-20, so its default is not reported. Otherwise
-//    a property holding an arrow is left alone: it is a value handed on, most
-//    often a stand-in for a dependency.
+//    inside a function by destructuring, at any depth, by a rest element's
+//    pattern, by a default or by an assignment, and every parameter whose
+//    default is a function. It reads every value an expression may be: each
+//    branch of a conditional, either side of ?? and ||, the right of &&, and
+//    each argument a call may give back by its declared types, as
+//    Object.freeze, Object.assign and an identity function do, or by a body
+//    declared here that returns it. A key is read whatever its spelling:
+//    against an array literal, an index key reads the item there. A name a
+//    spread of unknown extent, or a key not known, may give its value cannot
+//    be read, so it fails the test, naming the name and why; the same holds
+//    for the other two tests. A parameter its function's @param tag
+//    documents is part of the interface, not a helper, by the owner's ruling
+//    of 2026-10-20, so its default is not reported. Otherwise a property
+//    holding an arrow is left alone: it is a value handed on, most often a
+//    stand-in for a dependency.
 // 4. Throw only Error. A value that is not an Error carries no message and no
 //    stack to the person who meets it. The lint rule
 //    "@typescript-eslint/only-throw-error" refuses a thrown value typed any or
@@ -111,6 +168,17 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    throws, through parentheses, so `throw (failure);` is found and a change
 //    of layout does not move an approved one.
 //
+// The tests for rules 1 to 3 read a function by where it is written. A
+// placement check makes sure that no function is written where they cannot
+// see it. It follows every function written with a body, of each kind the
+// compiler counts as function-like, out through each wrapper, each call that
+// may give it back and each literal that holds it, to where it ends. That is
+// a name the rules read, or one of the places in ALLOWED_POSITIONS, each
+// with the reason it is safe. A function that ends anywhere else fails the
+// test, naming the function, its file and its line, and so does a place
+// whose reason is missing, and a function-like kind of node that neither
+// FOLLOWED_KINDS nor TYPE_KINDS names.
+//
 // eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
 // removes, beside the rules themselves.
 //
@@ -122,11 +190,11 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //   `if (typeof failure === "string") throw failure;`: the check narrows it
 //   to a string first, so it is no longer typed unknown, and no one writes
 //   the check by accident.
-// - A nested helper whose arrow sits under a type wrapper inside
-//   Object.freeze, as in `Object.freeze(((n: number): number => n + 1)
-//   satisfies (n: number) => number)`: the lint selector reads only an arrow
-//   given to Object.freeze directly, and stacking a wrapper inside the call
-//   is a choice, not a slip. The throws check does read through it.
+//
+// The lint selector reads only an arrow given to Object.freeze directly, so
+// it misses one under a type wrapper inside the call, as in
+// `Object.freeze(((n: number): number => n + 1) satisfies (n: number) =>
+// number)`. The nested-helper test and the throws test both read through it.
 describe("the code skill's rules for this repository's own code", () => {
   // The first type check reads the libraries, which takes seconds. The later
   // ones share them.
@@ -171,7 +239,8 @@ describe("the code skill's rules for this repository's own code", () => {
     let read = 0;
     const problems: string[] = [];
     for (const file of typescriptFiles()) {
-      const found = undocumentedThrows(file, readFileSync(join(REPOSITORY_ROOT, file), "utf8"));
+      const { source, checker } = repositorySource(file);
+      const found = undocumentedThrowsIn(file, source, checker);
       read += found.read;
       problems.push(...found.problems);
     }
@@ -346,7 +415,8 @@ describe("the code skill's rules for this repository's own code", () => {
     const found: string[] = [];
     let files = 0;
     for (const file of typescriptFiles()) {
-      found.push(...boundHelpers(file, readFileSync(join(REPOSITORY_ROOT, file), "utf8")));
+      const { source, checker } = repositorySource(file);
+      found.push(...boundHelpersIn(file, source, checker));
       files += 1;
     }
     expect(found).toEqual([]);
@@ -897,12 +967,220 @@ describe("the code skill's rules for this repository's own code", () => {
     });
   });
 
+  test("a rest element with a pattern reads the items left over, and one with a name binds an array", () => {
+    const helper = "(n: number): number => n + 1";
+    const bound: Array<[body: string, found: string[]]> = [
+      [`const [...[helper]] = [${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const [...[helper = ${helper}]] = [0];`, ["probe.ts / main / helper"]],
+      [`const [, ...[helper]] = [1, ${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const [, ...[, helper]] = [1, 2, ${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const [...{ 0: helper }] = [${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const [, ...[helper]] = [${helper}, 1] as const;`, []],
+      [`const [...rest] = [${helper}] as const;`, []],
+      [`const [, ...[helper]] = [...made(), ${helper}];`, [positionNotKnown("helper", "...made()")]],
+    ];
+    for (const [body, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return 0;\n}\n`), body).toEqual(found);
+    }
+    const tail = "\nexport function main(): number { return 1; }\n";
+    expect(entryPointProblem("probe.ts", `const [...[helper]] = [${helper}];${tail}`))
+      .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const [...[read]] = [${thrower}] as const;`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    // A rest element with a name binds the array of what is left, which is not a function.
+    expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const [...readers] = [${thrower}];`)).toEqual({ read: 0, problems: [] });
+    expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const [first, ...readers] = [1, ${thrower}];`)).toEqual({ read: 0, problems: [] });
+  });
+
+  test("an object pattern read against an array literal takes each index key from the items", () => {
+    const helper = "(n: number): number => n + 1";
+    const bound: Array<[body: string, found: string[]]> = [
+      [`const { 0: helper } = [${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const { "0": helper } = [${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const { 1: helper } = [1, ${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const { 1: helper } = [...[1] as const, ${helper}] as const;`, ["probe.ts / main / helper"]],
+      [`const { 0: helper } = [1, ${helper}] as const;`, []],
+      // A key that is not an index names no item.
+      [`const { length } = [${helper}] as const;`, []],
+      [`const { "00": helper } = [${helper}];`, []],
+      [`const { 1: helper } = [...made(), ${helper}];`, [positionNotKnown("helper", "...made()")]],
+    ];
+    for (const [body, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return 0;\n}\n`), body).toEqual(found);
+    }
+    const tail = "\nexport function main(): number { return 1; }\n";
+    expect(entryPointProblem("probe.ts", `const { 0: helper } = [${helper}];${tail}`))
+      .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { 0: read } = [${thrower}] as const;`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+  });
+
+  test("a function a call may give back is read as the value of the call", () => {
+    const helper = "(n: number): number => n + 1";
+    const declared = "\nfunction identity<T>(value: T): T {\n  return value;\n}\nfunction wrap(given: (n: number) => number): (n: number) => number {\n  return given;\n}\n"
+      + "declare function schedule(callback: () => void): () => void;\n";
+    const bound: Array<[body: string, found: string[]]> = [
+      [`const helper = identity<(n: number) => number>(${helper});`, ["probe.ts / main / helper"]],
+      [`const helper = identity(identity(${helper}));`, ["probe.ts / main / helper"]],
+      [`const helper = Object.assign<(n: number) => number, { unit: string }>(${helper}, { unit: "items" });`, ["probe.ts / main / helper"]],
+      [`const helper = Object.freeze(${helper});`, ["probe.ts / main / helper"]],
+      [`const helper = Object.freeze((${helper}) satisfies (n: number) => number);`, ["probe.ts / main / helper"]],
+      [`const { helper } = identity({ helper: ${helper} });`, ["probe.ts / main / helper"]],
+      // A function declared here that returns its parameter gives back what it is given, generic or not.
+      [`const helper = wrap(${helper});`, ["probe.ts / main / helper"]],
+      // A call whose declared result is not what it is given hands the function on.
+      ["const cancel = schedule((): void => undefined);", []],
+      [`const sizes = [1].map(${helper});`, []],
+    ];
+    for (const [body, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return 0;\n}\n${declared}`), body).toEqual(found);
+    }
+    // A call whose function cannot be found may give back what it is given.
+    expect(boundHelpers("probe.ts", `export function main(untyped: any): number {\n  const helper = untyped.wrap(${helper});\n  return 0;\n}\n`)).toEqual(["probe.ts / main / helper"]);
+    const tail = `\nexport function main(): number { return 1; }${declared}`;
+    expect(entryPointProblem("probe.ts", `const helper = identity<((n: number) => number) | undefined>(${helper});${tail}`))
+      .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = identity(${thrower});${declared}`).problems)
+      .toEqual(["probe.ts:2: the comment on read does not say what it throws"]);
+  });
+
   test("a rethrow from a rejection handler is found however the method it is handed to is written", () => {
     for (const call of ["(read().catch)(HANDLER)", "((read()).catch)(HANDLER)", "(read().then)(undefined, HANDLER)", "read()[\"catch\"](HANDLER)", "read().catch(function (failure: unknown): never {\n    throw failure;\n  })"]) {
       const text = `export function passOn(read: () => Promise<string>): Promise<string> {\n  return ${call.replace("HANDLER", "(failure: unknown) => {\n    throw failure;\n  }")};\n}\n`;
       expect(throwsSomeName(text), call).toBe(true);
       expect(rethrows("probe.ts", text), call).toEqual(["probe.ts / (an unnamed function) / throw failure;"]);
     }
+  });
+
+  test("a computed key written as a literal is read as the key it gives, and one that is not known is reported", () => {
+    const helper = "(n: number): number => n + 1";
+    const bound: Array<[body: string, found: string[]]> = [
+      [`const { [\`helper\`]: helper } = { helper: ${helper} };`, ["probe.ts / main / helper"]],
+      [`const { helper } = { [\`helper\`]: ${helper} };`, ["probe.ts / main / helper"]],
+      [`const { [0]: helper } = { 0: ${helper} };`, ["probe.ts / main / helper"]],
+      [`const { [KEY]: helper } = { helper: ${helper} };`, ["probe.ts / main / helper"]],
+      [`const { helper } = { [KEY]: ${helper} };`, ["probe.ts / main / helper"]],
+      [`const { [name]: helper } = { helper: ${helper} };`, ["probe.ts / main / helper: its key, [name], is not known, so what it holds cannot be read"]],
+      [`const { helper } = { [name]: ${helper} };`, ["probe.ts / main / helper: its key may be given by [name], whose value is not known, so what it holds cannot be read"]],
+      [`const { helper } = { [name]: ${helper}, helper: 1 };`, []],
+    ];
+    for (const [body, found] of bound) {
+      expect(boundHelpers("probe.ts", `const KEY = "helper";\nexport function main(name: string): number {\n  ${body}\n  return 0;\n}\n`), body).toEqual(found);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { [\`read\`]: read } = { read: ${thrower} };`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+  });
+
+  test("a comment on a function inside a wrapper is the function's own, wherever the function sits", () => {
+    const thrower = "((): never => {\n    throw new RangeError(\"size\");\n  })";
+    const said = "/**\n   * Reads a size.\n   * @throws A `RangeError` always.\n   */";
+    for (const wrapped of [`${thrower} satisfies () => never`, `${thrower} as () => never`, `${thrower}!`]) {
+      expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const readers = [\n  /** Reads a size. */\n  ${wrapped},\n] as const;`), wrapped)
+        .toEqual({ read: 1, problems: ["probe.ts:4: the comment on an array item does not say what it throws"] });
+      expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const readers = [\n  ${said}\n  ${wrapped},\n] as const;`), wrapped).toEqual({ read: 1, problems: [] });
+      // With destructuring, the item's own comment is read, not the statement's.
+      expect(undocumentedThrows("probe.ts", `/** Holds readers. */\nexport const [read] = [\n  ${said}\n  ${wrapped},\n] as const;`), wrapped).toEqual({ read: 1, problems: [] });
+      expect(undocumentedThrows("probe.ts", `/**\n * Holds readers.\n * @throws A \`RangeError\` always.\n */\nexport const [read] = [\n  /** Reads a size. */\n  ${wrapped},\n] as const;`), wrapped)
+        .toEqual({ read: 1, problems: ["probe.ts:7: the comment on an array item does not say what it throws"] });
+    }
+    // A comment after a property's colon, or on a function handed to a call, is the function's own too.
+    expect(undocumentedThrows("probe.ts", `export const reader = {\n  read: /** Reads a size. */ ${thrower},\n};`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `export function main(): void {\n  run(/** Reads a size. */ ${thrower});\n}\ndeclare function run(read: () => never): void;\n`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on an unnamed function does not say what it throws"] });
+  });
+
+  test("every function written in the repository ends in a place the rules read", () => {
+    let placed = 0;
+    const problems: string[] = [];
+    for (const file of typescriptFiles()) {
+      const { source, checker } = repositorySource(file);
+      const found = placementsIn(file, source, checker, ALLOWED_POSITIONS);
+      placed += found.placed;
+      problems.push(...found.problems);
+    }
+    expect(problems).toEqual([]);
+    // A walk that placed nothing would find nothing wrong, so the count must be the size a walk of this repository gives.
+    expect(placed).toBeGreaterThan(2000);
+  });
+
+  test("the kinds the placement check names are the kinds the installed compiler counts as function-like", () => {
+    const counted = new Set(Object.values(ts.SyntaxKind).filter((kind): kind is ts.SyntaxKind => typeof kind === "number" && ts.isFunctionLike({ kind } as unknown as ts.Node)));
+    const named = new Set([...Object.keys(FOLLOWED_KINDS), ...Object.keys(TYPE_KINDS)].map((name) => ts.SyntaxKind[name as keyof typeof ts.SyntaxKind]));
+    expect([...named].sort()).toEqual([...counted].sort());
+    expect(Object.keys(FOLLOWED_KINDS).filter((name) => name in TYPE_KINDS)).toEqual([]);
+    // Each reason is one line.
+    for (const reason of [...Object.values(TYPE_KINDS), ...Object.values(ALLOWED_POSITIONS)]) {
+      expect(reason.trim() !== "" && !reason.includes("\n"), reason).toBe(true);
+    }
+  });
+
+  test("a function that ends in a place the allowed list does not name fails, naming the function and its line", () => {
+    const cases: Array<[text: string, problems: string[]]> = [
+      ["(() => 1)();\n", ["probe.ts:1: an arrow function cannot be placed: it is called where it is written, a place the allowed list does not name"]],
+      ["export function main(): number {\n  for (const check of [(): number => 1]) check();\n  return 0;\n}\n",
+        ["probe.ts:2: an arrow function cannot be placed: it sits in a ForOfStatement, a place the allowed list does not name"]],
+      ["export const tested = ((): number => 1) && 2;\n", ["probe.ts:1: an arrow function cannot be placed: it sits in a BinaryExpression, a place the allowed list does not name"]],
+      ["export const listed = [(): number => 1].map((check) => check());\n",
+        ["probe.ts:1: an arrow function cannot be placed: it sits in a PropertyAccessExpression, a place the allowed list does not name"]],
+      ["export const text = `${String((): number => 1)}`;\n", []],
+      ["let later: (() => number) | undefined;\nlater = (): number => 1;\nexport const used = later;\n",
+        ["probe.ts:2: an arrow function cannot be placed: it is assigned to later at the top level of the module, which the entry-point rule does not read"]],
+      ["run(...[(): number => 1]);\ndeclare function run(...checks: Array<() => number>): void;\n",
+        ["probe.ts:1: an arrow function cannot be placed: it sits in a SpreadElement, a place the allowed list does not name"]],
+      // A call whose function cannot be found may give back what it is given, so its value is followed on, here to a statement that drops it.
+      ["made((): number => 1);\n", ["probe.ts:1: an arrow function cannot be placed: it sits in an ExpressionStatement, a place the allowed list does not name"]],
+      ["export function main(untyped: any): number {\n  const helper = untyped.wrap((n: number): number => n);\n  return helper(1);\n}\n", []],
+      ["export const { length } = (): number => 1;\n",
+        ["probe.ts:1: an arrow function cannot be placed: a name may take it, but which one cannot be read, as it is read from a function as though the function were a literal"]],
+      ["export function main(): number {\n  const [, helper] = [...made(), (n: number): number => n];\n  return 0;\n}\n",
+        ["probe.ts:2: an arrow function cannot be placed: a name may take it, but which one cannot be read, as its position follows ...made(), whose length is not known"]],
+      ["export const helper = ((): (() => number) => (): number => 1)();\n", [
+        "probe.ts:1: an arrow function cannot be placed: it is called where it is written, a place the allowed list does not name",
+        "probe.ts:1: an arrow function cannot be placed: it is returned by a function called where it is written, a place the allowed list does not name",
+      ]],
+    ];
+    for (const [text, problems] of cases) {
+      expect(unplacedFunctions("probe.ts", text).problems, text).toEqual(problems);
+    }
+  });
+
+  test("each allowed position places a function, and a position whose reason is missing places none", () => {
+    const reached: Readonly<Record<string, string>> = {
+      "a function declaration": "export function main(): number {\n  return 1;\n}\n",
+      "a class member": "export class Reader {\n  read = (): number => 1;\n}\n",
+      "an argument to a call that does not give it back": "export const sizes = [1].map((size) => size + 1);\n",
+      "returned from a function": "export function make(): () => number {\n  return (): number => 1;\n}\n",
+      "held in a value bound to a name": "export const reader = { read: (): number => 1 };\n",
+      "a part of a literal no name takes": "export const { size } = { size: 1, read: (): number => 1 };\n",
+      "stored on a property": "export function main(reader: { read: () => number }): void {\n  reader.read = (): number => 2;\n}\n",
+    };
+    expect(Object.keys(reached).sort()).toEqual(Object.keys(ALLOWED_POSITIONS).sort());
+    for (const [position, text] of Object.entries(reached)) {
+      const found = unplacedFunctions("probe.ts", text);
+      expect(found.problems, position).toEqual([]);
+      expect(found.placed, position).toBeGreaterThan(0);
+      const emptied = unplacedFunctions("probe.ts", text, { ...ALLOWED_POSITIONS, [position]: "" }).problems;
+      expect(emptied.some((problem) => problem.endsWith(`is ${position}, which has no reason on the allowed list`)), position).toBe(true);
+      const removed = Object.fromEntries(Object.entries(ALLOWED_POSITIONS).filter(([name]) => name !== position));
+      expect(unplacedFunctions("probe.ts", text, removed).problems.length, position).toBeGreaterThan(0);
+    }
+    // A function bound to a name is placed by the rules that read the name, not by the list.
+    expect(unplacedFunctions("probe.ts", "export const read = (): number => 1;\n")).toEqual({ placed: 1, problems: [] });
+  });
+
+  test("a function assigned to a name inside a function is a nested helper", () => {
+    for (const assignment of ["helper = (n: number): number => n + 1;", "helper ??= (n: number): number => n + 1;", "(helper) = (n: number): number => n + 1;"]) {
+      const text = `export function main(): number {\n  let helper: ((n: number) => number) | undefined;\n  ${assignment}\n  return helper(1);\n}\n`;
+      expect(boundHelpers("probe.ts", text), assignment).toEqual(["probe.ts / main / helper"]);
+      expect(unplacedFunctions("probe.ts", text).problems, assignment).toEqual([]);
+    }
+    // A function stored on a property is handed on.
+    expect(boundHelpers("probe.ts", "export function main(reader: { read: () => number }): void {\n  reader.read = (): number => 2;\n}\n")).toEqual([]);
   });
 });
 
@@ -953,8 +1231,8 @@ interface FirstFunction {
   name: string;
   exported: boolean;
   statement: ts.Statement;
-  /** The spread of unknown extent that may give a destructured name its value, so it may be the first function; or null. */
-  unknownAfter: ts.SpreadElement | ts.SpreadAssignment | null;
+  /** What makes a destructured name's value unknown, so it may be the first function; or null. */
+  unknownAfter: UnknownCause | null;
 }
 
 /**
@@ -970,14 +1248,14 @@ function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFun
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      const written = new Set(helperNames(declaration.name, declaration.initializer));
-      const unknown = unknownPositions(declaration.name, declaration.initializer);
+      const reading = readBinding(declaration.name, declaration.initializer, checker);
+      const written = new Set(helperNames(reading, checker));
       for (const name of boundNames(declaration.name)) {
         if (written.has(name) || checker.getTypeAtLocation(name).getCallSignatures().length > 0) {
           return { name: name.text, exported, statement, unknownAfter: null };
         }
-        const position = unknown.find((found) => found.name === name);
-        if (position !== undefined) return { name: name.text, exported, statement, unknownAfter: position.spread };
+        const position = reading.unknown.find((found) => found.name === name);
+        if (position !== undefined) return { name: name.text, exported, statement, unknownAfter: position.cause };
       }
     }
   }
@@ -992,14 +1270,15 @@ function boundNames(binding: ts.BindingName): ts.Identifier[] {
 
 /**
  * The functions an expression may hold: each value `possibleValues` gives
- * that is an arrow function or a function expression. Any call with a
- * callback but `Object.freeze` runs it to build a value, so it holds none.
+ * that is an arrow function or a function expression. A call that runs a
+ * callback to build a value, as `map` does, gives back what the callback
+ * returns, not the callback, so it holds none.
  *
  * @returns Each arrow function or function expression, none when the
  *     expression holds neither or is undefined.
  */
-function functionValues(expression: ts.Expression | undefined): Array<ts.ArrowFunction | ts.FunctionExpression> {
-  return possibleValues(expression).filter(isFunctionValue);
+function functionValues(expression: ts.Expression | undefined, checker: ts.TypeChecker): Array<ts.ArrowFunction | ts.FunctionExpression> {
+  return possibleValues(expression, checker).filter(isFunctionValue);
 }
 
 /** Whether an expression is an arrow function or a function expression. */
@@ -1018,24 +1297,37 @@ const EITHER_SIDE = new Set<ts.SyntaxKind>([
 /** The operators whose result is the left side only when it is falsy: `&&`, and the assignment that uses it. */
 const RIGHT_UNLESS_FALSY = new Set<ts.SyntaxKind>([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.AmpersandAmpersandEqualsToken]);
 
+/** No function's body is being read, as `possibleValues` begins. */
+const NOTHING_FOLLOWED: ReadonlySet<ts.Node> = new Set();
+
 /**
  * Each value an expression may be, read through the wrappers `heldValue`
  * looks through. A conditional may be either branch. `??` and `||` may be
  * either side. `&&` may be its right side, or its left side when that is
  * falsy, which a function, an object literal or an array literal never is.
- * A comma list, or an assignment, is the value on its right.
+ * A comma list, or an assignment, is the value on its right. A call, or
+ * `new`, may be each argument `givenBack` finds it gives back, and is
+ * itself the value when it gives back none.
  *
+ * @param following The functions whose bodies `givenBack` is reading
+ *     already, so that a function that calls itself is read once.
  * @returns Each value, in the order it is written; none when given undefined.
  */
-function possibleValues(expression: ts.Expression | undefined): ts.Expression[] {
+function possibleValues(expression: ts.Expression | undefined, checker: ts.TypeChecker, following: ReadonlySet<ts.Node> = NOTHING_FOLLOWED): ts.Expression[] {
   const inner = heldValue(expression);
   if (inner === undefined) return [];
-  if (ts.isConditionalExpression(inner)) return [...possibleValues(inner.whenTrue), ...possibleValues(inner.whenFalse)];
+  if (ts.isConditionalExpression(inner)) return [...possibleValues(inner.whenTrue, checker, following), ...possibleValues(inner.whenFalse, checker, following)];
+  if (ts.isCallExpression(inner) || ts.isNewExpression(inner)) {
+    const given = givenBack(inner, checker, following);
+    return given.length === 0 ? [inner] : given;
+  }
   if (!ts.isBinaryExpression(inner)) return [inner];
   const operator = inner.operatorToken.kind;
-  if (EITHER_SIDE.has(operator)) return [...possibleValues(inner.left), ...possibleValues(inner.right)];
-  if (RIGHT_UNLESS_FALSY.has(operator)) return [...possibleValues(inner.left).filter((value) => !isAlwaysTruthy(value)), ...possibleValues(inner.right)];
-  if (operator === ts.SyntaxKind.CommaToken || operator === ts.SyntaxKind.EqualsToken) return possibleValues(inner.right);
+  if (EITHER_SIDE.has(operator)) return [...possibleValues(inner.left, checker, following), ...possibleValues(inner.right, checker, following)];
+  if (RIGHT_UNLESS_FALSY.has(operator)) {
+    return [...possibleValues(inner.left, checker, following).filter((value) => !isAlwaysTruthy(value)), ...possibleValues(inner.right, checker, following)];
+  }
+  if (operator === ts.SyntaxKind.CommaToken || operator === ts.SyntaxKind.EqualsToken) return possibleValues(inner.right, checker, following);
   return [inner];
 }
 
@@ -1046,30 +1338,146 @@ function isAlwaysTruthy(expression: ts.Expression): boolean {
 
 /**
  * The value an expression holds, looking through parentheses, a type
- * assertion, `satisfies` and a call of `Object.freeze` on one value.
+ * assertion, `satisfies` and `!`, none of which changes what runs.
  *
  * @returns The innermost expression, or undefined when given undefined.
  */
 function heldValue(expression: ts.Expression | undefined): ts.Expression | undefined {
   let inner = expression;
-  while (inner !== undefined) {
-    if (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isSatisfiesExpression(inner)
-      || ts.isTypeAssertionExpression(inner) || ts.isNonNullExpression(inner)) {
-      inner = inner.expression;
-    } else if (isFreezeCall(inner)) {
-      inner = inner.arguments[0];
-    } else {
-      break;
-    }
+  while (inner !== undefined && (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isSatisfiesExpression(inner)
+    || ts.isTypeAssertionExpression(inner) || ts.isNonNullExpression(inner))) {
+    inner = inner.expression;
   }
   return inner;
 }
 
-/** Whether an expression calls `Object.freeze` on one value. */
-function isFreezeCall(expression: ts.Expression): expression is ts.CallExpression {
-  return ts.isCallExpression(expression) && expression.arguments.length === 1
-    && ts.isPropertyAccessExpression(expression.expression) && ts.isIdentifier(expression.expression.expression)
-    && expression.expression.expression.text === "Object" && expression.expression.name.text === "freeze";
+/** The one value an expression may be, as `possibleValues` reads it, or undefined when it may be more than one. */
+function singleValue(expression: ts.Expression, checker: ts.TypeChecker): ts.Expression | undefined {
+  const values = possibleValues(expression, checker);
+  return values.length === 1 ? values[0] : undefined;
+}
+
+/**
+ * The values a call, or `new`, may give back as its own value: each value,
+ * as `possibleValues` reads it, of an argument the call may give back. An
+ * argument may be given back when the parameter it is passed to is declared
+ * with a type parameter of the call's own signature that the declared result
+ * uses too, outside any function type, as with `Object.freeze`,
+ * `Object.assign` and an identity function; then each of its values whose
+ * type fits the result, or a type the result intersects, is given back. A
+ * type parameter used only inside a function type, as `map` uses one for
+ * what its callback returns, gives back what the callback returns, not the
+ * callback. Every value of an argument is given back when the function
+ * called is declared here with a body that returns that parameter, generic
+ * or not, and when the function called cannot be found, as for a method of
+ * a value typed any, since that may give back anything it is given.
+ *
+ * @returns Each value given back, in the order written.
+ */
+function givenBack(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): ts.Expression[] {
+  const declaration = calledDeclaration(call, checker);
+  const result = checker.getTypeAtLocation(call);
+  const given: ts.Expression[] = [];
+  for (const [at, argument] of (call.arguments ?? []).entries()) {
+    const parameter = declaration === undefined ? undefined : parameterOf(declaration, call, at);
+    if (declaration === undefined || (parameter !== undefined && returnsParameter(declaration, parameter, checker, following))) {
+      given.push(...possibleValues(argument, checker, following));
+    } else if (parameter !== undefined && sharesTypeParameter(declaration, parameter)) {
+      given.push(...possibleValues(argument, checker, following).filter((value) => fitsResult(checker.getTypeAtLocation(value), result, checker)));
+    }
+  }
+  return given;
+}
+
+/** The declaration of the signature a call, or `new`, resolves to, or undefined when the function called cannot be found. */
+function calledDeclaration(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): ts.SignatureDeclaration | undefined {
+  // The type says a signature always has a declaration, but one the checker cannot resolve has none.
+  const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = checker.getResolvedSignature(call)?.getDeclaration();
+  return declaration === undefined || ts.isJSDocSignature(declaration) ? undefined : declaration;
+}
+
+/**
+ * The parameter of a declaration that one argument of a call is passed to,
+ * reading a rest parameter for each argument from its position on.
+ *
+ * @returns The parameter, or undefined when a spread at or before the
+ *     argument hides which parameter it is passed to, or there is none.
+ */
+function parameterOf(declaration: ts.SignatureDeclaration, call: ts.CallExpression | ts.NewExpression, at: number): ts.ParameterDeclaration | undefined {
+  if ((call.arguments ?? []).slice(0, at + 1).some(ts.isSpreadElement)) return undefined;
+  const parameters = declaration.parameters.filter((parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this");
+  const last = parameters.at(-1);
+  if (last?.dotDotDotToken !== undefined && at >= parameters.length - 1) return last;
+  return parameters[at];
+}
+
+/**
+ * Whether a parameter's declared type uses, outside any function type, a
+ * type parameter of its own signature that the signature's declared result
+ * uses too, outside any function type.
+ */
+function sharesTypeParameter(declaration: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration): boolean {
+  if (parameter.type === undefined || declaration.type === undefined) return false;
+  const own = new Set((declaration.typeParameters ?? []).map((typeParameter) => typeParameter.name.text));
+  const result = typeNamesOutsideFunctions(declaration.type);
+  return [...typeNamesOutsideFunctions(parameter.type)].some((name) => own.has(name) && result.has(name));
+}
+
+/** Each name a type refers to by a type reference, outside any function type within it. */
+function typeNamesOutsideFunctions(type: ts.TypeNode): Set<string> {
+  const names = new Set<string>();
+  const pending: ts.Node[] = [type];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isFunctionLike(node)) continue;
+    if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) names.add(node.typeName.text);
+    // A callback that returns a value stops the walk, so this one returns nothing.
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+  }
+  return names;
+}
+
+/** Whether a value of one type may be a call's whole result: it fits the result, or a type the result intersects. */
+function fitsResult(given: ts.Type, result: ts.Type, checker: ts.TypeChecker): boolean {
+  if (checker.isTypeAssignableTo(given, result)) return true;
+  return result.isIntersection() && result.types.some((part) => checker.isTypeAssignableTo(given, part));
+}
+
+/**
+ * Whether a function declared here with a body may return one of its
+ * parameters: whether a value that one of its return statements, or its
+ * expression body, may be is that parameter's name.
+ */
+function returnsParameter(declaration: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): boolean {
+  if (!ts.isIdentifier(parameter.name) || following.has(declaration)) return false;
+  const symbol = checker.getSymbolAtLocation(parameter.name);
+  const deeper = new Set([...following, declaration]);
+  return returnedExpressions(declaration).some((returned) => possibleValues(returned, checker, deeper)
+    .some((value) => ts.isIdentifier(value) && checker.getSymbolAtLocation(value) === symbol));
+}
+
+/**
+ * The expressions a function may return: its expression body, or the value
+ * of each return statement of its own, not of a function nested in it.
+ *
+ * @returns Each expression, none when the declaration has no body.
+ */
+function returnedExpressions(declaration: ts.SignatureDeclaration): ts.Expression[] {
+  const body = (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration) || ts.isConstructorDeclaration(declaration)
+    || ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration) || ts.isFunctionExpression(declaration)
+    || ts.isArrowFunction(declaration)) ? declaration.body : undefined;
+  if (body === undefined) return [];
+  if (!ts.isBlock(body)) return [body];
+  const returned: ts.Expression[] = [];
+  const pending: ts.Node[] = [body];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isReturnStatement(node) && node.expression !== undefined) returned.push(node.expression);
+    ts.forEachChild(node, (child) => {
+      if (!ts.isFunctionLike(child)) pending.push(child);
+    });
+  }
+  return returned;
 }
 
 /** A source file with the type checker of the program that read it. */
@@ -1087,7 +1495,7 @@ interface TypedSource {
  * @throws An `Error` when the compiler did not read the file.
  */
 function typedSource(file: string, text: string): TypedSource {
-  const fileName = join(REPOSITORY_ROOT, file).split(BACKSLASH).join("/");
+  const fileName = compilerPath(file);
   const host = ts.createCompilerHost(COMPILER_OPTIONS, true);
   host.getSourceFile = sourceReader(host.getSourceFile, fileName, text);
   const program = ts.createProgram([fileName], COMPILER_OPTIONS, host);
@@ -1096,21 +1504,64 @@ function typedSource(file: string, text: string): TypedSource {
   return { source, checker: program.getTypeChecker() };
 }
 
+/** The path the compiler gives a file of the repository: absolute, with forward slashes. */
+function compilerPath(file: string): string {
+  return join(REPOSITORY_ROOT, file).split(BACKSLASH).join("/");
+}
+
 /**
  * A compiler host's reader that gives one file the text given, and reads
- * every other file from disk once, through SHARED_SOURCES.
+ * every other file as `sharedReader` does.
  *
  * @returns The reader.
  */
 function sourceReader(read: ts.CompilerHost["getSourceFile"], fileName: string, text: string): ts.CompilerHost["getSourceFile"] {
+  const shared = sharedReader(read);
+  return (name, version, onError) => name === fileName ? ts.createSourceFile(name, text, version, true) : shared(name, version, onError);
+}
+
+/**
+ * A compiler host's reader that reads each file from disk once, through
+ * SHARED_SOURCES.
+ *
+ * @returns The reader.
+ */
+function sharedReader(read: ts.CompilerHost["getSourceFile"]): ts.CompilerHost["getSourceFile"] {
   return (name, version, onError) => {
-    if (name === fileName) return ts.createSourceFile(name, text, version, true);
     const kept = SHARED_SOURCES.get(name);
     if (kept !== undefined) return kept;
     const made = read(name, version, onError);
     if (made !== undefined) SHARED_SOURCES.set(name, made);
     return made;
   };
+}
+
+/**
+ * The program of every TypeScript file in the repository, read under this
+ * repository's options. It is made once, by the first test that asks, and
+ * the tests that read every file share it.
+ */
+function repositoryProgram(): ts.Program {
+  const kept = REPOSITORY_PROGRAMS[0];
+  if (kept !== undefined) return kept;
+  const host = ts.createCompilerHost(COMPILER_OPTIONS, true);
+  host.getSourceFile = sharedReader(host.getSourceFile);
+  const program = ts.createProgram(typescriptFiles().map(compilerPath), COMPILER_OPTIONS, host);
+  REPOSITORY_PROGRAMS.push(program);
+  return program;
+}
+
+/**
+ * One file of the repository as the repository's program read it, with that
+ * program's checker.
+ *
+ * @throws An `Error` when the program did not read the file.
+ */
+function repositorySource(file: string): TypedSource {
+  const program = repositoryProgram();
+  const source = program.getSourceFile(compilerPath(file));
+  if (source === undefined) throw new Error(`The compiler did not read ${file}.`);
+  return { source, checker: program.getTypeChecker() };
 }
 
 /**
@@ -1304,42 +1755,72 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
 }
 
 /**
- * Every name a file binds to a function inside a function by destructuring
- * or by a default, and every parameter whose default is a function: rule 3's
- * nested helpers that a lint selector cannot see, since a selector cannot
- * tell which key of a literal a name is bound to.
+ * Every name a file binds to a function inside a function: by destructuring,
+ * by a default, by a declaration or an assignment whose value may be a
+ * function, and every parameter whose default is a function. These are rule
+ * 3's nested helpers that a lint selector cannot see, since a selector cannot
+ * tell which key of a literal a name is bound to, nor which argument a call
+ * gives back.
  *
- * A name bound by destructuring reads the value or method its key, or its
- * position, holds in the literal destructured, at any depth, through the
- * wrappers a function value is read through. A name whose default is a
- * function is bound to one too. A rest element binds an object, not a
- * function, and a destructuring at the top level of a module binds no nested
- * helper. A parameter that an `@param` tag of its function's comment, or of
- * one of its overload signatures, names is part of the interface, so its own
- * default is not read; a default inside a destructured parameter is still
- * read. A name that a spread of unknown extent may give its value cannot be
- * read, so it is reported as such, naming the spread.
+ * A name bound by destructuring reads what `readBinding` finds its key, or
+ * its position, holds in each literal destructured, at any depth, through the
+ * wrappers and calls a function value is read through. A name whose default
+ * is a function is bound to one too. A rest element with a name binds an
+ * object or array, not a function; one with a pattern reads the items left.
+ * A destructuring at the top level of a module binds no nested helper. A
+ * parameter that an `@param` tag of its function's comment, or of one of its
+ * overload signatures, names is part of the interface, so its own default is
+ * not read; a default inside a destructured parameter is still read. A name
+ * whose value cannot be read is reported as such, saying why.
  *
  * @returns One "file / function / name" entry for each, in the order they
  *     appear, then, for each declaration, one entry for each name it
  *     cannot read, which says why.
  */
 function boundHelpers(file: string, text: string): string[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const { source, checker } = typedSource(file, text);
+  return boundHelpersIn(file, source, checker);
+}
+
+/** What `boundHelpers` finds in one source file, read with the checker of the program that read it. */
+function boundHelpersIn(file: string, source: ts.SourceFile, checker: ts.TypeChecker): string[] {
   const found: string[] = [];
   const pending: ts.Node[] = [source];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     pending.push(...[...node.getChildren(source)].reverse());
+    const assigned = assignedName(node);
+    if (assigned !== null && ts.findAncestor(node, ts.isFunctionLike) !== undefined && functionValues(assigned.value, checker).length > 0) {
+      found.push(`${file} / ${enclosingFunctionName(assigned.name, source)} / ${assigned.name.text}`);
+    }
     const declaration = helperDeclaration(node);
     if (declaration === null) continue;
-    for (const name of new Set(helperNames(declaration.name, declaration.initializer))) {
+    const reading = readBinding(declaration.name, declaration.initializer, checker);
+    for (const name of new Set(helperNames(reading, checker))) {
       found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}`);
     }
-    for (const { name, spread } of unknownPositions(declaration.name, declaration.initializer)) {
-      found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}: ${unknownReason(spread, source)}, so what it holds cannot be read`);
+    for (const { name, cause } of reading.unknown) {
+      found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}: ${unknownReason(cause, source)}, so what it holds cannot be read`);
     }
   }
   return found;
+}
+
+/** A name an assignment gives a value, with the value. */
+interface AssignedName {
+  name: ts.Identifier;
+  value: ts.Expression;
+}
+
+/** The name a node assigns a value to, with the value, or null when it assigns nothing to a name. */
+function assignedName(node: ts.Node): AssignedName | null {
+  if (!ts.isBinaryExpression(node) || !isAssignmentOperator(node.operatorToken.kind)) return null;
+  const target = heldValue(node.left);
+  return target !== undefined && ts.isIdentifier(target) ? { name: target, value: node.right } : null;
+}
+
+/** Whether a token is an operator that assigns: `=`, or a compound form such as `??=`. */
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 }
 
 /**
@@ -1367,161 +1848,223 @@ function isDocumentedParameter(parameter: ts.ParameterDeclaration): boolean {
   return tags.some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
 }
 
-/**
- * Each name a binding gives a function, reading each literal the value
- * given may be, as `possibleValues` reads it, and, below it, each default.
- * A default is read whether or not the value given means it never runs,
- * since a function written there is bound to the name.
- */
-function helperNames(binding: ts.BindingName, value: ts.Expression | undefined): ts.Identifier[] {
-  if (ts.isIdentifier(binding)) return functionValues(value).length === 0 ? [] : [binding];
-  const literals = possibleValues(value);
-  const names: ts.Identifier[] = [];
-  for (const [at, element] of binding.elements.entries()) {
-    if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
-    for (const literal of literals) {
-      for (const held of elementSource(binding, element, at, literal).holders.map(heldBy)) {
-        if (!ts.isMethodDeclaration(held)) names.push(...helperNames(element.name, held));
-        else if (ts.isIdentifier(element.name)) names.push(element.name);
-      }
-    }
-    names.push(...helperNames(element.name, element.initializer));
-  }
-  return names;
+/** Each name a reading gives a function: a name one of whose values may be an arrow function or a function expression, or is a method. */
+function helperNames(reading: Reading, checker: ts.TypeChecker): ts.Identifier[] {
+  return reading.bound.filter(({ value }) => ts.isMethodDeclaration(value) || functionValues(value, checker).length > 0).map(({ name }) => name);
+}
+
+/** A name a binding gives a value, and one value it may take. */
+interface Bound {
+  name: ts.Identifier;
+  /** What its key or position holds in a literal, a method there, or its default. */
+  value: ts.Expression | ts.MethodDeclaration;
 }
 
 /**
- * A name whose value a spread of unknown extent may give, with that spread:
- * a position of an array literal after a spread of anything but an array or
- * string literal, or a key of an object literal that a spread of anything
- * but an object literal may give.
+ * What makes a name's value unknown, so that no rule can read what it holds:
+ * a spread of unknown extent, a key computed from anything but a literal, or
+ * a value read by a pattern that is not a literal of the kind it reads.
  */
+type UnknownCause = ts.Node;
+
+/** A name whose value cannot be read, with what makes it unknown. */
 interface UnknownPosition {
   name: ts.Identifier;
-  spread: ts.SpreadElement | ts.SpreadAssignment;
+  cause: UnknownCause;
+}
+
+/** A part of a literal that a name may take, where which name takes it cannot be told, with why. */
+interface UnreadPart {
+  node: ts.Node;
+  cause: UnknownCause;
+}
+
+/** What a binding gives each name, read against the value given, and where every other part of each literal it reads goes. */
+interface Reading {
+  /** Each name with each value it may take, in the order the names are written. */
+  bound: Bound[];
+  /** Each name whose value cannot be read, with why. */
+  unknown: UnknownPosition[];
+  /** Each property, accessor or item of a literal read that no name takes as its value. */
+  untaken: ts.Node[];
+  /** Each property or item that a rest element with a name takes into the object or array it binds. */
+  rested: ts.Node[];
+  /** Each part of a literal read that a name may take, where which name cannot be told. */
+  unread: UnreadPart[];
 }
 
 /**
- * Each name a binding takes from a spread of unknown extent, at any depth,
- * reading each literal the value may be, as `possibleValues` reads it, and
- * each default. What such a name holds cannot be known without running the
- * code, so no rule can read it, and it is reported instead. A rest element
- * binds what is left over, not one item or key, so it is not one.
+ * What a binding gives each name. Each literal the value given may be, as
+ * `possibleValues` reads it, is read. A name bound to an object's key reads
+ * that key's value or method from an object literal, whatever the key's
+ * spelling, or the item at that index from an array literal. A name bound by
+ * position reads the item there. A nested pattern reads the nested literal.
+ * A rest element with a pattern reads the items left after the elements
+ * before it. Every name and nested pattern also reads its default, whether or
+ * not the value given means the default never runs, since a function written
+ * there is bound to the name. A spread of an object or array literal is read
+ * through; a spread of anything else, or a key computed from anything but a
+ * literal, leaves what it may give unknown.
+ *
+ * @param reading What has been read so far, which this adds to and returns.
+ * @param offset The position in an array literal that the pattern's first
+ *     element reads: past the elements before a rest element, for its pattern.
  */
-function unknownPositions(binding: ts.BindingName, value: ts.Expression | undefined): UnknownPosition[] {
-  if (ts.isIdentifier(binding)) return [];
-  const literals = possibleValues(value);
-  const found: UnknownPosition[] = [];
-  for (const [at, element] of binding.elements.entries()) {
-    if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
-    for (const literal of literals) {
-      const { holders, unknownAfter } = elementSource(binding, element, at, literal);
-      if (unknownAfter !== null) found.push(...boundNames(element.name).map((name) => ({ name, spread: unknownAfter })));
-      for (const held of holders.map(heldBy)) {
-        if (!ts.isMethodDeclaration(held)) found.push(...unknownPositions(element.name, held));
-      }
-    }
-    found.push(...unknownPositions(element.name, element.initializer));
+function readBinding(binding: ts.BindingName, value: ts.Expression | ts.MethodDeclaration | undefined, checker: ts.TypeChecker,
+  reading: Reading = { bound: [], unknown: [], untaken: [], rested: [], unread: [] }, offset = 0): Reading {
+  if (ts.isIdentifier(binding)) {
+    if (value !== undefined) reading.bound.push({ name: binding, value });
+    return reading;
   }
-  return found;
+  const literals = valuesOf(value, checker);
+  for (const [at, element] of binding.elements.entries()) {
+    if (ts.isOmittedExpression(element)) continue;
+    for (const literal of literals) {
+      readElement(binding, element, at, literal, checker, reading, offset);
+    }
+    if (element.initializer !== undefined) readBinding(element.name, element.initializer, checker, reading);
+  }
+  for (const literal of literals) {
+    sortLiteral(binding, literal, checker, reading, offset);
+  }
+  return reading;
 }
 
-/**
- * Why the rules cannot read a name that a spread of unknown extent may give
- * its value, as a clause about the name.
- */
-function unknownReason(spread: ts.SpreadElement | ts.SpreadAssignment, source: ts.SourceFile): string {
-  if (ts.isSpreadElement(spread)) return `its position follows ${spread.getText(source)}, whose length is not known`;
-  return `its key may be given by ${spread.getText(source)}, whose keys are not known`;
+/** Each value a name's value may be, as `possibleValues` reads it; a method is itself. None when there is no value. */
+function valuesOf(value: ts.Expression | ts.MethodDeclaration | undefined, checker: ts.TypeChecker): Array<ts.Expression | ts.MethodDeclaration> {
+  if (value === undefined) return [];
+  return ts.isMethodDeclaration(value) ? [value] : possibleValues(value, checker);
 }
 
-/** Where one binding element of a pattern takes its value from, in one literal. */
+/** Reads what one element of a pattern takes from one literal, adding it to the reading. */
+function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression | ts.MethodDeclaration,
+  checker: ts.TypeChecker, reading: Reading, offset: number): void {
+  if (element.dotDotDotToken !== undefined) {
+    // A rest element with a name binds what is left as an object or array; one with a pattern reads the items left.
+    if (!ts.isIdentifier(element.name) && ts.isArrayLiteralExpression(literal)) readBinding(element.name, literal, checker, reading, offset + at);
+    return;
+  }
+  const source = elementSource(pattern, element, at, literal, checker, offset);
+  const cause = source.unknownAfter;
+  if (cause !== null) reading.unknown.push(...boundNames(element.name).map((name) => ({ name, cause })));
+  for (const holder of source.holders) {
+    readBinding(element.name, heldBy(holder), checker, reading);
+  }
+}
+
+/** A property, method or array item of a literal that gives a name its value. */
+type Holder = ts.PropertyAssignment | ts.ShorthandPropertyAssignment | ts.MethodDeclaration | ts.Expression;
+
+/** Where one element of a pattern takes its value from, in one literal. */
 interface ElementSource {
-  /**
-   * Each property or method of an object literal that gives the element's
-   * key, or the item of an array literal at its position: every one that may
-   * give its value, a later one as well as one it overrides.
-   */
-  holders: Array<ts.PropertyAssignment | ts.MethodDeclaration | ts.Expression>;
-  /** The spread of unknown extent that may give the element its value instead, or null. */
-  unknownAfter: ts.SpreadElement | ts.SpreadAssignment | null;
+  /** Each property, method or array item that may give the element its value: a later one as well as one it overrides. */
+  holders: Holder[];
+  /** What may give the element its value instead, so that it cannot be read, or null. */
+  unknownAfter: UnknownCause | null;
 }
 
 /**
  * Where a binding element takes its value from in one literal: by key from an
- * object literal, through each spread of an object literal, or by position
- * from an array literal, through each spread of an array or string literal.
+ * object literal, through each spread of an object literal; or by position,
+ * or by an index key, from an array literal, through each spread of an array
+ * or string literal.
  *
- * @returns No holder and no spread when the literal is not the kind the
- *     pattern reads.
+ * @returns No holder and nothing unknown when the literal is not an object
+ *     or array literal, or the key is not an index of an array literal.
  */
-function elementSource(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression): ElementSource {
-  if (ts.isObjectBindingPattern(pattern)) return keyedProperties(literal, boundKey(element));
-  const item = literalItem(literal, at);
-  return { holders: item === undefined ? [] : [item], unknownAfter: unknownSpread(literal, at) };
+function elementSource(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression | ts.MethodDeclaration,
+  checker: ts.TypeChecker, offset: number): ElementSource {
+  if (!ts.isArrayLiteralExpression(literal) && !ts.isObjectLiteralExpression(literal)) return { holders: [], unknownAfter: null };
+  if (ts.isArrayBindingPattern(pattern)) return itemSource(literal, offset + at, checker);
+  const key = boundKey(element, checker);
+  // A key computed from anything but a literal may be any key.
+  if (key === undefined) return { holders: [], unknownAfter: element.propertyName ?? element };
+  if (ts.isObjectLiteralExpression(literal)) return keyedProperties(literal, key, checker);
+  return isIndexKey(key) ? itemSource(literal, offset + Number(key), checker) : { holders: [], unknownAfter: null };
 }
 
-/** The value a property gives, or the method or array item itself. */
-function heldBy(holder: ts.PropertyAssignment | ts.MethodDeclaration | ts.Expression): ts.Expression | ts.MethodDeclaration {
-  return ts.isPropertyAssignment(holder) ? holder.initializer : holder;
-}
-
-/**
- * Each property or method of an object literal that gives one key, read
- * through each spread of another object literal, with the spread of anything
- * else that may give it a value after the last of them.
- *
- * @returns No holder and no spread when the literal is not an object
- *     literal or the key cannot be known.
- */
-function keyedProperties(literal: ts.Expression, key: string | undefined): ElementSource {
-  const found: ElementSource = { holders: [], unknownAfter: null };
-  if (key === undefined || !ts.isObjectLiteralExpression(literal)) return found;
-  for (const property of literal.properties) {
-    if (ts.isSpreadAssignment(property)) {
-      const spread = heldValue(property.expression);
-      if (spread === undefined || !ts.isObjectLiteralExpression(spread)) {
-        found.unknownAfter = property;
-        continue;
-      }
-      const inner = keyedProperties(spread, key);
-      found.holders.push(...inner.holders);
-      // A key the inner literal gives is settled there, unless a spread inside it comes later.
-      if (inner.holders.length > 0 || inner.unknownAfter !== null) found.unknownAfter = inner.unknownAfter;
-      continue;
-    }
-    if ((ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) && keyText(property.name) === key) {
-      found.holders.push(property);
-      found.unknownAfter = null;
-    }
-  }
-  return found;
+/** Whether a key names an item of an array: a whole number of zero or more, written as a number writes itself. */
+function isIndexKey(key: string): boolean {
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && String(index) === key;
 }
 
 /**
  * The item an array literal holds at one position, counting each item a
  * spread of another array literal, or of a string literal, gives it.
  *
- * @returns The item, or undefined when the literal is not an array literal,
- *     holds a hole or nothing there, or when the position falls after a
- *     spread of anything else, whose length is not written there. Such a
- *     position is not known, and `unknownSpread` names the spread.
+ * @returns The item as the one holder, none for a hole or nothing there or a
+ *     literal that is not an array literal, and the spread whose length is
+ *     not written there when the position falls after it.
  */
-function literalItem(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
-  return literal !== undefined && ts.isArrayLiteralExpression(literal) ? spreadItems(literal).items[at] : undefined;
+function itemSource(literal: ts.Expression, at: number, checker: ts.TypeChecker): ElementSource {
+  if (!ts.isArrayLiteralExpression(literal)) return { holders: [], unknownAfter: null };
+  const { items, unknownAfter } = spreadItems(literal, checker);
+  const item = items[at];
+  return { holders: item === undefined ? [] : [item], unknownAfter: at < items.length ? null : unknownAfter };
+}
+
+/** The value a property gives, or the method or array item itself. */
+function heldBy(holder: Holder): ts.Expression | ts.MethodDeclaration {
+  if (ts.isPropertyAssignment(holder)) return holder.initializer;
+  return ts.isShorthandPropertyAssignment(holder) ? holder.name : holder;
 }
 
 /**
- * The spread a position of an array literal follows when that spread ends
- * the positions known, so the item there cannot be read.
- *
- * @returns The spread, or null when the position is known or the literal is
- *     not an array literal.
+ * Each property or method of an object literal that gives one key, read
+ * through each spread of another object literal, with what may give the key
+ * a value after the last of them instead: a spread of anything else, or a
+ * key computed from anything but a literal. An accessor gives the key, but
+ * no value a pattern can read, so it settles the key and holds nothing.
  */
-function unknownSpread(literal: ts.Expression, at: number): ts.SpreadElement | null {
-  if (!ts.isArrayLiteralExpression(literal)) return null;
-  const { items, unknownAfter } = spreadItems(literal);
-  return at < items.length ? null : unknownAfter;
+function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): ElementSource {
+  const found: ElementSource = { holders: [], unknownAfter: null };
+  for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      const spread = singleValue(property.expression, checker);
+      if (spread === undefined || !ts.isObjectLiteralExpression(spread)) {
+        found.unknownAfter = property;
+        continue;
+      }
+      const inner = keyedProperties(spread, key, checker);
+      found.holders.push(...inner.holders);
+      // A key the inner literal gives is settled there, unless something inside it that may give any key comes later.
+      if (inner.holders.length > 0 || inner.unknownAfter !== null) found.unknownAfter = inner.unknownAfter;
+      continue;
+    }
+    const given = propertyKey(property.name, checker);
+    if (given === undefined) {
+      found.unknownAfter = property.name;
+      continue;
+    }
+    if (given !== key) continue;
+    if (!ts.isGetAccessorDeclaration(property) && !ts.isSetAccessorDeclaration(property)) found.holders.push(property);
+    found.unknownAfter = null;
+  }
+  return found;
+}
+
+/** The key a binding element reads from an object, or undefined when it cannot be known without running the code. */
+function boundKey(element: ts.BindingElement, checker: ts.TypeChecker): string | undefined {
+  if (element.propertyName !== undefined) return propertyKey(element.propertyName, checker);
+  return ts.isIdentifier(element.name) ? element.name.text : undefined;
+}
+
+/**
+ * The key a property name gives, as a string: a name, a string or number
+ * literal, or a key computed from an expression whose type is one string or
+ * number literal, such as a template literal without substitutions or a
+ * constant.
+ *
+ * @returns The key, or undefined when it cannot be known without running the code.
+ */
+function propertyKey(name: ts.PropertyName, checker: ts.TypeChecker): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return String(Number(name.text));
+  if (!ts.isComputedPropertyName(name)) return undefined;
+  const type = checker.getTypeAtLocation(name.expression);
+  if (type.isStringLiteral()) return type.value;
+  return type.isNumberLiteral() ? String(type.value) : undefined;
 }
 
 /** The items of an array literal, position by position, as far as they are known. */
@@ -1533,12 +2076,14 @@ interface SpreadItems {
   items: Array<ts.Expression | undefined>;
   /** The spread of anything but an array or string literal that ends the list, so no later position is known, or null. */
   unknownAfter: ts.SpreadElement | null;
+  /** That spread, and each element written after it at any depth, whose position is not known. */
+  after: ts.Node[];
 }
 
 /** The items an array literal holds, as far as its spreads let them be known. */
-function spreadItems(literal: ts.ArrayLiteralExpression): SpreadItems {
+function spreadItems(literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker): SpreadItems {
   const items: Array<ts.Expression | undefined> = [];
-  for (const element of literal.elements) {
+  for (const [index, element] of literal.elements.entries()) {
     if (ts.isOmittedExpression(element)) {
       items.push(undefined);
       continue;
@@ -1547,18 +2092,147 @@ function spreadItems(literal: ts.ArrayLiteralExpression): SpreadItems {
       items.push(element);
       continue;
     }
-    const spread = heldValue(element.expression);
+    const spread = singleValue(element.expression, checker);
     // A spread of a string gives one item for each character, as its iterator counts them: by code point, not by UTF-16 unit.
     if (spread !== undefined && (ts.isStringLiteral(spread) || ts.isNoSubstitutionTemplateLiteral(spread))) {
       items.push(...Array.from(spread.text, () => spread));
       continue;
     }
-    if (spread === undefined || !ts.isArrayLiteralExpression(spread)) return { items, unknownAfter: element };
-    const inner = spreadItems(spread);
+    if (spread === undefined || !ts.isArrayLiteralExpression(spread)) return { items, unknownAfter: element, after: literal.elements.slice(index) };
+    const inner = spreadItems(spread, checker);
     items.push(...inner.items);
-    if (inner.unknownAfter !== null) return { items, unknownAfter: inner.unknownAfter };
+    if (inner.unknownAfter !== null) return { items, unknownAfter: inner.unknownAfter, after: [...inner.after, ...literal.elements.slice(index + 1)] };
   }
-  return { items, unknownAfter: null };
+  return { items, unknownAfter: null, after: [] };
+}
+
+/**
+ * Records where each part of one literal a pattern reads goes, other than a
+ * part a name takes, which is recorded as that name's value: each part no
+ * name takes, each a rest element with a name takes, and each a name may
+ * take where which name cannot be told. An object literal read by position,
+ * or a function or method read as though it were a literal, cannot be read.
+ */
+function sortLiteral(pattern: ts.BindingPattern, literal: ts.Expression | ts.MethodDeclaration, checker: ts.TypeChecker, reading: Reading, offset: number): void {
+  if (ts.isArrayLiteralExpression(literal)) {
+    sortItems(pattern, literal, checker, reading, offset);
+  } else if (ts.isObjectLiteralExpression(literal) && ts.isObjectBindingPattern(pattern)) {
+    sortProperties(pattern, literal, checker, reading);
+  } else if (ts.isObjectLiteralExpression(literal) || ts.isMethodDeclaration(literal) || isFunctionValue(literal)) {
+    reading.unread.push({ node: literal, cause: literal });
+  }
+}
+
+/**
+ * Where one part of a literal goes in the pattern that reads it: taken as a
+ * name's value, taken into what a rest element's name binds, read again by
+ * a rest element's own pattern, taken by no name, or not known.
+ */
+type Destination = "taken" | "rested" | "read by a rest pattern" | "untaken" | "unread";
+
+/** Sorts the items of an array literal that a pattern reads by position, or by index keys, as `sortLiteral` says. */
+function sortItems(pattern: ts.BindingPattern, literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker, reading: Reading, offset: number): void {
+  const { items, unknownAfter, after } = spreadItems(literal, checker);
+  for (const [position, item] of items.entries()) {
+    if (position >= offset && item !== undefined) sortPart(item, itemDestination(pattern, position - offset, checker), reading, item);
+  }
+  if (unknownAfter === null) return;
+  const known = Math.max(0, items.length - offset);
+  for (const node of after) {
+    sortPart(node, laterDestination(pattern, known, checker), reading, unknownAfter);
+  }
+}
+
+/** Where the item at one position of an array literal goes in a pattern that reads it. */
+function itemDestination(pattern: ts.BindingPattern, at: number, checker: ts.TypeChecker): Destination {
+  if (ts.isArrayBindingPattern(pattern)) {
+    const rest = pattern.elements.findIndex(isRestElement);
+    if (rest !== -1 && at >= rest) return restDestination(pattern.elements[rest]);
+    const element = pattern.elements[at];
+    return element !== undefined && ts.isBindingElement(element) ? "taken" : "untaken";
+  }
+  const keys = pattern.elements.filter((element) => !isRestElement(element)).map((element) => boundKey(element, checker));
+  if (keys.includes(undefined)) return "unread";
+  if (keys.includes(String(at))) return "taken";
+  return pattern.elements.some(isRestElement) ? "rested" : "untaken";
+}
+
+/**
+ * Where an item of an array literal goes in a pattern that reads it, when the
+ * item follows a spread whose length is not known, so that it may sit at any
+ * position from the last one known.
+ */
+function laterDestination(pattern: ts.BindingPattern, known: number, checker: ts.TypeChecker): Destination {
+  if (ts.isArrayBindingPattern(pattern)) {
+    const rest = pattern.elements.findIndex(isRestElement);
+    const before = pattern.elements.slice(known, rest === -1 ? undefined : rest);
+    if (before.some(ts.isBindingElement)) return "unread";
+    return rest === -1 ? "untaken" : restDestination(pattern.elements[rest]);
+  }
+  const keys = pattern.elements.filter((element) => !isRestElement(element)).map((element) => boundKey(element, checker));
+  if (keys.some((key) => key === undefined || (isIndexKey(key) && Number(key) >= known))) return "unread";
+  return pattern.elements.some(isRestElement) ? "rested" : "untaken";
+}
+
+/** Whether an element of a pattern is a rest element. */
+function isRestElement(element: ts.ArrayBindingElement): boolean {
+  return ts.isBindingElement(element) && element.dotDotDotToken !== undefined;
+}
+
+/** Where an item that a rest element takes goes: into the array its name binds, or to its own pattern, which reads it again. */
+function restDestination(rest: ts.ArrayBindingElement | undefined): Destination {
+  return rest !== undefined && ts.isBindingElement(rest) && ts.isIdentifier(rest.name) ? "rested" : "read by a rest pattern";
+}
+
+/** Records one part of a literal where its destination says, as `sortLiteral` describes. */
+function sortPart(node: ts.Node, destination: Destination, reading: Reading, cause: UnknownCause): void {
+  if (destination === "untaken") reading.untaken.push(node);
+  else if (destination === "rested") reading.rested.push(node);
+  else if (destination === "unread") reading.unread.push({ node, cause });
+}
+
+/** Sorts the properties of an object literal that an object pattern reads, as `sortLiteral` says, through each spread of an object literal. */
+function sortProperties(pattern: ts.ObjectBindingPattern, literal: ts.ObjectLiteralExpression, checker: ts.TypeChecker, reading: Reading): void {
+  const named = pattern.elements.filter((element) => element.dotDotDotToken === undefined);
+  const unknownKey = named.find((element) => boundKey(element, checker) === undefined);
+  const keys = new Set(named.map((element) => boundKey(element, checker)));
+  const rested = pattern.elements.some((element) => element.dotDotDotToken !== undefined);
+  for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      const spread = singleValue(property.expression, checker);
+      if (spread !== undefined && ts.isObjectLiteralExpression(spread)) {
+        sortProperties(pattern, spread, checker, reading);
+      } else {
+        reading.unread.push({ node: property, cause: property });
+      }
+      continue;
+    }
+    // An accessor is never a name's value: a name takes what the getter returns.
+    if (ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) {
+      reading.untaken.push(property);
+      continue;
+    }
+    const key = propertyKey(property.name, checker);
+    if (key === undefined || unknownKey !== undefined) {
+      reading.unread.push({ node: property, cause: key === undefined ? property.name : unknownKey?.propertyName ?? property });
+    } else if (!keys.has(key)) {
+      (rested ? reading.rested : reading.untaken).push(property);
+    }
+  }
+}
+
+/**
+ * Why the rules cannot read a name whose value something of unknown extent
+ * may give, or a part of a literal a name may take, as a clause about it.
+ */
+function unknownReason(cause: UnknownCause, source: ts.SourceFile): string {
+  const text = cause.getText(source);
+  if (ts.isSpreadElement(cause)) return `its position follows ${text}, whose length is not known`;
+  if (ts.isSpreadAssignment(cause)) return `its key may be given by ${text}, whose keys are not known`;
+  if (ts.isComputedPropertyName(cause) && ts.isBindingElement(cause.parent)) return `its key, ${text}, is not known`;
+  if (ts.isComputedPropertyName(cause)) return `its key may be given by ${text}, whose value is not known`;
+  if (ts.isObjectLiteralExpression(cause)) return "it is read by position from an object literal";
+  return "it is read from a function as though the function were a literal";
 }
 
 /** What the throws check found in one file. */
@@ -1573,55 +2247,57 @@ interface ThrowsCount {
  * Every function with a JSDoc comment that throws from its own body, and whose
  * comment carries no `@throws` tag.
  *
- * A function here is a function declaration, a method, a constructor, an
- * accessor, a variable, an object property or a class field whose value
- * is an arrow function or a function expression, also through
- * `Object.freeze`, or such a function held directly in an array, or bound
- * by destructuring an object or array literal. A function declared with
- * overloads is read with the comments of its signatures as well as its own,
- * so a `@throws` tag on any of them counts. A throw counts when it can leave
- * the function: not inside a nested function, and not inside a `try` block
- * whose `catch` takes it. A name a documented statement binds that a spread
- * of unknown extent may give its value cannot be read, so it is reported as
- * such, after the others.
+ * A function here is a function declaration, a class method, a constructor or
+ * an accessor, read with its own comment, or a function written as a value,
+ * or a method of an object literal, read with the comment `documentedValues`
+ * finds for it. A function declared with overloads is read with the comments
+ * of its signatures as well as its own, so a `@throws` tag on any of them
+ * counts. A throw counts when it can leave the function: not inside a nested
+ * function, and not inside a `try` block whose `catch` takes it. A name a
+ * documented statement binds whose value cannot be read is reported as such,
+ * after the others.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const { source, checker } = typedSource(file, text);
+  return undocumentedThrowsIn(file, source, checker);
+}
+
+/** What `undocumentedThrows` finds in one source file, read with the checker of the program that read it. */
+function undocumentedThrowsIn(file: string, source: ts.SourceFile, checker: ts.TypeChecker): ThrowsCount {
   const problems: string[] = [];
   let read = 0;
-  for (const unit of documentedFunctions(source)) {
+  for (const unit of documentedFunctions(source, checker)) {
     if (!unit.bodies.some(throwsFromItsBody)) continue;
     read += 1;
-    if (ts.getJSDocTags(unit.commented).some((tag) => tag.tagName.text === "throws")) continue;
+    if (saysWhatItThrows(unit.commented)) continue;
     const line = source.getLineAndCharacterOfPosition(unit.commented.getStart(source)).line + 1;
     problems.push(`${file}:${line}: the comment on ${unit.name} does not say what it throws`);
   }
-  for (const { name, spread, commented } of documentedUnknownPositions(source)) {
+  for (const { name, cause, commented } of documentedUnknownPositions(source, checker)) {
     const line = source.getLineAndCharacterOfPosition(commented.getStart(source)).line + 1;
-    problems.push(`${file}:${line}: what ${name.text} binds cannot be read, as ${unknownReason(spread, source)}`);
+    problems.push(`${file}:${line}: what ${name.text} binds cannot be read, as ${unknownReason(cause, source)}`);
   }
   return { read, problems };
 }
 
-/** A name a documented statement binds that a spread of unknown extent may give its value. */
+/** A name a documented statement binds whose value cannot be read. */
 interface DocumentedUnknownPosition extends UnknownPosition {
   /** The statement that carries the comment. */
   commented: ts.VariableStatement;
 }
 
 /**
- * Each name a documented variable statement binds that a spread of unknown
- * extent may give its value, so that the throws check cannot read what it
- * binds.
+ * Each name a documented variable statement binds whose value cannot be
+ * read, so that the throws check cannot read what it binds.
  */
-function documentedUnknownPositions(source: ts.SourceFile): DocumentedUnknownPosition[] {
+function documentedUnknownPositions(source: ts.SourceFile, checker: ts.TypeChecker): DocumentedUnknownPosition[] {
   const found: DocumentedUnknownPosition[] = [];
   const pending: ts.Node[] = [source];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     pending.push(...[...node.getChildren(source)].reverse());
     if (!ts.isVariableStatement(node) || !hasJsDoc(node)) continue;
     for (const declaration of node.declarationList.declarations) {
-      found.push(...unknownPositions(declaration.name, declaration.initializer).map((position) => ({ ...position, commented: node })));
+      found.push(...readBinding(declaration.name, declaration.initializer, checker).unknown.map((position) => ({ ...position, commented: node })));
     }
   }
   return found;
@@ -1633,119 +2309,349 @@ interface DocumentedFunction {
   /** The node the comment is attached to. */
   commented: ts.Node;
   /** The body of each function it may be: more than one where a conditional chooses. */
-  bodies: readonly ts.Node[];
+  bodies: ts.Node[];
 }
 
-/** Every function in a file that has a JSDoc comment and a body. */
-function documentedFunctions(source: ts.SourceFile): DocumentedFunction[] {
-  const found: DocumentedFunction[] = [];
-  const pending: ts.Node[] = [source];
-  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    pending.push(...node.getChildren(source));
+/**
+ * Every documented function in a file that has a body: each declaration
+ * `asDocumentedFunction` reads, and each value `documentedValues` reads, in
+ * the order their comments appear.
+ */
+function documentedFunctions(source: ts.SourceFile, checker: ts.TypeChecker): DocumentedFunction[] {
+  const declared: DocumentedFunction[] = [];
+  for (const node of functionLikes(source)) {
     const unit = asDocumentedFunction(node, source);
-    if (unit !== null) found.push(unit);
-    found.push(...destructuredFunctions(node));
+    if (unit !== null) declared.push(unit);
   }
-  return found;
+  return [...declared, ...documentedValues(source, checker)].sort((one, other) => one.commented.getStart(source) - other.commented.getStart(source));
 }
 
 /**
- * Each function a documented variable statement binds, read with the
- * statement's comment: each name it declares whose value may be a function,
- * and each function it binds by destructuring an object or array literal.
+ * The node as a documented declaration: a function declaration, a class
+ * method or a constructor with a body and a comment, or an accessor with a
+ * body and a comment of its own.
+ *
+ * @returns The function, or null when the node is none of them.
  */
-function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
-  if (!ts.isVariableStatement(node) || !hasJsDoc(node)) return [];
-  const bodies = new Map<string, ts.Node[]>();
-  for (const declaration of node.declarationList.declarations) {
-    if (!ts.isIdentifier(declaration.name)) {
-      boundFunctions(declaration.name, declaration.initializer, bodies);
-      continue;
-    }
-    const held = functionBodies(declaration.initializer);
-    if (held.length > 0) bodies.set(declaration.name.text, [...bodies.get(declaration.name.text) ?? [], ...held]);
-  }
-  // A name read from more than one place, such as its value and its default, is one function to the reader.
-  return [...bodies].map(([name, held]) => ({ name, commented: node, bodies: held }));
-}
-
-/**
- * Each function a binding pattern binds from a value, added to the bodies
- * held for each name. Each literal the value may be, as `possibleValues`
- * reads it, is read. A name bound to an object's key reads that key's value
- * or method, whatever the key's spelling; a name bound by position reads the
- * item there; a nested pattern reads the nested literal; and every name and
- * nested pattern also reads its default, whether or not the value given
- * means the default never runs, since a function written there is bound to
- * the name. A key written as a computed name other than a string is not
- * read, nor is a property or an array item with a comment of its own, which
- * is read with that comment.
- */
-function boundFunctions(pattern: ts.BindingPattern, value: ts.Expression | undefined, bodies: Map<string, ts.Node[]>): void {
-  const literals = possibleValues(value);
-  for (const [at, element] of pattern.elements.entries()) {
-    if (ts.isOmittedExpression(element)) continue;
-    const name = element.name;
-    // A property or an array item with a comment of its own is read with that comment.
-    const given = literals.flatMap((literal) => elementSource(pattern, element, at, literal).holders).filter((holder) => !hasJsDoc(holder)).map(heldBy);
-    if (!ts.isIdentifier(name)) {
-      for (const held of given) {
-        if (!ts.isMethodDeclaration(held)) boundFunctions(name, held, bodies);
-      }
-      boundFunctions(name, element.initializer, bodies);
-      continue;
-    }
-    const held = [...given.flatMap(functionBodies), ...functionBodies(element.initializer)];
-    if (held.length > 0) bodies.set(name.text, [...bodies.get(name.text) ?? [], ...held]);
-  }
-}
-
-/** The key a binding element reads from an object, or undefined when it cannot be known without running the code. */
-function boundKey(element: ts.BindingElement): string | undefined {
-  if (element.propertyName !== undefined) return keyText(element.propertyName);
-  return ts.isIdentifier(element.name) ? element.name.text : undefined;
-}
-
-/** The text of a property's key, or undefined when it is computed from anything but a string or number literal. */
-function keyText(name: ts.PropertyName): string | undefined {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
-  if (ts.isComputedPropertyName(name) && (ts.isStringLiteral(name.expression) || ts.isNumericLiteral(name.expression))) return name.expression.text;
-  return undefined;
-}
-
-/** The body of each function a value may hold, or of a method, none when it holds no function. */
-function functionBodies(value: ts.Expression | ts.MethodDeclaration | undefined): ts.Node[] {
-  if (value !== undefined && ts.isMethodDeclaration(value)) return value.body === undefined ? [] : [value.body];
-  return functionValues(value).map((held) => held.body);
-}
-
-/** The node as a documented function, or null when it is not one. */
 function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedFunction | null {
-  // A function, method or constructor is read with the comments of its overload signatures as well as its own.
-  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)) && node.body !== undefined) {
+  // A function, a class method or a constructor is read with the comments of its overload signatures as well as its own.
+  if ((ts.isFunctionDeclaration(node) || (ts.isMethodDeclaration(node) && ts.isClassLike(node.parent)) || ts.isConstructorDeclaration(node)) && node.body !== undefined) {
     const commented = commentRead(node);
     return commented === null ? null : { name: node.name?.getText(source) ?? "constructor", commented, bodies: [node.body] };
   }
-  if (!hasJsDoc(node)) return null;
-  if ((ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined) {
+  if ((ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined && hasJsDoc(node)) {
     return { name: node.name.getText(source), commented: node, bodies: [node.body] };
-  }
-  // An object property or a class field whose value is a function.
-  if (ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node)) {
-    const bodies = functionBodies(node.initializer);
-    if (bodies.length > 0) return { name: node.name.getText(source), commented: node, bodies };
-  }
-  // A function held directly in an array, whose comment sits on the item.
-  if (ts.isArrayLiteralExpression(node.parent) && ts.isExpression(node)) {
-    const bodies = functionBodies(node);
-    if (bodies.length > 0) return { name: "an array item", commented: node, bodies };
   }
   return null;
 }
 
-/** Whether a node carries a JSDoc comment. */
+/**
+ * Every function written as a value, and every method of an object literal,
+ * that a comment documents, each read with that comment. The comment is the
+ * nearest of the function's own: on the function, on a wrapper around it, or
+ * on the property, method or array item that holds it. Failing that, it is
+ * the comment on the class field that holds the function, or on the
+ * statement that binds the function to a name. One comment and one name make
+ * one function to the check, whatever number of values it may be.
+ */
+function documentedValues(source: ts.SourceFile, checker: ts.TypeChecker): DocumentedFunction[] {
+  const found: DocumentedFunction[] = [];
+  for (const node of functionLikes(source)) {
+    const isValue = ts.isArrowFunction(node) || ts.isFunctionExpression(node) || (ts.isMethodDeclaration(node) && ts.isObjectLiteralExpression(node.parent));
+    if (!isValue || node.body === undefined) continue;
+    const documented = documentationOf(climb(node, checker), source);
+    if (documented === null) continue;
+    const same = found.find((unit) => unit.commented === documented.commented && unit.name === documented.name);
+    if (same === undefined) {
+      found.push({ ...documented, bodies: [node.body] });
+    } else {
+      same.bodies.push(node.body);
+    }
+  }
+  return found;
+}
+
+/** The comment that documents a function, as `documentedValues` finds it, with the name the check gives the function. */
+interface Documentation {
+  commented: ts.Node;
+  name: string;
+}
+
+/** The comment that documents a function, from where its value goes, as `documentedValues` reads it, or null when none does. */
+function documentationOf(climbed: Climb, source: ts.SourceFile): Documentation | null {
+  const name = valueName(climbed, source);
+  for (const node of climbed.path) {
+    if (hasJsDoc(node)) return { commented: node, name };
+    if (node === climbed.holder) break;
+  }
+  if (climbed.holder === undefined && ts.isPropertyDeclaration(climbed.sink) && hasJsDoc(climbed.sink)) return { commented: climbed.sink, name };
+  const place = climbed.place;
+  if (place.kind !== "bound" || !ts.isVariableDeclaration(place.declaration)) return null;
+  const statement = place.declaration.parent.parent;
+  return ts.isVariableStatement(statement) && hasJsDoc(statement) ? { commented: statement, name: place.name.text } : null;
+}
+
+/**
+ * The name the throws check gives a function value: the key of the property
+ * or method that holds it, "an array item" for an item of an array, the name
+ * it is bound to, or the class field that holds it; else "an unnamed function".
+ */
+function valueName(climbed: Climb, source: ts.SourceFile): string {
+  const holder = climbed.holder;
+  if (holder !== undefined) return ts.isPropertyAssignment(holder) || ts.isMethodDeclaration(holder) ? holder.name.getText(source) : "an array item";
+  if (climbed.place.kind === "bound") return climbed.place.name.text;
+  return ts.isPropertyDeclaration(climbed.sink) ? climbed.sink.name.getText(source) : "an unnamed function";
+}
+
+/** The JSDoc comments attached to a node itself, not those it would inherit from a statement around it. */
+function ownJsDocs(node: ts.Node): ts.JSDoc[] {
+  return ts.getJSDocCommentsAndTags(node).filter((comment): comment is ts.JSDoc => ts.isJSDoc(comment) && comment.parent === node);
+}
+
+/** Whether a node carries a JSDoc comment of its own. */
 function hasJsDoc(node: ts.Node): boolean {
-  return ts.getJSDocCommentsAndTags(node).some((comment) => ts.isJSDoc(comment));
+  return ownJsDocs(node).length > 0;
+}
+
+/** Whether a comment of a node's own has a `@throws` tag. */
+function saysWhatItThrows(node: ts.Node): boolean {
+  return ownJsDocs(node).some((comment) => (comment.tags ?? []).some((tag) => tag.tagName.text === "throws"));
+}
+
+/** Every node in a file of a kind the compiler counts as function-like, in the order written. */
+function functionLikes(source: ts.SourceFile): ts.SignatureDeclaration[] {
+  const found: ts.SignatureDeclaration[] = [];
+  const pending: ts.Node[] = [source];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isFunctionLike(node)) found.push(node);
+    pending.push(...[...node.getChildren(source)].reverse());
+  }
+  return found;
+}
+
+/** What the placement check found in one file. */
+interface Placements {
+  /** How many functions written there it placed. */
+  placed: number;
+  /** One "file:line: problem" entry for each function it could not place, naming the function and why. */
+  problems: string[];
+}
+
+/**
+ * Every function written with a body in a file that the placement check
+ * cannot place, with how many it placed. Each node of a kind the compiler
+ * counts as function-like is looked up in FOLLOWED_KINDS and TYPE_KINDS, and
+ * a kind in neither fails. A function written with a body is followed to its
+ * place, as `climb` reads it. Its place is one of the allowed positions,
+ * which must have a reason, or a name it is bound to, which the rules read.
+ * Anything else fails, saying why.
+ *
+ * @param allowed The allowed positions with their reasons: ALLOWED_POSITIONS,
+ *     unless a test gives another list.
+ */
+function unplacedFunctions(file: string, text: string, allowed: Readonly<Record<string, string>> = ALLOWED_POSITIONS): Placements {
+  const { source, checker } = typedSource(file, text);
+  return placementsIn(file, source, checker, allowed);
+}
+
+/** What `unplacedFunctions` finds in one source file, read with the checker of the program that read it. */
+function placementsIn(file: string, source: ts.SourceFile, checker: ts.TypeChecker, allowed: Readonly<Record<string, string>>): Placements {
+  const problems: string[] = [];
+  let placed = 0;
+  for (const node of functionLikes(source)) {
+    const kind = syntaxName(node.kind);
+    if (kind in TYPE_KINDS) continue;
+    const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+    const called = FOLLOWED_KINDS[kind];
+    if (called === undefined) {
+      problems.push(`${file}:${line}: a ${kind} is a kind of function the placement check does not name`);
+      continue;
+    }
+    // A signature with no body, such as an overload, makes no function.
+    if (!isWrittenFunction(node)) continue;
+    const place = climb(node, checker).place;
+    if (place.kind === "unplaced") {
+      problems.push(`${file}:${line}: ${called} cannot be placed: ${place.why}`);
+    } else if (place.kind === "position" && (allowed[place.position] ?? "").trim() === "") {
+      problems.push(`${file}:${line}: ${called} is ${place.position}, which has no reason on the allowed list`);
+    } else {
+      placed += 1;
+    }
+  }
+  return { placed, problems };
+}
+
+/** Whether a function-like node is written with a body, so that it makes a function. */
+function isWrittenFunction(node: ts.SignatureDeclaration): node is ts.FunctionLikeDeclaration {
+  return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) && node.body !== undefined;
+}
+
+/** The compiler's name for a syntax kind, passing over the markers, such as FirstStatement, that share a kind's number. */
+function syntaxName(kind: ts.SyntaxKind): string {
+  return Object.keys(ts.SyntaxKind).find((name) => ts.SyntaxKind[name as keyof typeof ts.SyntaxKind] === kind && !/^(First|Last)/.test(name)) ?? String(kind);
+}
+
+/** Where a function written here goes, as the placement check reads it. */
+interface Climb {
+  /** The function, then each node its value passes through, the innermost first. */
+  path: ts.Node[];
+  /** The property, method or array item of a literal that first holds it, or undefined when nothing holds it. */
+  holder: ts.Node | undefined;
+  /** The node its value ends in: where it is bound, handed on, or left. */
+  sink: ts.Node;
+  place: Place;
+}
+
+/** Where a function's value ends: in a position on the allowed list, bound to a name the rules read, or in neither. */
+type Place =
+  | { kind: "position"; position: string }
+  | { kind: "bound"; name: ts.Identifier; declaration: ts.Node }
+  | { kind: "unplaced"; why: string };
+
+/**
+ * Where a function written here goes. A function declaration and a class
+ * member stay where they are written. Any other function's value is followed
+ * out through each wrapper and each call that may give it back, as
+ * `possibleValues` reads them, and through each object or array literal
+ * that holds it, to the first node that does something else with it. That
+ * node decides its place.
+ */
+function climb(written: ts.FunctionLikeDeclaration, checker: ts.TypeChecker): Climb {
+  const path: ts.Node[] = [written];
+  if (ts.isFunctionDeclaration(written)) return { path, holder: undefined, sink: written.parent, place: { kind: "position", position: "a function declaration" } };
+  if (ts.isClassLike(written.parent)) return { path, holder: undefined, sink: written.parent, place: { kind: "position", position: "a class member" } };
+  let holder: ts.Node | undefined;
+  let value: ts.Node = written;
+  let top: ts.Node = written;
+  for (;;) {
+    const parent = top.parent;
+    if (ts.isBinaryExpression(parent) && isAssignmentOperator(parent.operatorToken.kind) && parent.right === top) {
+      return { path, holder, sink: parent, place: assignedPlace(parent, value === written) };
+    }
+    if (ts.isExpression(parent) && possibleValues(parent, checker).some((one) => one === value)) {
+      path.push(parent);
+      top = parent;
+      continue;
+    }
+    const holding = holdingLiteral(parent, top);
+    if (holding === undefined) return { path, holder, sink: parent, place: sinkPlace(parent, top, written, value === written, checker) };
+    holder ??= holding.holder;
+    path.push(...holding.steps);
+    value = holding.literal;
+    top = holding.literal;
+  }
+}
+
+/** A literal that holds a value, with the nodes the value passes through to reach it, and the property, method or item that holds it. */
+interface HoldingLiteral {
+  literal: ts.ArrayLiteralExpression | ts.ObjectLiteralExpression;
+  holder: ts.Node | undefined;
+  steps: ts.Node[];
+}
+
+/**
+ * The object or array literal that holds a value, when the node above the
+ * value is one: as an item, a spread, a property's value, or a method or
+ * accessor.
+ *
+ * @returns The literal, or undefined when the node above holds no value in a literal.
+ */
+function holdingLiteral(parent: ts.Node, top: ts.Node): HoldingLiteral | undefined {
+  if (ts.isArrayLiteralExpression(parent)) return { literal: parent, holder: top, steps: [parent] };
+  if (ts.isSpreadElement(parent) && ts.isArrayLiteralExpression(parent.parent)) return { literal: parent.parent, holder: undefined, steps: [parent, parent.parent] };
+  if (ts.isPropertyAssignment(parent) && parent.initializer === top) return { literal: parent.parent, holder: parent, steps: [parent, parent.parent] };
+  if (ts.isSpreadAssignment(parent)) return { literal: parent.parent, holder: undefined, steps: [parent, parent.parent] };
+  if (ts.isObjectLiteralExpression(parent)) return { literal: parent, holder: top, steps: [parent] };
+  return undefined;
+}
+
+/** A place on the allowed list. */
+function position(name: string): Place {
+  return { kind: "position", position: name };
+}
+
+/** No place: a function whose value ends somewhere the rules cannot read, saying why. */
+function unplaced(why: string): Place {
+  return { kind: "unplaced", why };
+}
+
+/**
+ * The place a function's value ends in, from the node that takes it.
+ *
+ * @param direct Whether the value that node takes is the function itself, not a literal that holds it.
+ */
+function sinkPlace(parent: ts.Node, top: ts.Node, written: ts.FunctionLikeDeclaration, direct: boolean, checker: ts.TypeChecker): Place {
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression !== top) {
+    // A call whose function cannot be found gives back every argument, so its value is followed past it.
+    const declaration = calledDeclaration(parent, checker);
+    const at = (parent.arguments ?? []).findIndex((argument) => argument === top);
+    if (declaration === undefined || parameterOf(declaration, parent, at) === undefined) {
+      return unplaced("it is handed to a call after a spread, or past its last parameter, so what the call does with it cannot be read");
+    }
+    return position("an argument to a call that does not give it back");
+  }
+  if ((ts.isReturnStatement(parent) && parent.expression === top) || (ts.isArrowFunction(parent) && parent.body === top)) {
+    const owner = ts.isArrowFunction(parent) ? parent : ts.findAncestor(parent, ts.isFunctionLike);
+    if (owner !== undefined && isCalledWhereWritten(owner)) return unplaced("it is returned by a function called where it is written, a place the allowed list does not name");
+    return position("returned from a function");
+  }
+  if ((ts.isVariableDeclaration(parent) || ts.isParameter(parent)) && parent.initializer === top) return declaredPlace(parent, written, direct, checker);
+  if (ts.isBindingElement(parent) && parent.initializer === top) {
+    const root = ts.findAncestor(parent, (node) => ts.isVariableDeclaration(node) || ts.isParameter(node));
+    if (root !== undefined && (ts.isVariableDeclaration(root) || ts.isParameter(root))) return declaredPlace(root, written, false, checker);
+  }
+  if (ts.isPropertyDeclaration(parent) && parent.initializer === top) return position("a class member");
+  if (ts.isCallExpression(parent)) return unplaced("it is called where it is written, a place the allowed list does not name");
+  const kind = syntaxName(parent.kind);
+  return unplaced(`it sits in ${/^[AEIOU]/.test(kind) ? "an" : "a"} ${kind}, a place the allowed list does not name`);
+}
+
+/** Whether a function is called where it is written, through any wrapper `heldValue` looks through. */
+function isCalledWhereWritten(written: ts.Node): boolean {
+  let outer = written;
+  while (ts.isParenthesizedExpression(outer.parent) || ts.isAsExpression(outer.parent) || ts.isSatisfiesExpression(outer.parent)
+    || ts.isTypeAssertionExpression(outer.parent) || ts.isNonNullExpression(outer.parent)) {
+    outer = outer.parent;
+  }
+  return ts.isCallExpression(outer.parent) && outer.parent.expression === outer;
+}
+
+/**
+ * The place of a function whose value a declaration or a parameter takes: the
+ * name it binds, or the object or array a name binds that holds it, or what
+ * `readBinding` finds of the part of a literal a pattern reads that holds it.
+ */
+function declaredPlace(declaration: ts.VariableDeclaration | ts.ParameterDeclaration, written: ts.FunctionLikeDeclaration, direct: boolean, checker: ts.TypeChecker): Place {
+  if (ts.isIdentifier(declaration.name)) return direct ? { kind: "bound", name: declaration.name, declaration } : position("held in a value bound to a name");
+  const reading = readBinding(declaration.name, declaration.initializer, checker);
+  const bound = reading.bound.find(({ value }) => valuesOf(value, checker).some((one) => one === written));
+  if (bound !== undefined) return { kind: "bound", name: bound.name, declaration };
+  for (let node: ts.Node = written; node !== declaration; node = node.parent) {
+    const part = node;
+    if (reading.rested.includes(part) || reading.bound.some(({ value }) => valuesOf(value, checker).some((one) => one === part))) return position("held in a value bound to a name");
+    if (reading.untaken.includes(part)) return position("a part of a literal no name takes");
+    const unread = reading.unread.find((entry) => entry.node === part);
+    if (unread !== undefined) return unplaced(`a name may take it, but which one cannot be read, as ${unknownReason(unread.cause, part.getSourceFile())}`);
+  }
+  return unplaced("it sits in a literal that its destructuring does not account for");
+}
+
+/**
+ * The place of a function whose value an assignment takes: a property it is
+ * stored on, or the object or array a name holds, or the name, inside a
+ * function, as a nested helper the rules read.
+ */
+function assignedPlace(assignment: ts.BinaryExpression, direct: boolean): Place {
+  const target = heldValue(assignment.left);
+  const alone = ts.isExpressionStatement(assignment.parent);
+  if (alone && target !== undefined && (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target))) return position("stored on a property");
+  if (alone && target !== undefined && ts.isIdentifier(target)) {
+    if (!direct) return position("held in a value bound to a name");
+    if (ts.findAncestor(assignment, ts.isFunctionLike) !== undefined) return { kind: "bound", name: target, declaration: assignment };
+    return unplaced(`it is assigned to ${target.text} at the top level of the module, which the entry-point rule does not read`);
+  }
+  return unplaced("it is assigned by a destructuring, or by an assignment whose value is used as well, a place the allowed list does not name");
 }
 
 /**
@@ -1759,7 +2665,7 @@ function hasJsDoc(node: ts.Node): boolean {
  */
 function commentRead(implementation: OverloadableFunction): ts.Node | null {
   const documented: ts.Node[] = [...overloadSignatures(implementation), implementation].filter(hasJsDoc);
-  const said = documented.find((commented) => ts.getJSDocTags(commented).some((tag) => tag.tagName.text === "throws"));
+  const said = documented.find(saysWhatItThrows);
   return said ?? (hasJsDoc(implementation) ? implementation : documented[0] ?? null);
 }
 
