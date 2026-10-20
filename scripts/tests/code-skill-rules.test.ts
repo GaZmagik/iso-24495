@@ -653,6 +653,30 @@ describe("the code skill's rules for this repository's own code", () => {
     // A function with no comment is not held to it: the skill requires no comment.
     expect(undocumentedThrows("probe.ts", "function f(): number { throw new Error(\"no size\"); }")).toEqual({ read: 0, problems: [] });
   });
+
+  test("a function either side of ??, || or && is read as the function it may be", () => {
+    for (const value of [
+      "other ?? ((n: number): number => n + 1)",
+      "other || ((n: number): number => n + 1)",
+      "other && ((n: number): number => n + 1)",
+      "((n: number): number => n + 1) ?? other",
+      "((n: number): number => n + 1) || other",
+      "other ?? (other || ((n: number): number => n + 1))",
+    ]) {
+      expect(boundHelpers("probe.ts", `export function main(other: number | undefined): number {\n  const helper = ${value};\n  return 0;\n}\n`), value)
+        .toEqual(["probe.ts / main / helper"]);
+    }
+    expect(boundHelpers("probe.ts", "export function main(other: number | undefined): number {\n  const size = other ?? 1;\n  return size;\n}\n")).toEqual([]);
+    for (const operator of ["??", "||", "&&"]) {
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = other ${operator} ((): never => {\n  throw new RangeError("size");\n});`), operator)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    }
+    // A function on the left of && is never falsy, so it is never the value.
+    expect(boundHelpers("probe.ts", "export function main(other: number): number {\n  const size = ((n: number): number => n) && other;\n  return size;\n}\n")).toEqual([]);
+    // A comma list, or an assignment, is the value on its right.
+    expect(boundHelpers("probe.ts", "export function main(other: number): number {\n  const helper = (other, (n: number): number => n);\n  return 0;\n}\n"))
+      .toEqual(["probe.ts / main / helper"]);
+  });
 });
 
 /** What the entry-point check found in one module. */
@@ -711,20 +735,52 @@ function boundNames(binding: ts.BindingName): ts.Identifier[] {
 }
 
 /**
- * The functions an expression may hold, looking through parentheses, a type
- * assertion and `satisfies`, which change nothing that runs, through a call
- * of `Object.freeze` on one value, which returns the value it is given, and
- * into both branches of a conditional, either of which it may be. Any other
- * call with a callback runs it to build a value, so it holds none.
+ * The functions an expression may hold: each value `possibleValues` gives
+ * that is an arrow function or a function expression. Any call with a
+ * callback but `Object.freeze` runs it to build a value, so it holds none.
  *
  * @returns Each arrow function or function expression, none when the
  *     expression holds neither or is undefined.
  */
 function functionValues(expression: ts.Expression | undefined): Array<ts.ArrowFunction | ts.FunctionExpression> {
+  return possibleValues(expression).filter(isFunctionValue);
+}
+
+/** Whether an expression is an arrow function or a function expression. */
+function isFunctionValue(expression: ts.Expression): expression is ts.ArrowFunction | ts.FunctionExpression {
+  return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression);
+}
+
+/** The operators whose result may be either side: `??` and `||`, and the assignments that use them. */
+const EITHER_SIDE = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.QuestionQuestionToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+]);
+
+/** The operators whose result is the left side only when it is falsy: `&&`, and the assignment that uses it. */
+const RIGHT_UNLESS_FALSY = new Set<ts.SyntaxKind>([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.AmpersandAmpersandEqualsToken]);
+
+/**
+ * Each value an expression may be, read through the wrappers `heldValue`
+ * looks through. A conditional may be either branch. `??` and `||` may be
+ * either side. `&&` may be its right side, or its left side when that is
+ * falsy, which a function never is. A comma list, or an assignment, is the
+ * value on its right.
+ *
+ * @returns Each value, in the order it is written; none when given undefined.
+ */
+function possibleValues(expression: ts.Expression | undefined): ts.Expression[] {
   const inner = heldValue(expression);
   if (inner === undefined) return [];
-  if (ts.isConditionalExpression(inner)) return [...functionValues(inner.whenTrue), ...functionValues(inner.whenFalse)];
-  return ts.isArrowFunction(inner) || ts.isFunctionExpression(inner) ? [inner] : [];
+  if (ts.isConditionalExpression(inner)) return [...possibleValues(inner.whenTrue), ...possibleValues(inner.whenFalse)];
+  if (!ts.isBinaryExpression(inner)) return [inner];
+  const operator = inner.operatorToken.kind;
+  if (EITHER_SIDE.has(operator)) return [...possibleValues(inner.left), ...possibleValues(inner.right)];
+  if (RIGHT_UNLESS_FALSY.has(operator)) return [...possibleValues(inner.left).filter((value) => !isFunctionValue(value)), ...possibleValues(inner.right)];
+  if (operator === ts.SyntaxKind.CommaToken || operator === ts.SyntaxKind.EqualsToken) return possibleValues(inner.right);
+  return [inner];
 }
 
 /**
