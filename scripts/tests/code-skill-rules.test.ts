@@ -247,6 +247,20 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(rethrows("probe.ts", narrowed)).toEqual([]);
   });
 
+  test("an approved rethrow is known by its name whatever its spacing, and a parenthesised rethrow is one too", () => {
+    const file = "scripts/audit-pull-request-text.ts";
+    const text = readFileSync(join(REPOSITORY_ROOT, file), "utf8");
+    expect(text.split("throw error;").length).toBe(2);
+    // A line break may not follow the word throw, so a broken line sits inside parentheses.
+    for (const spaced of ["throw  error;", "throw\terror;", "throw /* as thrown */ error;", "throw (\n      error\n    );", "throw (error);", "throw error"]) {
+      expect(rethrows(file, text.replace("throw error;", spaced)), spaced).toEqual([`${file} / openUnlessLink / throw error;`]);
+    }
+    const parenthesised = "export function passOn(read: () => string): string {\n  try {\n    return read();\n  } catch (failure) {\n"
+      + "    throw ((failure));\n  }\n}\n";
+    expect(throwsSomeName(parenthesised)).toBe(true);
+    expect(rethrows("probe.ts", parenthesised)).toEqual(["probe.ts / passOn / throw failure;"]);
+  });
+
   test("a shim runs its module's first function when the module exports that function under another name", () => {
     const shim = "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli(process.argv));";
     const aliased = "function entry(args: string[]): number { return args.length; }\nexport { entry as runCli };\n";
@@ -528,10 +542,19 @@ function throwsSomeName(text: string): boolean {
   const source = ts.createSourceFile("any-name.ts", text, ts.ScriptTarget.Latest, true);
   const pending: ts.Node[] = [source];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    if (ts.isThrowStatement(node) && ts.isIdentifier(node.expression)) return true;
+    if (ts.isThrowStatement(node) && thrownName(node) !== null) return true;
     pending.push(...node.getChildren(source));
   }
   return false;
+}
+
+/** The name a throw statement throws, looking through parentheses, or null when it throws anything else. */
+function thrownName(statement: ts.ThrowStatement): ts.Identifier | null {
+  let thrown = statement.expression;
+  while (ts.isParenthesizedExpression(thrown)) {
+    thrown = thrown.expression;
+  }
+  return ts.isIdentifier(thrown) ? thrown : null;
 }
 
 /**
@@ -540,8 +563,10 @@ function throwsSomeName(text: string): boolean {
  * promise's `catch` or `then`. A value narrowed to an Error is not one.
  *
  * @returns One "file / function / throw" entry for each, in the order they
- *     appear. A throw in an arrow or function expression with no name of its
- *     own reads "(an unnamed function)".
+ *     appear. The throw reads "throw name;" however it is spaced or
+ *     parenthesised, so a change of layout does not change the entry. A throw
+ *     in an arrow or function expression with no name of its own reads
+ *     "(an unnamed function)".
  */
 function rethrows(file: string, text: string): string[] {
   const { source, checker } = typedSource(file, text);
@@ -549,11 +574,12 @@ function rethrows(file: string, text: string): string[] {
   const pending: ts.Node[] = [source];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     pending.push(...[...node.getChildren(source)].reverse());
-    if (!ts.isThrowStatement(node) || !ts.isIdentifier(node.expression)) continue;
-    if ((checker.getTypeAtLocation(node.expression).flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) === 0) continue;
-    const declaration = checker.getSymbolAtLocation(node.expression)?.valueDeclaration;
+    const name = ts.isThrowStatement(node) ? thrownName(node) : null;
+    if (name === null) continue;
+    if ((checker.getTypeAtLocation(name).flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) === 0) continue;
+    const declaration = checker.getSymbolAtLocation(name)?.valueDeclaration;
     if (declaration === undefined || !isCaughtBinding(declaration)) continue;
-    found.push(`${file} / ${enclosingFunctionName(node, source)} / ${node.getText(source)}`);
+    found.push(`${file} / ${enclosingFunctionName(node, source)} / throw ${name.text};`);
   }
   return found;
 }
