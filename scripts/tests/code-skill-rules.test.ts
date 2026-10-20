@@ -107,6 +107,8 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
   "held in a value bound to a name": "The name binds the object or array that holds the function, not the function, which is a value handed on, most often a stand-in for a dependency.",
   "a part of a literal no name takes": "A destructuring binds no name to it, so nothing keeps it.",
   "stored on a property": "An assignment to a property, as a statement of its own, hands it on as a property that holds it does.",
+  "a member of a value that holds it, which by its declared type is not the function":
+    "The member's declared type uses neither the receiver nor a type parameter that carries the function, so its value is neither the function nor a value holding it, as expect(check).toThrow() returns nothing.",
 };
 
 // This file is the record of the four rules this plugin's own TypeScript is
@@ -172,12 +174,16 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 // placement check makes sure that no function is written where they cannot
 // see it. It follows every function written with a body, of each kind the
 // compiler counts as function-like, out through each wrapper, each call that
-// may give it back and each literal that holds it, to where it ends. That is
-// a name the rules read, or one of the places in ALLOWED_POSITIONS, each
-// with the reason it is safe. A function that ends anywhere else fails the
-// test, naming the function, its file and its line, and so does a place
-// whose reason is missing, and a function-like kind of node that neither
-// FOLLOWED_KINDS nor TYPE_KINDS names.
+// may give it back and each literal that holds it, to where it ends. A call
+// whose value may hold what it is given, as Array.of's array does, is
+// followed as a literal is, and a member of a value that holds the function
+// is read by its declared type: one that may be the function fails, and one
+// that may hold it is followed on. It ends at a name the rules read, or at
+// one of the places in ALLOWED_POSITIONS, each with the reason it is safe.
+// A function that ends anywhere else fails the test, naming the function,
+// its file and its line, and so does a place whose reason is missing, and a
+// function-like kind of node that neither FOLLOWED_KINDS nor TYPE_KINDS
+// names.
 //
 // eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
 // removes, beside the rules themselves.
@@ -1045,6 +1051,8 @@ describe("the code skill's rules for this repository's own code", () => {
     const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
     expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = identity(${thrower});${declared}`).problems)
       .toEqual(["probe.ts:2: the comment on read does not say what it throws"]);
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = Object.freeze((${thrower}) satisfies () => never);`).problems)
+      .toEqual(["probe.ts:2: the comment on read does not say what it throws"]);
   });
 
   test("a rethrow from a rejection handler is found however the method it is handed to is written", () => {
@@ -1125,8 +1133,22 @@ describe("the code skill's rules for this repository's own code", () => {
       ["export function main(): number {\n  for (const check of [(): number => 1]) check();\n  return 0;\n}\n",
         ["probe.ts:2: an arrow function cannot be placed: it sits in a ForOfStatement, a place the allowed list does not name"]],
       ["export const tested = ((): number => 1) && 2;\n", ["probe.ts:1: an arrow function cannot be placed: it sits in a BinaryExpression, a place the allowed list does not name"]],
-      ["export const listed = [(): number => 1].map((check) => check());\n",
-        ["probe.ts:1: an arrow function cannot be placed: it sits in a PropertyAccessExpression, a place the allowed list does not name"]],
+      // A method whose value may hold what its receiver holds, as map gives an array, is followed on as the holder; here a name binds it.
+      ["export const listed = [(): number => 1].map((check) => check());\n", []],
+      // A function read back out of a value that holds it, or a function made from it, is read by no rule.
+      ["export const helper = Array.of((n: number): number => n).pop();\n",
+        ["probe.ts:1: an arrow function cannot be placed: it is read back out of a value that holds it, which no rule reads"]],
+      ["export const helper = Array.of((n: number): number => n)[0];\n",
+        ["probe.ts:1: an arrow function cannot be placed: it is read back out of a value that holds it, which no rule reads"]],
+      ["export const helper = [(n: number): number => n][0];\n",
+        ["probe.ts:1: an arrow function cannot be placed: it is read back out of a value that holds it, which no rule reads"]],
+      ["export const helper = ((n: number): number => n).bind(null);\n",
+        ["probe.ts:1: an arrow function cannot be placed: it is read back out of a value that holds it, which no rule reads"]],
+      // A destructuring of a call that holds a function cannot be read, nor of what a method returns as its receiver.
+      ["export function main(): number {\n  const [helper] = Array.of((n: number): number => n + 1);\n  return helper(1);\n}\n",
+        ["probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read"]],
+      ["export function main(): number {\n  const [helper] = Array.of((n: number): number => n + 1).fill(1 as never);\n  return helper(1);\n}\n",
+        ["probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read"]],
       ["export const text = `${String((): number => 1)}`;\n", []],
       ["let later: (() => number) | undefined;\nlater = (): number => 1;\nexport const used = later;\n",
         ["probe.ts:2: an arrow function cannot be placed: it is assigned to later at the top level of the module, which the entry-point rule does not read"]],
@@ -1158,6 +1180,8 @@ describe("the code skill's rules for this repository's own code", () => {
       "held in a value bound to a name": "export const reader = { read: (): number => 1 };\n",
       "a part of a literal no name takes": "export const { size } = { size: 1, read: (): number => 1 };\n",
       "stored on a property": "export function main(reader: { read: () => number }): void {\n  reader.read = (): number => 2;\n}\n",
+      "a member of a value that holds it, which by its declared type is not the function":
+        "import { expect } from \"bun:test\";\nexport function main(): void {\n  expect((): number => 1).not.toThrow();\n}\n",
     };
     expect(Object.keys(reached).sort()).toEqual(Object.keys(ALLOWED_POSITIONS).sort());
     for (const [position, text] of Object.entries(reached)) {
@@ -1375,18 +1399,38 @@ function singleValue(expression: ts.Expression, checker: ts.TypeChecker): ts.Exp
  * @returns Each value given back, in the order written.
  */
 function givenBack(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): ts.Expression[] {
+  return callValues(call, checker, following).given;
+}
+
+/** What a call, or `new`, does with the values it is given, as `givenBack` reads it. */
+interface CallValues {
+  /** Each value it may give back as its own value. */
+  given: ts.Expression[];
+  /**
+   * Each value its own value may hold instead: a value passed to a parameter
+   * that shares a type parameter with the declared result, whose type does
+   * not fit the result, as a function given to `Array.of` is held in the
+   * array it returns.
+   */
+  held: ts.Expression[];
+}
+
+/** The values a call, or `new`, may give back, and those its own value may hold, as `givenBack` and CallValues say. */
+function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): CallValues {
   const declaration = calledDeclaration(call, checker);
   const result = checker.getTypeAtLocation(call);
-  const given: ts.Expression[] = [];
+  const found: CallValues = { given: [], held: [] };
   for (const [at, argument] of (call.arguments ?? []).entries()) {
     const parameter = declaration === undefined ? undefined : parameterOf(declaration, call, at);
     if (declaration === undefined || (parameter !== undefined && returnsParameter(declaration, parameter, checker, following))) {
-      given.push(...possibleValues(argument, checker, following));
+      found.given.push(...possibleValues(argument, checker, following));
     } else if (parameter !== undefined && sharesTypeParameter(declaration, parameter)) {
-      given.push(...possibleValues(argument, checker, following).filter((value) => fitsResult(checker.getTypeAtLocation(value), result, checker)));
+      for (const value of possibleValues(argument, checker, following)) {
+        (fitsResult(checker.getTypeAtLocation(value), result, checker) ? found.given : found.held).push(value);
+      }
     }
   }
-  return given;
+  return found;
 }
 
 /** The declaration of the signature a call, or `new`, resolves to, or undefined when the function called cannot be found. */
@@ -1413,22 +1457,47 @@ function parameterOf(declaration: ts.SignatureDeclaration, call: ts.CallExpressi
 
 /**
  * Whether a parameter's declared type uses, outside any function type, a
- * type parameter of its own signature that the signature's declared result
- * uses too, outside any function type.
+ * type parameter its signature can use, its own or its interface's or
+ * class's, that the signature's declared result uses too, outside any
+ * function type.
  */
 function sharesTypeParameter(declaration: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration): boolean {
   if (parameter.type === undefined || declaration.type === undefined) return false;
-  const own = new Set((declaration.typeParameters ?? []).map((typeParameter) => typeParameter.name.text));
+  const usable = typeParametersInScope(declaration);
   const result = typeNamesOutsideFunctions(declaration.type);
-  return [...typeNamesOutsideFunctions(parameter.type)].some((name) => own.has(name) && result.has(name));
+  return [...typeNamesOutsideFunctions(parameter.type)].some((name) => usable.has(name) && result.has(name));
 }
 
-/** Each name a type refers to by a type reference, outside any function type within it. */
+/**
+ * The names of the type parameters a declaration can use: its own, and those
+ * of each declaration it sits in, such as its interface or class.
+ */
+function typeParametersInScope(declaration: ts.Node): Set<string> {
+  const names = new Set<string>();
+  for (let node: ts.Node | undefined = declaration; node !== undefined; node = node.parent) {
+    for (const typeParameter of declaredTypeParameters(node)) {
+      names.add(typeParameter.name.text);
+    }
+  }
+  return names;
+}
+
+/** The type parameters a node declares itself, none when it declares none. */
+function declaredTypeParameters(node: ts.Node): readonly ts.TypeParameterDeclaration[] {
+  if (ts.isClassLike(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return node.typeParameters ?? [];
+  return ts.isFunctionLike(node) ? node.typeParameters ?? [] : [];
+}
+
+/**
+ * Each name a type refers to by a type reference, outside any function type
+ * within it, and "this" when it uses the polymorphic `this` type there.
+ */
 function typeNamesOutsideFunctions(type: ts.TypeNode): Set<string> {
   const names = new Set<string>();
   const pending: ts.Node[] = [type];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (ts.isFunctionLike(node)) continue;
+    if (ts.isThisTypeNode(node)) names.add("this");
     if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) names.add(node.typeName.text);
     // A callback that returns a value stops the walk, so this one returns nothing.
     ts.forEachChild(node, (child) => {
@@ -2534,6 +2603,22 @@ function climb(written: ts.FunctionLikeDeclaration, checker: ts.TypeChecker): Cl
       top = parent;
       continue;
     }
+    // A call whose value may hold what it is given holds the function, or the literal that holds it, as a literal does.
+    if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression !== top
+      && callValues(parent, checker, NOTHING_FOLLOWED).held.some((one) => one === value)) {
+      path.push(parent);
+      value = parent;
+      top = parent;
+      continue;
+    }
+    if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === top) {
+      const member = memberStep(parent, written, checker);
+      if (member.place !== undefined) return { path, holder, sink: parent, place: member.place };
+      path.push(...member.steps);
+      value = member.target;
+      top = member.target;
+      continue;
+    }
     const holding = holdingLiteral(parent, top);
     if (holding === undefined) return { path, holder, sink: parent, place: sinkPlace(parent, top, written, value === written, checker) };
     holder ??= holding.holder;
@@ -2564,6 +2649,40 @@ function holdingLiteral(parent: ts.Node, top: ts.Node): HoldingLiteral | undefin
   if (ts.isSpreadAssignment(parent)) return { literal: parent.parent, holder: undefined, steps: [parent, parent.parent] };
   if (ts.isObjectLiteralExpression(parent)) return { literal: parent, holder: top, steps: [parent] };
   return undefined;
+}
+
+/** Where a member of a value that holds a function takes it: to a place, or on, held by the member or by the call of it. */
+interface MemberStep {
+  /** The place the function ends in, or undefined when the member, or the call of it, holds it and is followed on. */
+  place: Place | undefined;
+  /** The member, or the call of it, that holds the function. */
+  target: ts.Expression;
+  /** The nodes the value passes through to reach the target. */
+  steps: ts.Node[];
+}
+
+/**
+ * Where a member of a value that holds a function, or of the function
+ * itself, takes the function. A member, or a call of a method, whose value
+ * may be the function fails, since no rule reads a function read back out.
+ * One whose declared type uses neither the receiver nor a type parameter the
+ * receiver's type can use is not the function and holds none, as
+ * `expect(check).toThrow()` returns nothing. Any other holds the function,
+ * as `[...].map(...)` gives an array, and is followed on.
+ */
+function memberStep(access: ts.PropertyAccessExpression | ts.ElementAccessExpression, written: ts.FunctionLikeDeclaration, checker: ts.TypeChecker): MemberStep {
+  const call = ts.isCallExpression(access.parent) && access.parent.expression === access ? access.parent : undefined;
+  const target = call ?? access;
+  const steps = call === undefined ? [access] : [access, call];
+  if (fitsResult(checker.getTypeAtLocation(written), checker.getTypeAtLocation(target), checker)) {
+    return { place: unplaced("it is read back out of a value that holds it, which no rule reads"), target, steps };
+  }
+  const declaration = call === undefined ? checker.getSymbolAtLocation(ts.isPropertyAccessExpression(access) ? access.name : access.argumentExpression)?.declarations?.[0] : calledDeclaration(call, checker);
+  const type = declaration !== undefined && (ts.isFunctionLike(declaration) || ts.isPropertySignature(declaration) || ts.isPropertyDeclaration(declaration)) ? declaration.type : undefined;
+  if (declaration === undefined || type === undefined) return { place: undefined, target, steps };
+  const usable = typeParametersInScope(declaration);
+  const uses = [...typeNamesOutsideFunctions(type)].some((name) => name === "this" || usable.has(name));
+  return { place: uses ? undefined : position("a member of a value that holds it, which by its declared type is not the function"), target, steps };
 }
 
 /** A place on the allowed list. */
@@ -2634,7 +2753,7 @@ function declaredPlace(declaration: ts.VariableDeclaration | ts.ParameterDeclara
     const unread = reading.unread.find((entry) => entry.node === part);
     if (unread !== undefined) return unplaced(`a name may take it, but which one cannot be read, as ${unknownReason(unread.cause, part.getSourceFile())}`);
   }
-  return unplaced("it sits in a literal that its destructuring does not account for");
+  return unplaced("its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read");
 }
 
 /**
