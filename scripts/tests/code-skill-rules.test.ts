@@ -840,7 +840,7 @@ describe("the code skill's rules for this repository's own code", () => {
     }
     const module = `const [, helper] = [...made(), ${fn}];\nexport function runCli(): number { return 0; }\ndeclare function made(): number[];\n`;
     expect(shimProblem("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli());", "probe.ts", module))
-      .toBe("probe-cli.ts runs runCli, but what probe.ts leads with cannot be read: helper's position follows ...made(), whose length is not known");
+      .toBe("probe-cli.ts runs runCli, but probe.ts leads with helper, which cannot be read, as its position follows ...made(), whose length is not known");
   });
 
   test("a documented statement is read for every name it declares, not only the first", () => {
@@ -856,11 +856,49 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = ${thrower}, write = ${thrower};`).problems)
       .toEqual(["probe.ts:2: the comment on read does not say what it throws", "probe.ts:2: the comment on write does not say what it throws"]);
   });
+
+  test("a spread of an object literal gives its keys, and a key a spread of anything else may give is reported", () => {
+    const helper = "(n: number): number => n + 1";
+    const bound: Array<[body: string, found: string[]]> = [
+      [`const { helper } = { ...{ helper: ${helper} } };`, ["probe.ts / main / helper"]],
+      [`const { helper } = { ...Object.freeze({ helper: ${helper} }) };`, ["probe.ts / main / helper"]],
+      [`const { helper } = { ...{ ...{ helper: ${helper} } } };`, ["probe.ts / main / helper"]],
+      [`const { inner: { helper } } = { ...made(), inner: { helper: ${helper} } };`, ["probe.ts / main / helper"]],
+      ["const { size } = { ...{ size: 1 } };", []],
+      // A key given after the spread is settled there, whatever the spread holds.
+      ["const { size } = { ...made(), size: 1 };", []],
+      ["const { size } = { ...made(), ...{ size: 1 } };", []],
+      ["const { size } = { ...made() };", [keyNotKnown("size", "...made()")]],
+      ["const { size } = { ...{ ...made() } };", [keyNotKnown("size", "...made()")]],
+      ["const { inner: { size } } = { inner: { ...made() } };", [keyNotKnown("size", "...made()")]],
+      [`const { helper } = { helper: ${helper}, ...made() };`, ["probe.ts / main / helper", keyNotKnown("helper", "...made()")]],
+    ];
+    for (const [body, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return 0;\n}\n`), body).toEqual(found);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { read } = { ...{ read: ${thrower} } };`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { read } = { ...made() };`))
+      .toEqual({ read: 0, problems: ["probe.ts:2: what read binds cannot be read, as its key may be given by ...made(), whose keys are not known"] });
+    const tail = "\nexport function main(): number { return 1; }\ndeclare function made(): { helper: number };\n";
+    expect(entryPointProblem("probe.ts", `const { helper } = { ...{ helper: ${helper} } };${tail}`))
+      .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
+    expect(entryPointProblem("probe.ts", `const { helper } = { ...made() };${tail}`)).toEqual({
+      checked: true,
+      problem: "probe.ts:1: what helper holds cannot be read, as its key may be given by ...made(), whose keys are not known, so the first function cannot be found",
+    });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
 function positionNotKnown(name: string, spread: string): string {
   return `probe.ts / main / ${name}: its position follows ${spread}, whose length is not known, so what it holds cannot be read`;
+}
+
+/** The entry the nested-helper check gives a name of main in probe.ts whose key a spread of unknown keys may give. */
+function keyNotKnown(name: string, spread: string): string {
+  return `probe.ts / main / ${name}: its key may be given by ${spread}, whose keys are not known, so what it holds cannot be read`;
 }
 
 /** What the entry-point check found in one module. */
@@ -879,8 +917,8 @@ interface EntryPoint {
  * wraps or returns. A name bound by destructuring counts as a variable does.
  * A value a call builds with a callback is not one. A variable is a function
  * too wherever the nested-helper check would find one, through each value
- * it may be and each default, whatever its type says. A name whose position
- * follows a spread of unknown length may be one, so the first function
+ * it may be and each default, whatever its type says. A name that a spread
+ * of unknown extent may give its value may be one, so the first function
  * cannot be found past it, and that is the problem.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
@@ -889,7 +927,7 @@ function entryPointProblem(file: string, text: string): EntryPoint {
   if (first === null) return { checked: false, problem: null };
   const line = source.getLineAndCharacterOfPosition(first.statement.getStart(source)).line + 1;
   if (first.unknownAfter !== null) {
-    return { checked: true, problem: `${file}:${line}: what ${first.name} holds cannot be read, as its position follows ${first.unknownAfter.getText(source)}, whose length is not known, so the first function cannot be found` };
+    return { checked: true, problem: `${file}:${line}: what ${first.name} holds cannot be read, as ${unknownReason(first.unknownAfter, source)}, so the first function cannot be found` };
   }
   if (exportedNames(source, first).length > 0) return { checked: true, problem: null };
   return { checked: true, problem: `${file}:${line}: the first function, ${first.name}, is not exported` };
@@ -900,8 +938,8 @@ interface FirstFunction {
   name: string;
   exported: boolean;
   statement: ts.Statement;
-  /** The spread a destructured name's position follows when what it holds cannot be read, so it may be the first function; or null. */
-  unknownAfter: ts.SpreadElement | null;
+  /** The spread of unknown extent that may give a destructured name its value, so it may be the first function; or null. */
+  unknownAfter: ts.SpreadElement | ts.SpreadAssignment | null;
 }
 
 /**
@@ -1072,7 +1110,7 @@ function shimProblem(shim: string, shimText: string, module: string, moduleText:
   const typed = typedSource(module, moduleText);
   const first = firstFunction(typed.source, typed.checker);
   if (first !== null && first.unknownAfter !== null) {
-    return `${shim} runs ${run ?? "(no exit call)"}, but what ${module} leads with cannot be read: ${first.name}'s position follows ${first.unknownAfter.getText(typed.source)}, whose length is not known`;
+    return `${shim} runs ${run ?? "(no exit call)"}, but ${module} leads with ${first.name}, which cannot be read, as ${unknownReason(first.unknownAfter, typed.source)}`;
   }
   const exported = first === null ? [] : exportedNames(typed.source, first);
   if (run !== null && exported.includes(run)) return null;
@@ -1267,7 +1305,7 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
  * helper. A parameter that an `@param` tag of its function's comment, or of
  * one of its overload signatures, names is part of the interface, so its own
  * default is not read; a default inside a destructured parameter is still
- * read. A name whose position follows a spread of unknown length cannot be
+ * read. A name that a spread of unknown extent may give its value cannot be
  * read, so it is reported as such, naming the spread.
  *
  * @returns One "file / function / name" entry for each, in the order they
@@ -1286,7 +1324,7 @@ function boundHelpers(file: string, text: string): string[] {
       found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}`);
     }
     for (const { name, spread } of unknownPositions(declaration.name, declaration.initializer)) {
-      found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}: its position follows ${spread.getText(source)}, whose length is not known, so what it holds cannot be read`);
+      found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}: ${unknownReason(spread, source)}, so what it holds cannot be read`);
     }
   }
   return found;
@@ -1330,31 +1368,33 @@ function helperNames(binding: ts.BindingName, value: ts.Expression | undefined):
   for (const [at, element] of binding.elements.entries()) {
     if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
     for (const literal of literals) {
-      const held = ts.isObjectBindingPattern(binding) ? keyedProperty(literal, boundKey(element)) : literalItem(literal, at);
-      if (held !== undefined && ts.isMethodDeclaration(held)) {
-        if (ts.isIdentifier(element.name)) names.push(element.name);
-        continue;
+      for (const held of elementSource(binding, element, at, literal).holders.map(heldBy)) {
+        if (!ts.isMethodDeclaration(held)) names.push(...helperNames(element.name, held));
+        else if (ts.isIdentifier(element.name)) names.push(element.name);
       }
-      names.push(...helperNames(element.name, held !== undefined && ts.isPropertyAssignment(held) ? held.initializer : held));
     }
     names.push(...helperNames(element.name, element.initializer));
   }
   return names;
 }
 
-/** A name whose position in an array literal follows a spread of unknown length, with that spread. */
+/**
+ * A name whose value a spread of unknown extent may give, with that spread:
+ * a position of an array literal after a spread of anything but an array or
+ * string literal, or a key of an object literal that a spread of anything
+ * but an object literal may give.
+ */
 interface UnknownPosition {
   name: ts.Identifier;
-  spread: ts.SpreadElement;
+  spread: ts.SpreadElement | ts.SpreadAssignment;
 }
 
 /**
- * Each name a binding takes from a position of an array literal that
- * follows a spread of anything but an array or string literal, at any depth,
+ * Each name a binding takes from a spread of unknown extent, at any depth,
  * reading each literal the value may be, as `possibleValues` reads it, and
  * each default. What such a name holds cannot be known without running the
  * code, so no rule can read it, and it is reported instead. A rest element
- * binds an array, not an item, so it is not one.
+ * binds what is left over, not one item or key, so it is not one.
  */
 function unknownPositions(binding: ts.BindingName, value: ts.Expression | undefined): UnknownPosition[] {
   if (ts.isIdentifier(binding)) return [];
@@ -1363,15 +1403,85 @@ function unknownPositions(binding: ts.BindingName, value: ts.Expression | undefi
   for (const [at, element] of binding.elements.entries()) {
     if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
     for (const literal of literals) {
-      const spread = ts.isArrayBindingPattern(binding) ? unknownSpread(literal, at) : null;
-      if (spread !== null) {
-        found.push(...boundNames(element.name).map((name) => ({ name, spread })));
-        continue;
+      const { holders, unknownAfter } = elementSource(binding, element, at, literal);
+      if (unknownAfter !== null) found.push(...boundNames(element.name).map((name) => ({ name, spread: unknownAfter })));
+      for (const held of holders.map(heldBy)) {
+        if (!ts.isMethodDeclaration(held)) found.push(...unknownPositions(element.name, held));
       }
-      const held = ts.isObjectBindingPattern(binding) ? keyedProperty(literal, boundKey(element)) : literalItem(literal, at);
-      if (held !== undefined && !ts.isMethodDeclaration(held)) found.push(...unknownPositions(element.name, ts.isPropertyAssignment(held) ? held.initializer : held));
     }
     found.push(...unknownPositions(element.name, element.initializer));
+  }
+  return found;
+}
+
+/**
+ * Why the rules cannot read a name that a spread of unknown extent may give
+ * its value, as a clause about the name.
+ */
+function unknownReason(spread: ts.SpreadElement | ts.SpreadAssignment, source: ts.SourceFile): string {
+  if (ts.isSpreadElement(spread)) return `its position follows ${spread.getText(source)}, whose length is not known`;
+  return `its key may be given by ${spread.getText(source)}, whose keys are not known`;
+}
+
+/** Where one binding element of a pattern takes its value from, in one literal. */
+interface ElementSource {
+  /**
+   * Each property or method of an object literal that gives the element's
+   * key, or the item of an array literal at its position: every one that may
+   * give its value, a later one as well as one it overrides.
+   */
+  holders: Array<ts.PropertyAssignment | ts.MethodDeclaration | ts.Expression>;
+  /** The spread of unknown extent that may give the element its value instead, or null. */
+  unknownAfter: ts.SpreadElement | ts.SpreadAssignment | null;
+}
+
+/**
+ * Where a binding element takes its value from in one literal: by key from an
+ * object literal, through each spread of an object literal, or by position
+ * from an array literal, through each spread of an array or string literal.
+ *
+ * @returns No holder and no spread when the literal is not the kind the
+ *     pattern reads.
+ */
+function elementSource(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression): ElementSource {
+  if (ts.isObjectBindingPattern(pattern)) return keyedProperties(literal, boundKey(element));
+  const item = literalItem(literal, at);
+  return { holders: item === undefined ? [] : [item], unknownAfter: unknownSpread(literal, at) };
+}
+
+/** The value a property gives, or the method or array item itself. */
+function heldBy(holder: ts.PropertyAssignment | ts.MethodDeclaration | ts.Expression): ts.Expression | ts.MethodDeclaration {
+  return ts.isPropertyAssignment(holder) ? holder.initializer : holder;
+}
+
+/**
+ * Each property or method of an object literal that gives one key, read
+ * through each spread of another object literal, with the spread of anything
+ * else that may give it a value after the last of them.
+ *
+ * @returns No holder and no spread when the literal is not an object
+ *     literal or the key cannot be known.
+ */
+function keyedProperties(literal: ts.Expression, key: string | undefined): ElementSource {
+  const found: ElementSource = { holders: [], unknownAfter: null };
+  if (key === undefined || !ts.isObjectLiteralExpression(literal)) return found;
+  for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      const spread = heldValue(property.expression);
+      if (spread === undefined || !ts.isObjectLiteralExpression(spread)) {
+        found.unknownAfter = property;
+        continue;
+      }
+      const inner = keyedProperties(spread, key);
+      found.holders.push(...inner.holders);
+      // A key the inner literal gives is settled there, unless a spread inside it comes later.
+      if (inner.holders.length > 0 || inner.unknownAfter !== null) found.unknownAfter = inner.unknownAfter;
+      continue;
+    }
+    if ((ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) && keyText(property.name) === key) {
+      found.holders.push(property);
+      found.unknownAfter = null;
+    }
   }
   return found;
 }
@@ -1459,9 +1569,9 @@ interface ThrowsCount {
  * overloads is read with the comments of its signatures as well as its own,
  * so a `@throws` tag on any of them counts. A throw counts when it can leave
  * the function: not inside a nested function, and not inside a `try` block
- * whose `catch` takes it. A name a documented statement binds from a
- * position that follows a spread of unknown length cannot be read, so it is
- * reported as such, after the others.
+ * whose `catch` takes it. A name a documented statement binds that a spread
+ * of unknown extent may give its value cannot be read, so it is reported as
+ * such, after the others.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -1476,20 +1586,20 @@ function undocumentedThrows(file: string, text: string): ThrowsCount {
   }
   for (const { name, spread, commented } of documentedUnknownPositions(source)) {
     const line = source.getLineAndCharacterOfPosition(commented.getStart(source)).line + 1;
-    problems.push(`${file}:${line}: what ${name.text} binds cannot be read, as its position follows ${spread.getText(source)}, whose length is not known`);
+    problems.push(`${file}:${line}: what ${name.text} binds cannot be read, as ${unknownReason(spread, source)}`);
   }
   return { read, problems };
 }
 
-/** A name a documented statement binds whose position follows a spread of unknown length. */
+/** A name a documented statement binds that a spread of unknown extent may give its value. */
 interface DocumentedUnknownPosition extends UnknownPosition {
   /** The statement that carries the comment. */
   commented: ts.VariableStatement;
 }
 
 /**
- * Each name a documented variable statement binds whose position follows a
- * spread of unknown length, so that the throws check cannot read what it
+ * Each name a documented variable statement binds that a spread of unknown
+ * extent may give its value, so that the throws check cannot read what it
  * binds.
  */
 function documentedUnknownPositions(source: ts.SourceFile): DocumentedUnknownPosition[] {
@@ -1564,10 +1674,11 @@ function boundFunctions(pattern: ts.BindingPattern, value: ts.Expression | undef
   for (const [at, element] of pattern.elements.entries()) {
     if (ts.isOmittedExpression(element)) continue;
     const name = element.name;
-    const given = literals.map((literal) => ts.isObjectBindingPattern(pattern) ? keyValue(literal, boundKey(element)) : itemValue(literal, at));
+    // A property or an array item with a comment of its own is read with that comment.
+    const given = literals.flatMap((literal) => elementSource(pattern, element, at, literal).holders).filter((holder) => !hasJsDoc(holder)).map(heldBy);
     if (!ts.isIdentifier(name)) {
       for (const held of given) {
-        if (held !== undefined && !ts.isMethodDeclaration(held)) boundFunctions(name, held, bodies);
+        if (!ts.isMethodDeclaration(held)) boundFunctions(name, held, bodies);
       }
       boundFunctions(name, element.initializer, bodies);
       continue;
@@ -1588,38 +1699,6 @@ function keyText(name: ts.PropertyName): string | undefined {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
   if (ts.isComputedPropertyName(name) && (ts.isStringLiteral(name.expression) || ts.isNumericLiteral(name.expression))) return name.expression.text;
   return undefined;
-}
-
-/**
- * The value or method an object literal gives one key.
- *
- * @returns It, or undefined when the literal is not an object literal, has no
- *     such key, or documents that property with a comment of its own.
- */
-function keyValue(literal: ts.Expression | undefined, key: string | undefined): ts.Expression | ts.MethodDeclaration | undefined {
-  const property = keyedProperty(literal, key);
-  if (property === undefined || hasJsDoc(property)) return undefined;
-  return ts.isPropertyAssignment(property) ? property.initializer : property;
-}
-
-/** The property or method an object literal gives one key, or undefined when it is not an object literal or has no such key. */
-function keyedProperty(literal: ts.Expression | undefined, key: string | undefined): ts.PropertyAssignment | ts.MethodDeclaration | undefined {
-  if (literal === undefined || key === undefined || !ts.isObjectLiteralExpression(literal)) return undefined;
-  for (const property of literal.properties) {
-    if ((ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) && keyText(property.name) === key) return property;
-  }
-  return undefined;
-}
-
-/**
- * The item an array literal holds at one position.
- *
- * @returns It, or undefined when the literal is not an array literal, holds
- *     no item there, or documents that item with a comment of its own.
- */
-function itemValue(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
-  const item = literalItem(literal, at);
-  return item === undefined || hasJsDoc(item) ? undefined : item;
 }
 
 /** The body of each function a value may hold, or of a method, none when it holds no function. */
