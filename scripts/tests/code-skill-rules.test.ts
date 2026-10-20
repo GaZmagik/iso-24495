@@ -412,6 +412,26 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 1, problems: ["probe.ts:2: the comment on f does not say what it throws"] });
   });
 
+  test("a documented function bound by destructuring a literal is read as the function it binds", () => {
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    for (const statement of [
+      `export const { read } = { read: ${thrower} };`,
+      `export const { size: read } = { size: ${thrower} };`,
+      `export const { read } = Object.freeze({ read: ${thrower} });`,
+      `export const [read] = [${thrower}] as const;`,
+    ]) {
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+      expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: [] });
+    }
+    // The one comment covers each function the statement binds.
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { read, write } = { read: ${thrower}, write: ${thrower} };`).problems)
+      .toEqual(["probe.ts:2: the comment on read does not say what it throws", "probe.ts:2: the comment on write does not say what it throws"]);
+    // A key that is not bound, and a bound value that is not a function, are not read.
+    expect(undocumentedThrows("probe.ts", `/** The size. */\nexport const { size } = { size: 1, read: ${thrower} };`)).toEqual({ read: 0, problems: [] });
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -490,6 +510,17 @@ function boundNames(binding: ts.BindingName): ts.Identifier[] {
  *     expression holds neither, or is undefined.
  */
 function functionValue(expression: ts.Expression | undefined): ts.ArrowFunction | ts.FunctionExpression | null {
+  const inner = heldValue(expression);
+  return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) ? inner : null;
+}
+
+/**
+ * The value an expression holds, looking through parentheses, a type
+ * assertion, `satisfies` and a call of `Object.freeze` on one value.
+ *
+ * @returns The innermost expression, or undefined when given undefined.
+ */
+function heldValue(expression: ts.Expression | undefined): ts.Expression | undefined {
   let inner = expression;
   while (inner !== undefined) {
     if (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isSatisfiesExpression(inner)
@@ -501,7 +532,7 @@ function functionValue(expression: ts.Expression | undefined): ts.ArrowFunction 
       break;
     }
   }
-  return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) ? inner : null;
+  return inner;
 }
 
 /** Whether an expression calls `Object.freeze` on one value. */
@@ -733,11 +764,12 @@ interface ThrowsCount {
  * A function here is a function declaration, a method, a constructor, an
  * accessor, a variable, an object property or a class field whose value
  * is an arrow function or a function expression, also through
- * `Object.freeze`, or such a function held directly in an array. A function
- * declared with overloads is read with the comments of its signatures as well
- * as its own, so a `@throws` tag on any of them counts. A throw counts when it can leave the function: not
- * inside a nested function, and not inside a `try` block whose `catch`
- * takes it.
+ * `Object.freeze`, or such a function held directly in an array, or bound
+ * by destructuring an object or array literal. A function declared with
+ * overloads is read with the comments of its signatures as well as its own,
+ * so a `@throws` tag on any of them counts. A throw counts when it can leave
+ * the function: not inside a nested function, and not inside a `try` block
+ * whose `catch` takes it.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -769,8 +801,42 @@ function documentedFunctions(source: ts.SourceFile): DocumentedFunction[] {
     pending.push(...node.getChildren(source));
     const unit = asDocumentedFunction(node, source);
     if (unit !== null) found.push(unit);
+    found.push(...destructuredFunctions(node, source));
   }
   return found;
+}
+
+/**
+ * Each function a documented variable statement binds by destructuring an
+ * object or array literal, read with the statement's comment. A name bound
+ * to an object's key reads the value of that key; a name bound by position
+ * reads the item at that position.
+ */
+function destructuredFunctions(node: ts.Node, source: ts.SourceFile): DocumentedFunction[] {
+  if (!ts.isVariableStatement(node) || !hasJsDoc(node)) return [];
+  const found: DocumentedFunction[] = [];
+  for (const declaration of node.declarationList.declarations) {
+    const literal = heldValue(declaration.initializer);
+    const pattern = declaration.name;
+    if (literal === undefined || ts.isIdentifier(pattern)) continue;
+    for (const [at, element] of pattern.elements.entries()) {
+      if (ts.isOmittedExpression(element) || !ts.isIdentifier(element.name)) continue;
+      const value = ts.isObjectBindingPattern(pattern) ? keyValue(literal, (element.propertyName ?? element.name).getText(source))
+        : ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+      const bound = functionValue(value);
+      if (bound !== null) found.push({ name: element.name.text, commented: node, body: bound.body });
+    }
+  }
+  return found;
+}
+
+/** The value an object literal gives one key, or undefined when it is not an object literal or has no such key. */
+function keyValue(literal: ts.Expression, key: string): ts.Expression | undefined {
+  if (!ts.isObjectLiteralExpression(literal)) return undefined;
+  for (const property of literal.properties) {
+    if (ts.isPropertyAssignment(property) && property.name.getText() === key) return property.initializer;
+  }
+  return undefined;
 }
 
 /** The node as a documented function, or null when it is not one. */
