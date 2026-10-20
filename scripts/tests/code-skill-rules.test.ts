@@ -382,6 +382,17 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(boundHelpers("probe.ts", "/**\n * Runs.\n *\n * @param options What to run with.\n */\n" + destructured)).toEqual(["probe.ts / main / helper"]);
   });
 
+  test("a parameter an overload signature's @param tag documents is interface in the implementation too", () => {
+    const implementation = "export function main(size: number, helper: (n: number) => number = (n: number): number => n + 1): number {\n  return helper(size);\n}\n";
+    const documented = "/**\n * Runs.\n *\n * @param size The size.\n * @param helper Adds one.\n */\nexport function main(size: number, helper?: (n: number) => number): number;\n";
+    expect(boundHelpers("probe.ts", documented + implementation)).toEqual([]);
+    const undocumented = "/**\n * Runs.\n *\n * @param size The size.\n */\nexport function main(size: number, helper?: (n: number) => number): number;\n";
+    expect(boundHelpers("probe.ts", undocumented + implementation)).toEqual(["probe.ts / main / helper"]);
+    // A signature of another function does not document this one.
+    const other = "/**\n * Runs another.\n *\n * @param helper Adds one.\n */\nexport function other(helper?: (n: number) => number): number;\nexport function other(): number {\n  return 0;\n}\n";
+    expect(boundHelpers("probe.ts", other + implementation)).toEqual(["probe.ts / main / helper"]);
+  });
+
   test("a function a destructuring does not bind to a name, or binds at the top level, is not a nested helper", () => {
     for (const body of [
       "const { helper }: { unused: () => number; helper: number } = { unused: (): number => 1, helper: 2 };",
@@ -926,9 +937,10 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
  * wrappers a function value is read through. A name whose default is a
  * function is bound to one too. A rest element binds an object, not a
  * function, and a destructuring at the top level of a module binds no nested
- * helper. A parameter that an `@param` tag of its function's comment names
- * is part of the interface, so its own default is not read; a default inside
- * a destructured parameter is still read.
+ * helper. A parameter that an `@param` tag of its function's comment, or of
+ * one of its overload signatures, names is part of the interface, so its own
+ * default is not read; a default inside a destructured parameter is still
+ * read.
  *
  * @returns One "file / function / name" entry for each, in the order they
  *     appear.
@@ -949,10 +961,18 @@ function boundHelpers(file: string, text: string): string[] {
   return found;
 }
 
-/** Whether a parameter is named by an `@param` tag of its function's comment. Only a parameter with a name of its own can be. */
+/**
+ * Whether a parameter is named by an `@param` tag of its function's comment,
+ * or of the comment on any overload signature of its function. Only a
+ * parameter with a name of its own can be.
+ */
 function isDocumentedParameter(parameter: ts.ParameterDeclaration): boolean {
   const name = parameter.name;
-  return ts.isIdentifier(name) && ts.getJSDocParameterTags(parameter).some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
+  if (!ts.isIdentifier(name)) return false;
+  const owner = parameter.parent;
+  const signatures = ts.isFunctionDeclaration(owner) || ts.isMethodDeclaration(owner) || ts.isConstructorDeclaration(owner) ? overloadSignatures(owner) : [];
+  const tags = [...ts.getJSDocParameterTags(parameter), ...signatures.flatMap((signature) => ts.getJSDocTags(signature).filter(ts.isJSDocParameterTag))];
+  return tags.some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
 }
 
 /** Each name a binding gives a function, reading the value it is given and, below it, each default. */
@@ -1167,22 +1187,31 @@ function hasJsDoc(node: ts.Node): boolean {
  *
  * @returns The node carrying the comment, or null when none of them has one.
  */
-function commentRead(implementation: ts.FunctionDeclaration | ts.MethodDeclaration | ts.ConstructorDeclaration): ts.Node | null {
+function commentRead(implementation: OverloadableFunction): ts.Node | null {
+  const documented: ts.Node[] = [...overloadSignatures(implementation), implementation].filter(hasJsDoc);
+  const said = documented.find((commented) => ts.getJSDocTags(commented).some((tag) => tag.tagName.text === "throws"));
+  return said ?? (hasJsDoc(implementation) ? implementation : documented[0] ?? null);
+}
+
+/** A declaration that may follow overload signatures of its own. */
+type OverloadableFunction = ts.FunctionDeclaration | ts.MethodDeclaration | ts.ConstructorDeclaration;
+
+/** The overload signatures of the same name directly above an implementation, in the order they appear. */
+function overloadSignatures(implementation: OverloadableFunction): OverloadableFunction[] {
   const parent = implementation.parent;
   let siblings: readonly ts.Node[] = [];
   if (ts.isClassLike(parent)) siblings = parent.members;
   else if (ts.isSourceFile(parent) || ts.isBlock(parent) || ts.isModuleBlock(parent)) siblings = parent.statements;
   const name = implementation.name?.getText();
-  const documented: ts.Node[] = hasJsDoc(implementation) ? [implementation] : [];
+  const signatures: OverloadableFunction[] = [];
   for (let at = siblings.indexOf(implementation) - 1; at >= 0; at -= 1) {
     const signature = siblings[at];
     if (signature === undefined || signature.kind !== implementation.kind) break;
     if (!ts.isFunctionDeclaration(signature) && !ts.isMethodDeclaration(signature) && !ts.isConstructorDeclaration(signature)) break;
     if (signature.body !== undefined || signature.name?.getText() !== name) break;
-    if (hasJsDoc(signature)) documented.unshift(signature);
+    signatures.unshift(signature);
   }
-  const said = documented.find((commented) => ts.getJSDocTags(commented).some((tag) => tag.tagName.text === "throws"));
-  return said ?? (hasJsDoc(implementation) ? implementation : documented[0] ?? null);
+  return signatures;
 }
 
 /** Whether a throw statement in a body can leave the function that owns the body. */
