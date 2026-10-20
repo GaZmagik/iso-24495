@@ -150,8 +150,11 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    spelling: against an array literal, an index key reads the item there.
 //    A name a spread of unknown extent, or a key not known, may give its
 //    value cannot be read, so it fails the test, naming the name and why;
-//    the same holds for the other two tests. A parameter its function's
-//    @param tag
+//    the same holds for the other two tests. A name whose type cannot be a
+//    function, such as a number, a string, an array, or an object that asks
+//    for a property a function lacks, binds no function, so the
+//    nested-helper and throws tests pass it; the entry-point test still
+//    fails it. A parameter its function's @param tag
 //    documents is part of the interface, not a helper, by the owner's ruling
 //    of 2026-10-20, so its default is not reported. Otherwise a property
 //    holding an arrow is left alone: it is a value handed on, most often a
@@ -1230,6 +1233,26 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", documented)).toEqual({ read: 1, problems: [] });
     expect(unplacedFunctions("probe.ts", documented).problems).toEqual([]);
   });
+
+  test("a name whose type cannot be a function is not a possible helper, wherever its position is unknown", () => {
+    // A name bound to an array, or to an object a function could not be, binds no function, whatever the value holds.
+    for (const parameter of ["values: number[]", "values: string[]", "values: boolean[]", "values: number[][]", "values: Array<{ size: number }>",
+      "values: Array<{ run: () => number }>", "values: Array<Array<() => number>>"]) {
+      expect(boundHelpers("probe.ts", `export function main(${parameter}): number {\n  const [first] = [...values];\n  return 0;\n}\n`), parameter).toEqual([]);
+    }
+    for (const parameter of ["values: Array<() => number>", "values: any[]", "values: unknown[]", "values: Array<number | (() => number)>", "values: object[]",
+      "values: Array<{}>", "values: Array<{ name: string }>", "values: Array<{ size?: number }>", "values: Array<{ run: () => number } & (() => number)>"]) {
+      expect(boundHelpers("probe.ts", `export function main(${parameter}): number {\n  const [first] = [...values];\n  return 0;\n}\n`), parameter)
+        .toEqual([positionNotKnown("first", "...values")]);
+    }
+    expect(boundHelpers("probe.ts", "export function main<T>(values: T[]): number {\n  const [first] = [...values];\n  return 0;\n}\n")).toEqual([positionNotKnown("first", "...values")]);
+    expect(boundHelpers("probe.ts", "export function main(fns: (() => number)[]): number {\n  const [first] = [...fns];\n  return first();\n}\n"))
+      .toEqual([positionNotKnown("first", "...fns")]);
+    // The throws check reads the same way.
+    expect(undocumentedThrows("probe.ts", "declare const sizes: number[];\n/** The first size. */\nexport const [first] = [...sizes];\n")).toEqual({ read: 0, problems: [] });
+    expect(undocumentedThrows("probe.ts", "declare const readers: Array<() => number>;\n/** The first reader. */\nexport const [first] = [...readers];\n"))
+      .toEqual({ read: 0, problems: ["probe.ts:3: what first binds cannot be read, as its position follows ...readers, whose length is not known"] });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1494,6 +1517,58 @@ function implementationOf(declaration: ts.SignatureDeclaration): ts.SignatureDec
     if (next.body !== undefined) return next;
   }
   return undefined;
+}
+
+/** The types the checker cannot narrow, so that a value of one may be anything: any, unknown and object. */
+const OPEN_TYPES = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive;
+
+/** The types whose values are those of their constraint: a type parameter, and a type built from one. */
+const CONSTRAINED_TYPES = ts.TypeFlags.TypeParameter | ts.TypeFlags.IndexedAccess | ts.TypeFlags.Conditional | ts.TypeFlags.Substitution;
+
+/**
+ * Whether a value of a type may be a function: the type can be called or
+ * constructed, or a function may be given where it is declared, as for any,
+ * unknown, object, a type parameter with no narrower constraint, or an
+ * object type that asks for nothing a function lacks, such as `{}`. A
+ * union may be one when any of its parts may; an intersection when it can
+ * be called, or each of its parts may. A string, a number, an array, or an
+ * object that asks for a property a function lacks cannot be.
+ */
+function mayBeFunction(type: ts.Type, checker: ts.TypeChecker, location: ts.Node): boolean {
+  if (type.flags & OPEN_TYPES) return true;
+  if (type.flags & CONSTRAINED_TYPES) {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return constraint === undefined || constraint === type || mayBeFunction(constraint, checker, location);
+  }
+  if (type.isUnion()) return type.types.some((part) => mayBeFunction(part, checker, location));
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return true;
+  if (type.isIntersection()) return type.types.every((part) => mayBeFunction(part, checker, location));
+  if (!(type.flags & ts.TypeFlags.Object) || checker.isArrayType(type) || checker.isTupleType(type)) return false;
+  // A function has no index signature, so it is given where one is declared only when that signature takes anything.
+  if (checker.getIndexInfosOfType(type).some((index) => !(index.type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)))) return false;
+  const members = functionMembers(checker, location);
+  return checker.getPropertiesOfType(type).every((property) => (property.flags & ts.SymbolFlags.Optional) !== 0 || members.has(property.name));
+}
+
+/** The names of the members every function has, from the global Function and Object interfaces, read once for each checker. */
+const FUNCTION_MEMBERS = new WeakMap<ts.TypeChecker, ReadonlySet<string>>();
+
+/**
+ * The names of the members every function has, as the checker's own
+ * libraries declare them on the Function and Object interfaces.
+ *
+ * @param location A node of a file the checker read, where the global interfaces are in scope.
+ * @throws An `Error` when the checker's libraries do not declare both
+ *     interfaces, since no type could then be read as a function.
+ */
+function functionMembers(checker: ts.TypeChecker, location: ts.Node): ReadonlySet<string> {
+  const known = FUNCTION_MEMBERS.get(checker);
+  if (known !== undefined) return known;
+  const interfaces = checker.getSymbolsInScope(location, ts.SymbolFlags.Interface).filter((symbol) => symbol.name === "Function" || symbol.name === "Object");
+  if (interfaces.length !== 2) throw new Error(`the libraries declare ${interfaces.length} of the Function and Object interfaces, not both`);
+  const members = new Set(interfaces.flatMap((symbol) => checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol)).map((property) => property.name)));
+  FUNCTION_MEMBERS.set(checker, members);
+  return members;
 }
 
 /**
@@ -1901,7 +1976,8 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
  * parameter that an `@param` tag of its function's comment, or of one of its
  * overload signatures, names is part of the interface, so its own default is
  * not read; a default inside a destructured parameter is still read. A name
- * whose value cannot be read is reported as such, saying why.
+ * whose value cannot be read is reported as such, saying why, when its type
+ * may be a function, as `mayBeFunction` reads it.
  *
  * @returns One "file / function / name" entry for each, in the order they
  *     appear, then, for each declaration, one entry for each name it
@@ -1928,11 +2004,22 @@ function boundHelpersIn(file: string, source: ts.SourceFile, checker: ts.TypeChe
     for (const name of new Set(helperNames(reading, checker))) {
       found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}`);
     }
-    for (const { name, cause } of reading.unknown) {
+    for (const { name, cause } of possibleFunctions(reading.unknown, checker)) {
       found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}: ${unknownReason(cause, source)}, so what it holds cannot be read`);
     }
   }
   return found;
+}
+
+/**
+ * The names whose value cannot be read that may still be a function, as
+ * `mayBeFunction` reads their type. A name whose type cannot be one, such as
+ * a number, a string, an array, or an object that asks for a property a
+ * function lacks, binds no function, so it is no helper, whatever the value
+ * it binds holds.
+ */
+function possibleFunctions(unknown: readonly UnknownPosition[], checker: ts.TypeChecker): UnknownPosition[] {
+  return unknown.filter(({ name }) => mayBeFunction(checker.getTypeAtLocation(name), checker, name));
 }
 
 /** A name an assignment gives a value, with the value. */
@@ -2384,8 +2471,8 @@ interface ThrowsCount {
  * of its signatures as well as its own, so a `@throws` tag on any of them
  * counts. A throw counts when it can leave the function: not inside a nested
  * function, and not inside a `try` block whose `catch` takes it. A name a
- * documented statement binds whose value cannot be read is reported as such,
- * after the others.
+ * documented statement binds whose value cannot be read, and whose type may
+ * be a function, is reported as such, after the others.
  */
 function undocumentedThrows(file: string, text: string): ThrowsCount {
   const { source, checker } = typedSource(file, text);
@@ -2418,7 +2505,8 @@ interface DocumentedUnknownPosition extends UnknownPosition {
 
 /**
  * Each name a documented variable statement binds whose value cannot be
- * read, so that the throws check cannot read what it binds.
+ * read, so that the throws check cannot read what it binds, and that by
+ * its type may be a function or hold one.
  */
 function documentedUnknownPositions(source: ts.SourceFile, checker: ts.TypeChecker): DocumentedUnknownPosition[] {
   const found: DocumentedUnknownPosition[] = [];
@@ -2427,7 +2515,7 @@ function documentedUnknownPositions(source: ts.SourceFile, checker: ts.TypeCheck
     pending.push(...[...node.getChildren(source)].reverse());
     if (!ts.isVariableStatement(node) || !hasJsDoc(node)) continue;
     for (const declaration of node.declarationList.declarations) {
-      found.push(...readBinding(declaration.name, declaration.initializer, checker).unknown.map((position) => ({ ...position, commented: node })));
+      found.push(...possibleFunctions(readBinding(declaration.name, declaration.initializer, checker).unknown, checker).map((position) => ({ ...position, commented: node })));
     }
   }
   return found;
