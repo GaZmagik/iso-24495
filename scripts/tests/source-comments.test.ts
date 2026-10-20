@@ -75,6 +75,21 @@ describe("the rules of the guide that a lint rule cannot state", () => {
     expect(undocumentedExports("probe.ts", "function f(): void {}")).toEqual({ exported: 0, missing: [] });
   });
 
+  test("the implementation of documented overload signatures needs no JSDoc comment of its own", () => {
+    const signatures = "/** Reads a size from text. */\nexport function f(size: string): number;\n/** Reads a size from a number. */\nexport function f(size: number): number;\n";
+    const body = "export function f(size: string | number): number { return Number(size); }";
+    // TypeScript hides the implementation's signature from a caller, who reads the signatures' comments.
+    expect(undocumentedExports("probe.ts", `${signatures}// Either form.\n${body}`)).toEqual({ exported: 3, missing: [] });
+    expect(undocumentedExports("probe.ts", `${signatures}/** Either form. */\n${body}`)).toEqual({ exported: 3, missing: [] });
+    expect(undocumentedExports("probe.ts", signatures + body)).toEqual({ exported: 3, missing: [] });
+    // Each signature still needs its own comment, since each is what a caller reads.
+    const unsaid = "/** Reads a size from text. */\nexport function f(size: string): number;\nexport function f(size: number): number;\n";
+    expect(undocumentedExports("probe.ts", unsaid + body).missing).toEqual(["probe.ts:3: f has no JSDoc comment"]);
+    // A function of another name above is not a signature of this one.
+    expect(undocumentedExports("probe.ts", "/** Reads text. */\nexport function g(size: string): number;\n" + body).missing)
+      .toEqual(["probe.ts:3: f has no JSDoc comment"]);
+  });
+
   test("a JSDoc comment that states a type is reported", () => {
     for (const tag of ["@param {string} name The name.", "@returns {number} The count.", "@return {number} The count."]) {
       expect(jsdocProblems("probe.ts", `/** ${tag} */\nexport function f(name: string): number { return name.length; }`).problems, tag)
@@ -115,21 +130,31 @@ interface ExportCount {
  * The top-level exported declarations of one file that have no JSDoc comment.
  *
  * A re-export, `export { name } from`, is not a declaration and is not
- * counted: the name keeps the comment it has where it is declared.
+ * counted: the name keeps the comment it has where it is declared. The
+ * implementation of overload signatures is counted but needs no comment of
+ * its own: TypeScript hides its signature from a caller, who reads the
+ * signatures, and each of those needs one.
  */
 function undocumentedExports(file: string, text: string): ExportCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const missing: string[] = [];
   let exported = 0;
-  for (const statement of source.statements) {
+  for (const [at, statement] of source.statements.entries()) {
     const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) ?? [] : [];
     if (!modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
     exported += 1;
     if (ts.getJSDocCommentsAndTags(statement).some((comment) => ts.isJSDoc(comment))) continue;
+    if (implementsSignatureAbove(statement, source.statements[at - 1])) continue;
     const line = source.getLineAndCharacterOfPosition(statement.getStart(source)).line + 1;
     missing.push(`${file}:${line}: ${declaredName(statement)} has no JSDoc comment`);
   }
   return { exported, missing };
+}
+
+/** Whether a statement is the implementation of a function whose overload signature is the statement above it. */
+function implementsSignatureAbove(statement: ts.Statement, above: ts.Statement | undefined): boolean {
+  return ts.isFunctionDeclaration(statement) && statement.body !== undefined && statement.name !== undefined
+    && above !== undefined && ts.isFunctionDeclaration(above) && above.body === undefined && above.name?.text === statement.name.text;
 }
 
 /** The name a top-level statement declares, for a report. */
