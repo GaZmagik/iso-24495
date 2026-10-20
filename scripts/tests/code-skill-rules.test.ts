@@ -111,6 +111,11 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //   `if (typeof failure === "string") throw failure;`: the check narrows it
 //   to a string first, so it is no longer typed unknown, and no one writes
 //   the check by accident.
+// - A nested helper whose arrow sits under a type wrapper inside
+//   Object.freeze, as in `Object.freeze(((n: number): number => n + 1)
+//   satisfies (n: number) => number)`: the lint selector reads only an arrow
+//   given to Object.freeze directly, and stacking a wrapper inside the call
+//   is a choice, not a slip. The throws check does read through it.
 describe("the code skill's rules for this repository's own code", () => {
   // The first type check reads the libraries, which takes seconds. The later
   // ones share them.
