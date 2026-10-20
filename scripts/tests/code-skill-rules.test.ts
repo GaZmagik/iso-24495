@@ -61,6 +61,18 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
     "Passes on the failure to list the corpus root unchanged, in a calibrated file whose behaviour must not move.",
 };
 
+/**
+ * The parameters whose default is a function that this repository keeps,
+ * each as "file / function / parameter" with the reason. The check that a
+ * function bound inside a function is a nested helper reads a parameter's
+ * default as such a binding, and these are the sites it passes. This list
+ * awaits the owner's confirmation.
+ */
+const FUNCTION_DEFAULTS: Readonly<Record<string, string>> = {
+  "skills/iso-24495-4/scripts/generate-report.ts / runCli / now":
+    "A documented dependency stand-in that tests replace: the default supplies the current time.",
+};
+
 // This file is the record of the four rules this plugin's own TypeScript is
 // held to, taken from its code skill, `iso-24495-code`, by the owner's
 // ruling. The skill states the first three in words. It states the fourth
@@ -82,10 +94,13 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    function, or an object method or accessor inside a function is refused
 //    by the "code skill" syntax selector in eslint.config.mjs, probed in
 //    lint-rules.test.ts. A variable holding a function through
-//    Object.freeze counts, and so does a name bound by destructuring a
-//    literal, frozen or not, that holds a function, or whose default is a
-//    function. Otherwise a property holding an arrow is left alone: it is a
-//    value handed on, most often a stand-in for a dependency.
+//    Object.freeze counts. A selector cannot tell which key of a literal a
+//    name is bound to, so a test here finds every name bound to a function
+//    inside a function by destructuring, at any depth, or by a default, and
+//    every parameter whose default is a function. FUNCTION_DEFAULTS names the
+//    one parameter default kept, with its reason. Otherwise a property
+//    holding an arrow is left alone: it is a value handed on, most often a
+//    stand-in for a dependency.
 // 4. Throw only Error. A value that is not an Error carries no message and no
 //    stack to the person who meets it. The lint rule
 //    "@typescript-eslint/only-throw-error" refuses a thrown value typed any or
@@ -329,6 +344,49 @@ describe("the code skill's rules for this repository's own code", () => {
       .toBe("probe-cli.ts runs auditText, but probe.ts leads with runCli");
     // A method of anything but a namespace import is not a function of the module.
     expect(shimEntryPoint("probe-cli.ts", "const cli = { runCli: (): number => 0 };\nprocess.exit(cli.runCli());")).toBeNull();
+  });
+
+  test("the only function bound inside a function by destructuring or a default is the approved parameter default", () => {
+    const found: string[] = [];
+    for (const file of typescriptFiles()) {
+      found.push(...boundHelpers(file, readFileSync(join(REPOSITORY_ROOT, file), "utf8")));
+    }
+    expect(found.sort()).toEqual(Object.keys(FUNCTION_DEFAULTS).sort());
+    expect(Object.values(FUNCTION_DEFAULTS).filter((reason) => reason.includes("\n") || reason.trim() === "")).toEqual([]);
+  });
+
+  test("a function bound by destructuring at any depth, by a default, or by a parameter default is a nested helper", () => {
+    const bound: Array<[form: string, body: string]> = [
+      ["a nested binding", "const { inner: { helper } } = { inner: { helper: (n: number): number => n + 1 } };"],
+      ["a nested default", "const { inner: { helper = (n: number): number => n + 1 } } = { inner: {} };"],
+      ["a default beside a function value", "const { helper = (n: number): number => n } = { helper: (n: number): number => n + 1 };"],
+      ["a method", "const { helper } = { helper(n: number): number { return n + 1; } };"],
+      ["a quoted key", "const { \"helper\": helper } = { helper: (n: number): number => n + 1 };"],
+      ["a nested array", "const [[helper]] = [[(n: number): number => n + 1]] as const;"],
+      ["a frozen literal", "const { helper } = Object.freeze({ cover: 1, helper: (n: number): number => n + 1 });"],
+      ["a default from a default literal", "const { inner: { helper } = { helper: (n: number): number => n + 1 } } = {};"],
+    ];
+    for (const [form, body] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return helper(1);\n}\n`), form).toEqual(["probe.ts / main / helper"]);
+    }
+    expect(boundHelpers("probe.ts", "export function main(helper: (n: number) => number = (n: number): number => n + 1): number {\n  return helper(1);\n}\n"))
+      .toEqual(["probe.ts / main / helper"]);
+    expect(boundHelpers("probe.ts", "export function main({ helper }: { helper: (n: number) => number } = { helper: (n: number): number => n + 1 }): number {\n  return helper(1);\n}\n"))
+      .toEqual(["probe.ts / main / helper"]);
+  });
+
+  test("a function a destructuring does not bind to a name, or binds at the top level, is not a nested helper", () => {
+    for (const body of [
+      "const { helper }: { unused: () => number; helper: number } = { unused: (): number => 1, helper: 2 };",
+      "const [helper] = [2, (n: number): number => n + 1] as const;",
+      "const { helper, ...rest } = { helper: 2, other: (n: number): number => n + 1 };",
+      "const { helper } = made({ helper: 2 });",
+      "const { helper = 2 } = {};",
+    ]) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  ${body}\n  return helper;\n}\n`), body).toEqual([]);
+    }
+    expect(boundHelpers("probe.ts", "const { helper } = { helper: (n: number): number => n + 1 };\nexport function main(size = 1): number {\n  return helper(size);\n}\n"))
+      .toEqual([]);
   });
 
   test("a shim's entry point is read through parentheses around the function called", () => {
@@ -839,6 +897,62 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
   return "(the module itself)";
 }
 
+/**
+ * Every name a file binds to a function inside a function by destructuring
+ * or by a default, and every parameter whose default is a function: rule 3's
+ * nested helpers that a lint selector cannot see, since a selector cannot
+ * tell which key of a literal a name is bound to.
+ *
+ * A name bound by destructuring reads the value or method its key, or its
+ * position, holds in the literal destructured, at any depth, through the
+ * wrappers a function value is read through. A name whose default is a
+ * function is bound to one too. A rest element binds an object, not a
+ * function, and a destructuring at the top level of a module binds no nested
+ * helper.
+ *
+ * @returns One "file / function / name" entry for each, in the order they
+ *     appear.
+ */
+function boundHelpers(file: string, text: string): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const pending: ts.Node[] = [source];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    pending.push(...[...node.getChildren(source)].reverse());
+    let names: ts.Identifier[] = [];
+    if (ts.isParameter(node)) names = helperNames(node.name, node.initializer);
+    else if (ts.isVariableDeclaration(node) && ts.findAncestor(node, ts.isFunctionLike) !== undefined) names = helperNames(node.name, node.initializer);
+    for (const name of new Set(names)) {
+      found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}`);
+    }
+  }
+  return found;
+}
+
+/** Each name a binding gives a function, reading the value it is given and, below it, each default. */
+function helperNames(binding: ts.BindingName, value: ts.Expression | undefined): ts.Identifier[] {
+  if (ts.isIdentifier(binding)) return functionValue(value) === null ? [] : [binding];
+  const literal = heldValue(value);
+  const names: ts.Identifier[] = [];
+  for (const [at, element] of binding.elements.entries()) {
+    if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) continue;
+    const held = ts.isObjectBindingPattern(binding) ? keyedProperty(literal, boundKey(element)) : literalItem(literal, at);
+    if (held !== undefined && ts.isMethodDeclaration(held)) {
+      if (ts.isIdentifier(element.name)) names.push(element.name);
+      continue;
+    }
+    const given = held !== undefined && ts.isPropertyAssignment(held) ? held.initializer : held;
+    names.push(...helperNames(element.name, given ?? element.initializer));
+    if (given !== undefined && element.initializer !== undefined) names.push(...helperNames(element.name, element.initializer));
+  }
+  return names;
+}
+
+/** The item an array literal holds at one position, or undefined when it is not an array literal or holds none there. */
+function literalItem(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
+  return literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+}
+
 /** What the throws check found in one file. */
 interface ThrowsCount {
   /** How many documented functions throw from their own body. */
@@ -951,11 +1065,16 @@ function keyText(name: ts.PropertyName): string | undefined {
  *     such key, or documents that property with a comment of its own.
  */
 function keyValue(literal: ts.Expression | undefined, key: string | undefined): ts.Expression | ts.MethodDeclaration | undefined {
+  const property = keyedProperty(literal, key);
+  if (property === undefined || hasJsDoc(property)) return undefined;
+  return ts.isPropertyAssignment(property) ? property.initializer : property;
+}
+
+/** The property or method an object literal gives one key, or undefined when it is not an object literal or has no such key. */
+function keyedProperty(literal: ts.Expression | undefined, key: string | undefined): ts.PropertyAssignment | ts.MethodDeclaration | undefined {
   if (literal === undefined || key === undefined || !ts.isObjectLiteralExpression(literal)) return undefined;
   for (const property of literal.properties) {
-    if ((!ts.isPropertyAssignment(property) && !ts.isMethodDeclaration(property)) || keyText(property.name) !== key) continue;
-    if (hasJsDoc(property)) return undefined;
-    return ts.isPropertyAssignment(property) ? property.initializer : property;
+    if ((ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) && keyText(property.name) === key) return property;
   }
   return undefined;
 }
@@ -967,7 +1086,7 @@ function keyValue(literal: ts.Expression | undefined, key: string | undefined): 
  *     no item there, or documents that item with a comment of its own.
  */
 function itemValue(literal: ts.Expression | undefined, at: number): ts.Expression | undefined {
-  const item = literal !== undefined && ts.isArrayLiteralExpression(literal) ? literal.elements[at] : undefined;
+  const item = literalItem(literal, at);
   return item === undefined || hasJsDoc(item) ? undefined : item;
 }
 
