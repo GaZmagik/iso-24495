@@ -275,12 +275,15 @@ describe("the code skill's rules for this repository's own code", () => {
   });
 
   test("an approved rethrow is known by its name whatever its spacing, and a parenthesised rethrow is one too", () => {
+    // The approved site, standing alone, so that the probe holds whatever the real file's layout is.
     const file = "scripts/audit-pull-request-text.ts";
-    const text = readFileSync(join(REPOSITORY_ROOT, file), "utf8");
-    expect(text.split("throw error;").length).toBe(2);
+    const approved = `${file} / openUnlessLink / throw error;`;
+    expect(approved in APPROVED_RETHROWS).toBe(true);
+    const site = "export function openUnlessLink(open: () => number): number | null {\n  try {\n    return open();\n  } catch (error) {\n"
+      + "    if (error instanceof RangeError) return null;\n    THROWN\n  }\n}\n";
     // A line break may not follow the word throw, so a broken line sits inside parentheses.
-    for (const spaced of ["throw  error;", "throw\terror;", "throw /* as thrown */ error;", "throw (\n      error\n    );", "throw (error);", "throw error"]) {
-      expect(rethrows(file, text.replace("throw error;", spaced)), spaced).toEqual([`${file} / openUnlessLink / throw error;`]);
+    for (const spaced of ["throw error;", "throw  error;", "throw\terror;", "throw /* as thrown */ error;", "throw (\n      error\n    );", "throw (error);", "throw error"]) {
+      expect(rethrows(file, site.replace("THROWN", spaced)), spaced).toEqual([approved]);
     }
     const parenthesised = "export function passOn(read: () => string): string {\n  try {\n    return read();\n  } catch (failure) {\n"
       + "    throw ((failure));\n  }\n}\n";
