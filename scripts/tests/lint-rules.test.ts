@@ -223,6 +223,15 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "  return mapped.length + settings.size;"],
   [[], "}"],
   [[], "export const frozenAtTop = Object.freeze((): number => 1);"],
+  // A name bound by destructuring a literal that holds a function is a helper
+  // too. A destructured value that is not a function is left alone.
+  [[], "export function destructuredHelpers(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { next } = { next: (n: number): number => n + 1 };"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [previous] = [(n: number): number => n - 1] as const;"],
+  [[], "  const { size } = { size: 1 };"],
+  [[], "  return next(size) + previous(size);"],
+  [[], "}"],
+  [[], "export const { topNext } = { topNext: (n: number): number => n + 1 };"],
   [[], "export const topLevelHelpers = {"],
   [[], "  value(): number {"],
   [[], "    return 1;"],

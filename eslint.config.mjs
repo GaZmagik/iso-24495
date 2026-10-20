@@ -156,7 +156,10 @@ export const CODE_SKILL_SYNTAX = [
     // most often a stand-in for a dependency. A type wrapper changes nothing
     // that runs, so a helper under up to three of them is read as a helper.
     // Object.freeze returns the function it is given, so a helper it wraps,
-    // or a type wrapper around that call, is read as a helper too.
+    // or a type wrapper around that call, is read as a helper too. A name
+    // bound by destructuring an object or array literal is a helper when the
+    // literal holds a function: the selector cannot match a name to its key,
+    // so any function in a destructured literal is read as one.
     // The parser keeps no node for parentheses, so they need no selector.
     selector: [
       ":function FunctionDeclaration",
@@ -166,6 +169,10 @@ export const CODE_SKILL_SYNTAX = [
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
       `:function VariableDeclarator > ${FREEZE_CALL}.init > ${FUNCTION_VALUE}.arguments`,
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FREEZE_CALL}.expression > ${FUNCTION_VALUE}.arguments`,
+      `:function VariableDeclarator[id.type='ObjectPattern'] > ObjectExpression.init > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function VariableDeclarator[id.type='ObjectPattern'] > ${TYPE_WRAPPER}.init > ObjectExpression.expression > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function VariableDeclarator[id.type='ArrayPattern'] > ArrayExpression.init > ${FUNCTION_VALUE}`,
+      `:function VariableDeclarator[id.type='ArrayPattern'] > ${TYPE_WRAPPER}.init > ArrayExpression.expression > ${FUNCTION_VALUE}`,
       ":function Property:matches([method=true], [kind='get'], [kind='set'])",
     ].join(", "),
     message: "code skill: a named helper is declared at the top level, not inside a function",

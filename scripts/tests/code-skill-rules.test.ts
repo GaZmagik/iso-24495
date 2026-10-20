@@ -82,8 +82,10 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    function, or an object method or accessor inside a function is refused
 //    by the "code skill" syntax selector in eslint.config.mjs, probed in
 //    lint-rules.test.ts. A variable holding a function through
-//    Object.freeze counts. A property holding an arrow is left alone: it is a
-//    value handed on, most often a stand-in for a dependency.
+//    Object.freeze counts, and so does a name bound by destructuring a
+//    literal that holds a function. Otherwise a property holding an arrow is
+//    left alone: it is a value handed on, most often a stand-in for a
+//    dependency.
 // 4. Throw only Error. A value that is not an Error carries no message and no
 //    stack to the person who meets it. The lint rule
 //    "@typescript-eslint/only-throw-error" refuses a thrown value typed any or
