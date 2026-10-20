@@ -581,6 +581,26 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 0, problems: [] });
   });
 
+  test("a function a conditional chooses is read as the function it may be", () => {
+    for (const value of [
+      "flag ? (n: number): number => n + 1 : (n: number): number => n + 2",
+      "flag ? 1 : (n: number): number => n + 2",
+      "flag ? (other ? (n: number): number => n : 1) : 2",
+      "(flag ? (n: number): number => n + 1 : (n: number): number => n) as (n: number) => number",
+    ]) {
+      expect(boundHelpers("probe.ts", `export function main(flag: boolean, other: boolean): number {\n  const helper = ${value};\n  return 0;\n}\n`), value)
+        .toEqual(["probe.ts / main / helper"]);
+    }
+    expect(boundHelpers("probe.ts", "export function main(flag: boolean): number {\n  const size = flag ? 1 : 2;\n  return size;\n}\n")).toEqual([]);
+    const thrower = "flag ? (): never => {\n  throw new RangeError(\"size\");\n} : (): number => 1";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = ${thrower};`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/**\n * Reads a size.\n * @throws A \`RangeError\` when the flag is set.\n */\nexport const read = ${thrower};`))
+      .toEqual({ read: 1, problems: [] });
+    expect(undocumentedThrows("probe.ts", `export const readers = {\n  /** Reads a size. */\n  read: ${thrower},\n};`))
+      .toEqual({ read: 1, problems: ["probe.ts:3: the comment on read does not say what it throws"] });
+  });
+
   test("a destructured array item with a comment of its own is read with that comment alone", () => {
     const item = "  (): number => {\n    throw new RangeError(\"size\");\n  },\n] as const;";
     const said = "  /**\n   * Reads a size.\n   * @throws A `RangeError` always.\n   */\n";
@@ -672,17 +692,20 @@ function boundNames(binding: ts.BindingName): ts.Identifier[] {
 }
 
 /**
- * The function an expression holds, looking through parentheses, a type
- * assertion and `satisfies`, which change nothing that runs, and through a
- * call of `Object.freeze` on one value, which returns the value it is given.
- * Any other call with a callback runs it to build a value, so it holds none.
+ * The functions an expression may hold, looking through parentheses, a type
+ * assertion and `satisfies`, which change nothing that runs, through a call
+ * of `Object.freeze` on one value, which returns the value it is given, and
+ * into both branches of a conditional, either of which it may be. Any other
+ * call with a callback runs it to build a value, so it holds none.
  *
- * @returns The arrow function or function expression, or null when the
- *     expression holds neither, or is undefined.
+ * @returns Each arrow function or function expression, none when the
+ *     expression holds neither or is undefined.
  */
-function functionValue(expression: ts.Expression | undefined): ts.ArrowFunction | ts.FunctionExpression | null {
+function functionValues(expression: ts.Expression | undefined): Array<ts.ArrowFunction | ts.FunctionExpression> {
   const inner = heldValue(expression);
-  return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) ? inner : null;
+  if (inner === undefined) return [];
+  if (ts.isConditionalExpression(inner)) return [...functionValues(inner.whenTrue), ...functionValues(inner.whenFalse)];
+  return ts.isArrowFunction(inner) || ts.isFunctionExpression(inner) ? [inner] : [];
 }
 
 /**
@@ -994,7 +1017,7 @@ function isDocumentedParameter(parameter: ts.ParameterDeclaration): boolean {
 
 /** Each name a binding gives a function, reading the value it is given and, below it, each default. */
 function helperNames(binding: ts.BindingName, value: ts.Expression | undefined): ts.Identifier[] {
-  if (ts.isIdentifier(binding)) return functionValue(value) === null ? [] : [binding];
+  if (ts.isIdentifier(binding)) return functionValues(value).length === 0 ? [] : [binding];
   const literal = heldValue(value);
   const names: ts.Identifier[] = [];
   for (const [at, element] of binding.elements.entries()) {
@@ -1043,7 +1066,7 @@ function undocumentedThrows(file: string, text: string): ThrowsCount {
   const problems: string[] = [];
   let read = 0;
   for (const unit of documentedFunctions(source)) {
-    if (!throwsFromItsBody(unit.body)) continue;
+    if (!unit.bodies.some(throwsFromItsBody)) continue;
     read += 1;
     if (ts.getJSDocTags(unit.commented).some((tag) => tag.tagName.text === "throws")) continue;
     const line = source.getLineAndCharacterOfPosition(unit.commented.getStart(source)).line + 1;
@@ -1057,7 +1080,8 @@ interface DocumentedFunction {
   name: string;
   /** The node the comment is attached to. */
   commented: ts.Node;
-  body: ts.Node;
+  /** The body of each function it may be: more than one where a conditional chooses. */
+  bodies: readonly ts.Node[];
 }
 
 /** Every function in a file that has a JSDoc comment and a body. */
@@ -1105,8 +1129,9 @@ function boundFunctions(pattern: ts.BindingPattern, literal: ts.Expression | und
       found.push(...boundFunctions(element.name, known ? given : heldValue(element.initializer), commented));
       continue;
     }
-    const body = functionBody(value) ?? functionBody(element.initializer);
-    if (body !== null) found.push({ name: element.name.text, commented, body });
+    const given = functionBodies(value);
+    const bodies = given.length > 0 ? given : functionBodies(element.initializer);
+    if (bodies.length > 0) found.push({ name: element.name.text, commented, bodies });
   }
   return found;
 }
@@ -1156,10 +1181,10 @@ function itemValue(literal: ts.Expression | undefined, at: number): ts.Expressio
   return item === undefined || hasJsDoc(item) ? undefined : item;
 }
 
-/** The body of the function a value holds, or of a method, or null when it holds no function. */
-function functionBody(value: ts.Expression | ts.MethodDeclaration | undefined): ts.Node | null {
-  if (value !== undefined && ts.isMethodDeclaration(value)) return value.body ?? null;
-  return functionValue(value)?.body ?? null;
+/** The body of each function a value may hold, or of a method, none when it holds no function. */
+function functionBodies(value: ts.Expression | ts.MethodDeclaration | undefined): ts.Node[] {
+  if (value !== undefined && ts.isMethodDeclaration(value)) return value.body === undefined ? [] : [value.body];
+  return functionValues(value).map((held) => held.body);
 }
 
 /** The node as a documented function, or null when it is not one. */
@@ -1167,28 +1192,26 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
   // A function, method or constructor is read with the comments of its overload signatures as well as its own.
   if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)) && node.body !== undefined) {
     const commented = commentRead(node);
-    return commented === null ? null : { name: node.name?.getText(source) ?? "constructor", commented, body: node.body };
+    return commented === null ? null : { name: node.name?.getText(source) ?? "constructor", commented, bodies: [node.body] };
   }
   if (!hasJsDoc(node)) return null;
   if ((ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined) {
-    return { name: node.name.getText(source), commented: node, body: node.body };
+    return { name: node.name.getText(source), commented: node, bodies: [node.body] };
   }
   if (ts.isVariableStatement(node)) {
     const declaration = node.declarationList.declarations[0];
-    const value = functionValue(declaration?.initializer);
-    if (declaration !== undefined && value !== null) {
-      return { name: declaration.name.getText(source), commented: node, body: value.body };
-    }
+    const bodies = functionBodies(declaration?.initializer);
+    if (declaration !== undefined && bodies.length > 0) return { name: declaration.name.getText(source), commented: node, bodies };
   }
   // An object property or a class field whose value is a function.
   if (ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node)) {
-    const value = functionValue(node.initializer);
-    if (value !== null) return { name: node.name.getText(source), commented: node, body: value.body };
+    const bodies = functionBodies(node.initializer);
+    if (bodies.length > 0) return { name: node.name.getText(source), commented: node, bodies };
   }
   // A function held directly in an array, whose comment sits on the item.
   if (ts.isArrayLiteralExpression(node.parent) && ts.isExpression(node)) {
-    const value = functionValue(node);
-    if (value !== null) return { name: "an array item", commented: node, body: value.body };
+    const bodies = functionBodies(node);
+    if (bodies.length > 0) return { name: "an array item", commented: node, bodies };
   }
   return null;
 }
