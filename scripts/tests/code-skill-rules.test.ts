@@ -318,6 +318,19 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(shimProblem("probe-cli.ts", shim, "probe.ts", other)).toBe("probe-cli.ts runs runCli, but probe.ts leads with auditText");
   });
 
+  test("a shim's entry point is read through a namespace import, await and parentheses", () => {
+    expect(shimEntryPoint("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit(cli.runCli());")).toBe("runCli");
+    expect(shimEntryPoint("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(await (runCli()));")).toBe("runCli");
+    expect(shimEntryPoint("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit((await ((cli.runCli()))));")).toBe("runCli");
+    // A call through the namespace to another function still names that function, so a mismatch still shows.
+    const module = "export function runCli(): number { return 0; }\nexport function auditText(): number { return 1; }\n";
+    expect(shimProblem("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit(cli.runCli());", "probe.ts", module)).toBeNull();
+    expect(shimProblem("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit(cli.auditText());", "probe.ts", module))
+      .toBe("probe-cli.ts runs auditText, but probe.ts leads with runCli");
+    // A method of anything but a namespace import is not a function of the module.
+    expect(shimEntryPoint("probe-cli.ts", "const cli = { runCli: (): number => 0 };\nprocess.exit(cli.runCli());")).toBeNull();
+  });
+
   test("a shim's entry point is named as its module exports it, through an import alias", () => {
     expect(shimEntryPoint("probe-cli.ts", "import { runCli as main } from \"./probe.ts\";\nprocess.exit(main(process.argv));"))
       .toBe("runCli");
@@ -644,11 +657,14 @@ function exportedNames(source: ts.SourceFile, first: FirstFunction): string[] {
 }
 
 /**
- * The function a command shim runs: the one whose result, awaited or not, it
- * passes to `process.exit` at the top level.
+ * The function a command shim runs: the one whose result, awaited or not and
+ * in parentheses or not, it passes to `process.exit` at the top level. The
+ * function is called by its name, or through a namespace import as in
+ * `cli.runCli()`.
  *
  * @returns The function's name as its module exports it, through any import
- *     alias, or null when no such call is found.
+ *     alias, or null when no such call is found. A method of anything but a
+ *     namespace import is not a function of the module, and gives null.
  */
 function shimEntryPoint(file: string, text: string): string | null {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -656,14 +672,28 @@ function shimEntryPoint(file: string, text: string): string | null {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) continue;
     const exit = statement.expression;
     if (exit.expression.getText(source) !== "process.exit") continue;
-    const argument = exit.arguments[0];
-    const call = argument !== undefined && ts.isAwaitExpression(argument) ? argument.expression : argument;
-    if (call !== undefined && ts.isCallExpression(call) && ts.isIdentifier(call.expression)) {
-      const local = call.expression.text;
-      return importedNames(source).get(local) ?? local;
+    let call = exit.arguments[0];
+    while (call !== undefined && (ts.isAwaitExpression(call) || ts.isParenthesizedExpression(call))) {
+      call = call.expression;
+    }
+    if (call === undefined || !ts.isCallExpression(call)) continue;
+    const callee = call.expression;
+    if (ts.isIdentifier(callee)) return importedNames(source).get(callee.text) ?? callee.text;
+    if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && namespaceImports(source).has(callee.expression.text)) {
+      return callee.name.text;
     }
   }
   return null;
+}
+
+/** The local names a module gives the modules it imports whole, as in `import * as cli`. */
+function namespaceImports(source: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const statement of source.statements) {
+    const bindings = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : undefined;
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) names.add(bindings.name.text);
+  }
+  return names;
 }
 
 /** Each local name a module imports by name, mapped to the name it is exported under. */
