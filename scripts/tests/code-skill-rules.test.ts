@@ -358,6 +358,26 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 0, problems: [] });
   });
 
+  test("the comment on an overload signature counts for the implementation that follows it", () => {
+    const signatures = "function f(size: string): number;\nfunction f(size: number): number;\n";
+    const implementation = "function f(size: string | number): number {\n  throw new RangeError(String(size));\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${signatures}${implementation}`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on f does not say what it throws"] });
+    // The comment may sit on either signature, and one that says what the function throws covers it.
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nfunction f(size: string): number;\n/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\nfunction f(size: number): number;\n${implementation}`))
+      .toEqual({ read: 1, problems: [] });
+    // The implementation's own comment still counts.
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${signatures}/**\n * Reads a size.\n * @throws A \`RangeError\` always.\n */\n${implementation}`))
+      .toEqual({ read: 1, problems: [] });
+    // A class method reads the same way.
+    const method = "export class Reader {\n  /** Reads a size. */\n  read(size: string): number;\n  read(size: number): number;\n"
+      + "  read(size: string | number): number {\n    throw new RangeError(String(size));\n  }\n}";
+    expect(undocumentedThrows("probe.ts", method)).toEqual({ read: 1, problems: ["probe.ts:3: the comment on read does not say what it throws"] });
+    // A signature of another function is not an overload of this one.
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nfunction g(size: string): number;\nfunction g(size: string): number { return size.length; }\n${implementation}`))
+      .toEqual({ read: 0, problems: [] });
+  });
+
   test("a throw that the function itself catches, or that sits in a nested function, is not the function's own", () => {
     expect(undocumentedThrows("probe.ts", "/** Reads a size. */\nfunction f(): number { try { throw new Error(\"no size\"); } catch { return 0; } }"))
       .toEqual({ read: 0, problems: [] });
@@ -673,7 +693,9 @@ interface ThrowsCount {
  * A function here is a function declaration, a method, a constructor, an
  * accessor, a variable, an object property or a class field whose value
  * is an arrow function or a function expression, also through
- * `Object.freeze`, or such a function held directly in an array. A throw counts when it can leave the function: not
+ * `Object.freeze`, or such a function held directly in an array. An
+ * implementation with no comment of its own is read with the comment of its
+ * overload signatures. A throw counts when it can leave the function: not
  * inside a nested function, and not inside a `try` block whose `catch`
  * takes it.
  */
@@ -713,7 +735,12 @@ function documentedFunctions(source: ts.SourceFile): DocumentedFunction[] {
 
 /** The node as a documented function, or null when it is not one. */
 function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedFunction | null {
-  if (!ts.getJSDocCommentsAndTags(node).some((comment) => ts.isJSDoc(comment))) return null;
+  // An implementation with no comment of its own takes the comment of its overload signatures.
+  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body !== undefined && !hasJsDoc(node)) {
+    const overload = documentedOverload(node);
+    return overload === null ? null : { name: node.name?.getText(source) ?? "(an unnamed function)", commented: overload, body: node.body };
+  }
+  if (!hasJsDoc(node)) return null;
   if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)
     || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined) {
     return { name: node.name?.getText(source) ?? "constructor", commented: node, body: node.body };
@@ -736,6 +763,35 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
     if (value !== null) return { name: "an array item", commented: node, body: value.body };
   }
   return null;
+}
+
+/** Whether a node carries a JSDoc comment. */
+function hasJsDoc(node: ts.Node): boolean {
+  return ts.getJSDocCommentsAndTags(node).some((comment) => ts.isJSDoc(comment));
+}
+
+/**
+ * The documented overload signature of an implementation: of the signatures
+ * of the same name directly above it, the one whose comment says what the
+ * function throws, or else the first with a comment.
+ *
+ * @returns The signature, or null when none above it has a comment.
+ */
+function documentedOverload(implementation: ts.FunctionDeclaration | ts.MethodDeclaration): ts.Node | null {
+  const parent = implementation.parent;
+  let siblings: readonly ts.Node[] = [];
+  if (ts.isClassLike(parent)) siblings = parent.members;
+  else if (ts.isSourceFile(parent) || ts.isBlock(parent) || ts.isModuleBlock(parent)) siblings = parent.statements;
+  const name = implementation.name?.getText();
+  const documented: ts.Node[] = [];
+  for (let at = siblings.indexOf(implementation) - 1; at >= 0; at -= 1) {
+    const signature = siblings[at];
+    if (signature === undefined || signature.kind !== implementation.kind) break;
+    if (!ts.isFunctionDeclaration(signature) && !ts.isMethodDeclaration(signature)) break;
+    if (signature.body !== undefined || signature.name?.getText() !== name) break;
+    if (hasJsDoc(signature)) documented.unshift(signature);
+  }
+  return documented.find((signature) => ts.getJSDocTags(signature).some((tag) => tag.tagName.text === "throws")) ?? documented[0] ?? null;
 }
 
 /** Whether a throw statement in a body can leave the function that owns the body. */
