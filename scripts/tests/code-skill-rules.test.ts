@@ -754,6 +754,27 @@ describe("the code skill's rules for this repository's own code", () => {
         .toEqual({ read: 1, problems: [] });
     }
   });
+
+  test("a spread of a string literal gives one position for each character, as a spread of a string does when it runs", () => {
+    // A character outside the basic plane is two UTF-16 units but one position, so it tells the two ways of counting apart.
+    const text = `a${String.fromCodePoint(0x1f600)}`;
+    const helper = "(n: number): number => n + 1";
+    const bound: Array<[pattern: string, literal: string, found: string[]]> = [
+      ["[, , helper]", `[..."${text}", ${helper}] as const`, ["probe.ts / main / helper"]],
+      ["[, helper]", `[..."${text}", ${helper}] as const`, []],
+      ["[, , , helper]", `[..."${text}", ${helper}] as const`, []],
+      ["[, , helper]", `[...\`ab\`, ${helper}] as const`, ["probe.ts / main / helper"]],
+      ["[, , helper]", `[...[..."${text}"], ${helper}] as const`, ["probe.ts / main / helper"]],
+      ["[helper]", `[..."", ${helper}] as const`, ["probe.ts / main / helper"]],
+    ];
+    for (const [pattern, literal, found] of bound) {
+      expect(boundHelpers("probe.ts", `export function main(): number {\n  const ${pattern} = ${literal};\n  return 0;\n}\n`), `${pattern} = ${literal}`).toEqual(found);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const [, , read] = [..."${text}", ${thrower}] as const;`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `/** The size. */\nexport const [, size] = [..."${text}", ${thrower}] as const;`)).toEqual({ read: 0, problems: [] });
+  });
 });
 
 /** What the entry-point check found in one module. */
@@ -1194,7 +1215,7 @@ function helperNames(binding: ts.BindingName, value: ts.Expression | undefined):
 
 /**
  * The item an array literal holds at one position, counting each item a
- * spread of another array literal gives it.
+ * spread of another array literal, or of a string literal, gives it.
  *
  * @returns The item, or undefined when the literal is not an array literal,
  *     holds a hole or nothing there, or when the position falls after a
@@ -1206,9 +1227,12 @@ function literalItem(literal: ts.Expression | undefined, at: number): ts.Express
 
 /** The items of an array literal, position by position, as far as they are known. */
 interface SpreadItems {
-  /** Each item, a hole as undefined, with each spread of an array literal expanded in place. */
+  /**
+   * Each item, a hole as undefined, with each spread of an array literal expanded
+   * in place, and each character of a spread string literal held as that literal.
+   */
   items: Array<ts.Expression | undefined>;
-  /** False when a spread of anything but an array literal ends the list, so no later position is known. */
+  /** False when a spread of anything but an array or string literal ends the list, so no later position is known. */
   complete: boolean;
 }
 
@@ -1225,6 +1249,11 @@ function spreadItems(literal: ts.ArrayLiteralExpression): SpreadItems {
       continue;
     }
     const spread = heldValue(element.expression);
+    // A spread of a string gives one item for each character, as its iterator counts them: by code point, not by UTF-16 unit.
+    if (spread !== undefined && (ts.isStringLiteral(spread) || ts.isNoSubstitutionTemplateLiteral(spread))) {
+      items.push(...Array.from(spread.text, () => spread));
+      continue;
+    }
     if (spread === undefined || !ts.isArrayLiteralExpression(spread)) return { items, complete: false };
     const inner = spreadItems(spread);
     items.push(...inner.items);
