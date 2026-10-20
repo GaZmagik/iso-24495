@@ -94,13 +94,21 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
 //    cannot tell two statements of a file apart, so a test here holds that
 //    file to its two approved throws, by their text. In the same way, a test
 //    here holds the rethrows of a caught value to the three approved sites,
-//    each with its reason, in APPROVED_RETHROWS.
+//    each with its reason, in APPROVED_RETHROWS. A rethrow is known by the
+//    name it throws, through parentheses, so `throw (failure);` is found and
+//    a change of layout does not move an approved one.
 //
 // eslint.config.mjs also records the eight lint rules that ESLint 11.0.0
 // removes, beside the rules themselves.
 //
-// As with the lint rules, these checks catch accidents. A comment that names
-// what a function throws and is wrong is left to review.
+// As with the lint rules, these checks catch accidents, by the owner's ruling
+// of 2026-10-09. These deliberate forms are left to review, each with why:
+// - A comment that names what a function throws and is wrong: no check can
+//   tell what a sentence claims.
+// - A caught value narrowed by a type check and then thrown, as in
+//   `if (typeof failure === "string") throw failure;`: the check narrows it
+//   to a string first, so it is no longer typed unknown, and no one writes
+//   the check by accident.
 describe("the code skill's rules for this repository's own code", () => {
   // The first type check reads the libraries, which takes seconds. The later
   // ones share them.
