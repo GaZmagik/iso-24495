@@ -837,6 +837,20 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(shimProblem("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli());", "probe.ts", module))
       .toBe("probe-cli.ts runs runCli, but what probe.ts leads with cannot be read: helper's position follows ...made(), whose length is not known");
   });
+
+  test("a documented statement is read for every name it declares, not only the first", () => {
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    for (const statement of [
+      `export const size = 1, read = ${thrower};`,
+      `export const size = 1, { read } = { read: ${thrower} };`,
+      `export const read = ${thrower}, size = 1;`,
+    ]) {
+      expect(undocumentedThrows("probe.ts", `/** Reads a size. */\n${statement}`), statement)
+        .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+    }
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = ${thrower}, write = ${thrower};`).problems)
+      .toEqual(["probe.ts:2: the comment on read does not say what it throws", "probe.ts:2: the comment on write does not say what it throws"]);
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1504,14 +1518,20 @@ function documentedFunctions(source: ts.SourceFile): DocumentedFunction[] {
 }
 
 /**
- * Each function a documented variable statement binds by destructuring an
- * object or array literal, read with the statement's comment.
+ * Each function a documented variable statement binds, read with the
+ * statement's comment: each name it declares whose value may be a function,
+ * and each function it binds by destructuring an object or array literal.
  */
 function destructuredFunctions(node: ts.Node): DocumentedFunction[] {
   if (!ts.isVariableStatement(node) || !hasJsDoc(node)) return [];
   const bodies = new Map<string, ts.Node[]>();
   for (const declaration of node.declarationList.declarations) {
-    if (!ts.isIdentifier(declaration.name)) boundFunctions(declaration.name, declaration.initializer, bodies);
+    if (!ts.isIdentifier(declaration.name)) {
+      boundFunctions(declaration.name, declaration.initializer, bodies);
+      continue;
+    }
+    const held = functionBodies(declaration.initializer);
+    if (held.length > 0) bodies.set(declaration.name.text, [...bodies.get(declaration.name.text) ?? [], ...held]);
   }
   // A name read from more than one place, such as its value and its default, is one function to the reader.
   return [...bodies].map(([name, held]) => ({ name, commented: node, bodies: held }));
@@ -1608,11 +1628,6 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
   if (!hasJsDoc(node)) return null;
   if ((ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) && node.body !== undefined) {
     return { name: node.name.getText(source), commented: node, bodies: [node.body] };
-  }
-  if (ts.isVariableStatement(node)) {
-    const declaration = node.declarationList.declarations[0];
-    const bodies = functionBodies(declaration?.initializer);
-    if (declaration !== undefined && bodies.length > 0) return { name: declaration.name.getText(source), commented: node, bodies };
   }
   // An object property or a class field whose value is a function.
   if (ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node)) {
