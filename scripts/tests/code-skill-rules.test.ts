@@ -671,8 +671,13 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = other ${operator} ((): never => {\n  throw new RangeError("size");\n});`), operator)
         .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
     }
-    // A function on the left of && is never falsy, so it is never the value.
+    // A function on the left of && is never falsy, so it is never the value, and nor is an object or array literal there.
     expect(boundHelpers("probe.ts", "export function main(other: number): number {\n  const size = ((n: number): number => n) && other;\n  return size;\n}\n")).toEqual([]);
+    for (const body of ["const { helper } = { helper: (n: number): number => n } && other;", "const [helper] = [(n: number): number => n] && other;"]) {
+      expect(boundHelpers("probe.ts", `export function main(other: { helper: number } & number[]): number {\n  ${body}\n  return 0;\n}\n`), body).toEqual([]);
+    }
+    expect(boundHelpers("probe.ts", "export function main(other: { helper: number } | undefined): number {\n  const { helper } = other && { helper: (n: number): number => n };\n  return 0;\n}\n"))
+      .toEqual(["probe.ts / main / helper"]);
     // A comma list, or an assignment, is the value on its right.
     expect(boundHelpers("probe.ts", "export function main(other: number): number {\n  const helper = (other, (n: number): number => n);\n  return 0;\n}\n"))
       .toEqual(["probe.ts / main / helper"]);
@@ -964,8 +969,8 @@ const RIGHT_UNLESS_FALSY = new Set<ts.SyntaxKind>([ts.SyntaxKind.AmpersandAmpers
  * Each value an expression may be, read through the wrappers `heldValue`
  * looks through. A conditional may be either branch. `??` and `||` may be
  * either side. `&&` may be its right side, or its left side when that is
- * falsy, which a function never is. A comma list, or an assignment, is the
- * value on its right.
+ * falsy, which a function, an object literal or an array literal never is.
+ * A comma list, or an assignment, is the value on its right.
  *
  * @returns Each value, in the order it is written; none when given undefined.
  */
@@ -976,9 +981,14 @@ function possibleValues(expression: ts.Expression | undefined): ts.Expression[] 
   if (!ts.isBinaryExpression(inner)) return [inner];
   const operator = inner.operatorToken.kind;
   if (EITHER_SIDE.has(operator)) return [...possibleValues(inner.left), ...possibleValues(inner.right)];
-  if (RIGHT_UNLESS_FALSY.has(operator)) return [...possibleValues(inner.left).filter((value) => !isFunctionValue(value)), ...possibleValues(inner.right)];
+  if (RIGHT_UNLESS_FALSY.has(operator)) return [...possibleValues(inner.left).filter((value) => !isAlwaysTruthy(value)), ...possibleValues(inner.right)];
   if (operator === ts.SyntaxKind.CommaToken || operator === ts.SyntaxKind.EqualsToken) return possibleValues(inner.right);
   return [inner];
+}
+
+/** Whether an expression is a function, an object literal or an array literal, none of which is ever falsy. */
+function isAlwaysTruthy(expression: ts.Expression): boolean {
+  return isFunctionValue(expression) || ts.isObjectLiteralExpression(expression) || ts.isArrayLiteralExpression(expression);
 }
 
 /**
