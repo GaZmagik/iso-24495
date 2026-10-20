@@ -148,10 +148,12 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    each argument a call may give back by its declared types, as
 //    Object.freeze, Object.assign and an identity function do, or by a body
 //    declared here that returns it. A function declared with overloads is
-//    read through its implementation's body. A body that passes an argument
-//    on, by any use but calling it, may give it back when the declared
-//    result fits it, unless each value it returns is a function or literal
-//    it writes new, or hold it, in a literal, a name or a typed return,
+//    read through its implementation's body, and a function whose type an
+//    annotation declares through the function the annotated name, field or
+//    property holds. A body that passes an argument on, by any use but
+//    calling it, may give it back when the declared result fits it, unless
+//    each value it returns is a function or literal it writes new, or hold
+//    it, in a literal, a name or a typed return,
 //    when the declared result has a place that may hold a function. A key is
 //    read whatever its spelling: against an array literal, an index key
 //    reads the item there. A name a spread of unknown extent, a key not
@@ -1360,11 +1362,62 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(unplacedFunctions("probe.ts", text).problems, body).toEqual([]);
     }
   });
+
+  test("a call of a function written under a type annotation reads the function the annotation describes", () => {
+    const helper = "(): number => 1";
+    // Each wrapper's type is declared apart from the function, so a call of it resolves to the type, which has no body.
+    const boxes = "\ntype Boxer = (reader: () => number) => [() => number];\n"
+      + "const box: (reader: () => number) => [() => number] = (reader) => [reader];\n"
+      + "const aliased: Boxer = (reader) => [reader];\n"
+      + "function boxing(reader: () => number): [() => number] {\n  return [reader];\n}\n"
+      + "const renamed: Boxer = boxing;\n"
+      + "const chosen: Boxer = Math.random() > 0.5 ? box : aliased;\n"
+      + "var first: Boxer = Math.random() > 0.5 ? box : second;\nvar second: Boxer = first;\n"
+      + "var again: Boxer = again(one) && box;\ndeclare const one: () => number;\n"
+      + "class Boxes {\n  box: Boxer = (reader) => [reader];\n}\n"
+      + "interface Holders {\n  box: Boxer;\n  hold(reader: () => number): [() => number];\n}\n"
+      + "const holders: Holders = {\n  box: (reader) => [reader],\n  hold(reader) {\n    return [reader];\n  },\n};\n"
+      + "const shared = { box };\nconst { box: unpacked } = { box };\n"
+      + "namespace Boxing {\n  export const box: Boxer = (reader) => [reader];\n}\nimport imported = Boxing.box;\n"
+      + "const keep: (reader: () => number) => () => number = (reader) => reader;\n"
+      + "const measure: (reader: () => number) => number[] = (reader) => [reader()];\n"
+      + "declare const declared: Boxer;\ndeclare function stated(reader: () => number): [() => number];\n";
+    const unread = "probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read";
+    const cases: Array<[body: string, found: string[], problems: string[]]> = [];
+    for (const callee of ["box", "aliased", "renamed", "chosen", "second", "again", "new Boxes().box", "holders.box", "holders.hold", "shared.box", "unpacked", "imported", "Boxing.box"]) {
+      cases.push([`const [helper] = ${callee}(${helper});`, [heldByCall("helper", `${callee}(${helper})`)], [unread]]);
+    }
+    cases.push(
+      // A function the annotation describes that gives back what it is given gives back the function.
+      [`const helper = keep(${helper});`, ["probe.ts / main / helper"], []],
+      // One that only calls what it is given holds nothing, and a name bound to the value that holds the function binds no function.
+      [`const [size] = measure(${helper});`, [], []],
+      [`const boxed = box(${helper});`, [], []],
+      // A function whose body is not written here is read by its declared types alone, as before.
+      [`const [helper] = declared(${helper});`, [], []],
+      [`const [helper] = stated(${helper});`, [], []],
+    );
+    for (const [body, found, problems] of cases) {
+      const text = `export function main(): number {\n  ${body}\n  return 0;\n}\n${boxes}`;
+      expect(boundHelpers("probe.ts", text), body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, body).toEqual(problems);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const [read] = box(${thrower});${boxes}`))
+      .toEqual({ read: 0, problems: [`probe.ts:2: what read binds cannot be read, as it is read from box(${thrower}), a call whose value may hold a function`] });
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = keep(${thrower});${boxes}`))
+      .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
 function positionNotKnown(name: string, spread: string): string {
   return `probe.ts / main / ${name}: its position follows ${spread}, whose length is not known, so what it holds cannot be read`;
+}
+
+/** The entry the nested-helper check gives a name of main in probe.ts that a destructuring takes from a call whose value may hold a function. */
+function heldByCall(name: string, call: string): string {
+  return `probe.ts / main / ${name}: it is read from ${call}, a call whose value may hold a function, so what it holds cannot be read`;
 }
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose key a spread of unknown keys may give. */
@@ -1565,10 +1618,11 @@ function singleValue(expression: ts.Expression, checker: ts.TypeChecker): ts.Exp
  * called is declared here with a body that returns that parameter, generic
  * or not, and when the function called cannot be found, as for a method of
  * a value typed any, since that may give back anything it is given. A
- * function declared with overloads is read through its implementation.
- * When the body passes the parameter on in any other way than calling it,
- * each of the argument's values whose type fits the result is given back,
- * unless every value the body returns is one it writes new.
+ * function declared with overloads is read through its implementation, and
+ * one whose type an annotation declares through each function the annotated
+ * name holds. When the body passes the parameter on in any other way than
+ * calling it, each of the argument's values whose type fits the result is
+ * given back, unless every value the body returns is one it writes new.
  *
  * @returns Each value given back, in the order written.
  */
@@ -1595,16 +1649,19 @@ interface CallValues {
  * hold, as `givenBack` and CallValues say. A call of a function declared
  * with overloads runs its implementation, so the implementation's body and
  * parameters say what it returns, while the signature it resolves to gives
- * the declared types. An argument whose parameter the body passes on, by
- * any use but calling it, may come back however the body passes it: as the
- * value itself, which its declared result says by fitting it, unless every
- * value the body returns is a function or literal it writes new; or held
- * in a literal, a name bound to one, or a value built elsewhere, which a
- * result with a place that may hold a function says.
+ * the declared types. A call of a function whose type an annotation
+ * declares runs the function the annotated name holds, read in the same
+ * way, each one where the name may hold more than one. An argument whose
+ * parameter the body passes on, by any use but calling it, may come back
+ * however the body passes it: as the value itself, which its declared
+ * result says by fitting it, unless every value the body returns is a
+ * function or literal it writes new; or held in a literal, a name bound to
+ * one, or a value built elsewhere, which a result with a place that may
+ * hold a function says.
  */
 function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, following: ReadonlySet<ts.Node>): CallValues {
   const declaration = calledDeclaration(call, checker);
-  const implementations = declaration === undefined ? [] : [implementationOf(declaration)].filter((found) => found !== undefined);
+  const implementations = declaration === undefined ? [] : implementationsOf(call, declaration, checker);
   const result = checker.getTypeAtLocation(call);
   const found: CallValues = { given: [], held: [] };
   const returned = new Map<ts.SignatureDeclaration, ts.Expression[] | undefined>();
@@ -1660,6 +1717,96 @@ function implementationOf(declaration: ts.SignatureDeclaration): ts.SignatureDec
     if (next.body !== undefined) return next;
   }
   return undefined;
+}
+
+/** The calls whose callee `implementationsOf` is reading, so that a call met again inside that reading is not read twice. */
+const CALLEES_BEING_READ = new Set<ts.Node>();
+
+/**
+ * The declarations whose bodies may run when a call resolves to a signature:
+ * the one `implementationOf` finds, or, when the signature is declared by a
+ * type and has no body, each function the callee holds, as `heldFunctions`
+ * finds it. A type annotation on a function value describes the function,
+ * and a call of the annotated name runs the function written there, as it
+ * would were the annotation not written.
+ *
+ * @returns Each declaration with a body, none when none is written here,
+ *     or when the call is met again while its callee is being read, as
+ *     where names are given values that call each other.
+ */
+function implementationsOf(call: ts.CallExpression | ts.NewExpression, declaration: ts.SignatureDeclaration, checker: ts.TypeChecker): ts.SignatureDeclaration[] {
+  const own = implementationOf(declaration);
+  if (own !== undefined) return [own];
+  if (CALLEES_BEING_READ.has(call)) return [];
+  CALLEES_BEING_READ.add(call);
+  try {
+    return heldFunctions(call.expression, checker, new Set());
+  } finally {
+    CALLEES_BEING_READ.delete(call);
+  }
+}
+
+/**
+ * Each function written with a body that an expression may be: each value
+ * `declaredValues` finds it may be that is an arrow function, a function
+ * expression, or a function or method declared with a body.
+ *
+ * @param seen The declarations read already, so that names given each other are read once.
+ */
+function heldFunctions(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): ts.SignatureDeclaration[] {
+  return declaredValues(expression, checker, seen).filter((value): value is ts.SignatureDeclaration => ts.isFunctionLike(value) && bodyOf(value) !== undefined);
+}
+
+/**
+ * Each value an expression may be, as `possibleValues` reads it, with each
+ * name, and each property read from a value, followed to what it is given
+ * where it is declared, as `namedValues` reads it.
+ *
+ * @param seen The declarations read already, so that names given each other are read once.
+ */
+function declaredValues(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): Array<ts.Expression | ts.SignatureDeclaration> {
+  return possibleValues(expression, checker).flatMap((value) => ts.isIdentifier(value) || ts.isPropertyAccessExpression(value) ? namedValues(value, checker, seen) : [value]);
+}
+
+/**
+ * What a name, or a property read from a value, is given where it is
+ * declared, through an import alias: a function or method declared with a
+ * body is itself; a variable, class field or property gives each value its
+ * initializer may be, as `declaredValues` reads it; a shorthand property
+ * gives what its name does; and a name bound by destructuring a literal
+ * gives what `readBinding` finds it takes there. A property a type declares,
+ * as an interface does, gives what its key holds in each object literal the
+ * value it is read from may be.
+ *
+ * @returns Each value, none when it is not written here: for a parameter,
+ *     whose caller gives the value, or a name declared with no value.
+ */
+function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): Array<ts.Expression | ts.SignatureDeclaration> {
+  const found = ts.isIdentifier(value) ? referencedSymbol(value, checker) : checker.getSymbolAtLocation(value.name);
+  const symbol = found !== undefined && (found.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(found) : found;
+  return (symbol?.declarations ?? []).flatMap((declaration): Array<ts.Expression | ts.SignatureDeclaration> => {
+    if (seen.has(declaration)) return [];
+    seen.add(declaration);
+    if (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) {
+      const run = implementationOf(declaration);
+      return run === undefined ? [] : [run];
+    }
+    if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
+      return declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, seen);
+    }
+    if (ts.isShorthandPropertyAssignment(declaration)) return declaredValues(declaration.name, checker, seen);
+    if (ts.isBindingElement(declaration)) {
+      const root = ts.walkUpBindingElementsAndPatterns(declaration);
+      if (!ts.isVariableDeclaration(root)) return [];
+      return readBinding(root.name, root.initializer, checker).bound.filter(({ name }) => name === declaration.name)
+        .flatMap(({ value: taken }) => ts.isMethodDeclaration(taken) ? [taken] : declaredValues(taken, checker, seen));
+    }
+    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return [];
+    const key = value.name.text;
+    return declaredValues(value.expression, checker, seen).filter(ts.isObjectLiteralExpression)
+      .flatMap((literal) => keyedProperties(literal, key, checker).holders.map(heldBy))
+      .flatMap((held) => ts.isMethodDeclaration(held) ? [held] : declaredValues(held, checker, seen));
+  });
 }
 
 /**
