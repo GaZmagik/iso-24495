@@ -142,6 +142,18 @@ const FUNCTION_VALUE = ":matches(ArrowFunctionExpression, FunctionExpression)";
 const FREEZE_CALL = "CallExpression[callee.type='MemberExpression'][callee.object.name='Object'][callee.property.name='freeze'][arguments.length=1]";
 
 /**
+ * A declaration that destructures one name, with or without a default, from
+ * an object, with no type stated. Given a literal of one property, the type
+ * check allows only the key the name is bound to, so the property is bound.
+ */
+const ONE_NAME_FROM_OBJECT = "VariableDeclarator[id.type='ObjectPattern'][id.properties.length=1][id.properties.0.computed=false]"
+  + ":matches([id.properties.0.value.type='Identifier'], [id.properties.0.value.left.type='Identifier']):not([id.typeAnnotation])";
+
+/** A declaration that destructures one name, with or without a default, from an array. */
+const ONE_NAME_FROM_ARRAY = "VariableDeclarator[id.type='ArrayPattern'][id.elements.length=1]"
+  + ":matches([id.elements.0.type='Identifier'], [id.elements.0.left.type='Identifier'])";
+
+/**
  * The rules of this plugin's own code skill, `iso-24495-code`, that a syntax
  * selector can state. Each works as the entries above do, and the lint test
  * probes each the same way. The skill's other rules that this repository
@@ -156,11 +168,13 @@ export const CODE_SKILL_SYNTAX = [
     // most often a stand-in for a dependency. A type wrapper changes nothing
     // that runs, so a helper under up to three of them is read as a helper.
     // Object.freeze returns the function it is given, so a helper it wraps,
-    // or a type wrapper around that call, is read as a helper too. A name
-    // bound by destructuring an object or array literal is a helper when the
-    // literal holds a function, frozen or not: the selector cannot match a
-    // name to its key, so any function in a destructured literal is read as
-    // one. A destructured name whose default is a function is a helper too.
+    // or a type wrapper around that call, is read as a helper too. A
+    // selector cannot match a name to its key, so it reads a destructured
+    // literal only where the type check makes the match certain: one name
+    // from a literal of one item, frozen or not. A destructured name whose
+    // default is a function is a helper too. Every other function bound by
+    // destructuring or a default, and every parameter default, is found by
+    // a test in scripts/tests/code-skill-rules.test.ts.
     // The parser keeps no node for parentheses, so they need no selector.
     selector: [
       ":function FunctionDeclaration",
@@ -170,12 +184,12 @@ export const CODE_SKILL_SYNTAX = [
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
       `:function VariableDeclarator > ${FREEZE_CALL}.init > ${FUNCTION_VALUE}.arguments`,
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FREEZE_CALL}.expression > ${FUNCTION_VALUE}.arguments`,
-      `:function VariableDeclarator[id.type='ObjectPattern'] > ObjectExpression.init > Property[method=false] > ${FUNCTION_VALUE}.value`,
-      `:function VariableDeclarator[id.type='ObjectPattern'] > ${TYPE_WRAPPER}.init > ObjectExpression.expression > Property[method=false] > ${FUNCTION_VALUE}.value`,
-      `:function VariableDeclarator[id.type='ArrayPattern'] > ArrayExpression.init > ${FUNCTION_VALUE}`,
-      `:function VariableDeclarator[id.type='ArrayPattern'] > ${TYPE_WRAPPER}.init > ArrayExpression.expression > ${FUNCTION_VALUE}`,
-      `:function VariableDeclarator[id.type='ObjectPattern'] > ${FREEZE_CALL}.init > ObjectExpression.arguments > Property[method=false] > ${FUNCTION_VALUE}.value`,
-      `:function VariableDeclarator[id.type='ArrayPattern'] > ${FREEZE_CALL}.init > ArrayExpression.arguments > ${FUNCTION_VALUE}`,
+      `:function ${ONE_NAME_FROM_OBJECT} > ObjectExpression.init[properties.length=1] > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function ${ONE_NAME_FROM_OBJECT} > ${TYPE_WRAPPER}.init > ObjectExpression.expression[properties.length=1] > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function ${ONE_NAME_FROM_ARRAY} > ArrayExpression.init[elements.length=1] > ${FUNCTION_VALUE}`,
+      `:function ${ONE_NAME_FROM_ARRAY} > ${TYPE_WRAPPER}.init > ArrayExpression.expression[elements.length=1] > ${FUNCTION_VALUE}`,
+      `:function ${ONE_NAME_FROM_OBJECT} > ${FREEZE_CALL}.init > ObjectExpression.arguments[properties.length=1] > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function ${ONE_NAME_FROM_ARRAY} > ${FREEZE_CALL}.init > ArrayExpression.arguments[elements.length=1] > ${FUNCTION_VALUE}`,
       `:function VariableDeclarator > ObjectPattern.id > Property > AssignmentPattern.value > ${FUNCTION_VALUE}.right`,
       `:function VariableDeclarator > ArrayPattern.id > AssignmentPattern > ${FUNCTION_VALUE}.right`,
       ":function Property:matches([method=true], [kind='get'], [kind='set'])",

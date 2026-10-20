@@ -223,8 +223,9 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "  return mapped.length + settings.size;"],
   [[], "}"],
   [[], "export const frozenAtTop = Object.freeze((): number => 1);"],
-  // A name bound by destructuring a literal that holds a function is a helper
-  // too. A destructured value that is not a function is left alone.
+  // One name bound by destructuring a literal of one function is a helper
+  // too. A destructured value that is not a function is left alone. Other
+  // destructured helpers are found by code-skill-rules.test.ts.
   [[], "export function destructuredHelpers(): number {"],
   [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { next } = { next: (n: number): number => n + 1 };"],
   [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [previous] = [(n: number): number => n - 1] as const;"],
@@ -240,7 +241,10 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { frozenNext } = Object.freeze({ frozenNext: (n: number): number => n + 1 });"],
   [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [frozenBack] = Object.freeze([(n: number): number => n - 1]);"],
   [[], "  const { limit = 1 } = { limit: 2 };"],
-  [[], "  return step(limit) + back(limit) + frozenNext(limit) + (frozenBack?.(limit) ?? 0);"],
+  // A function the destructuring does not bind to a name is not a helper.
+  [[], "  const { unbound }: { unused: () => number; unbound: number } = { unused: (): number => 1, unbound: 2 };"],
+  [[], "  const [first] = [2, (n: number): number => n + 1] as const;"],
+  [[], "  return step(limit) + back(limit) + frozenNext(limit) + (frozenBack?.(limit) ?? 0) + unbound + first;"],
   [[], "}"],
   [[], "export const topLevelHelpers = {"],
   [[], "  value(): number {"],
