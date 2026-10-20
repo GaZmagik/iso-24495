@@ -232,6 +232,16 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "  return next(size) + previous(size);"],
   [[], "}"],
   [[], "export const { topNext } = { topNext: (n: number): number => n + 1 };"],
+  // A default that is a function, or a function in a frozen literal, binds a
+  // helper as well. A default that is not a function is left alone.
+  [[], "export function destructuredDefaults(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { step = (n: number): number => n + 1 }: { step?: (n: number) => number } = {};"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [back = (n: number): number => n - 1] = [] as Array<(n: number) => number>;"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { frozenNext } = Object.freeze({ frozenNext: (n: number): number => n + 1 });"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [frozenBack] = Object.freeze([(n: number): number => n - 1]);"],
+  [[], "  const { limit = 1 } = { limit: 2 };"],
+  [[], "  return step(limit) + back(limit) + frozenNext(limit) + (frozenBack?.(limit) ?? 0);"],
+  [[], "}"],
   [[], "export const topLevelHelpers = {"],
   [[], "  value(): number {"],
   [[], "    return 1;"],
