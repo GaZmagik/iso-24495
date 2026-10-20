@@ -61,18 +61,6 @@ const APPROVED_RETHROWS: Readonly<Record<string, string>> = {
     "Passes on the failure to list the corpus root unchanged, in a calibrated file whose behaviour must not move.",
 };
 
-/**
- * The parameters whose default is a function that this repository keeps,
- * each as "file / function / parameter" with the reason. The check that a
- * function bound inside a function is a nested helper reads a parameter's
- * default as such a binding, and these are the sites it passes. This list
- * awaits the owner's confirmation.
- */
-const FUNCTION_DEFAULTS: Readonly<Record<string, string>> = {
-  "skills/iso-24495-4/scripts/generate-report.ts / runCli / now":
-    "A documented dependency stand-in that tests replace: the default supplies the current time.",
-};
-
 // This file is the record of the four rules this plugin's own TypeScript is
 // held to, taken from its code skill, `iso-24495-code`, by the owner's
 // ruling. The skill states the first three in words. It states the fourth
@@ -97,10 +85,11 @@ const FUNCTION_DEFAULTS: Readonly<Record<string, string>> = {
 //    Object.freeze counts. A selector cannot tell which key of a literal a
 //    name is bound to, so a test here finds every name bound to a function
 //    inside a function by destructuring, at any depth, or by a default, and
-//    every parameter whose default is a function. FUNCTION_DEFAULTS names the
-//    one parameter default kept, with its reason. Otherwise a property
-//    holding an arrow is left alone: it is a value handed on, most often a
-//    stand-in for a dependency.
+//    every parameter whose default is a function. A parameter its function's
+//    @param tag documents is part of the interface, not a helper, by the
+//    owner's ruling of 2026-10-20, so its default is not reported. Otherwise
+//    a property holding an arrow is left alone: it is a value handed on, most
+//    often a stand-in for a dependency.
 // 4. Throw only Error. A value that is not an Error carries no message and no
 //    stack to the person who meets it. The lint rule
 //    "@typescript-eslint/only-throw-error" refuses a thrown value typed any or
@@ -346,13 +335,16 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(shimEntryPoint("probe-cli.ts", "const cli = { runCli: (): number => 0 };\nprocess.exit(cli.runCli());")).toBeNull();
   });
 
-  test("the only function bound inside a function by destructuring or a default is the approved parameter default", () => {
+  test("no function is bound inside a function by destructuring or a default", () => {
     const found: string[] = [];
+    let files = 0;
     for (const file of typescriptFiles()) {
       found.push(...boundHelpers(file, readFileSync(join(REPOSITORY_ROOT, file), "utf8")));
+      files += 1;
     }
-    expect(found.sort()).toEqual(Object.keys(FUNCTION_DEFAULTS).sort());
-    expect(Object.values(FUNCTION_DEFAULTS).filter((reason) => reason.includes("\n") || reason.trim() === "")).toEqual([]);
+    expect(found).toEqual([]);
+    // A walk that read nothing would find nothing, so the count must be the size a walk of this repository gives.
+    expect(files).toBeGreaterThan(50);
   });
 
   test("a function bound by destructuring at any depth, by a default, or by a parameter default is a nested helper", () => {
@@ -373,6 +365,21 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual(["probe.ts / main / helper"]);
     expect(boundHelpers("probe.ts", "export function main({ helper }: { helper: (n: number) => number } = { helper: (n: number): number => n + 1 }): number {\n  return helper(1);\n}\n"))
       .toEqual(["probe.ts / main / helper"]);
+  });
+
+  test("a function default on a parameter its function's @param tag documents is interface, not a nested helper", () => {
+    const signature = "export function main(helper: (n: number) => number = (n: number): number => n + 1): number {\n  return helper(1);\n}\n";
+    const documented = "/**\n * Runs.\n *\n * @param helper Adds one. The default adds one to its argument.\n */\n";
+    expect(boundHelpers("probe.ts", documented + signature)).toEqual([]);
+    expect(boundHelpers("probe.ts", "/** Runs. */\n" + signature)).toEqual(["probe.ts / main / helper"]);
+    expect(boundHelpers("probe.ts", "/**\n * Runs.\n *\n * @param other Not this parameter.\n */\n" + signature)).toEqual(["probe.ts / main / helper"]);
+    expect(boundHelpers("probe.ts", signature)).toEqual(["probe.ts / main / helper"]);
+    // A tag documents the parameter, not a helper declared in the body.
+    const body = "export function main(size = 1): number {\n  const { helper } = { helper: (n: number): number => n + 1 };\n  return helper(size);\n}\n";
+    expect(boundHelpers("probe.ts", "/**\n * Runs.\n *\n * @param size The size.\n * @param helper Adds one.\n */\n" + body)).toEqual(["probe.ts / main / helper"]);
+    // A default inside a destructured parameter is a default of the name it binds, not of the parameter.
+    const destructured = "export function main({ helper = (n: number): number => n + 1 }: { helper?: (n: number) => number } = {}): number {\n  return helper(1);\n}\n";
+    expect(boundHelpers("probe.ts", "/**\n * Runs.\n *\n * @param options What to run with.\n */\n" + destructured)).toEqual(["probe.ts / main / helper"]);
   });
 
   test("a function a destructuring does not bind to a name, or binds at the top level, is not a nested helper", () => {
@@ -908,7 +915,9 @@ function enclosingFunctionName(node: ts.Node, source: ts.SourceFile): string {
  * wrappers a function value is read through. A name whose default is a
  * function is bound to one too. A rest element binds an object, not a
  * function, and a destructuring at the top level of a module binds no nested
- * helper.
+ * helper. A parameter that an `@param` tag of its function's comment names
+ * is part of the interface, so its own default is not read; a default inside
+ * a destructured parameter is still read.
  *
  * @returns One "file / function / name" entry for each, in the order they
  *     appear.
@@ -920,13 +929,19 @@ function boundHelpers(file: string, text: string): string[] {
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     pending.push(...[...node.getChildren(source)].reverse());
     let names: ts.Identifier[] = [];
-    if (ts.isParameter(node)) names = helperNames(node.name, node.initializer);
+    if (ts.isParameter(node)) names = isDocumentedParameter(node) ? [] : helperNames(node.name, node.initializer);
     else if (ts.isVariableDeclaration(node) && ts.findAncestor(node, ts.isFunctionLike) !== undefined) names = helperNames(node.name, node.initializer);
     for (const name of new Set(names)) {
       found.push(`${file} / ${enclosingFunctionName(name, source)} / ${name.text}`);
     }
   }
   return found;
+}
+
+/** Whether a parameter is named by an `@param` tag of its function's comment. Only a parameter with a name of its own can be. */
+function isDocumentedParameter(parameter: ts.ParameterDeclaration): boolean {
+  const name = parameter.name;
+  return ts.isIdentifier(name) && ts.getJSDocParameterTags(parameter).some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
 }
 
 /** Each name a binding gives a function, reading the value it is given and, below it, each default. */
