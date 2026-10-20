@@ -198,6 +198,24 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ checked: true, problem: null });
   });
 
+  test("a first function bound by destructuring is read as a declared one is", () => {
+    const caller = "\nexport function main(): number { return helper(1); }";
+    for (const binding of [
+      "const [helper] = [(x: number): number => x] as const;",
+      "const [, helper] = [1, (x: number): number => x] as const;",
+      "const { helper } = { helper: (x: number): number => x };",
+      "const { inner: [helper] } = { inner: [(x: number): number => x] as const };",
+    ]) {
+      expect(entryPointProblem("probe.ts", binding + caller), binding)
+        .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
+    }
+    expect(entryPointProblem("probe.ts", `export const [helper] = [(x: number): number => x] as const;${caller}`))
+      .toEqual({ checked: true, problem: null });
+    // A destructured value that cannot be called is not a function.
+    expect(entryPointProblem("probe.ts", `const [LIMIT] = [1] as const;\nexport function main(): number { return LIMIT; }`))
+      .toEqual({ checked: true, problem: null });
+  });
+
   test("a shim's entry point is the function whose result it exits with", () => {
     expect(shimEntryPoint("probe-cli.ts", "import { runCli } from \"./probe.ts\";\nprocess.exit(runCli(process.argv));")).toBe("runCli");
     expect(shimEntryPoint("probe-cli.ts", "process.exit(await runCli(process.argv));")).toBe("runCli");
@@ -352,7 +370,8 @@ interface EntryPoint {
  *
  * A function is a function declaration, or a top-level variable whose type
  * can be called: an arrow, a function expression, or a function that a call
- * wraps or returns. A value a call builds with a callback is not one.
+ * wraps or returns. A name bound by destructuring counts as a variable does.
+ * A value a call builds with a callback is not one.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
   const { source, checker } = typedSource(file, text);
@@ -380,12 +399,17 @@ function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFun
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && checker.getTypeAtLocation(declaration.name).getCallSignatures().length > 0) {
-        return { name: declaration.name.text, exported, statement };
-      }
+      const callable = boundNames(declaration.name).find((name) => checker.getTypeAtLocation(name).getCallSignatures().length > 0);
+      if (callable !== undefined) return { name: callable.text, exported, statement };
     }
   }
   return null;
+}
+
+/** Each name a declaration binds, in the order they appear, through any destructuring. */
+function boundNames(binding: ts.BindingName): ts.Identifier[] {
+  if (ts.isIdentifier(binding)) return [binding];
+  return binding.elements.flatMap((element) => ts.isOmittedExpression(element) ? [] : boundNames(element.name));
 }
 
 /**
