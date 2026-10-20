@@ -134,6 +134,14 @@ const TYPE_WRAPPER = ":matches(TSSatisfiesExpression, TSAsExpression, TSNonNullE
 const FUNCTION_VALUE = ":matches(ArrowFunctionExpression, FunctionExpression)";
 
 /**
+ * A call of Object.freeze on one value, which returns the value it is given.
+ * A selector cannot see types, so it cannot tell a call that returns its
+ * callback from one that builds a value with it, such as a map. This one
+ * call is named for that reason.
+ */
+const FREEZE_CALL = "CallExpression[callee.type='MemberExpression'][callee.object.name='Object'][callee.property.name='freeze'][arguments.length=1]";
+
+/**
  * The rules of this plugin's own code skill, `iso-24495-code`, that a syntax
  * selector can state. Each works as the entries above do, and the lint test
  * probes each the same way. The skill's other rules that this repository
@@ -147,6 +155,8 @@ export const CODE_SKILL_SYNTAX = [
     // A property whose value is an arrow is not: it is a value handed on,
     // most often a stand-in for a dependency. A type wrapper changes nothing
     // that runs, so a helper under up to three of them is read as a helper.
+    // Object.freeze returns the function it is given, so a helper it wraps,
+    // or a type wrapper around that call, is read as a helper too.
     // The parser keeps no node for parentheses, so they need no selector.
     selector: [
       ":function FunctionDeclaration",
@@ -154,6 +164,8 @@ export const CODE_SKILL_SYNTAX = [
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FUNCTION_VALUE}.expression`,
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
       `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
+      `:function VariableDeclarator > ${FREEZE_CALL}.init > ${FUNCTION_VALUE}.arguments`,
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FREEZE_CALL}.expression > ${FUNCTION_VALUE}.arguments`,
       ":function Property:matches([method=true], [kind='get'], [kind='set'])",
     ].join(", "),
     message: "code skill: a named helper is declared at the top level, not inside a function",

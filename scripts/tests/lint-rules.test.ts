@@ -213,6 +213,16 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [["@typescript-eslint/no-non-null-assertion", restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const viaNonNull = ((): number => 4)!;"],
   [[], "  return viaSatisfies() + viaAs() + viaBoth() + viaNonNull();"],
   [[], "}"],
+  // Object.freeze returns the function it is given, so it hides no helper
+  // either. Another call with one callback builds a value, and is left alone.
+  [[], "export function frozenHelpers(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const frozen = Object.freeze<() => number>(() => 1);"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const frozenTyped = Object.freeze((): number => 2) as () => number;"],
+  [[], "  const mapped = [1].map((value) => value + frozen() + frozenTyped());"],
+  [[], "  const settings = Object.freeze({ size: 1 });"],
+  [[], "  return mapped.length + settings.size;"],
+  [[], "}"],
+  [[], "export const frozenAtTop = Object.freeze((): number => 1);"],
   [[], "export const topLevelHelpers = {"],
   [[], "  value(): number {"],
   [[], "    return 1;"],
