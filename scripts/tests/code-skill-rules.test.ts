@@ -541,6 +541,25 @@ describe("the code skill's rules for this repository's own code", () => {
       .toBe("probe-cli.ts runs auditText, but probe.ts leads with runCli");
   });
 
+  test("a shim's exit call is read through a wrapper around the statement, the argument or a literal key", () => {
+    const shim = "import * as cli from \"./probe.ts\";\n";
+    for (const call of [
+      "(process.exit(cli.runCli()));", "((process.exit(cli.runCli())));", "process.exit(cli.runCli() satisfies number);",
+      "process.exit((await cli.runCli()) satisfies number);", "process.exit(await (cli.runCli() as Promise<number>));",
+      "process.exit(cli[(\"runCli\")]());", "process[(\"exit\")](cli.runCli());", "process.exit(cli[\"runCli\" as \"runCli\"]());",
+    ]) {
+      expect(shimEntryPoint("probe-cli.ts", shim + call), call).toBe("runCli");
+    }
+    // A wrapper changes nothing else: another call is still no exit call, and another function is still a mismatch.
+    for (const call of ["(process.kill(cli.runCli()));", "process[(key)](cli.runCli());", "(runCli(process.argv));"]) {
+      expect(shimEntryPoint("probe-cli.ts", shim + call), call).toBeNull();
+    }
+    const module = "export function runCli(): number { return 0; }\nexport function auditText(): number { return 1; }\n";
+    expect(shimProblem("probe-cli.ts", `${shim}(process.exit(cli.runCli()));`, "probe.ts", module)).toBeNull();
+    expect(shimProblem("probe-cli.ts", `${shim}(process.exit(cli.auditText() satisfies number));`, "probe.ts", module))
+      .toBe("probe-cli.ts runs auditText, but probe.ts leads with runCli");
+  });
+
   test("a shim's entry point is read through parentheses around the namespace", () => {
     const module = "export function runCli(): number { return 0; }\nexport function auditText(): number { return 1; }\n";
     expect(shimProblem("probe-cli.ts", "import * as cli from \"./probe.ts\";\nprocess.exit((cli).runCli());", "probe.ts", module)).toBeNull();
@@ -2711,13 +2730,14 @@ function exportedNames(source: ts.SourceFile, first: FirstFunction): string[] {
 }
 
 /**
- * The function a command shim runs: the one whose result, awaited or not and
- * in parentheses or not, it passes to `process.exit` at the top level. The
- * function is called by its name, or through a namespace import as in
- * `cli.runCli()` or `cli["runCli"]()`. `process.exit`, the function, the
- * member and the namespace are each read through any wrapper `heldValue`
- * looks through, such as parentheses, and a member is read by its name or by
- * a key written as a string literal.
+ * The function a command shim runs: the one whose result, awaited or not, it
+ * passes to `process.exit` in a statement at the top level. The function is
+ * called by its name, or through a namespace import as in `cli.runCli()` or
+ * `cli["runCli"]()`. The call to `process.exit`, its argument, the call in
+ * it, `process.exit` itself, the function, the member, its key and the
+ * namespace are each read through any wrapper `heldValue` looks through,
+ * such as parentheses and `satisfies`, and a member is read by its name or
+ * by a key written as a string literal.
  *
  * @returns The function's name as its module exports it, through any import
  *     alias, or null when no such call is found. A method of anything but a
@@ -2726,15 +2746,12 @@ function exportedNames(source: ts.SourceFile, first: FirstFunction): string[] {
 function shimEntryPoint(file: string, text: string): string | null {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   for (const statement of source.statements) {
-    if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) continue;
-    const exit = statement.expression;
+    const exit = ts.isExpressionStatement(statement) ? heldValue(statement.expression) : undefined;
+    if (exit === undefined || !ts.isCallExpression(exit)) continue;
     const exiting = heldValue(exit.expression);
     const owner = exiting === undefined ? undefined : memberReceiver(exiting);
     if (exiting === undefined || memberName(exiting) !== "exit" || owner === undefined || !isNamed(owner, "process")) continue;
-    let call = exit.arguments[0];
-    while (call !== undefined && (ts.isAwaitExpression(call) || ts.isParenthesizedExpression(call))) {
-      call = call.expression;
-    }
+    const call = awaitedValue(exit.arguments[0]);
     if (call === undefined || !ts.isCallExpression(call)) continue;
     const callee = heldValue(call.expression);
     if (callee !== undefined && ts.isIdentifier(callee)) return importedNames(source).get(callee.text) ?? callee.text;
@@ -2745,10 +2762,24 @@ function shimEntryPoint(file: string, text: string): string | null {
   return null;
 }
 
-/** The name of the member an expression reads: a property's name, or a key written as a string literal; undefined for anything else. */
+/** The value an expression awaits or holds, through each `await` and each wrapper `heldValue` looks through, in any order. */
+function awaitedValue(expression: ts.Expression | undefined): ts.Expression | undefined {
+  let inner = heldValue(expression);
+  while (inner !== undefined && ts.isAwaitExpression(inner)) {
+    inner = heldValue(inner.expression);
+  }
+  return inner;
+}
+
+/**
+ * The name of the member an expression reads: a property's name, or a key
+ * written as a string literal, through any wrapper `heldValue` looks through;
+ * undefined for anything else.
+ */
 function memberName(expression: ts.Expression): string | undefined {
   if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
-  return ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression) ? expression.argumentExpression.text : undefined;
+  const key = ts.isElementAccessExpression(expression) ? heldValue(expression.argumentExpression) : undefined;
+  return key !== undefined && ts.isStringLiteralLike(key) ? key.text : undefined;
 }
 
 /** Whether an expression is the given name, through any wrapper `heldValue` looks through. */
