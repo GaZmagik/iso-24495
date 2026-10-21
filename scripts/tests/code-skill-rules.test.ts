@@ -163,9 +163,8 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    why; the same holds for the other two tests. A name whose type cannot
 //    be a function, such as a number, a string, an array, or an object that
 //    asks for a property a function lacks, binds no function, so the
-//    nested-helper and throws tests pass it; the entry-point test passes it
-//    when a call gives it, and fails it when a spread or a key not known
-//    does. A parameter its function's @param tag
+//    nested-helper, throws and entry-point tests pass it, whatever made its
+//    value unknown. A parameter its function's @param tag
 //    documents is part of the interface, not a helper, by the owner's ruling
 //    of 2026-10-20, so its default is not reported. Otherwise a property
 //    holding an arrow is left alone: it is a value handed on, most often a
@@ -980,7 +979,7 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
     expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { read } = { ...made() };`))
       .toEqual({ read: 0, problems: ["probe.ts:2: what read binds cannot be read, as its key may be given by ...made(), whose keys are not known"] });
-    const tail = "\nexport function main(): number { return 1; }\ndeclare function made(): { helper: number };\n";
+    const tail = "\nexport function main(): number { return 1; }\ndeclare function made(): { helper: unknown };\n";
     expect(entryPointProblem("probe.ts", `const { helper } = { ...{ helper: ${helper} } };${tail}`))
       .toEqual({ checked: true, problem: "probe.ts:1: the first function, helper, is not exported" });
     expect(entryPointProblem("probe.ts", `const { helper } = { ...made() };${tail}`)).toEqual({
@@ -1464,6 +1463,30 @@ describe("the code skill's rules for this repository's own code", () => {
       problems: [`probe.ts:2: what read binds cannot be read, as it is read from wrap(${thrower}).value, a member of a call whose value may hold a function`],
     });
   });
+
+  test("a top-level name whose type cannot be a function is not the first function, whatever made its value unknown", () => {
+    const main = "\n/** Reads the size. */\nexport function main(): number {\n  return 1;\n}\n";
+    for (const statement of [
+      "const values = [1, 2];\nconst [size] = [...values];",
+      "const key = Math.random() > 0.5 ? \"left\" : \"right\";\nconst { [key]: size } = { left: 1, right: 2 };",
+      "declare const sized: { size: number };\nconst { size } = { ...sized };",
+      "declare const names: string[];\nconst [name] = [...names];",
+      "declare const rows: Array<{ size: number }>;\nconst [row] = [...rows];",
+    ]) {
+      expect(entryPointProblem("probe.ts", statement + main), statement).toEqual({ checked: true, problem: null });
+    }
+    // A name whose type may be a function, or cannot be told, still fails, saying why.
+    const failing: Array<[statement: string, why: string]> = [
+      ["declare const readers: Array<() => number>;\nconst [first] = [...readers];", "its position follows ...readers, whose length is not known"],
+      ["declare const anything: any[];\nconst [first] = [...anything];", "its position follows ...anything, whose length is not known"],
+      ["const key = Math.random() > 0.5 ? \"left\" : \"right\";\nconst { [key]: first } = { left: (): number => 1, right: 2 };", "its key, [key], is not known"],
+      ["declare const made: { first: unknown };\nconst { first } = { ...made };", "its key may be given by ...made, whose keys are not known"],
+    ];
+    for (const [statement, why] of failing) {
+      expect(entryPointProblem("probe.ts", statement + main), statement)
+        .toEqual({ checked: true, problem: `probe.ts:2: what first holds cannot be read, as ${why}, so the first function cannot be found` });
+    }
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1503,10 +1526,9 @@ interface EntryPoint {
  * A value a call builds with a callback is not one. A variable is a function
  * too wherever the nested-helper check would find one, through each value
  * it may be and each default, whatever its type says. A name that a spread
- * of unknown extent, or a key not known, may give its value may be one,
- * whatever its type says, so the first function cannot be found past it,
- * and that is the problem. So may a name a destructuring takes from a call
- * that may hold a function, unless its type cannot be a function.
+ * of unknown extent, a key not known, or a call that may hold a function,
+ * may give its value may be one, so the first function cannot be found past
+ * it, and that is the problem, unless its type cannot be a function.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
   const { source, checker } = typedSource(file, text);
@@ -1549,10 +1571,9 @@ function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFun
           return { name: name.text, exported, statement, unknownAfter: null };
         }
         const position = reading.unknown.find((found) => found.name === name);
-        // A name taken from a call that holds a function is no function when its type cannot be one.
-        const fromCall = position !== undefined && (ts.isCallExpression(position.cause) || ts.isNewExpression(position.cause));
-        if (fromCall && !mayBeFunction(checker.getTypeAtLocation(name), checker, name)) continue;
-        if (position !== undefined) return { name: name.text, exported, statement, unknownAfter: position.cause };
+        // A name whose type cannot be a function is none, whatever made its value unknown.
+        if (position === undefined || !mayBeFunction(checker.getTypeAtLocation(name), checker, name)) continue;
+        return { name: name.text, exported, statement, unknownAfter: position.cause };
       }
     }
   }
