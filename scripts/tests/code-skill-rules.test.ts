@@ -1750,6 +1750,7 @@ describe("the code skill's rules for this repository's own code", () => {
       ["const helper: unknown = { size: 1 };", ""],
       ["const helper = JSON.parse(\"1\") as unknown;", ""],
       ["const helper: (() => number) | null = null;", ""],
+      ["const helper: (() => number) | undefined = undefined;", ""],
       ["const [, helper] = [...\"ab\", (): number => 1] as const;", ""],
     ] as Array<[statement: string, after: string]>) {
       expect(entryPointProblem("probe.ts", `${statement}${main}${after}`), statement + after).toEqual({ checked: true, problem: null });
@@ -1875,6 +1876,8 @@ function mayBeCalled(type: ts.Type): boolean {
 function givesFunction(name: ts.Identifier, declaration: ts.VariableDeclaration, reading: Reading, type: ts.Type, checker: ts.TypeChecker): boolean {
   const bound = name !== declaration.name;
   if (bound && reading.bound.some((each) => each.name === name)) return false;
+  // A value written as one whose own type cannot be a function, such as undefined or null, decides it, whatever the declared type allows.
+  if (!bound && declaration.initializer !== undefined && possibleValues(declaration.initializer, checker).every((one) => !mayBeFunction(checker.getTypeAtLocation(one), checker, one))) return false;
   const values = declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, new Set());
   if (!bound && values.some((one) => ts.isFunctionLike(one) && bodyOf(one) !== undefined)) return true;
   // A literal the value is given where it is written is read as the destructuring would read it there.
