@@ -21,6 +21,13 @@ const SHARED_SOURCES = new Map<string, ts.SourceFile>();
 /** The program of every TypeScript file in the repository, once a test has made it. */
 const REPOSITORY_PROGRAMS: ts.Program[] = [];
 
+
+/**
+ * The files written here of each program a check here made, by the
+ * program's checker: every file but a declaration file and a library's.
+ */
+const PROGRAM_SOURCES = new WeakMap<ts.TypeChecker, readonly ts.SourceFile[]>();
+
 const BACKSLASH = String.fromCharCode(92);
 
 /** How the name of a command shim ends. A shim runs one function of the module named without it. */
@@ -166,9 +173,13 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    through a name destructured from the literal a call of a function
 //    written here returns, a for-of over an array literal, and a
 //    parameter's default, while what a caller gives a parameter is read
-//    by its declared type, as a declared name's is. A variable or class
-//    field declared with no value that code here gives one later, as a
-//    constructor's assignment does, cannot be followed. A function
+//    by its declared type, as a declared name's is. A variable, class
+//    field or property is followed to its initializer and to every
+//    assignment written to it in the program, in a constructor or
+//    anywhere else, and a call of such a name runs each function it may
+//    hold, whatever type the compiler took from its first value. One that
+//    a destructuring, a for-in or a for-of assigns, or that is declared
+//    with no value that an assignment gives it, cannot be followed. A function
 //    written here that cannot be followed may give back or hold any
 //    argument. A body that passes an argument on, by any use but
 //    calling it, or a constructor whose parameter is written as a property,
@@ -1752,6 +1763,63 @@ describe("the code skill's rules for this repository's own code", () => {
     }
   });
 
+  test("a wrapper is followed to every assignment that gives it a value, wherever it is written", () => {
+    const helper = "(): number => 1";
+    // `boxing` gives back what it is given. Each `consuming` calls it, and returns a new object holding a number.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function consuming(reader: () => number): object {\n  return { value: reader() };\n}\n"
+      + "function consumingNext(reader: () => number): object {\n  return { value: reader() + 1 };\n}\n";
+    const chosen = "Math.random() > 0.5";
+    // Each pair is a wrapper that one assignment makes an identity, then the same wrapper whose every value is a consumer.
+    const cases: Array<[before: string, call: string, after: string, found: string[]]> = [
+      [`let box: Boxer = consuming;\n  if (${chosen}) box = boxing;`, "box", "", ["probe.ts / main / helper"]],
+      [`let box: Boxer = consuming;\n  if (${chosen}) box = consumingNext;`, "box", "", []],
+      // A name whose type the compiler takes from its first function runs each function assigned to it as well.
+      ["let box = consuming;\n  box = boxing;", "box", "", ["probe.ts / main / helper"]],
+      ["let box = consuming;\n  box = consumingNext;", "box", "", []],
+      [`let box: Boxer;\n  if (${chosen}) {\n    box = consuming;\n  } else {\n    box = boxing;\n  }`, "box", "", ["probe.ts / main / helper"]],
+      [`let box: Boxer;\n  if (${chosen}) {\n    box = consuming;\n  } else {\n    box = consumingNext;\n  }`, "box", "", []],
+      ["let box: Boxer | undefined;\n  box ??= boxing;", "box", "", ["probe.ts / main / helper"]],
+      ["let box: Boxer | undefined;\n  box ??= consuming;", "box", "", []],
+      // A field is followed to what its initializer and each assignment give it, in the constructor or anywhere else.
+      ["", "new Field().box", "class Field {\n  box: Boxer = consuming;\n  constructor() {\n    this.box = boxing;\n  }\n}\n", ["probe.ts / main / helper"]],
+      ["", "new Field().box", "class Field {\n  box: Boxer;\n  constructor() {\n    this.box = consuming;\n  }\n}\n", []],
+      ["const made = new Field();\n  made.box = boxing;", "made.box", "class Field {\n  box: Boxer = consuming;\n}\n", ["probe.ts / main / helper"]],
+      ["const made = new Field();\n  made.box = consumingNext;", "made.box", "class Field {\n  box: Boxer = consuming;\n}\n", []],
+      // A property of an object literal is followed to each assignment, by name or by a key written as a literal.
+      ["const holder = { box: consuming as Boxer };\n  holder.box = boxing;", "holder.box", "", ["probe.ts / main / helper"]],
+      ["const holder = { box: consuming as Boxer };\n  holder[\"box\"] = boxing;", "holder.box", "", ["probe.ts / main / helper"]],
+      ["const holder = { box: consuming as Boxer };\n  holder.box = consumingNext;", "holder.box", "", []],
+      // An assignment a destructuring or a for-of makes cannot be read, so the wrapper may give back what it is given.
+      ["let box: Boxer = consuming;\n  [box] = [consumingNext];", "box", "", ["probe.ts / main / helper"]],
+      ["let box: Boxer = consuming;\n  ({ box } = { box: consumingNext });", "box", "", ["probe.ts / main / helper"]],
+      ["let box: Boxer = consuming;\n  for (box of [consumingNext]) void box;", "box", "", ["probe.ts / main / helper"]],
+    ];
+    for (const [before, call, after, found] of cases) {
+      const text = `export function main(): number {\n  ${before}\n  const helper = ${call}(${helper});\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+      expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, before + call + after).toEqual([]);
+    }
+    // A private field is followed to each assignment in the same way.
+    for (const [assigned, found] of [["boxing", ["probe.ts / run / helper"]], ["consumingNext", []]] as Array<[assigned: string, found: string[]]>) {
+      const text = `export function main(): number {\n  return new Field().run();\n}\n${wrappers}class Field {\n  #box: Boxer = consuming;\n`
+        + `  constructor() {\n    this.#box = ${assigned};\n  }\n  run(): number {\n    const helper = this.#box(${helper});\n    void helper;\n    return 0;\n  }\n}\n`;
+      expect(boundHelpers("probe.ts", text), assigned).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, assigned).toEqual([]);
+    }
+    // The throws check reads a function a reassigned wrapper gives back with the comment on the name it is bound to.
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    for (const [before, call, after] of [
+      [`let box: Boxer = consuming;\n  if (${chosen}) box = boxing;`, "box", ""],
+      ["", "new Field().box", "class Field {\n  box: Boxer = consuming;\n  constructor() {\n    this.box = boxing;\n  }\n}\n"],
+    ] as Array<[before: string, call: string, after: string]>) {
+      const text = `export function main(): object {\n  ${before}\n  /** Reads a size. */\n  const helper = ${call}(${thrower});\n  return helper;\n}\n${wrappers}${after}`;
+      const line = before.split("\n").length + 3;
+      expect(undocumentedThrows("probe.ts", text).problems, call).toEqual([`probe.ts:${line}: the comment on helper does not say what it throws`]);
+    }
+  });
+
   test("a top-level name whose type cannot be a function is not the first function, whatever made its value unknown", () => {
     const main = "\n/** Reads the size. */\nexport function main(): number {\n  return 1;\n}\n";
     for (const statement of [
@@ -2321,11 +2389,16 @@ const CALLEES_BEING_READ = new Set<ts.Node>();
 
 /**
  * The declarations whose bodies may run when a call resolves to a signature:
- * the one `implementationOf` finds, or, when the signature is declared by a
- * type and has no body, each function the callee holds, as `heldFunctions`
- * finds it. A type annotation on a function value describes the function,
- * and a call of the annotated name runs the function written there, as it
- * would were the annotation not written.
+ * the one `implementationOf` finds, when the callee names that function
+ * itself; or each function the callee holds, as `heldFunctions` finds it,
+ * when the callee is a name, a member or a call whose value is given
+ * elsewhere, as a variable, a field or a parameter is. A type annotation
+ * on a function value describes the function, and a call of the annotated
+ * name runs the function written there, as it would were the annotation
+ * not written; and a name whose type the compiler takes from one function
+ * runs each function an assignment gives it as well. Where the callee holds
+ * no function written here that can be read, the signature's own
+ * implementation runs.
  *
  * @param callee The expression whose value is the function that runs.
  * @returns Each declaration with a body, none when none is written here,
@@ -2335,14 +2408,41 @@ const CALLEES_BEING_READ = new Set<ts.Node>();
 function implementationsOf(call: ts.CallExpression | ts.NewExpression, callee: ts.Expression, declaration: ts.SignatureDeclaration,
   checker: ts.TypeChecker): Implementations {
   const own = implementationOf(declaration);
-  if (own !== undefined) return { functions: [own], unread: false };
-  if (CALLEES_BEING_READ.has(call)) return NOTHING_RUNS;
+  const resolved: Implementations = own === undefined ? NOTHING_RUNS : { functions: [own], unread: false };
+  if (own !== undefined && namesFunction(callee, declaration, checker)) return resolved;
+  if (CALLEES_BEING_READ.has(call)) return resolved;
   CALLEES_BEING_READ.add(call);
   try {
-    return heldFunctions(callee, checker, new Set());
+    const held = heldFunctions(callee, checker, new Set());
+    return held.functions.length === 0 && !held.unread ? resolved : held;
   } finally {
     CALLEES_BEING_READ.delete(call);
   }
+}
+
+/** The name, or the key, that an expression reads: itself for a name, or a member's; undefined for any other expression. */
+function nameRead(expression: ts.Expression): ts.Node | undefined {
+  if (ts.isIdentifier(expression)) return expression;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name;
+  return ts.isElementAccessExpression(expression) ? expression.argumentExpression : undefined;
+}
+
+/**
+ * Whether a callee names the function a signature declares, or the class
+ * whose constructor it is, so that its value is that function: a name or a
+ * member whose symbol, through any import alias, has that declaration. A
+ * callee that is none of a name, a member or a call, such as `super`, is
+ * read by the signature it resolves to.
+ */
+function namesFunction(callee: ts.Expression, declaration: ts.SignatureDeclaration, checker: ts.TypeChecker): boolean {
+  const inner = heldValue(callee) ?? callee;
+  const named = nameRead(inner);
+  if (named === undefined) return !ts.isCallExpression(inner);
+  const declarations = usedSymbol(named, checker)?.declarations;
+  if (declarations === undefined) return true;
+  const run = implementationOf(declaration);
+  return declarations.some((one) => one === declaration || (run !== undefined && ts.isFunctionLike(one) && implementationOf(one) === run)
+    || (ts.isClassLike(one) && ts.isConstructorDeclaration(declaration) && declaration.parent === one));
 }
 
 /**
@@ -2491,11 +2591,13 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * property a type declares, as an interface does, gives what its key holds
  * in each object literal the value it is read from may be, as `keyedValues`
  * reads it, and the property read as well, as unread, for each value it is
- * read from that is not one. Where no rule can read all a name declared
- * here may be given, the name read is given back as well, as unread: for a
- * variable or class field declared with no value that `isGivenLater` finds
- * code here gives one, as a constructor's assignment does; and for any
- * other declaration written here that none of these reads.
+ * read from that is not one. Each of these that can be assigned gives as
+ * well what every assignment to it gives, as `assignedValues` reads them.
+ * Where no rule can read all a name declared here may be given, the name
+ * read is given back as well, as unread: for a variable or class field
+ * declared with no value that no assignment gives one, where
+ * `isGivenLater` finds code here may give it one, as Object.assign does;
+ * and for any other declaration written here that none of these reads.
  *
  * @returns Each value; none for a name declared with `declare`, or every
  *     declaration of which is in a declaration file, as the library's are,
@@ -2516,23 +2618,213 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     }
     if (ts.isClassLike(declaration)) return [declaration];
     if (ts.isGetAccessorDeclaration(declaration)) return returnedExpressions(declaration).flatMap((returned) => declaredValues(returned, checker, seen));
+    // A function expression's own name gives the function.
+    if (ts.isFunctionExpression(declaration)) return [declaration];
+    const assigned = assignedValues(value, declaration, checker, seen);
     if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
-      if (declaration.initializer !== undefined) return declaredValues(declaration.initializer, checker, seen);
+      if (declaration.initializer !== undefined) return [...declaredValues(declaration.initializer, checker, seen), ...assigned.values];
       const loop = declaration.parent.parent;
-      if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return iteratedValues(value, loop.expression, checker, seen);
-      // A name declared here with no value, as a class field the constructor assigns, is given one no rule reads.
+      if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop.expression, checker, seen), ...assigned.values];
+      if (assigned.found) return assigned.values;
+      // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
       return isGivenLater(declaration) ? [value] : [];
     }
-    if (ts.isShorthandPropertyAssignment(declaration)) return declaredValues(declaration.name, checker, seen);
+    if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values];
     // A parameter's caller gives what its declared type allows, as a declared name's type alone describes it, or its default.
-    if (ts.isParameter(declaration)) return declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, seen);
-    if (ts.isBindingElement(declaration)) return destructuredValues(value, declaration, checker, seen);
-    if (ts.isFunctionExpression(declaration)) return [declaration];
+    if (ts.isParameter(declaration)) return [...declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, seen), ...assigned.values];
+    if (ts.isBindingElement(declaration)) return [...destructuredValues(value, declaration, checker, seen), ...assigned.values];
     if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
     const key = value.name.text;
-    return declaredValues(value.expression, checker, seen)
-      .flatMap((literal) => ts.isObjectLiteralExpression(literal) ? keyedValues(literal, key, value, checker, seen) : [value]);
+    return [...declaredValues(value.expression, checker, seen)
+      .flatMap((literal) => ts.isObjectLiteralExpression(literal) ? keyedValues(literal, key, value, checker, seen) : [value]), ...assigned.values];
   });
+}
+
+/** What the assignments to a name give it, as `assignedValues` reads them. */
+interface Assigned {
+  /** Each value an assignment may give, and the name read as well, as unread, when one gives a value no rule reads. */
+  values: DeclaredValue[];
+  /** Whether any assignment gives the name a value. */
+  found: boolean;
+}
+
+/**
+ * What every assignment written in the program gives a variable, a class
+ * field, a property or a parameter, wherever it is written, as
+ * `assignmentsOf` finds them: each value, as `declaredValues` reads the
+ * assignment, so that `box = boxing` gives `boxing`, `box ??= boxing` gives
+ * `boxing` too, and `size += 1` gives a number. An assignment that a
+ * destructuring, or a for-in or for-of, makes cannot be read, so the name
+ * read is given back as well, as unread.
+ */
+function assignedValues(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.Declaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Assigned {
+  const written = assignmentsOf(declaration, checker);
+  const values = written.assignments.flatMap((assignment) => declaredValues(assignment, checker, seen));
+  return { values: written.unread ? [...values, value] : values, found: written.assignments.length > 0 || written.unread };
+}
+
+/** The assignments to one declaration, as `assignmentsOf` finds them. */
+interface Assignments {
+  /** Each assignment written as `name = value`, or with a compound operator, whose target is the declaration. */
+  assignments: ts.BinaryExpression[];
+  /** Whether a destructuring, a for-in or a for-of assigns it as well, which no rule reads. */
+  unread: boolean;
+}
+
+/** The assignments found to each declaration, for each checker, so that each is searched for once. */
+const ASSIGNMENTS = new WeakMap<ts.TypeChecker, Map<ts.Node, Assignments>>();
+
+/**
+ * Every assignment, in each file of the program, whose target is a
+ * declaration: a name, or a property read by name or by a key written as a
+ * literal, as `this.box = boxing` and `holder["box"] = boxing` are, through
+ * any wrapper `heldValue` looks through, that `usesOf` finds refers to it.
+ * One that a destructuring or a for-in or for-of makes is noted as unread.
+ * `++` and `--` give a number, so they are not read.
+ */
+function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): Assignments {
+  const known = ASSIGNMENTS.get(checker) ?? new Map<ts.Node, Assignments>();
+  ASSIGNMENTS.set(checker, known);
+  const kept = known.get(declaration);
+  if (kept !== undefined) return kept;
+  const found: Assignments = { assignments: [], unread: false };
+  known.set(declaration, found);
+  for (const use of usesOf(declaration, checker)) {
+    const target = outerValue(memberRead(use));
+    const parent = target.parent;
+    if (ts.isBinaryExpression(parent) && isAssignmentOperator(parent.operatorToken.kind) && parent.left === target) {
+      if (isDestructuringTarget(parent)) {
+        found.unread = true;
+      } else {
+        found.assignments.push(parent);
+      }
+    } else if (isDestructuringTarget(target)) {
+      found.unread = true;
+    }
+  }
+  return found;
+}
+
+/** The property access, or element access, that reads a name or key, or the name itself when it reads no member. */
+function memberRead(use: ts.Node): ts.Node {
+  const parent = use.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === use) return parent;
+  return ts.isElementAccessExpression(parent) && parent.argumentExpression === use ? parent : use;
+}
+
+/** The outermost of the wrappers `heldValue` looks through that hold a node, or the node itself. */
+function outerValue(node: ts.Node): ts.Node {
+  let outer = node;
+  while (ts.isParenthesizedExpression(outer.parent) || ts.isAsExpression(outer.parent) || ts.isSatisfiesExpression(outer.parent)
+    || ts.isTypeAssertionExpression(outer.parent) || ts.isNonNullExpression(outer.parent)) {
+    outer = outer.parent;
+  }
+  return outer;
+}
+
+/**
+ * Whether a node is a target that a destructuring assignment, or a for-in or
+ * for-of, gives a value: it sits, through items, properties, spreads,
+ * parentheses and defaults, in an object or array literal on the left of
+ * `=`, or is, or sits in, what a for-in or for-of assigns.
+ */
+function isDestructuringTarget(node: ts.Node): boolean {
+  let literal = false;
+  for (let inner = node, outer = node.parent; ; inner = outer, outer = outer.parent) {
+    if (ts.isForInStatement(outer) || ts.isForOfStatement(outer)) return outer.initializer === inner;
+    const assigns = ts.isBinaryExpression(outer) && outer.operatorToken.kind === ts.SyntaxKind.EqualsToken && outer.left === inner;
+    // `target = fallback` as an item or a property's value is a default, read through as the target is.
+    const isDefault = assigns && (ts.isArrayLiteralExpression(outer.parent) || (ts.isPropertyAssignment(outer.parent) && outer.parent.initializer === outer));
+    if (assigns && !isDefault) return literal;
+    if (ts.isArrayLiteralExpression(outer) || ts.isObjectLiteralExpression(outer)) {
+      literal = true;
+    } else if (!isDefault && !ts.isSpreadElement(outer) && !ts.isSpreadAssignment(outer) && !ts.isShorthandPropertyAssignment(outer)
+      && !(ts.isPropertyAssignment(outer) && outer.initializer === inner) && !ts.isParenthesizedExpression(outer)) {
+      return false;
+    }
+  }
+}
+
+/** Each name written in one file, read once for each file. */
+interface WrittenNames {
+  /** Each name, private name, and key written as a literal that an element access reads, by its text. */
+  byText: ReadonlyMap<string, readonly ts.Node[]>;
+  /** Each name a default import binds, whatever its text. */
+  defaults: readonly ts.Identifier[];
+}
+
+/** The names written in each file, as `writtenNames` reads them. */
+const WRITTEN_NAMES = new WeakMap<ts.SourceFile, WrittenNames>();
+
+/** The names written in one file, as WrittenNames says, read once. */
+function writtenNames(file: ts.SourceFile): WrittenNames {
+  const kept = WRITTEN_NAMES.get(file);
+  if (kept !== undefined) return kept;
+  const byText = new Map<string, ts.Node[]>();
+  const defaults: ts.Identifier[] = [];
+  const pending: ts.Node[] = [file];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)
+      || (ts.isStringLiteralLike(node) && ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)) {
+      const same = byText.get(node.text);
+      if (same === undefined) {
+        byText.set(node.text, [node]);
+      } else {
+        same.push(node);
+      }
+    }
+    if (ts.isImportClause(node) && node.name !== undefined) defaults.push(node.name);
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+  }
+  const names = { byText, defaults };
+  WRITTEN_NAMES.set(file, names);
+  return names;
+}
+
+/**
+ * Each node in the files of a declaration's program that refers to it: a
+ * name, a private name, or a key written as a literal that an element
+ * access reads, whose symbol, through any import alias, the declaration
+ * declares. An import or export under another name, a default import
+ * included, is followed by that name too. The declaration's own name is one.
+ * A program no check here made is searched in the declaration's own file.
+ */
+function usesOf(declaration: ts.Declaration, checker: ts.TypeChecker): ts.Node[] {
+  const name = ts.getNameOfDeclaration(declaration);
+  if (name === undefined || !(ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name))) return [];
+  const files = PROGRAM_SOURCES.get(checker) ?? [declaration.getSourceFile()];
+  const texts = [name.text];
+  for (const file of files) {
+    for (const imported of writtenNames(file).defaults) {
+      if (!texts.includes(imported.text) && refersTo(imported, declaration, checker)) texts.push(imported.text);
+    }
+  }
+  const found: ts.Node[] = [];
+  // A name pushed while this runs is read too, as an array's iterator reads items added after it starts.
+  for (const text of texts) {
+    for (const file of files) {
+      for (const node of writtenNames(file).byText.get(text) ?? []) {
+        if (!refersTo(node, declaration, checker)) continue;
+        found.push(node);
+        const parent = node.parent;
+        if ((ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent)) && !texts.includes(parent.name.text)) texts.push(parent.name.text);
+      }
+    }
+  }
+  return found;
+}
+
+/** Whether a name, a private name, or a key written as a literal refers to a declaration where it is used, as `usedSymbol` reads it. */
+function refersTo(node: ts.Node, declaration: ts.Declaration, checker: ts.TypeChecker): boolean {
+  return (usedSymbol(node, checker)?.declarations ?? []).includes(declaration);
+}
+
+/** The symbol a name, a private name, or a key written as a literal refers to where it is used, through any import alias. */
+function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
+  const found = ts.isIdentifier(node) ? referencedSymbol(node, checker) : checker.getSymbolAtLocation(node);
+  return found !== undefined && (found.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(found) : found;
 }
 
 /**
@@ -2889,7 +3181,20 @@ function typedSource(file: string, text: string): TypedSource {
   const program = ts.createProgram([fileName], COMPILER_OPTIONS, host);
   const source = program.getSourceFile(fileName);
   if (source === undefined) throw new Error(`The compiler did not read ${file}.`);
-  return { source, checker: program.getTypeChecker() };
+  return { source, checker: checkerOf(program) };
+}
+
+/**
+ * The checker of a program, recorded in PROGRAM_SOURCES with the files of
+ * the program written here, so that every call and assignment the program
+ * holds can be found.
+ */
+function checkerOf(program: ts.Program): ts.TypeChecker {
+  const checker = program.getTypeChecker();
+  if (!PROGRAM_SOURCES.has(checker)) {
+    PROGRAM_SOURCES.set(checker, program.getSourceFiles().filter((file) => !file.isDeclarationFile && !program.isSourceFileFromExternalLibrary(file)));
+  }
+  return checker;
 }
 
 /** The path the compiler gives a file of the repository: absolute, with forward slashes. */
@@ -2949,7 +3254,7 @@ function repositorySource(file: string): TypedSource {
   const program = repositoryProgram();
   const source = program.getSourceFile(compilerPath(file));
   if (source === undefined) throw new Error(`The compiler did not read ${file}.`);
-  return { source, checker: program.getTypeChecker() };
+  return { source, checker: checkerOf(program) };
 }
 
 /**
