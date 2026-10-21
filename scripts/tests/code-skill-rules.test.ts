@@ -123,7 +123,11 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    a command shim's module leads with the function the shim runs. Tests are
 //    not held to it, by the owner's ruling. decimal.ts is listed below with
 //    its reason. A name is a function when its type can be called, or
-//    wherever rule 3's test below would find one. Tested here.
+//    wherever rule 3's test below would find one, or when its value,
+//    followed through each function written here that gives it, is one.
+//    A value no rule can follow is read by its declared type: a part of
+//    it that can be called, as in `(() => number) | undefined`, makes it
+//    a function. Tested here.
 // 2. Interface comment present. A caller learns what a function does without
 //    reading its body. Every top-level export has a JSDoc comment, tested in
 //    source-comments.test.ts. A comment on a function that throws says what
@@ -1722,6 +1726,39 @@ describe("the code skill's rules for this repository's own code", () => {
         .toEqual({ checked: true, problem: `probe.ts:2: what first holds cannot be read, as ${why}, so the first function cannot be found` });
     }
   });
+
+  test("a first name is a function when a part of its type can be called, or its value is a function written here", () => {
+    const main = "\n/** Reads the size. */\nexport function main(): number {\n  return 1;\n}\n";
+    const reported = { checked: true, problem: "probe.ts:1: the first function, helper, is not exported" };
+    for (const [statement, after] of [
+      ["const helper = maybe();", "function maybe(): (() => number) | undefined {\n  return (): number => 1;\n}\n"],
+      ["const helper = maybe();", "function maybe(): (() => number) | false {\n  return (): number => 1;\n}\n"],
+      ["let helper: (() => number) | undefined;", ""],
+      ["const { helper } = made();", "declare function made(): { helper?: () => number };\n"],
+      ["const { helper } = made();", "function made(): { helper: unknown } {\n  return { helper: (): number => 1 };\n}\n"],
+      // A value typed so that it says nothing of being a function is read through the function that makes it.
+      ["const helper = make();", "function make(): unknown {\n  return (): number => 1;\n}\n"],
+      ["const helper = make();", "function make(): object {\n  return Object.freeze((): number => 1);\n}\n"],
+      ["const helper = anything();", "declare const anything: any;\n"],
+    ] as Array<[statement: string, after: string]>) {
+      expect(entryPointProblem("probe.ts", `${statement}${main}${after}`), statement + after).toEqual(reported);
+    }
+    // A value that cannot be called, and is read as none, is not a function, whatever its type allows.
+    for (const [statement, after] of [
+      ["const helper = make();", "function make(): unknown {\n  return 1;\n}\n"],
+      ["const helper = make();", "function make(): { name: string } {\n  return { name: \"size\" };\n}\n"],
+      ["const helper: unknown = { size: 1 };", ""],
+      ["const helper = JSON.parse(\"1\") as unknown;", ""],
+      ["const helper: (() => number) | null = null;", ""],
+      ["const [, helper] = [...\"ab\", (): number => 1] as const;", ""],
+    ] as Array<[statement: string, after: string]>) {
+      expect(entryPointProblem("probe.ts", `${statement}${main}${after}`), statement + after).toEqual({ checked: true, problem: null });
+    }
+    // The shim check reads the module's first function the same way.
+    const module = `const helper = maybe();${main}function maybe(): (() => number) | undefined {\n  return (): number => 1;\n}\n`;
+    expect(shimProblem("probe-cli.ts", "import { main } from \"./probe.ts\";\nprocess.exit(main());", "probe.ts", module))
+      .toBe("probe-cli.ts runs main, but probe.ts leads with helper");
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1760,9 +1797,10 @@ interface EntryPoint {
  * wraps or returns. A name bound by destructuring counts as a variable does.
  * A value a call builds with a callback is not one. A variable is a function
  * too wherever the nested-helper check would find one, through each value
- * it may be and each default, whatever its type says. A name that a spread
- * of unknown extent, a key not known, or a call that may hold a function,
- * may give its value may be one, so the first function cannot be found past
+ * it may be and each default, whatever its type says, and wherever
+ * `givesFunction` finds its value may be one. A name that a spread of
+ * unknown extent, a key not known, or a call that may hold a function, may
+ * give its value may be one, so the first function cannot be found past
  * it, and that is the problem, unless its type cannot be a function.
  */
 function entryPointProblem(file: string, text: string): EntryPoint {
@@ -1802,17 +1840,49 @@ function firstFunction(source: ts.SourceFile, checker: ts.TypeChecker): FirstFun
       const reading = readBinding(declaration.name, declaration.initializer, checker);
       const written = new Set(helperNames(reading, checker));
       for (const name of boundNames(declaration.name)) {
-        if (written.has(name) || checker.getTypeAtLocation(name).getCallSignatures().length > 0) {
-          return { name: name.text, exported, statement, unknownAfter: null };
-        }
+        const type = checker.getTypeAtLocation(name);
+        if (written.has(name) || type.getCallSignatures().length > 0) return { name: name.text, exported, statement, unknownAfter: null };
         const position = reading.unknown.find((found) => found.name === name);
         // A name whose type cannot be a function is none, whatever made its value unknown.
-        if (position === undefined || !mayBeFunction(checker.getTypeAtLocation(name), checker, name)) continue;
-        return { name: name.text, exported, statement, unknownAfter: position.cause };
+        if (position !== undefined && mayBeFunction(type, checker, name)) return { name: name.text, exported, statement, unknownAfter: position.cause };
+        if (givesFunction(name, declaration, reading, type, checker)) return { name: name.text, exported, statement, unknownAfter: null };
       }
     }
   }
   return null;
+}
+
+/** Whether a type, or a part of its union, can be called, as `(() => number) | undefined` can once it is narrowed. */
+function mayBeCalled(type: ts.Type): boolean {
+  return (type.isUnion() ? type.types : [type]).some((part) => part.getCallSignatures().length > 0);
+}
+
+/**
+ * Whether a top-level name whose type has no call signature of its own may
+ * still be a function. Its value is read through each name, member and call
+ * to what it is given where it is written, as `declaredValues` reads it, so
+ * a name bound to the value of a call of a function written here is a
+ * function when that function returns one. A name a destructuring takes
+ * from a literal is read by `readBinding`, which decides it; one it takes
+ * from anything else is read through the value destructured. Where the
+ * value is not written here, as a library's call is not, or is something
+ * no rule can follow whose type may be a function, the declared type
+ * decides: the name is a function when a part of its type can be called,
+ * as `(() => number) | undefined` can, or when its type is any, unknown or
+ * object and the value cannot be followed. A class is not a function here,
+ * as a class declaration is not.
+ */
+function givesFunction(name: ts.Identifier, declaration: ts.VariableDeclaration, reading: Reading, type: ts.Type, checker: ts.TypeChecker): boolean {
+  const bound = name !== declaration.name;
+  if (bound && reading.bound.some((each) => each.name === name)) return false;
+  const values = declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, new Set());
+  if (!bound && values.some((one) => ts.isFunctionLike(one) && bodyOf(one) !== undefined)) return true;
+  // A literal the value is given where it is written is read as the destructuring would read it there.
+  if (bound && values.some((one) => ts.isExpression(one) && helperNames(readBinding(declaration.name, one, checker), checker).includes(name))) return true;
+  // What no rule can follow may be anything its type allows.
+  const unfollowed = values.some((one) => ts.isExpression(one) && !isAlwaysTruthy(one) && mayBeFunction(checker.getTypeAtLocation(one), checker, one));
+  if (values.length > 0 && !unfollowed) return false;
+  return mayBeCalled(type) || (unfollowed && isOpenType(type));
 }
 
 /** Each name a declaration binds, in the order they appear, through any destructuring. */
@@ -2440,6 +2510,11 @@ function referencedSymbol(name: ts.Identifier, checker: ts.TypeChecker): ts.Symb
 
 /** The types the checker cannot narrow, so that a value of one may be anything: any, unknown and object. */
 const OPEN_TYPES = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive;
+
+/** Whether a type is one the checker cannot narrow, as OPEN_TYPES names them. */
+function isOpenType(type: ts.Type): boolean {
+  return (type.flags & OPEN_TYPES) !== 0;
+}
 
 /** The types whose values are those of their constraint: a type parameter, and a type built from one. */
 const CONSTRAINED_TYPES = ts.TypeFlags.TypeParameter | ts.TypeFlags.IndexedAccess | ts.TypeFlags.Conditional | ts.TypeFlags.Substitution;
