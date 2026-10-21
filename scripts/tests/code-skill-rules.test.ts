@@ -171,9 +171,13 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    and a value one hands on where no parameter takes it, such as `this`,
 //    cannot be read. A wrapper is followed to where its value is written:
 //    through a name destructured from the literal a call of a function
-//    written here returns, a for-of over an array literal, and a
-//    parameter's default, while what a caller gives a parameter is read
-//    by its declared type, as a declared name's is. A variable, class
+//    written here returns, a for-of over an array literal, a parameter's
+//    default, and the argument at a parameter's position in every call of
+//    its function in the program. A parameter whose calls cannot all be
+//    found, as for a function no code here calls, one handed on as a
+//    value, a method, or a callback given to a library, may be given any
+//    value its type allows, so it cannot be followed. A name written under
+//    `declare` is read by its declared type, as a library's is. A variable, class
 //    field or property is followed to its initializer and to every
 //    assignment written to it in the program, in a constructor or
 //    anywhere else, and a call of such a name runs each function it may
@@ -1744,10 +1748,11 @@ describe("the code skill's rules for this repository's own code", () => {
       ["", `let box: Boxer;\n  box = boxing;\n  const helper = box(${helper});`, ["probe.ts / main / helper"]],
       // A wrapper whose result cannot hold a function gives back none of what it is given.
       ["box: (reader: () => number) => number = measuring", `const size = box(${helper});`, []],
-      // What a caller gives a parameter, and a declared name, are read by their declared type alone, which gives back nothing here.
-      ["box: Boxer", `const helper = box(${helper});`, []],
-      ["{ box }: { box: Boxer }", `const helper = box(${helper});`, []],
-      ["boxes: Boxer[]", `for (const box of boxes) {\n    const helper = box(${helper});\n    void helper;\n  }`, []],
+      // No code here calls main, so a caller may give a parameter any wrapper its type allows, which may give back what it is given.
+      ["box: Boxer", `const helper = box(${helper});`, ["probe.ts / main / helper"]],
+      ["{ box }: { box: Boxer }", `const helper = box(${helper});`, ["probe.ts / main / helper"]],
+      ["boxes: Boxer[]", `for (const box of boxes) {\n    const helper = box(${helper});\n    void helper;\n  }`, ["probe.ts / main / helper"]],
+      // A declared name is written outside the program, so its declared type alone describes it, as a library's does, which gives back nothing here.
       ["", `const helper = declared(${helper});`, []],
     ];
     for (const [signature, body, found] of cases) {
@@ -1760,6 +1765,78 @@ describe("the code skill's rules for this repository's own code", () => {
     for (const [signature, call] of [["box: Boxer = boxing", "box"], ["", "made"], ["", "new Box().box"]] as Array<[signature: string, call: string]>) {
       const text = `${documented}export function main(${signature}): object {\n  /** Reads a size. */\n  const helper = ${call}(${thrower});\n  return helper;\n}\n${wrappers}`;
       expect(undocumentedThrows("probe.ts", text).problems, call).toEqual(["probe.ts:8: the comment on helper does not say what it throws"]);
+    }
+  });
+
+  test("a parameter is followed to the argument every call of its function gives it, and is unread where a call cannot be found", () => {
+    const helper = "(): number => 1";
+    // `boxing` gives back what it is given. `consuming` calls it, and returns a new object holding a number.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function consuming(reader: () => number): object {\n  return { value: reader() };\n}\n";
+    const relay = "function relay(box: Boxer): number {\n  return run(box);\n}\n";
+    const called = `const helper = box(${helper});\n  void helper;`;
+    const iterated = `for (const box of boxes) {\n    const helper = box(${helper});\n    void helper;\n  }`;
+    // Each pair is a parameter one caller gives an identity wrapper, then the same parameter whose every caller gives a consumer.
+    const cases: Array<[signature: string, body: string, callers: string, found: string[]]> = [
+      ["box: Boxer", called, "run(boxing);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "run(consuming);", []],
+      ["box: Boxer", called, "run(consuming);\n  run(boxing);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "run(consuming);\n  run(consuming);", []],
+      // A default is read beside what each caller gives.
+      ["box: Boxer = consuming", called, "run();\n  run(boxing);", ["probe.ts / run / helper"]],
+      ["box: Boxer = consuming", called, "run();", []],
+      ["box: Boxer = boxing", called, "run(consuming);", ["probe.ts / run / helper"]],
+      // A destructured parameter and a for-of over one read what each caller gives.
+      ["{ box }: { box: Boxer }", called, "run({ box: boxing });", ["probe.ts / run / helper"]],
+      ["{ box }: { box: Boxer }", called, "run({ box: consuming });", []],
+      ["boxes: Boxer[]", iterated, "run([boxing]);", ["probe.ts / run / helper"]],
+      ["boxes: Boxer[]", iterated, "run([consuming]);", []],
+      // Where a call cannot be found, or a spread hides the argument, a caller may give any wrapper the type allows.
+      ["box: Boxer", called, "run(...[consuming]);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "run(consuming);\n  void [run];", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "run.call(undefined, consuming);", ["probe.ts / run / helper"]],
+      ["...boxes: Boxer[]", iterated, "run(consuming);", ["probe.ts / run / helper"]],
+    ];
+    for (const [signature, body, callers, found] of cases) {
+      const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nfunction run(${signature}): number {\n  ${body}\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text), signature + callers).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, signature + callers).toEqual([]);
+    }
+    // A caller that is itself handed a parameter is followed to its own callers, and is unread where it has none.
+    for (const [callers, found] of [
+      ["relay(boxing);", ["probe.ts / run / helper"]],
+      ["relay(consuming);", []],
+      ["", ["probe.ts / run / helper"]],
+    ] as Array<[callers: string, found: string[]]>) {
+      const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nfunction run(box: Boxer): number {\n  ${called}\n  return 0;\n}\n${wrappers}${relay}`;
+      expect(boundHelpers("probe.ts", text), callers).toEqual(found);
+    }
+    // An arrow is called by the name of the variable it is the value of.
+    for (const [callers, found] of [["run(boxing);", ["probe.ts / run / helper"]], ["run(consuming);", []]] as Array<[callers: string, found: string[]]>) {
+      const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nconst run = (box: Boxer): number => {\n  ${called}\n  return 0;\n};\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text), callers).toEqual(found);
+    }
+    // A timer whose every clock returns a canceller it writes new hands back none of the callbacks it is given.
+    const clocks = "\ninterface Clock {\n  schedule: (callback: () => void, ms: number) => () => void;\n}\n"
+      + "function transport(clock: Clock): void {\n  let cancel: (() => void) | undefined;\n  cancel = clock.schedule((): void => undefined, 1);\n  cancel();\n}\n";
+    for (const [clock, found] of [
+      ["{ schedule: (callback, ms) => {\n    const timer = setTimeout(callback, ms);\n    return () => clearTimeout(timer);\n  } }", []],
+      ["{ schedule: (callback) => callback }", ["probe.ts / transport / cancel"]],
+    ] as Array<[clock: string, found: string[]]>) {
+      const text = `export function main(): void {\n  transport(${clock});\n}\n${clocks}`;
+      expect(boundHelpers("probe.ts", text), clock).toEqual(found);
+    }
+    // The throws check reads a function such a parameter gives back with the comment on the name it is bound to.
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    for (const [signature, callers, problems] of [
+      ["box: Boxer", "", ["probe.ts:7: the comment on helper does not say what it throws"]],
+      ["box: Boxer = consuming", "", ["probe.ts:7: the comment on helper does not say what it throws"]],
+      ["box: Boxer", "run(boxing);", ["probe.ts:7: the comment on helper does not say what it throws"]],
+      ["box: Boxer", "run(consuming);", []],
+    ] as Array<[signature: string, callers: string, problems: string[]]>) {
+      const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nfunction run(${signature}): object {\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+      expect(undocumentedThrows("probe.ts", text).problems, signature + callers).toEqual(problems);
     }
   });
 
@@ -2584,9 +2661,8 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * body is itself; a class is itself; a get accessor gives each value it
  * returns; a variable, class field or property gives each value its
  * initializer may be, as `declaredValues` reads it; a shorthand property
- * gives what its name does; a parameter gives each value its default may
- * be, since what its caller gives is what its declared type allows, as a
- * declared name's is; a function expression's own name gives the function;
+ * gives what its name does; a parameter gives what `passedValues` finds its
+ * default and each of its callers give it; a function expression's own name gives the function;
  * and a name bound by destructuring gives what `destructuredValues` finds. A
  * property a type declares, as an interface does, gives what its key holds
  * in each object literal the value it is read from may be, as `keyedValues`
@@ -2630,8 +2706,10 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       return isGivenLater(declaration) ? [value] : [];
     }
     if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values];
-    // A parameter's caller gives what its declared type allows, as a declared name's type alone describes it, or its default.
-    if (ts.isParameter(declaration)) return [...declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, seen), ...assigned.values];
+    if (ts.isParameter(declaration)) {
+      const passed = passedValues(declaration, checker, seen);
+      return [...passed.values, ...passed.unread ? [value] : [], ...assigned.values];
+    }
     if (ts.isBindingElement(declaration)) return [...destructuredValues(value, declaration, checker, seen), ...assigned.values];
     if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
     const key = value.name.text;
@@ -2830,7 +2908,7 @@ function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefin
 /**
  * What a for-of name is given: each item of each array literal the value it
  * iterates may be, as `declaredValues` reads that value. A value not written
- * here, or a parameter, is read by its declared type alone. The name read is
+ * here is read by its declared type alone. The name read is
  * given back as well, as unread, for a spread among the items, or a value
  * iterated that is not an array literal, such as a set, since no rule reads
  * what those give.
@@ -2870,16 +2948,19 @@ function isAmbient(declaration: ts.Node): boolean {
  * it a value, as a for-of does; or when the name may take its value from
  * something not written as a literal, from a part of a literal whose key or
  * position is not known, or from a literal that gives it no value a pattern
- * reads, as a get accessor does. A value not written here, as a library's
- * call is not, and what a parameter's caller gives, are read by their
- * declared type alone, as `namedValues` reads them.
+ * reads, as a get accessor does, or when what a parameter is destructured
+ * from is unread, as `passedValues` reads it. A value not written here, as
+ * a library's call is not, is read by its declared type alone, as
+ * `namedValues` reads it.
  */
 function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.BindingElement, checker: ts.TypeChecker,
   seen: Set<ts.Node>): DeclaredValue[] {
   const name = declaration.name;
   if (!ts.isIdentifier(name)) return [value];
   const root = ts.walkUpBindingElementsAndPatterns(declaration);
-  const given = root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen);
+  const passed = ts.isParameter(root) ? passedValues(root, checker, seen)
+    : { values: root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen), unread: false };
+  const given = passed.values;
   const literals = given.filter((one): one is ts.Expression => ts.isExpression(one));
   // Each default is read once, whatever the value destructured is.
   const readings = literals.length === 0 ? [readBinding(root.name, undefined, checker)] : literals.map((literal) => readBinding(root.name, literal, checker));
@@ -2888,8 +2969,121 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   const unknown = readings.some((reading) => [...reading.opaque, ...reading.unknown.map((position) => position.name)].includes(name));
   const untaken = taken.length === 0 && literals.some((literal) => ts.isObjectLiteralExpression(literal) || ts.isArrayLiteralExpression(literal));
   const later = root.initializer === undefined && isGivenLater(declaration);
-  const unread = later || unknown || untaken || given.some((one) => !ts.isExpression(one));
+  const unread = passed.unread || later || unknown || untaken || given.some((one) => !ts.isExpression(one));
   return unread ? [...taken, value] : taken;
+}
+
+/** What a parameter is given, as `passedValues` reads it. */
+interface Passed {
+  /** Each value its default, or an argument a call passes it, may be. */
+  values: DeclaredValue[];
+  /** Whether a caller may give it a value no rule reads. */
+  unread: boolean;
+}
+
+/**
+ * What a parameter is given: each value its default may be, and each value
+ * of the argument at its position in every call of its function that
+ * `callsOf` finds, as `declaredValues` reads them. What a caller gives is
+ * read where the caller writes it, so a wrapper handed to a function is
+ * read as the wrapper it is. Where no rule can find every call, as for a
+ * function that no code here calls, one handed on as a value, a method,
+ * or a callback given to a library, or where a spread at or before its
+ * position hides which argument it takes, or where it is a rest parameter
+ * or `this`, a caller may give it anything its type allows, so it is unread.
+ */
+function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
+  const values = parameter.initializer === undefined ? [] : declaredValues(parameter.initializer, checker, seen);
+  const owner = parameter.parent;
+  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
+  const calls = at < 0 || parameter.dotDotDotToken !== undefined ? undefined : callsOf(owner, checker);
+  if (calls === undefined) return { values, unread: true };
+  let unread = false;
+  for (const call of calls) {
+    const given = call.arguments ?? [];
+    const argument = given[at];
+    if (given.slice(0, at + 1).some(ts.isSpreadElement)) {
+      unread = true;
+    } else if (argument !== undefined) {
+      values.push(...declaredValues(argument, checker, seen));
+    }
+  }
+  return { values, unread };
+}
+
+/** The calls found of each function, for each checker, or undefined where they cannot all be found. */
+const CALLS = new WeakMap<ts.TypeChecker, Map<ts.Node, ReadonlyArray<ts.CallExpression | ts.NewExpression> | undefined>>();
+
+/**
+ * Every call of a function, in each file of its program, when every one can
+ * be found: each use of the name it is called by, as `usesOf` finds them,
+ * through an import alias, is a call or `new` of it, through any wrapper
+ * `heldValue` looks through, or an import, an export, or a `typeof`, none of
+ * which calls it. The name is that of a function declaration, of the class
+ * whose constructor it is, or of the variable an arrow or function
+ * expression is the value of.
+ *
+ * @returns The calls; undefined when the function has no such name, as a
+ *     method or a callback has not, or a use of it hands it on as a value,
+ *     as `f.call` or `[f]` does, or nothing here calls it, so that what a
+ *     caller gives cannot be read.
+ */
+function callsOf(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): ReadonlyArray<ts.CallExpression | ts.NewExpression> | undefined {
+  const known = CALLS.get(checker) ?? new Map<ts.Node, ReadonlyArray<ts.CallExpression | ts.NewExpression> | undefined>();
+  CALLS.set(checker, known);
+  if (known.has(owner)) return known.get(owner);
+  const named = calledByName(owner);
+  const calls: Array<ts.CallExpression | ts.NewExpression> = [];
+  let readable = named !== undefined;
+  for (const use of named === undefined ? [] : usesOf(named, checker)) {
+    if (use === ts.getNameOfDeclaration(named) || isAliasOrType(use)) continue;
+    const call = calledAt(use);
+    if (call === undefined) {
+      readable = false;
+    } else {
+      calls.push(call);
+    }
+  }
+  const found = readable && calls.length > 0 ? calls : undefined;
+  known.set(owner, found);
+  return found;
+}
+
+/**
+ * The declaration whose name a function is called by: a function
+ * declaration itself, the class declaration whose constructor it is, or the
+ * variable an arrow or function expression is the value of, through any
+ * wrapper `heldValue` looks through.
+ *
+ * @returns The declaration, or undefined for any other function, such as a
+ *     method or a callback handed to a call.
+ */
+function calledByName(owner: ts.SignatureDeclaration): ts.FunctionDeclaration | ts.ClassDeclaration | ts.VariableDeclaration | undefined {
+  if (ts.isFunctionDeclaration(owner)) return owner.name === undefined ? undefined : owner;
+  if (ts.isConstructorDeclaration(owner)) return ts.isClassDeclaration(owner.parent) && owner.parent.name !== undefined ? owner.parent : undefined;
+  if (!ts.isArrowFunction(owner) && !ts.isFunctionExpression(owner)) return undefined;
+  const outer = outerValue(owner);
+  const holder = outer.parent;
+  return ts.isVariableDeclaration(holder) && holder.initializer === outer && ts.isIdentifier(holder.name) ? holder : undefined;
+}
+
+/** Whether a use of a name imports it, exports it, or reads its type with `typeof`, none of which calls it or hands it on. */
+function isAliasOrType(use: ts.Node): boolean {
+  const parent = use.parent;
+  if (ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent)
+    || ts.isImportEqualsDeclaration(parent) || ts.isExportAssignment(parent)) return true;
+  let named: ts.Node = use;
+  while (ts.isQualifiedName(named.parent)) {
+    named = named.parent;
+  }
+  return ts.isTypeQueryNode(named.parent);
+}
+
+/** The call, or `new`, a use of a name is the function of, through a namespace and any wrapper `heldValue` looks through, or undefined when it is not one. */
+function calledAt(use: ts.Node): ts.CallExpression | ts.NewExpression | undefined {
+  const outer = outerValue(memberRead(use));
+  const parent = outer.parent;
+  return (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === outer ? parent : undefined;
 }
 
 /**
