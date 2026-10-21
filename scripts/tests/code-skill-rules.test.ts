@@ -185,7 +185,12 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    anywhere else, and a call of such a name runs each function it may
 //    hold, whatever type the compiler took from its first value. One that
 //    a destructuring, a for-in or a for-of assigns, or that is declared
-//    with no value that an assignment gives it, cannot be followed. A function
+//    with no value that an assignment gives it, cannot be followed. A
+//    for-of reads the items of the array literal a collection is made
+//    from, as `new Set([...])` holds them, and a name whose array, set or
+//    map code may change through a member, as `push`, `add` and
+//    `list[0] =` do, cannot be followed; a method the library's
+//    ReadonlyArray, ReadonlySet or ReadonlyMap declares only reads. A function
 //    written here that cannot be followed may give back or hold any
 //    argument. A body that passes an argument on, by any use but
 //    calling it, or a constructor whose parameter is written as a property,
@@ -1899,6 +1904,41 @@ describe("the code skill's rules for this repository's own code", () => {
     }
   });
 
+  test("a collection is read through the array it is made from, and is unread where code may change it through a member", () => {
+    const helper = "(): number => 1";
+    // `boxing` gives back what it is given. `consuming` calls it, and returns a new object holding a number.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function consuming(reader: () => number): object {\n  return { value: reader() };\n}\n";
+    const making = "function make(): Set<Boxer> {\n  return new Set([consuming]);\n}\n";
+    // Each pair is a collection holding an identity wrapper, or changed to hold one, then the same collection holding consumers alone.
+    const cases: Array<[before: string, iterated: string, found: string[]]> = [
+      ["", "new Set([consuming, boxing])", ["probe.ts / main / helper"]],
+      ["", "new Set([consuming])", []],
+      ["const made = new Set([consuming]);\n  made.add(boxing);", "made", ["probe.ts / main / helper"]],
+      ["const made = new Set([consuming]);\n  void made.has(consuming);", "made", []],
+      ["const list = [consuming];\n  list.push(boxing);", "list", ["probe.ts / main / helper"]],
+      ["const list = [consuming];\n  list[0] = boxing;", "list", ["probe.ts / main / helper"]],
+      ["const list = [consuming];\n  void list.map((each) => each);", "list", []],
+      ["const list = [consuming];\n  list[\"push\"](boxing);", "list", ["probe.ts / main / helper"]],
+      ["", "make()", []],
+    ];
+    for (const [before, iterated, found] of cases) {
+      const text = `export function main(): number {\n  ${before}\n  for (const box of ${iterated}) {\n    const helper = box(${helper});\n    void helper;\n  }\n  return 0;\n}\n${wrappers}${making}`;
+      expect(boundHelpers("probe.ts", text), before + iterated).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, before + iterated).toEqual([]);
+    }
+    // The throws check reads a function a changed collection gives back with the comment on the name it is bound to.
+    const thrower = "(): never => {\n      throw new RangeError(\"size\");\n    }";
+    for (const [before, problems] of [
+      ["const list = [consuming];\n  list.push(boxing);", ["probe.ts:6: the comment on helper does not say what it throws"]],
+      ["const list = [consuming];\n  void list.length;", []],
+    ] as Array<[before: string, problems: string[]]>) {
+      const text = `export function main(): object {\n  ${before}\n  for (const box of list) {\n    /** Reads a size. */\n    const helper = box(${thrower});\n    return helper;\n  }\n  return {};\n}\n${wrappers}`;
+      expect(undocumentedThrows("probe.ts", text).problems, before).toEqual(problems);
+    }
+  });
+
   test("a top-level name whose type cannot be a function is not the first function, whatever made its value unknown", () => {
     const main = "\n/** Reads the size. */\nexport function main(): number {\n  return 1;\n}\n";
     for (const statement of [
@@ -2774,7 +2814,11 @@ function assignedValues(value: ts.Identifier | ts.PropertyAccessExpression, decl
 interface Assignments {
   /** Each assignment written as `name = value`, or with a compound operator, whose target is the declaration. */
   assignments: ts.BinaryExpression[];
-  /** Whether a destructuring, a for-in or a for-of assigns it as well, which no rule reads. */
+  /**
+   * Whether a destructuring, a for-in or a for-of assigns it as well, or
+   * code may change what it holds through a member, as `list.push(boxing)`
+   * and `list[0] = boxing` do, which no rule reads.
+   */
   unread: boolean;
 }
 
@@ -2786,8 +2830,10 @@ const ASSIGNMENTS = new WeakMap<ts.TypeChecker, Map<ts.Node, Assignments>>();
  * declaration: a name, or a property read by name or by a key written as a
  * literal, as `this.box = boxing` and `holder["box"] = boxing` are, through
  * any wrapper `heldValue` looks through, that `usesOf` finds refers to it.
- * One that a destructuring or a for-in or for-of makes is noted as unread.
- * `++` and `--` give a number, so they are not read.
+ * One that a destructuring or a for-in or for-of makes is noted as unread,
+ * and so is a use that may change what the declaration holds through a
+ * member, as `changesThrough` reads it. `++` and `--` give a number, so they
+ * are not read.
  */
 function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): Assignments {
   const known = ASSIGNMENTS.get(checker) ?? new Map<ts.Node, Assignments>();
@@ -2807,9 +2853,83 @@ function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): As
       }
     } else if (isDestructuringTarget(target)) {
       found.unread = true;
+    } else if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === target && changesThrough(parent, checker)) {
+      found.unread = true;
     }
   }
   return found;
+}
+
+/**
+ * Whether a member of a collection a rule reads through, an array, a set or
+ * a map, may change what the collection holds: it is assigned, deleted,
+ * counted up or down, or destructured into, or it is a method called that
+ * `isReadingMember` does not find only reads. Any other value's properties
+ * change only by being assigned, which `assignmentsOf` reads for each
+ * property.
+ */
+function changesThrough(member: ts.PropertyAccessExpression | ts.ElementAccessExpression, checker: ts.TypeChecker): boolean {
+  const receiver = checker.getNonNullableType(checker.getTypeAtLocation(member.expression));
+  if (!(receiver.isUnion() ? receiver.types : [receiver]).some((part) => part.flags & ts.TypeFlags.Object && readOnlyForm(part, checker) !== undefined)) return false;
+  const outer = outerValue(member);
+  const above = outer.parent;
+  if (ts.isBinaryExpression(above) && isAssignmentOperator(above.operatorToken.kind) && above.left === outer) return true;
+  if (ts.isDeleteExpression(above) || isDestructuringTarget(outer)) return true;
+  if ((ts.isPrefixUnaryExpression(above) || ts.isPostfixUnaryExpression(above))
+    && (above.operator === ts.SyntaxKind.PlusPlusToken || above.operator === ts.SyntaxKind.MinusMinusToken)) return true;
+  return ts.isCallExpression(above) && above.expression === outer && !isReadingMember(member, checker);
+}
+
+/**
+ * Whether a member called on a value only reads the value, by its declared
+ * type. The collections a rule reads through are arrays, sets and maps: a
+ * method of one reads it when the library's read-only form of the
+ * collection, ReadonlyArray, ReadonlySet or ReadonlyMap, declares a member
+ * of that name, as it declares `map` and not `push`, and an item of an array
+ * read by a number, as `list[0]` is, is a value it holds, not a method. A
+ * method named by any other key not written as a literal may be any method,
+ * so it may change the collection. Any other value's properties change only
+ * by being assigned, which `assignmentsOf` reads, and a primitive cannot
+ * change.
+ */
+function isReadingMember(member: ts.PropertyAccessExpression | ts.ElementAccessExpression, checker: ts.TypeChecker): boolean {
+  const key = ts.isPropertyAccessExpression(member) ? member.name : member.argumentExpression;
+  const receiver = checker.getNonNullableType(checker.getTypeAtLocation(member.expression));
+  return (receiver.isUnion() ? receiver.types : [receiver]).every((part) => {
+    const counterpart = part.flags & ts.TypeFlags.Object ? readOnlyForm(part, checker) : undefined;
+    if (counterpart === undefined) return true;
+    if (ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteralLike(key)) return readOnlyMembers(counterpart, checker, member).has(key.text);
+    return counterpart === "ReadonlyArray" && (checker.getTypeAtLocation(key).flags & ts.TypeFlags.NumberLike) !== 0;
+  });
+}
+
+/** The name of the library's read-only form of a collection type: ReadonlyArray for an array or tuple, ReadonlySet for a set, ReadonlyMap for a map; undefined for any other type. */
+function readOnlyForm(type: ts.Type, checker: ts.TypeChecker): string | undefined {
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return "ReadonlyArray";
+  const name = type.getSymbol()?.name;
+  if (name === "Set" || name === "ReadonlySet") return "ReadonlySet";
+  return name === "Map" || name === "ReadonlyMap" ? "ReadonlyMap" : undefined;
+}
+
+/** The members of each of the library's read-only collection interfaces, by name, read once for each checker. */
+const READ_ONLY_MEMBERS = new WeakMap<ts.TypeChecker, Map<string, ReadonlySet<string>>>();
+
+/**
+ * The names of the members one of the library's interfaces declares, as the
+ * checker's own libraries declare it, or none when they do not declare it,
+ * so that every method of the collection may change it.
+ *
+ * @param location A node of a file the checker read, where the global interfaces are in scope.
+ */
+function readOnlyMembers(name: string, checker: ts.TypeChecker, location: ts.Node): ReadonlySet<string> {
+  const known = READ_ONLY_MEMBERS.get(checker) ?? new Map<string, ReadonlySet<string>>();
+  READ_ONLY_MEMBERS.set(checker, known);
+  const kept = known.get(name);
+  if (kept !== undefined) return kept;
+  const declared = checker.getSymbolsInScope(location, ts.SymbolFlags.Interface).find((symbol) => symbol.name === name);
+  const members = new Set(declared === undefined ? [] : checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(declared)).map((property) => property.name));
+  known.set(name, members);
+  return members;
 }
 
 /** The property access, or element access, that reads a name or key, or the name itself when it reads no member. */
@@ -2936,16 +3056,22 @@ function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefin
 
 /**
  * What a for-of name is given: each item of each array literal the value it
- * iterates may be, as `declaredValues` reads that value. A value not written
- * here is read by its declared type alone. The name read is
- * given back as well, as unread, for a spread among the items, or a value
- * iterated that is not an array literal, such as a set, since no rule reads
- * what those give.
+ * iterates may be, as `declaredValues` reads that value. A call or `new` is
+ * read through each array literal `callValues` finds it holds, as a set
+ * holds the items of the array it is made from; a name that holds the
+ * collection, and that code may add to through a member, is unread already,
+ * as `assignmentsOf` finds. A value not written here is read by its
+ * declared type alone. The name read is given back as well, as unread, for
+ * a spread among the items, a call that holds anything but array literals,
+ * or any other value iterated that is not an array literal, since no rule
+ * reads what those give.
  */
 function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, iterated: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   return declaredValues(iterated, checker, seen).flatMap((one): DeclaredValue[] => {
-    if (!ts.isArrayLiteralExpression(one)) return [value];
-    return one.elements.flatMap((item) => ts.isSpreadElement(item) ? [value] : declaredValues(item, checker, seen));
+    const held = ts.isCallExpression(one) || ts.isNewExpression(one) ? callValues(one, checker, NOTHING_FOLLOWED).held.flatMap((each) => declaredValues(each, checker, seen)) : [];
+    const lists = ts.isArrayLiteralExpression(one) ? [one] : held.filter(ts.isArrayLiteralExpression);
+    if (lists.length === 0 || lists.length < held.length) return [value];
+    return lists.flatMap((list) => list.elements.flatMap((item) => ts.isSpreadElement(item) ? [value] : declaredValues(item, checker, seen)));
   });
 }
 
