@@ -647,6 +647,28 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 1, problems: ["probe.ts:4: the comment on read does not say what it throws"] });
   });
 
+  test("an assignment in parentheses, or under a type wrapper, that is a statement of its own is read as the bare statement is", () => {
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    const said = "/** Reads a size. @throws A `RangeError` always. */";
+    for (const wrapped of [`(box.read = ${thrower});`, `((box.read = ${thrower}));`, `(box["read"] = ${thrower});`, `(box.read = ${thrower}) satisfies unknown;`]) {
+      const text = `export function main(): void {\n  const box: { read?: () => number } = {};\n  COMMENT\n  ${wrapped}\n}\n`;
+      expect(unplacedFunctions("probe.ts", text.replace("COMMENT", said)).problems, wrapped).toEqual([]);
+      expect(undocumentedThrows("probe.ts", text.replace("COMMENT", said)), wrapped).toEqual({ read: 1, problems: [] });
+      expect(undocumentedThrows("probe.ts", text.replace("COMMENT", "/** Reads a size. */")), wrapped)
+        .toEqual({ read: 1, problems: ["probe.ts:4: the comment on read does not say what it throws"] });
+      expect(boundHelpers("probe.ts", text.replace("COMMENT", said)), wrapped).toEqual([]);
+    }
+    // A name assigned inside a function is a nested helper however the statement is wrapped.
+    expect(boundHelpers("probe.ts", "export function main(): number {\n  let helper: () => number;\n  (helper = (): number => 1);\n  return helper();\n}\n"))
+      .toEqual(["probe.ts / main / helper"]);
+    // An assignment whose value is used as well is still not a statement of its own.
+    for (const used of ["const kept = (box.read = (): number => 1);", "consume((box.read = (): number => 1));"]) {
+      const text = `export function main(): void {\n  const box: { read?: () => number } = {};\n  ${used}\n}\ndeclare function consume(value: unknown): void;\n`;
+      expect(unplacedFunctions("probe.ts", text).problems, used)
+        .toEqual(["probe.ts:3: an arrow function cannot be placed: it is assigned by a destructuring, or by an assignment whose value is used as well, a place the allowed list does not name"]);
+    }
+  });
+
   test("a documented function held in an array, that throws and does not say so, is reported, and one that says so is accepted", () => {
     const missing = ["probe.ts:3: the comment on an array item does not say what it throws"];
     for (const item of ["(): never => {", "((): never => {", "function (): never {"]) {
@@ -3570,10 +3592,11 @@ function documentationOf(climbed: Climb, source: ts.SourceFile): Documentation |
     if (node === climbed.holder) break;
   }
   if (climbed.holder === undefined && ts.isPropertyDeclaration(climbed.sink) && hasJsDoc(climbed.sink)) return { commented: climbed.sink, name };
-  // A statement that assigns the function documents it, as the compiler reads that comment for the function.
+  // A statement that assigns the function documents it, as the compiler reads that comment for the function, whatever wraps the assignment.
   const sink = climbed.sink;
-  if (climbed.holder === undefined && ts.isBinaryExpression(sink) && ts.isExpressionStatement(sink.parent) && hasJsDoc(sink.parent)) {
-    return { commented: sink.parent, name: assignedTargetName(sink.left, source) };
+  const assigning = ts.isBinaryExpression(sink) ? assigningStatement(sink) : undefined;
+  if (climbed.holder === undefined && ts.isBinaryExpression(sink) && assigning !== undefined && hasJsDoc(assigning)) {
+    return { commented: assigning, name: assignedTargetName(sink.left, source) };
   }
   const place = climbed.place;
   // A parameter's own comment documents the function it is given by default, or that a name it destructures takes.
@@ -3983,7 +4006,7 @@ function declaredPlace(declaration: ts.VariableDeclaration | ts.ParameterDeclara
  */
 function assignedPlace(assignment: ts.BinaryExpression, direct: boolean): Place {
   const target = heldValue(assignment.left);
-  const alone = ts.isExpressionStatement(assignment.parent);
+  const alone = assigningStatement(assignment) !== undefined;
   if (alone && target !== undefined && (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target))) return position("stored on a property");
   if (alone && target !== undefined && ts.isIdentifier(target)) {
     if (!direct) return position("held in a value bound to a name");
@@ -3991,6 +4014,20 @@ function assignedPlace(assignment: ts.BinaryExpression, direct: boolean): Place 
     return unplaced(`it is assigned to ${target.text} at the top level of the module, which the entry-point rule does not read`);
   }
   return unplaced("it is assigned by a destructuring, or by an assignment whose value is used as well, a place the allowed list does not name");
+}
+
+/**
+ * The statement an assignment is on its own, through any wrapper `heldValue`
+ * looks through, as in `(box.read = reader);`, none of which uses its value.
+ *
+ * @returns The statement, or undefined when the assignment's value is used.
+ */
+function assigningStatement(assignment: ts.BinaryExpression): ts.ExpressionStatement | undefined {
+  let outer: ts.Node = assignment;
+  while (ts.isExpression(outer.parent) && heldValue(outer.parent) === assignment) {
+    outer = outer.parent;
+  }
+  return ts.isExpressionStatement(outer.parent) ? outer.parent : undefined;
 }
 
 /**
