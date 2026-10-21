@@ -1939,6 +1939,103 @@ describe("the code skill's rules for this repository's own code", () => {
     }
   });
 
+  test("a place that may hold a function is read through every route that changes it, by whatever name or function it is reached", () => {
+    const helper = "(): number => 1";
+    // `boxing` gives back what it is given. Each `consuming` calls it, and returns a new object holding a number.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function consuming(reader: () => number): object {\n  return { value: reader() };\n}\n"
+      + "function consumingNext(reader: () => number): object {\n  return { value: reader() + 1 };\n}\n";
+    const holder = "const holder = { box: consuming as Boxer };";
+    const list = "const list = [consuming];";
+    const reported = ["probe.ts / main / helper"];
+    // Each pair is a place changed to hold an identity wrapper, then the same place changed to hold a consumer, or changed in no way that holds one.
+    const called: Array<[before: string, call: string, after: string, found: string[]]> = [
+      [`${holder}\n  Object.assign(holder, { box: boxing });`, "holder.box", "", reported],
+      [`${holder}\n  Object.assign(holder, { box: consumingNext });`, "holder.box", "", []],
+      [`${holder}\n  Object.assign(holder, { size: 1 });`, "holder.box", "", []],
+      [`${holder}\n  holder[key] = boxing;`, "holder.box", "", reported],
+      [`${holder}\n  holder[key] = consumingNext;`, "holder.box", "", []],
+      ["const holder: Record<string, Boxer> = { box: consuming };\n  holder[name] = boxing;", "holder.box!", "", reported],
+      ["const holder: Record<string, Boxer> = { box: consuming };\n  holder[name] = consumingNext;", "holder.box!", "", []],
+      ["const holder: Record<string, Boxer> = { box: boxing };", "holder.box!", "", reported],
+      ["const holder: Record<string, Boxer> = { box: consuming };", "holder.box!", "", []],
+      [`${holder}\n  Reflect.set(holder, "box", boxing);`, "holder.box", "", reported],
+      [`${holder}\n  Reflect.set(holder, "box", consumingNext);`, "holder.box", "", []],
+      [`${holder}\n  Object.defineProperty(holder, "box", { value: boxing });`, "holder.box", "", reported],
+      [`${holder}\n  Object.defineProperty(holder, "box", { value: consumingNext });`, "holder.box", "", []],
+      [`${holder}\n  const alias: { box: Boxer } = holder;\n  alias.box = boxing;`, "holder.box", "", reported],
+      [`${holder}\n  const alias: { box: Boxer } = holder;\n  alias.box = consumingNext;`, "holder.box", "", []],
+      [`${holder}\n  give(holder);`, "holder.box", "function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n", reported],
+      [`${holder}\n  give(holder);`, "holder.box", "function give(target: { box: Boxer }): void {\n  target.box = consumingNext;\n}\n", []],
+      // A function whose every call cannot be found changes each place its parameter's type allows.
+      [`${holder}\n  give(holder);`, "holder.box", "export function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n", reported],
+      [`${holder}\n  give(holder);`, "holder.box", "export function give(target: { box: Boxer }): void {\n  target.box = consumingNext;\n}\n", []],
+      ["const made = new Holder();\n  made.set(key);", "made.box", "class Holder {\n  box: Boxer = consuming;\n  set(key: \"box\"): void {\n    this[key] = boxing;\n  }\n}\n", reported],
+      ["const made = new Holder();\n  made.set(key);", "made.box", "class Holder {\n  box: Boxer = consuming;\n  set(key: \"box\"): void {\n    this[key] = consumingNext;\n  }\n}\n", []],
+      ["", "new Holder().box", "class Holder {\n  box: Boxer = consuming;\n  constructor() {\n    Object.assign(this, { box: boxing });\n  }\n}\n", reported],
+      ["", "new Holder().box", "class Holder {\n  box: Boxer = consuming;\n  constructor() {\n    Object.assign(this, { box: consumingNext });\n  }\n}\n", []],
+      ["shared.box = boxing;", "shared.box", "const shared = {\n  box(reader: () => number): object {\n    return { value: reader() };\n  },\n};\n", reported],
+      ["shared.box = consumingNext;", "shared.box", "const shared = {\n  box(reader: () => number): object {\n    return { value: reader() };\n  },\n};\n", []],
+      ["const map = new Map<string, Boxer>([[\"k\", consuming]]);\n  map.set(\"k\", boxing);", "map.get(\"k\")!", "", reported],
+      ["const map = new Map<string, Boxer>([[\"k\", consuming]]);\n  map.set(\"k\", consumingNext);", "map.get(\"k\")!", "", []],
+      ["const map = new Map<string, Boxer>([[\"k\", boxing]]);", "map.get(\"k\")!", "", reported],
+      ["const map = new Map<string, Boxer>([[\"k\", consuming]]);", "map.get(\"k\")!", "", []],
+      ["const boxes: Boxer[] = [boxing];", "boxes.at(0)!", "", reported],
+      ["const boxes: Boxer[] = [consuming];", "boxes.at(0)!", "", []],
+      ["const holder = { box: boxing };", "(Reflect.get(holder, \"box\") as Boxer)", "", reported],
+      ["const holder = { box: consuming };", "(Reflect.get(holder, \"box\") as Boxer)", "", []],
+    ];
+    for (const [before, call, after, found] of called) {
+      const text = `export function main(key: "box", name: string): number {\n  ${before}\n  const helper = ${call}(${helper});\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+      expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, before + call + after).toEqual([]);
+    }
+    const iterated: Array<[before: string, iterated: string, after: string, found: string[]]> = [
+      [`${list}\n  const alias = list;\n  alias.push(boxing);`, "list", "", reported],
+      [`${list}\n  const alias = list;\n  alias.push(consumingNext);`, "list", "", []],
+      [`${list}\n  const alias = list;\n  void alias.length;`, "list", "", []],
+      ["const made = new Set([consuming]);\n  const alias = made;\n  alias.add(boxing);", "made", "", reported],
+      ["const made = new Set([consuming]);\n  const alias = made;\n  alias.add(consumingNext);", "made", "", []],
+      [`${list}\n  addTo(list);`, "list", "function addTo(list: Boxer[]): void {\n  list.push(boxing);\n}\n", reported],
+      [`${list}\n  addTo(list);`, "list", "function addTo(list: Boxer[]): void {\n  list.push(consumingNext);\n}\n", []],
+      [`${list}\n  void count(list);`, "list", "function count(list: Boxer[]): number {\n  return list.length;\n}\n", []],
+      [`${list}\n  addTo(list);`, "list", "export function addTo(list: Boxer[]): void {\n  list.push(boxing);\n}\n", reported],
+      [`${list}\n  addTo(list);`, "list", "export function addTo(list: Boxer[]): void {\n  list.push(consumingNext);\n}\n", []],
+      [`${list}\n  Array.prototype.push.call(list, boxing);`, "list", "", reported],
+      [`${list}\n  Array.prototype.push.call(list, consumingNext);`, "list", "", []],
+      [`${list}\n  const lists = [list];\n  for (const inner of lists) inner.push(boxing);`, "list", "", reported],
+      [`${list}\n  const lists = [list];\n  for (const inner of lists) inner.push(consumingNext);`, "list", "", []],
+      [`${list}\n  grow(hand(list));`, "list", "function hand(list: Boxer[]): Boxer[] {\n  return list;\n}\nfunction grow(list: Boxer[]): void {\n  list.push(boxing);\n}\n", reported],
+      [`${list}\n  grow(hand(list));`, "list", "function hand(list: Boxer[]): Boxer[] {\n  return list;\n}\nfunction grow(list: Boxer[]): void {\n  list.push(consumingNext);\n}\n", []],
+      [`${holder}\n  holder[key] = boxing;`, "Object.values(holder)", "", reported],
+      [`${holder}\n  holder[key] = consumingNext;`, "Object.values(holder)", "", []],
+      // A collection a member call changes holds what the call adds, and nothing else.
+      [`${list}\n  list.push(consumingNext);`, "list", "", []],
+      ["const made = new Set([consuming]);\n  made.add(consumingNext);", "made", "", []],
+      ["", "[boxing].slice()", "", reported],
+      ["", "[consuming].slice()", "", []],
+      ["const map = new Map<string, Boxer>([[\"k\", consuming]]);\n  map.set(\"k\", boxing);", "map.values()", "", reported],
+      ["const map = new Map<string, Boxer>([[\"k\", consuming]]);\n  map.set(\"k\", consumingNext);", "map.values()", "", []],
+    ];
+    for (const [before, collection, after, found] of iterated) {
+      const text = `export function main(key: "box", name: string): number {\n  ${before}\n  for (const box of ${collection}) {\n    const helper = box(${helper});\n    void helper;\n  }\n  return 0;\n}\n${wrappers}${after}`;
+      expect(boundHelpers("probe.ts", text), before + collection + after).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, before + collection + after).toEqual([]);
+    }
+    // The throws check reads a function such a route gives back with the comment on the name it is bound to.
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    for (const [before, problems] of [
+      [`${holder}\n  holder[key] = boxing;`, ["probe.ts:5: the comment on helper does not say what it throws"]],
+      [`${holder}\n  holder[key] = consumingNext;`, []],
+      [`${holder}\n  Object.assign(holder, { box: boxing });`, ["probe.ts:5: the comment on helper does not say what it throws"]],
+      [`${holder}\n  Object.assign(holder, { box: consumingNext });`, []],
+    ] as Array<[before: string, problems: string[]]>) {
+      const text = `export function main(key: "box"): object {\n  ${before}\n  /** Reads a size. */\n  const helper = holder.box(${thrower});\n  return helper;\n}\n${wrappers}`;
+      expect(undocumentedThrows("probe.ts", text).problems, before).toEqual(problems);
+    }
+  });
+
   test("a top-level name whose type cannot be a function is not the first function, whatever made its value unknown", () => {
     const main = "\n/** Reads the size. */\nexport function main(): number {\n  return 1;\n}\n";
     for (const statement of [
@@ -2536,7 +2633,8 @@ const CALLEES_BEING_READ = new Set<ts.Node>();
 /**
  * The declarations whose bodies may run when a call resolves to a signature:
  * the one `implementationOf` finds, when the callee names that function
- * itself; or each function the callee holds, as `heldFunctions` finds it,
+ * itself and it is no method, which code may replace by writing to its
+ * key; or each function the callee holds, as `heldFunctions` finds it,
  * when the callee is a name, a member or a call whose value is given
  * elsewhere, as a variable, a field or a parameter is. A type annotation
  * on a function value describes the function, and a call of the annotated
@@ -2555,7 +2653,7 @@ function implementationsOf(call: ts.CallExpression | ts.NewExpression, callee: t
   checker: ts.TypeChecker): Implementations {
   const own = implementationOf(declaration);
   const resolved: Implementations = own === undefined ? NOTHING_RUNS : { functions: [own], unread: false };
-  if (own !== undefined && namesFunction(callee, declaration, checker)) return resolved;
+  if (own !== undefined && !ts.isMethodDeclaration(own) && namesFunction(callee, declaration, checker)) return resolved;
   if (CALLEES_BEING_READ.has(call)) return resolved;
   CALLEES_BEING_READ.add(call);
   try {
@@ -2659,9 +2757,10 @@ function declaredValues(expression: ts.Expression, checker: ts.TypeChecker, seen
  * value, as `declaredValues` reads it, that a function that runs returns,
  * as `make()` is the function `make` returns. `f.bind(self)` is what `f` is.
  *
- * @returns The values; none when the function that runs is not written
- *     here, as for a declared or library function, whose declared type
- *     alone describes its value; and the call itself as well when a function
+ * @returns The values; for a library function, what `libraryValues` finds
+ *     it gives back of what it is handed; none when the function that runs
+ *     is declared with no body here, whose declared type alone describes
+ *     its value; and the call itself as well when a function
  *     that runs is written here but cannot be followed, or `bind` keeps
  *     arguments for the function it makes.
  */
@@ -2670,6 +2769,7 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
   if (invocation.binds) return invocation.unread.length > 1 ? [call] : declaredValues(invocation.callee, checker, seen);
   if (invocation.declaration === undefined) return [call];
   const implementations = implementationsOf(call, invocation.callee, invocation.declaration, checker);
+  if (implementations.functions.length === 0 && !implementations.unread && invocation.declaration.getSourceFile().isDeclarationFile) return libraryValues(call, checker, seen);
   const values = implementations.functions.flatMap((run) => {
     const body = bodyOf(run);
     if (body === undefined || seen.has(body)) return [];
@@ -2681,8 +2781,10 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
 
 /**
  * What an item read by index is given where it is written: the item at that
- * position of each array literal, or what the key gives in each object
- * literal, as `keyedValues` reads it, that the value read from may be.
+ * position of each array literal, as `itemSource` reads it, what the key
+ * gives in each object literal, as `keyedValues` reads it, or each value
+ * `libraryContents` finds that a call of a library function holds, whose
+ * type fits the item's, that the value read from may be.
  *
  * @returns The values; none when the value read from is not written here;
  *     and the access itself as well when the key cannot be known, or a value
@@ -2696,6 +2798,11 @@ function indexedValues(access: ts.ElementAccessExpression, checker: ts.TypeCheck
   let unread = false;
   const found = declaredValues(access.expression, checker, seen).flatMap((literal): DeclaredValue[] => {
     if (ts.isObjectLiteralExpression(literal)) return keyedValues(literal, key, access, checker, seen);
+    if (isLibraryCall(literal, checker)) {
+      const held = libraryContents(literal, checker.getTypeAtLocation(access), checker, seen);
+      if (held.unread !== null) unread = true;
+      return readContents({ values: held.values, unread: null }, access, checker, seen);
+    }
     if (!ts.isArrayLiteralExpression(literal) || !isIndexKey(key)) {
       unread = true;
       return [];
@@ -2737,8 +2844,11 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * in each object literal the value it is read from may be, as `keyedValues`
  * reads it, and the property read as well, as unread, for each value it is
  * read from that is not one. Each of these that can be assigned gives as
- * well what every assignment to it gives, as `assignedValues` reads them.
- * Where no rule can read all a name declared here may be given, the name
+ * well what every assignment to it gives, as `assignedValues` reads them,
+ * and a member of an object literal or a class, a method included, what
+ * code writes to its key, as `memberWrites` reads it. A member no
+ * declaration names, as one an index signature gives, is read as
+ * `unnamedMemberValues` reads it. Where no rule can read all a name declared here may be given, the name
  * read is given back as well, as unread: for a variable or class field
  * declared with no value that no assignment gives one, where
  * `isGivenLater` finds code here may give it one, as Object.assign does;
@@ -2753,31 +2863,33 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
   const found = ts.isIdentifier(value) ? referencedSymbol(value, checker) : checker.getSymbolAtLocation(value.name);
   const symbol = found !== undefined && (found.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(found) : found;
   const declarations = symbol?.declarations ?? [];
+  if (declarations.length === 0 && ts.isPropertyAccessExpression(value)) return unnamedMemberValues(value, checker, seen);
   if (declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)) return [];
   return declarations.flatMap((declaration): DeclaredValue[] => {
     if (seen.has(declaration)) return [];
     seen.add(declaration);
     if (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) {
       const run = implementationOf(declaration);
-      return run === undefined ? [] : [run];
+      return [...run === undefined ? [] : [run], ...memberWrites(value, declaration, checker, seen)];
     }
     if (ts.isClassLike(declaration)) return [declaration];
     if (ts.isGetAccessorDeclaration(declaration)) return returnedExpressions(declaration).flatMap((returned) => declaredValues(returned, checker, seen));
     // A function expression's own name gives the function.
     if (ts.isFunctionExpression(declaration)) return [declaration];
     const assigned = assignedValues(value, declaration, checker, seen);
+    const written = memberWrites(value, declaration, checker, seen);
     if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
-      if (declaration.initializer !== undefined) return [...declaredValues(declaration.initializer, checker, seen), ...assigned.values];
+      if (declaration.initializer !== undefined) return [...declaredValues(declaration.initializer, checker, seen), ...assigned.values, ...written];
       const loop = declaration.parent.parent;
       if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop.expression, checker, seen), ...assigned.values];
-      if (assigned.found) return assigned.values;
+      if (assigned.found) return [...assigned.values, ...written];
       // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
-      return isGivenLater(declaration) ? [value] : [];
+      return isGivenLater(declaration) ? [value, ...written] : written;
     }
-    if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values];
+    if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values, ...written];
     if (ts.isParameter(declaration)) {
       const passed = passedValues(declaration, checker, seen);
-      return [...passed.values, ...passed.unread ? [value] : [], ...assigned.values];
+      return [...passed.values, ...passed.unread ? [value] : [], ...assigned.values, ...written];
     }
     if (ts.isBindingElement(declaration)) return [...destructuredValues(value, declaration, checker, seen), ...assigned.values];
     if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
@@ -2817,7 +2929,8 @@ interface Assignments {
   /**
    * Whether a destructuring, a for-in or a for-of assigns it as well, or
    * code may change what it holds through a member, as `list.push(boxing)`
-   * and `list[0] = boxing` do, which no rule reads.
+   * and `list[0] = boxing` do, where what it holds is not a place whose
+   * changes `writtenTo` reads.
    */
   unread: boolean;
 }
@@ -2832,8 +2945,9 @@ const ASSIGNMENTS = new WeakMap<ts.TypeChecker, Map<ts.Node, Assignments>>();
  * any wrapper `heldValue` looks through, that `usesOf` finds refers to it.
  * One that a destructuring or a for-in or for-of makes is noted as unread,
  * and so is a use that may change what the declaration holds through a
- * member, as `changesThrough` reads it. `++` and `--` give a number, so they
- * are not read.
+ * member, as `changesThrough` reads it, unless every value the declaration
+ * may hold is a container, as `reachesOnlyContainers` says, whose every
+ * change `writtenTo` reads. `++` and `--` give a number, so they are not read.
  */
 function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): Assignments {
   const known = ASSIGNMENTS.get(checker) ?? new Map<ts.Node, Assignments>();
@@ -2853,7 +2967,8 @@ function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): As
       }
     } else if (isDestructuringTarget(target)) {
       found.unread = true;
-    } else if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === target && changesThrough(parent, checker)) {
+    } else if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === target && changesThrough(parent, checker)
+      && !reachesOnlyContainers(parent.expression, checker)) {
       found.unread = true;
     }
   }
@@ -3055,24 +3170,752 @@ function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefin
 }
 
 /**
- * What a for-of name is given: each item of each array literal the value it
- * iterates may be, as `declaredValues` reads that value. A call or `new` is
- * read through each array literal `callValues` finds it holds, as a set
- * holds the items of the array it is made from; a name that holds the
- * collection, and that code may add to through a member, is unread already,
- * as `assignmentsOf` finds. A value not written here is read by its
- * declared type alone. The name read is given back as well, as unread, for
- * a spread among the items, a call that holds anything but array literals,
- * or any other value iterated that is not an array literal, since no rule
- * reads what those give.
+ * What a for-of name is given: each item each value iterated may hold, as
+ * `declaredValues` reads that value. An array literal gives its items and
+ * each item code adds to it, as `placeContents` finds them. A call or `new`
+ * of a library function gives each value `libraryContents` finds that the
+ * values it is handed hold, whose type fits the name, as `new Set(list)`,
+ * `list.slice()` and `map.values()` give those of `list` and `map`. Any
+ * other call or `new` is read through each array literal `callValues` finds
+ * it holds. A value not written here is read by its declared type alone.
+ * The name read is given back as well, as unread, for a spread among the
+ * items, a container changed in a way no rule reads, a call that holds
+ * anything but array literals, or any other value iterated that is not an
+ * array literal, since no rule reads what those give.
  */
 function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, iterated: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  const wanted = checker.getTypeAtLocation(value);
   return declaredValues(iterated, checker, seen).flatMap((one): DeclaredValue[] => {
+    if (ts.isArrayLiteralExpression(one)) return readContents(placeContents(one, checker, seen), value, checker, seen);
+    if (isLibraryCall(one, checker)) return readContents(libraryContents(one, wanted, checker, seen), value, checker, seen);
     const held = ts.isCallExpression(one) || ts.isNewExpression(one) ? callValues(one, checker, NOTHING_FOLLOWED).held.flatMap((each) => declaredValues(each, checker, seen)) : [];
-    const lists = ts.isArrayLiteralExpression(one) ? [one] : held.filter(ts.isArrayLiteralExpression);
+    const lists = held.filter(ts.isArrayLiteralExpression);
     if (lists.length === 0 || lists.length < held.length) return [value];
-    return lists.flatMap((list) => list.elements.flatMap((item) => ts.isSpreadElement(item) ? [value] : declaredValues(item, checker, seen)));
+    return lists.flatMap((list) => readContents(placeContents(list, checker, seen), value, checker, seen));
   });
+}
+
+/** A value whose contents the rules read where it is written: an object or array literal, a collection a library call makes, or a class, whose instances share each member the class declares. */
+type Container = ts.ArrayLiteralExpression | ts.ObjectLiteralExpression | ts.CallExpression | ts.NewExpression | ts.ClassLikeDeclaration;
+
+/** A value a container is given: an expression, or a method an object literal writes. */
+type WrittenValue = ts.Expression | ts.MethodDeclaration;
+
+/** What a container holds, as `placeContents` finds it. */
+interface Contents {
+  /** Each item, property value or method it holds, written where it is made or given to it later. */
+  values: WrittenValue[];
+  /** What makes it hold what no rule reads, or null. */
+  unread: ts.Node | null;
+}
+
+/** What the values a library call is handed hold, as `libraryContents` finds it. */
+interface ReachedContents extends Contents {
+  /** Whether any value it is handed is written here, or is a value no rule reads, so that its declared type alone does not describe what it gives. */
+  reached: boolean;
+}
+
+/**
+ * Each value a container holds, read as `declaredValues` reads it, with the
+ * name read given back as well, as unread, where it may hold what no rule
+ * reads.
+ */
+function readContents(contents: Contents, value: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  const values = contents.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
+  return contents.unread === null ? values : [...values, value];
+}
+
+/**
+ * What a container holds: each item of an array literal, each value or
+ * method of an object literal, each initializer of a property a class
+ * declares, and, for a collection a library call makes, what each value the
+ * call is handed holds, as `reachedContents` finds it, so that
+ * `new Set(list)` holds what `list` holds; and each value code gives the
+ * container after it is made, as `writtenTo` finds it. A spread, or an
+ * accessor, gives what no rule here reads.
+ */
+function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const found: Contents = { values: [], unread: null };
+  if (seen.has(container)) return found;
+  seen.add(container);
+  if (ts.isArrayLiteralExpression(container)) {
+    for (const item of container.elements) {
+      if (ts.isSpreadElement(item)) {
+        found.unread ??= item;
+      } else if (!ts.isOmittedExpression(item)) {
+        found.values.push(item);
+      }
+    }
+  } else if (ts.isObjectLiteralExpression(container)) {
+    for (const property of container.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        found.values.push(property.initializer);
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        found.values.push(property.name);
+      } else if (ts.isMethodDeclaration(property)) {
+        found.values.push(property);
+      } else {
+        found.unread ??= property;
+      }
+    }
+  } else if (ts.isClassLike(container)) {
+    found.values.push(...container.members.filter(ts.isPropertyDeclaration).flatMap((member) => member.initializer === undefined ? [] : [member.initializer]));
+  } else {
+    for (const source of librarySources(container, checker)) {
+      const reached = reachedContents(source, checker, seen);
+      found.values.push(...reached.values);
+      found.unread ??= reached.unread;
+    }
+  }
+  const written = writtenTo(container, undefined, checker);
+  found.values.push(...written.values);
+  found.unread ??= written.unread;
+  return found;
+}
+
+/**
+ * What the containers an expression may be hold, as `placeContents` finds
+ * them, for each value `declaredValues` finds it may be. A value that may
+ * be or hold a function and is no container, as a parameter whose callers
+ * cannot all be found is not, holds what no rule reads.
+ */
+function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
+  const found: ReachedContents = { values: [], unread: null, reached: false };
+  for (const value of declaredValues(expression, checker, seen)) {
+    found.reached = true;
+    const containers = containersOfValue(value, checker);
+    if (containers === undefined) {
+      if (mayCarryFunction(value, checker)) found.unread ??= expression;
+      continue;
+    }
+    for (const container of containers) {
+      const held = placeContents(container, checker, seen);
+      found.values.push(...held.values);
+      found.unread ??= held.unread;
+    }
+  }
+  return found;
+}
+
+/**
+ * Each value a call of a library function may give back from the values it
+ * is handed, as `librarySources` lists them, and from what code gives the
+ * collection the call makes, as `writtenTo` finds it: each value they hold,
+ * as `placeContents` finds it, whose type fits the type wanted, or, for an
+ * array literal that does not, each of its items that does, as `map.get(key)`
+ * gives the value of each entry. A value held that fits nothing and may be
+ * or hold a function makes what is given unread when the type wanted may
+ * hold one, since the call may build what it gives from that value, as
+ * `Object.entries` does.
+ *
+ * @param wanted The type of what is read: the call's own, an item's, or a member's.
+ */
+function libraryContents(call: ts.CallExpression | ts.NewExpression, wanted: ts.Type, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
+  const found: ReachedContents = { values: [], unread: null, reached: false };
+  const held: Contents[] = [];
+  for (const source of librarySources(call, checker)) {
+    const reached = reachedContents(source, checker, seen);
+    found.reached ||= reached.reached;
+    held.push(reached);
+  }
+  if (isCollection(checker.getTypeAtLocation(call), checker)) held.push(writtenTo(call, undefined, checker));
+  for (const contents of held) {
+    found.unread ??= contents.unread;
+    for (const value of contents.values) {
+      const fitting = fittingValues(value, wanted, checker);
+      found.values.push(...fitting);
+      if (fitting.length === 0 && mayCarryFunction(value, checker) && mayHoldFunction(wanted, checker, call)) found.unread ??= call;
+    }
+  }
+  found.reached ||= found.values.length > 0 || found.unread !== null;
+  return found;
+}
+
+/** The value itself when its type fits the type wanted, or, for an array literal that does not, each of its items that does. */
+function fittingValues(value: WrittenValue, wanted: ts.Type, checker: ts.TypeChecker): WrittenValue[] {
+  if (fitsResult(checker.getTypeAtLocation(value), wanted, checker)) return [value];
+  if (!ts.isArrayLiteralExpression(value)) return [];
+  return value.elements.filter((item) => !ts.isSpreadElement(item) && !ts.isOmittedExpression(item) && fitsResult(checker.getTypeAtLocation(item), wanted, checker));
+}
+
+/**
+ * The values a call of a library function is handed that may hold a
+ * function: the value a method is read from, as `list` is in `list.at(0)`,
+ * and each argument. A function handed to it, as a callback is, holds none.
+ */
+function librarySources(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): ts.Expression[] {
+  const receiver = ts.isCallExpression(call) ? memberReceiver(call.expression) : undefined;
+  return [...receiver === undefined ? [] : [receiver], ...call.arguments ?? []].filter((source) => mayHoldFunction(checker.getTypeAtLocation(source), checker, source));
+}
+
+/** Whether a call, or `new`, runs a function declared in a library, as `invocationOf` finds it, so that no body written here says what it gives. */
+function isLibraryCall(node: ts.Node, checker: ts.TypeChecker): node is ts.CallExpression | ts.NewExpression {
+  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return false;
+  const invocation = invocationOf(node, checker);
+  return !invocation.binds && invocation.declaration !== undefined && invocation.declaration.getSourceFile().isDeclarationFile;
+}
+
+/**
+ * What a call of a library function gives back, when no function written
+ * here runs: each value `libraryContents` finds whose type fits the call's
+ * own, when its type may be a function, as `map.get(key)` gives a function
+ * the map holds; the call itself, when its type may hold a function, so
+ * that what reads it, as a loop or an index does, reads what it holds; and
+ * the call as well, as unread, where what it is handed holds what no rule
+ * reads. A call handed no value written here is read by its declared type
+ * alone, and gives none.
+ */
+function libraryValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  const result = checker.getTypeAtLocation(call);
+  if (!mayBeOrHoldFunction(result, checker, call)) return [];
+  // The declarations read to find what the call is handed are read again by whatever reads the call itself, as a loop over it does.
+  const contents = libraryContents(call, result, checker, new Set(seen));
+  if (!contents.reached) return [];
+  if (!mayBeFunction(result, checker, call)) return [call];
+  return readContents(contents, call, checker, seen);
+}
+
+/** Whether a type, or a part of its union, is an array, a set or a map, whose read-only form `readOnlyForm` names. */
+function isCollection(type: ts.Type, checker: ts.TypeChecker): boolean {
+  const part = checker.getNonNullableType(type);
+  return (part.isUnion() ? part.types : [part]).some((each) => (each.flags & ts.TypeFlags.Object) !== 0 && readOnlyForm(each, checker) !== undefined);
+}
+
+/** Whether a value a container may be given may be a function or hold one, by its type; a method, a function or a class always is one. */
+function mayCarryFunction(value: DeclaredValue, checker: ts.TypeChecker): boolean {
+  return !ts.isExpression(value) || mayBeOrHoldFunction(checker.getTypeAtLocation(value), checker, value);
+}
+
+/** The containers an expression may be, as `placesOf` finds them. */
+interface Reach {
+  /** Each container one of its values is. */
+  containers: Container[];
+  /** Whether a value it may be is written here, or is no rule's to read, and is no container, so that what it reaches cannot be told. */
+  unknown: boolean;
+  /** Whether it has no value written here, as a library's value has none, so that it reaches no container written here, though what it holds cannot be read. */
+  empty: boolean;
+}
+
+/**
+ * The containers each value an expression may be is, as `declaredValues`
+ * finds the values and `containersOfValue` reads each.
+ */
+function placesOf(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): Reach {
+  const values = declaredValues(expression, checker, seen);
+  const found: Reach = { containers: [], unknown: false, empty: values.length === 0 };
+  for (const value of values) {
+    const containers = containersOfValue(value, checker);
+    if (containers === undefined) {
+      found.unknown = true;
+    } else {
+      found.containers.push(...containers);
+    }
+  }
+  return found;
+}
+
+/** Whether every value an expression may be is a container `placesOf` finds, and it has one. */
+function reachesOnlyContainers(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  const reach = placesOf(expression, checker, new Set());
+  return !reach.unknown && !reach.empty;
+}
+
+/**
+ * The containers one value is: itself for an object or array literal, or for
+ * a class; each class a `new` makes an instance of; the class, or the object
+ * literal, whose method `this` is read in; and itself for a call or `new` of
+ * a library function whose value is an array, a set or a map.
+ *
+ * @returns The containers, or undefined when the value is none of these.
+ */
+function containersOfValue(value: DeclaredValue, checker: ts.TypeChecker): Container[] | undefined {
+  if (ts.isArrayLiteralExpression(value) || ts.isObjectLiteralExpression(value) || ts.isClassLike(value)) return [value];
+  if (value.kind === ts.SyntaxKind.ThisKeyword) {
+    const owner = thisOwner(value);
+    return owner === undefined ? undefined : [owner];
+  }
+  if (ts.isNewExpression(value)) {
+    const made = declaredValues(value.expression, checker, new Set());
+    if (made.length > 0 && made.every(ts.isClassLike)) return made.filter(ts.isClassLike);
+  }
+  return isLibraryCall(value, checker) && isCollection(checker.getTypeAtLocation(value), checker) ? [value] : undefined;
+}
+
+/**
+ * The container `this` is read in: the class whose method, constructor,
+ * accessor, property or static block holds it, or the object literal whose
+ * method or accessor holds it, through any arrow function between.
+ *
+ * @returns The container, or undefined when `this` is read anywhere else, as in a function declaration.
+ */
+function thisOwner(node: ts.Node): Container | undefined {
+  const holder = ts.findAncestor(node.parent, (each) => (ts.isFunctionLike(each) && !ts.isArrowFunction(each)) || ts.isPropertyDeclaration(each) || ts.isClassStaticBlockDeclaration(each));
+  const owner = holder?.parent;
+  if (owner !== undefined && ts.isClassLike(owner)) return owner;
+  return owner !== undefined && ts.isObjectLiteralExpression(owner) && holder !== undefined && (ts.isMethodDeclaration(holder) || ts.isAccessor(holder)) ? owner : undefined;
+}
+
+/**
+ * One change code makes to what a value holds, as `changesAt` finds it. A
+ * "value" write gives a value each key named, or, with no keys, any key or
+ * a new item, as `list.push(boxing)` adds one; a "copy" gives each key of
+ * another value, as `Object.assign(holder, source)` gives those of
+ * `source`; "moved" moves items to other positions, as `sort` does; and
+ * "unread" is a change no rule reads.
+ */
+type Write =
+  | { kind: "value"; keys: readonly string[] | undefined; value: WrittenValue }
+  | { kind: "copy"; source: ts.Expression }
+  | { kind: "moved" }
+  | { kind: "unread" };
+
+/** One change, with the value it is made through and where it is written. */
+interface Change {
+  receiver: ts.Expression;
+  write: Write;
+  at: ts.Node;
+  /**
+   * Set when the change counts only for the containers its receiver may
+   * be, and not, where the receiver may be no container, for each container
+   * the receiver's type takes, as `mayReach` would say.
+   */
+  containersOnly?: true;
+}
+
+/** The changes each container is given, for one checker, once every change is placed. */
+interface WriteTable {
+  /** Each change whose receiver may be a container, by the container. */
+  placed: Map<ts.Node, Change[]>;
+  /** Each change whose receiver may be a value that is no container, with the receiver's type, which says what containers it may be. */
+  unplaced: Array<{ change: Change; type: ts.Type }>;
+}
+
+/** The finished table of changes for each checker. */
+const WRITE_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
+
+/** The table of changes placed so far, for each checker whose table is being made, which a reading made meanwhile reads. */
+const TABLES_BEING_MADE = new WeakMap<ts.TypeChecker, WriteTable>();
+
+/** Each change no rule reads, so that a name it leaves unknown says why. */
+const UNREAD_CHANGES = new WeakSet<ts.Node>();
+
+/**
+ * Every change `changesAt` finds in the files of a program, each placed on
+ * each container its receiver may be, as `placesOf` finds them, and on each
+ * class that container extends, or kept with its receiver's type where the
+ * receiver may be a value written here that is no container. A receiver
+ * with no value written here reaches no container written here. A receiver may reach a container only
+ * through what another change gives, as `lists.push(list)` makes `list` an
+ * item of `lists`, so every change is placed again, reading what was placed
+ * before, until no change reaches more. The assignments found meanwhile are
+ * found again afterwards, since they were read from a table not finished.
+ *
+ * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
+ */
+function writeTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
+  const made = WRITE_TABLES.get(checker) ?? TABLES_BEING_MADE.get(checker);
+  if (made !== undefined) return made;
+  const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker));
+  let table: WriteTable = { placed: new Map(), unplaced: [] };
+  for (let before = -1; before < placedCount(table);) {
+    before = placedCount(table);
+    TABLES_BEING_MADE.set(checker, table);
+    ASSIGNMENTS.delete(checker);
+    table = placeChanges(changes, checker);
+  }
+  TABLES_BEING_MADE.delete(checker);
+  ASSIGNMENTS.delete(checker);
+  WRITE_TABLES.set(checker, table);
+  return table;
+}
+
+/** How many times a table places a change, counting each container a change is placed on and each change kept unplaced. */
+function placedCount(table: WriteTable): number {
+  return [...table.placed.values()].reduce((count, changes) => count + changes.length, table.unplaced.length);
+}
+
+/** Each change placed on each container its receiver may be, and on each class that container extends, or kept with its receiver's type. */
+function placeChanges(changes: readonly Change[], checker: ts.TypeChecker): WriteTable {
+  const table: WriteTable = { placed: new Map(), unplaced: [] };
+  for (const change of changes) {
+    const reach = placesOf(change.receiver, checker, new Set());
+    for (const container of new Set(reach.containers.flatMap((each) => [each, ...extendedClasses(each, checker)]))) {
+      const kept = table.placed.get(container);
+      if (kept === undefined) {
+        table.placed.set(container, [change]);
+      } else {
+        kept.push(change);
+      }
+    }
+    if (reach.unknown && change.containersOnly === undefined) table.unplaced.push({ change, type: receiverType(change.receiver, checker) });
+  }
+  return table;
+}
+
+/** Each class written here that a class extends, through each class those extend; none for any other container. */
+function extendedClasses(container: Container, checker: ts.TypeChecker, seen = new Set<ts.Node>()): ts.ClassLikeDeclaration[] {
+  if (!ts.isClassLike(container) || seen.has(container)) return [];
+  seen.add(container);
+  const base = container.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+  if (base === undefined) return [];
+  return declaredValues(base.expression, checker, new Set()).filter(ts.isClassLike).flatMap((each) => [each, ...extendedClasses(each, checker, seen)]);
+}
+
+/** The type a change's receiver has, without null or undefined, and, for a type parameter, its constraint. */
+function receiverType(receiver: ts.Expression, checker: ts.TypeChecker): ts.Type {
+  const type = checker.getNonNullableType(checker.getTypeAtLocation(receiver));
+  return isConstrainedType(type) ? checker.getBaseConstraintOfType(type) ?? type : type;
+}
+
+/** Each change `changesAt` finds at each node of a file. */
+function changesIn(file: ts.SourceFile, checker: ts.TypeChecker): Change[] {
+  const found: Change[] = [];
+  const pending: ts.Node[] = [file];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+    found.push(...changesAt(node, checker));
+  }
+  return found;
+}
+
+/**
+ * The changes one node makes to what a value holds that may give it a
+ * function, besides an assignment to a name, which `assignmentsOf` reads:
+ * an assignment to a member, read by its key, as `holder[key] = boxing`
+ * gives each key the key's type allows, or any key when its type is no
+ * literal; a member a destructuring, a for-in or a for-of assigns, which no
+ * rule reads; and each change a call makes, as `callChanges` finds them. A
+ * change that gives no value that may be or hold a function, or that moves
+ * or changes what a value that holds none holds, is left out, since no rule
+ * reads it.
+ */
+function changesAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
+  let changes: Change[] = [];
+  if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && !isDestructuringTarget(node)) {
+    const target = heldValue(node.left);
+    if (target !== undefined && (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target))) {
+      changes = [{ receiver: target.expression, write: { kind: "value", keys: memberKeys(target, checker), value: node.right }, at: node }];
+    }
+  } else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isDestructuringTarget(node)) {
+    changes = [{ receiver: node.expression, write: { kind: "unread" }, at: node }];
+  } else if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    changes = callChanges(node, checker);
+  }
+  const carried = changes.filter((change) => carriesFunction(change, checker));
+  for (const change of carried) {
+    if (change.write.kind === "unread") UNREAD_CHANGES.add(change.at);
+  }
+  return carried;
+}
+
+/** Whether a change may give a value a function: a value or a copy that may be or hold one, or a move or an unread change to a value that may hold one. */
+function carriesFunction(change: Change, checker: ts.TypeChecker): boolean {
+  const write = change.write;
+  if (write.kind === "value") return mayCarryFunction(write.value, checker);
+  if (write.kind === "copy") return mayBeOrHoldFunction(checker.getTypeAtLocation(write.source), checker, write.source);
+  return mayBeOrHoldFunction(receiverType(change.receiver, checker), checker, change.receiver);
+}
+
+/** The keys a member access reads: its name, or the keys `keysOf` finds its key gives. */
+function memberKeys(member: ts.PropertyAccessExpression | ts.ElementAccessExpression, checker: ts.TypeChecker): readonly string[] | undefined {
+  return ts.isPropertyAccessExpression(member) ? [member.name.text] : keysOf(member.argumentExpression, checker);
+}
+
+/**
+ * The keys an expression may give: its text, written as a string or number
+ * literal, or each string or number literal its type allows.
+ *
+ * @returns The keys, or undefined when its type allows a key that is no literal.
+ */
+function keysOf(key: ts.Expression | undefined, checker: ts.TypeChecker): readonly string[] | undefined {
+  if (key === undefined || ts.isSpreadElement(key)) return undefined;
+  if (ts.isStringLiteralLike(key)) return [key.text];
+  if (ts.isNumericLiteral(key)) return [String(Number(key.text))];
+  const type = checker.getTypeAtLocation(key);
+  const keys: string[] = [];
+  for (const part of type.isUnion() ? type.types : [type]) {
+    if (!part.isStringLiteral() && !part.isNumberLiteral()) return undefined;
+    keys.push(String(part.value));
+  }
+  return keys;
+}
+
+/** The methods of an array, a set or a map that add each value they are given, by name, with the position of the first value each adds. */
+const ADDING_METHODS: ReadonlyMap<string, number> = new Map([["push", 0], ["unshift", 0], ["add", 0], ["splice", 2], ["fill", 0], ["set", 1]]);
+
+/** The methods of an array that may move items to other positions. */
+const MOVING_METHODS: ReadonlySet<string> = new Set(["unshift", "splice", "fill", "copyWithin", "sort", "reverse", "pop", "shift"]);
+
+/** The methods of an array, a set or a map whose change the two lists above say, or that only remove items. */
+const KNOWN_CHANGES: ReadonlySet<string> = new Set([...ADDING_METHODS.keys(), ...MOVING_METHODS, "delete", "clear"]);
+
+/**
+ * The changes a call makes. A method of an array, a set or a map that
+ * `isReadingMember` does not find only reads changes the collection it is
+ * called on, or the one `call` or `apply` hands it as `this`, as
+ * `collectionChanges` reads it. A library function changes what it is
+ * handed as `libraryChanges` reads it. A function written here makes the
+ * changes written in its body, which are found where they are written.
+ */
+function callChanges(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): Change[] {
+  const invocation = invocationOf(call, checker);
+  if (invocation.binds) return [];
+  const callee = heldValue(invocation.callee);
+  const forwarded = ts.isCallExpression(call) && invocation.callee !== call.expression;
+  if (callee !== undefined && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+    && isCollection(checker.getTypeAtLocation(callee.expression), checker)) {
+    if (isReadingMember(callee, checker)) return [];
+    const self = call.arguments?.[0];
+    // `apply` handed a list not written as an array literal hands on values no rule reads.
+    if (forwarded && invocation.declaration === undefined) return self === undefined || ts.isSpreadElement(self) ? [] : [{ receiver: self, write: { kind: "unread" }, at: call }];
+    const receiver = forwarded ? invocation.unread[0] : callee.expression;
+    const keys = memberKeys(callee, checker);
+    return receiver === undefined ? [] : collectionChanges(receiver, keys?.length === 1 ? keys[0] : undefined, invocation.args, call);
+  }
+  const declaration = invocation.declaration;
+  return declaration === undefined || !declaration.getSourceFile().isDeclarationFile ? [] : libraryChanges(call, declaration, invocation, checker);
+}
+
+/**
+ * The changes one method of an array, a set or a map makes: each value an
+ * adding method adds, a move for a method that may move items, and an
+ * unread change for a spread among the values added, or a method that
+ * KNOWN_CHANGES does not name, or one whose name is not known.
+ */
+function collectionChanges(receiver: ts.Expression, method: string | undefined, args: readonly ts.Expression[], at: ts.Node): Change[] {
+  const changes: Change[] = [];
+  const first = method === undefined ? undefined : ADDING_METHODS.get(method);
+  const added = first === undefined ? [] : args.slice(first, method === "fill" || method === "set" ? first + 1 : undefined);
+  for (const value of added) {
+    changes.push({ receiver, write: ts.isSpreadElement(value) ? { kind: "unread" } : { kind: "value", keys: undefined, value }, at });
+  }
+  if (method !== undefined && MOVING_METHODS.has(method)) changes.push({ receiver, write: { kind: "moved" }, at });
+  if (method === undefined || !KNOWN_CHANGES.has(method)) changes.push({ receiver, write: { kind: "unread" }, at });
+  return changes;
+}
+
+/**
+ * The changes a library function makes to a value it is handed:
+ * `Object.assign` gives its target each key of each source, as
+ * `copiedChanges` reads them; `Object.defineProperty` and
+ * `Reflect.defineProperty` give the key the value a descriptor names, as
+ * `describedChanges` reads it, and `Object.defineProperties` gives each key
+ * its descriptor names; `Reflect.set` gives the key the value; and
+ * `Object.setPrototypeOf` and `Reflect.setPrototypeOf` give each key of the
+ * prototype. Any other library function handed two values that may be or
+ * hold a function may give one to the other, so each container that a
+ * value it is handed may be, at a parameter whose declared type takes any
+ * value, as `mayChangeArgument` says, is changed in a way no rule reads.
+ */
+function libraryChanges(call: ts.CallExpression | ts.NewExpression, declaration: ts.SignatureDeclaration, invocation: Invocation, checker: ts.TypeChecker): Change[] {
+  const [target, second, third] = invocation.args;
+  const name = libraryMemberName(declaration);
+  if (target !== undefined && !ts.isSpreadElement(target)) {
+    if (name === "Object.assign") return invocation.args.slice(1).flatMap((source) => copiedChanges(target, source, call, checker));
+    if (name === "Object.defineProperty" || name === "Reflect.defineProperty") return describedChanges(target, keysOf(second, checker), third, call);
+    if (name === "Object.defineProperties") return definedChanges(target, second, call, checker);
+    if (name === "Reflect.set") return third === undefined ? [] : [{ receiver: target, write: { kind: "value", keys: keysOf(second, checker), value: third }, at: call }];
+    if (name === "Object.setPrototypeOf" || name === "Reflect.setPrototypeOf") return second === undefined ? [] : [{ receiver: target, write: { kind: "copy", source: second }, at: call }];
+  }
+  const handed = [...invocation.args, ...invocation.unread].filter((each) => !ts.isSpreadElement(each) && mayBeOrHoldFunction(checker.getTypeAtLocation(each), checker, each));
+  if (handed.length < 2) return [];
+  return handed.filter((each) => mayHoldFunction(checker.getTypeAtLocation(each), checker, each) && mayChangeArgument(each, declaration, invocation, checker))
+    .map((each): Change => ({ receiver: each, write: { kind: "unread" }, at: call, containersOnly: true }));
+}
+
+/**
+ * The changes `Object.defineProperties` makes: each key of an object literal
+ * written in place is given what its descriptor names, as
+ * `describedChanges` reads it. Anything else gives what no rule reads.
+ */
+function definedChanges(target: ts.Expression, descriptors: ts.Expression | undefined, at: ts.Node, checker: ts.TypeChecker): Change[] {
+  const literal = heldValue(descriptors);
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) return [{ receiver: target, write: { kind: "unread" }, at }];
+  return literal.properties.flatMap((property): Change[] => {
+    const key = property.name === undefined ? undefined : propertyKey(property.name, checker);
+    return ts.isPropertyAssignment(property) ? describedChanges(target, key === undefined ? undefined : [key], property.initializer, at) : [{ receiver: target, write: { kind: "unread" }, at }];
+  });
+}
+
+/**
+ * Whether a library function may change an argument in a way its declared
+ * types do not say: the parameter it is handed to is declared with a type
+ * that takes any value, as any, unknown, object or a type parameter do, or
+ * with an array, a set or a map that is not read-only. `this`, handed by
+ * `call`, has no parameter, so it may be changed. A parameter declared with
+ * any other type, as `ts.forEachChild` declares a node, is changed only as
+ * that type's own members allow, which put nothing written here into it.
+ */
+function mayChangeArgument(argument: ts.Expression, declaration: ts.SignatureDeclaration, invocation: Invocation, checker: ts.TypeChecker): boolean {
+  const at = invocation.args.indexOf(argument);
+  const parameter = at < 0 ? undefined : parameterOf(declaration, invocation.args, at);
+  if (parameter === undefined) return true;
+  const type = checker.getTypeAtLocation(parameter);
+  return (type.isUnion() ? type.types : [type]).some((part) => isOpenType(part) || isConstrainedType(part)
+    || (isCollection(part, checker) && !isReadOnlyForm(part)));
+}
+
+/** Whether a type is the library's read-only form of an array, a set or a map, whose members give no way to change what it holds. */
+function isReadOnlyForm(type: ts.Type): boolean {
+  const name = type.getSymbol()?.name;
+  return name === "ReadonlyArray" || name === "ReadonlySet" || name === "ReadonlyMap";
+}
+
+/** The name of a function a library declares on Object or Reflect, as "Object.assign" or "Reflect.set", or undefined for any other. */
+function libraryMemberName(declaration: ts.SignatureDeclaration): string | undefined {
+  const name = declaration.name;
+  if (name === undefined || !ts.isIdentifier(name)) return undefined;
+  const owner = declaration.parent;
+  if (ts.isInterfaceDeclaration(owner) && owner.name.text === "ObjectConstructor") return `Object.${name.text}`;
+  return ts.isModuleBlock(owner) && ts.isIdentifier(owner.parent.name) && owner.parent.name.text === "Reflect" ? `Reflect.${name.text}` : undefined;
+}
+
+/**
+ * The changes copying one source into a target makes. Each property of an
+ * object literal written in place gives its key its value, or its method,
+ * and a spread in it gives each key of what it spreads; an accessor gives
+ * what no rule reads. Any other source gives each of its keys, as a "copy"
+ * write. A spread of sources hides which is which, so it is unread.
+ */
+function copiedChanges(target: ts.Expression, source: ts.Expression, at: ts.Node, checker: ts.TypeChecker): Change[] {
+  if (ts.isSpreadElement(source)) return [{ receiver: target, write: { kind: "unread" }, at }];
+  const literal = heldValue(source);
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) return [{ receiver: target, write: { kind: "copy", source }, at }];
+  return literal.properties.map((property): Change => {
+    if (ts.isSpreadAssignment(property)) return { receiver: target, write: { kind: "copy", source: property.expression }, at };
+    if (ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) return { receiver: target, write: { kind: "unread" }, at };
+    const value = ts.isPropertyAssignment(property) ? property.initializer : ts.isShorthandPropertyAssignment(property) ? property.name : property;
+    const key = propertyKey(property.name, checker);
+    return { receiver: target, write: { kind: "value", keys: key === undefined ? undefined : [key], value }, at };
+  });
+}
+
+/**
+ * The changes a property descriptor makes to a key: the value its `value`
+ * property names, written in an object literal in place. A getter, a
+ * setter, a key not known, or a descriptor not written so gives what no
+ * rule reads.
+ */
+function describedChanges(target: ts.Expression, keys: readonly string[] | undefined, descriptor: ts.Expression | undefined, at: ts.Node): Change[] {
+  const literal = heldValue(descriptor);
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) return [{ receiver: target, write: { kind: "unread" }, at }];
+  return literal.properties.flatMap((property): Change[] => {
+    const name = property.name !== undefined && (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)) ? property.name.text : undefined;
+    if (name === "value" && ts.isPropertyAssignment(property)) return [{ receiver: target, write: { kind: "value", keys, value: property.initializer }, at }];
+    if (name === "value" && ts.isShorthandPropertyAssignment(property)) return [{ receiver: target, write: { kind: "value", keys, value: property.name }, at }];
+    if (name === "value" && ts.isMethodDeclaration(property)) return [{ receiver: target, write: { kind: "value", keys, value: property }, at }];
+    return name === "get" || name === "set" || name === undefined ? [{ receiver: target, write: { kind: "unread" }, at }] : [];
+  });
+}
+
+/** What code gives a container after it is made, as `writtenTo` finds it. */
+interface Written extends Contents {
+  /** Whether items may have moved to other positions, so that a position read may hold any item. */
+  moved: boolean;
+}
+
+/** The containers whose copied keys are being read, so that two containers copied into each other are read once. */
+const COPIES_BEING_READ = new Set<ts.Node>();
+
+/**
+ * What code written in the program gives a container after it is made, for
+ * one key, or for every key and item when no key is given: each value a
+ * change placed on the container gives that key, any key or a new item;
+ * each value a copied value holds under that key, as `copiedValues` reads
+ * it; whether a change may move its items; and the first change no rule
+ * reads, if any. A change kept unplaced counts for the container when the
+ * container's type fits its receiver's, as `mayReach` says.
+ */
+function writtenTo(container: Container, key: string | undefined, checker: ts.TypeChecker): Written {
+  const table = writeTable(checker, container);
+  const changes = [...table.placed.get(container) ?? [], ...table.unplaced.filter(({ type }) => mayReach(type, container, checker)).map(({ change }) => change)];
+  const found: Written = { values: [], unread: null, moved: false };
+  for (const { write, at } of changes) {
+    if (write.kind === "value") {
+      if (key === undefined || write.keys === undefined || write.keys.includes(key)) found.values.push(write.value);
+    } else if (write.kind === "copy") {
+      const copied = copiedValues(write.source, key, checker);
+      found.values.push(...copied.values);
+      found.unread ??= copied.unread;
+    } else if (write.kind === "moved") {
+      found.moved = true;
+    } else {
+      found.unread ??= at;
+    }
+  }
+  return found;
+}
+
+/**
+ * What each container a copied value may be holds under one key, or under
+ * every key: the properties an object literal gives it, as
+ * `keyedProperties` reads them, and what any other container holds, as
+ * `placeContents` finds it. A copied value that may hold a function and is
+ * no container gives what no rule reads.
+ */
+function copiedValues(source: ts.Expression, key: string | undefined, checker: ts.TypeChecker): Contents {
+  const found: Contents = { values: [], unread: null };
+  const reach = placesOf(source, checker, new Set());
+  if ((reach.unknown || reach.empty) && mayHoldFunction(checker.getTypeAtLocation(source), checker, source)) found.unread = source;
+  for (const container of reach.containers) {
+    if (COPIES_BEING_READ.has(container)) continue;
+    COPIES_BEING_READ.add(container);
+    try {
+      if (key !== undefined && ts.isObjectLiteralExpression(container)) {
+        const keyed = keyedProperties(container, key, checker);
+        found.values.push(...keyed.holders.map(heldBy));
+        found.unread ??= keyed.unknownAfter;
+      } else {
+        const held = placeContents(container, checker, new Set());
+        found.values.push(...held.values);
+        found.unread ??= held.unread;
+      }
+    } finally {
+      COPIES_BEING_READ.delete(container);
+    }
+  }
+  return found;
+}
+
+/**
+ * Whether a change whose receiver may be no container may reach one: its
+ * receiver's type takes the container's type, widened as a name declared
+ * with it would be, so that a parameter typed `Boxer[]` may be any array of
+ * such functions. A class is read by the type of its instances.
+ */
+function mayReach(type: ts.Type, container: Container, checker: ts.TypeChecker): boolean {
+  if (!ts.isClassLike(container)) return checker.isTypeAssignableTo(checker.getWidenedType(checker.getTypeAtLocation(container)), type);
+  const symbol = container.name === undefined ? undefined : checker.getSymbolAtLocation(container.name);
+  return symbol !== undefined && checker.isTypeAssignableTo(checker.getDeclaredTypeOfSymbol(symbol), type);
+}
+
+/**
+ * What code gives a member of an object literal or a class besides what its
+ * declaration and each assignment to its name give it: each value
+ * `writtenTo` finds given its key, as `declaredValues` reads it, and the
+ * member read as well, as unread, where a change no rule reads may reach
+ * it. A member of anything else, or with a key not known, is given nothing
+ * more here.
+ */
+function memberWrites(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.Declaration, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  const owner = ts.isParameter(declaration) ? declaration.parent.parent : declaration.parent;
+  const name = ts.getNameOfDeclaration(declaration);
+  if (name === undefined || owner === undefined || !(ts.isObjectLiteralExpression(owner) || ts.isClassLike(owner))) return [];
+  const key = ts.isPrivateIdentifier(name) ? name.text : ts.isPropertyName(name) ? propertyKey(name, checker) : undefined;
+  return key === undefined ? [] : readContents(writtenTo(owner, key, checker), value, checker, seen);
+}
+
+/**
+ * What a member that no declaration names is given, as one an index
+ * signature gives is: what its key gives in each object literal the value
+ * it is read from may be, as `keyedValues` reads it, and the member read as
+ * well, as unread, for each value it is read from that is not one.
+ */
+function unnamedMemberValues(value: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  return declaredValues(value.expression, checker, seen)
+    .flatMap((literal) => ts.isObjectLiteralExpression(literal) ? keyedValues(literal, value.name.text, value, checker, seen) : [value]);
 }
 
 /**
@@ -3285,6 +4128,11 @@ function isOpenType(type: ts.Type): boolean {
 
 /** The types whose values are those of their constraint: a type parameter, and a type built from one. */
 const CONSTRAINED_TYPES = ts.TypeFlags.TypeParameter | ts.TypeFlags.IndexedAccess | ts.TypeFlags.Conditional | ts.TypeFlags.Substitution;
+
+/** Whether a type is one whose values are those of its constraint, as CONSTRAINED_TYPES names them. */
+function isConstrainedType(type: ts.Type): boolean {
+  return (type.flags & CONSTRAINED_TYPES) !== 0;
+}
 
 /**
  * Whether a value of a type may be a function: the type can be called or
@@ -4109,8 +4957,11 @@ function isIndexKey(key: string): boolean {
 function itemSource(literal: ts.Expression, at: number, checker: ts.TypeChecker): ElementSource {
   if (!ts.isArrayLiteralExpression(literal)) return { holders: [], unknownAfter: null };
   const { items, unknownAfter } = spreadItems(literal, checker);
-  const item = items[at];
-  return { holders: item === undefined ? [] : [item], unknownAfter: at < items.length ? null : unknownAfter };
+  const placed = writtenTo(literal, String(at), checker);
+  // An item code moved may now be at any position, and so may one written to a position not known.
+  const written = placed.moved ? writtenTo(literal, undefined, checker) : placed;
+  const known = (written.moved ? items : [items[at]]).filter((item): item is ts.Expression => item !== undefined);
+  return { holders: [...known, ...written.values], unknownAfter: written.unread ?? (at < items.length && !written.moved ? null : unknownAfter) };
 }
 
 /** The value a property gives, or the method or array item itself. */
@@ -4150,6 +5001,9 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
     if (!ts.isGetAccessorDeclaration(property) && !ts.isSetAccessorDeclaration(property)) found.holders.push(property);
     found.unknownAfter = null;
   }
+  const written = writtenTo(literal, key, checker);
+  found.holders.push(...written.values);
+  if (written.unread !== null) found.unknownAfter = written.unread;
   return found;
 }
 
@@ -4336,6 +5190,7 @@ function sortProperties(pattern: ts.ObjectBindingPattern, literal: ts.ObjectLite
  */
 function unknownReason(cause: UnknownCause, source: ts.SourceFile): string {
   const text = cause.getText(source);
+  if (UNREAD_CHANGES.has(cause)) return `it is read from a value that ${text} changes in a way no rule reads`;
   if (ts.isSpreadElement(cause)) return `its position follows ${text}, whose length is not known`;
   if (ts.isSpreadAssignment(cause)) return `its key may be given by ${text}, whose keys are not known`;
   if (ts.isComputedPropertyName(cause) && ts.isBindingElement(cause.parent)) return `its key, ${text}, is not known`;
