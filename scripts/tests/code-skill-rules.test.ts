@@ -131,7 +131,7 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    nearest comment of its own: on it, on a wrapper around it, or on the
 //    property or array item that holds it; failing that, with the comment on
 //    the class field that holds it, on the parameter whose default it is,
-//    or on the statement that binds it to a name. A JSDoc comment written just before an array item is the item's
+//    or on the statement that binds it to a name or assigns it. A JSDoc comment written just before an array item is the item's
 //    own, as the scanner finds it, whether or not the compiler attaches it.
 //    A rest element with a name binds an array, not a function.
 // 3. Helpers at top level. A reader cannot reach a closure without reading
@@ -589,6 +589,22 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(undocumentedThrows("probe.ts", text), text).toEqual({ read: 1, problems: problems.map((problem) => problem.replace(":7:", `:${line + lines}:`)) });
       }
     }
+  });
+
+  test("a statement that assigns a function documents it, and must say what it throws", () => {
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    const holder = "const holder: { read?: () => number; [key: string]: unknown } = {};\n";
+    const said = "/**\n * Reads a size.\n * @throws A `RangeError` always.\n */\n";
+    for (const target of ["holder.read", "holder[\"read\"]", "holder.read!"]) {
+      expect(undocumentedThrows("probe.ts", `${holder}/** Reads a size. */\n${target} = ${thrower};`), target)
+        .toEqual({ read: 1, problems: ["probe.ts:3: the comment on read does not say what it throws"] });
+      expect(undocumentedThrows("probe.ts", `${holder}${said}${target} = ${thrower};`), target).toEqual({ read: 1, problems: [] });
+    }
+    // A key that is not a literal names the function as written.
+    expect(undocumentedThrows("probe.ts", `${holder}const key = "read" as string;\n/** Reads a size. */\nholder[key] = ${thrower};`))
+      .toEqual({ read: 1, problems: ["probe.ts:4: the comment on key does not say what it throws"] });
+    expect(undocumentedThrows("probe.ts", `export function main(): void {\n  let read: () => number;\n  /** Reads a size. */\n  read = ${thrower};\n  read();\n}`))
+      .toEqual({ read: 1, problems: ["probe.ts:4: the comment on read does not say what it throws"] });
   });
 
   test("a documented function held in an array, that throws and does not say so, is reported, and one that says so is accepted", () => {
@@ -3436,7 +3452,7 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
  * on the property, method or array item that holds it. Failing that, it is
  * the comment on the class field that holds the function, on the parameter
  * whose default it is or that destructures it, or on the statement that
- * binds the function to a name. One comment and one name make
+ * binds the function to a name or assigns it. One comment and one name make
  * one function to the check, whatever number of values it may be.
  */
 function documentedValues(source: ts.SourceFile, checker: ts.TypeChecker): DocumentedFunction[] {
@@ -3470,6 +3486,11 @@ function documentationOf(climbed: Climb, source: ts.SourceFile): Documentation |
     if (node === climbed.holder) break;
   }
   if (climbed.holder === undefined && ts.isPropertyDeclaration(climbed.sink) && hasJsDoc(climbed.sink)) return { commented: climbed.sink, name };
+  // A statement that assigns the function documents it, as the compiler reads that comment for the function.
+  const sink = climbed.sink;
+  if (climbed.holder === undefined && ts.isBinaryExpression(sink) && ts.isExpressionStatement(sink.parent) && hasJsDoc(sink.parent)) {
+    return { commented: sink.parent, name: assignedTargetName(sink.left, source) };
+  }
   const place = climbed.place;
   // A parameter's own comment documents the function it is given by default, or that a name it destructures takes.
   if (place.kind === "bound" && ts.isParameter(place.declaration) && hasJsDoc(place.declaration)) return { commented: place.declaration, name };
@@ -3488,6 +3509,18 @@ function valueName(climbed: Climb, source: ts.SourceFile): string {
   if (holder !== undefined) return ts.isPropertyAssignment(holder) || ts.isMethodDeclaration(holder) ? holder.name.getText(source) : "an array item";
   if (climbed.place.kind === "bound") return climbed.place.name.text;
   return ts.isPropertyDeclaration(climbed.sink) ? climbed.sink.name.getText(source) : "an unnamed function";
+}
+
+/**
+ * The name the throws check gives a function an assignment stores: the key
+ * of the property it is assigned to, or the name.
+ */
+function assignedTargetName(target: ts.Expression, source: ts.SourceFile): string {
+  const inner = heldValue(target) ?? target;
+  if (ts.isPropertyAccessExpression(inner)) return inner.name.text;
+  if (!ts.isElementAccessExpression(inner)) return inner.getText(source);
+  const key = inner.argumentExpression;
+  return ts.isStringLiteralLike(key) ? key.text : key.getText(source);
 }
 
 /**
