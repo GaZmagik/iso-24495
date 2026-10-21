@@ -162,8 +162,15 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    constructor of the class it holds. `call`, `apply`, `bind`,
 //    `Reflect.apply` and `Reflect.construct` are read as the call they make,
 //    and a value one hands on where no parameter takes it, such as `this`,
-//    cannot be read. A function written here that cannot be followed may
-//    give back or hold any argument. A body that passes an argument on, by any use but
+//    cannot be read. A wrapper is followed to where its value is written:
+//    through a name destructured from the literal a call of a function
+//    written here returns, a for-of over an array literal, and a
+//    parameter's default, while what a caller gives a parameter is read
+//    by its declared type, as a declared name's is. A variable or class
+//    field declared with no value that code here gives one later, as a
+//    constructor's assignment does, cannot be followed. A function
+//    written here that cannot be followed may give back or hold any
+//    argument. A body that passes an argument on, by any use but
 //    calling it, or a constructor whose parameter is written as a property,
 //    may give it back when the declared result fits it, unless
 //    each value it returns is a function or literal it writes new, or hold
@@ -1703,6 +1710,48 @@ describe("the code skill's rules for this repository's own code", () => {
     }
   });
 
+  test("a wrapper whose value is given elsewhere is followed where it is written, or may give back what it is given", () => {
+    const helper = "(): number => 1";
+    // Each `box` gives back what it is given. Each `measure` calls it, and its result cannot hold a function.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function measuring(reader: () => number): number {\n  return reader();\n}\n"
+      + "function makeBox(): { box: Boxer } {\n  return { box: (reader: () => number): object => reader };\n}\n"
+      + "const { box: made } = makeBox();\n"
+      + "const factory = {\n  get box(): Boxer {\n    return boxing;\n  },\n};\nconst { box: got } = factory;\n"
+      + "class Box {\n  box: Boxer;\n  constructor() {\n    this.box = (reader: () => number): object => reader;\n  }\n}\n"
+      + "declare const declared: Boxer;\n";
+    const documented = "/**\n * Runs.\n * @param box The wrapper.\n * @param boxes The wrappers.\n */\n";
+    const cases: Array<[signature: string, body: string, found: string[]]> = [
+      ["", `const helper = made(${helper});`, ["probe.ts / main / helper"]],
+      ["", `const helper = got(${helper});`, ["probe.ts / main / helper"]],
+      ["", `const helper = new Box().box(${helper});`, ["probe.ts / main / helper"]],
+      ["box: Boxer = boxing", `const helper = box(${helper});`, ["probe.ts / main / helper"]],
+      ["{ box = boxing }: { box?: Boxer } = {}", `const helper = box(${helper});`, ["probe.ts / main / helper"]],
+      ["", `for (const box of [boxing]) {\n    const helper = box(${helper});\n    void helper;\n  }`, ["probe.ts / main / helper"]],
+      ["", `for (const box of new Set([boxing])) {\n    const helper = box(${helper});\n    void helper;\n  }`, ["probe.ts / main / helper"]],
+      ["", `let box: Boxer;\n  box = boxing;\n  const helper = box(${helper});`, ["probe.ts / main / helper"]],
+      // A wrapper whose result cannot hold a function gives back none of what it is given.
+      ["box: (reader: () => number) => number = measuring", `const size = box(${helper});`, []],
+      // What a caller gives a parameter, and a declared name, are read by their declared type alone, which gives back nothing here.
+      ["box: Boxer", `const helper = box(${helper});`, []],
+      ["{ box }: { box: Boxer }", `const helper = box(${helper});`, []],
+      ["boxes: Boxer[]", `for (const box of boxes) {\n    const helper = box(${helper});\n    void helper;\n  }`, []],
+      ["", `const helper = declared(${helper});`, []],
+    ];
+    for (const [signature, body, found] of cases) {
+      const text = `${documented}export function main(${signature}): number {\n  ${body}\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text), signature + body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, signature + body).toEqual([]);
+    }
+    // The throws check reads a function such a wrapper gives back with the comment on the name it is bound to.
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    for (const [signature, call] of [["box: Boxer = boxing", "box"], ["", "made"], ["", "new Box().box"]] as Array<[signature: string, call: string]>) {
+      const text = `${documented}export function main(${signature}): object {\n  /** Reads a size. */\n  const helper = ${call}(${thrower});\n  return helper;\n}\n${wrappers}`;
+      expect(undocumentedThrows("probe.ts", text).problems, call).toEqual(["probe.ts:8: the comment on helper does not say what it throws"]);
+    }
+  });
+
   test("a top-level name whose type cannot be a function is not the first function, whatever made its value unknown", () => {
     const main = "\n/** Reads the size. */\nexport function main(): number {\n  return 1;\n}\n";
     for (const statement of [
@@ -2435,16 +2484,23 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * body is itself; a class is itself; a get accessor gives each value it
  * returns; a variable, class field or property gives each value its
  * initializer may be, as `declaredValues` reads it; a shorthand property
- * gives what its name does; and a name bound by destructuring a literal
- * gives what `readBinding` finds it takes there. A property a type declares,
- * as an interface does, gives what its key holds in each object literal the
- * value it is read from may be, as `keyedValues` reads it, and the property
- * read as well, as unread, for each value it is read from that is not one.
+ * gives what its name does; a parameter gives each value its default may
+ * be, since what its caller gives is what its declared type allows, as a
+ * declared name's is; a function expression's own name gives the function;
+ * and a name bound by destructuring gives what `destructuredValues` finds. A
+ * property a type declares, as an interface does, gives what its key holds
+ * in each object literal the value it is read from may be, as `keyedValues`
+ * reads it, and the property read as well, as unread, for each value it is
+ * read from that is not one. Where no rule can read all a name declared
+ * here may be given, the name read is given back as well, as unread: for a
+ * variable or class field declared with no value that `isGivenLater` finds
+ * code here gives one, as a constructor's assignment does; and for any
+ * other declaration written here that none of these reads.
  *
- * @returns Each value, none when it is not written here: for a parameter,
- *     whose caller gives the value, a name declared with no value, or a
- *     name every declaration of which is in a declaration file, as the
- *     library's are, whose declared type alone describes it.
+ * @returns Each value; none for a name declared with `declare`, or every
+ *     declaration of which is in a declaration file, as the library's are,
+ *     whose declared type alone describes it, nor for a function declared
+ *     with no body.
  */
 function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   const found = ts.isIdentifier(value) ? referencedSymbol(value, checker) : checker.getSymbolAtLocation(value.name);
@@ -2461,20 +2517,87 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     if (ts.isClassLike(declaration)) return [declaration];
     if (ts.isGetAccessorDeclaration(declaration)) return returnedExpressions(declaration).flatMap((returned) => declaredValues(returned, checker, seen));
     if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
-      return declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, seen);
+      if (declaration.initializer !== undefined) return declaredValues(declaration.initializer, checker, seen);
+      const loop = declaration.parent.parent;
+      if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return iteratedValues(value, loop.expression, checker, seen);
+      // A name declared here with no value, as a class field the constructor assigns, is given one no rule reads.
+      return isGivenLater(declaration) ? [value] : [];
     }
     if (ts.isShorthandPropertyAssignment(declaration)) return declaredValues(declaration.name, checker, seen);
-    if (ts.isBindingElement(declaration)) {
-      const root = ts.walkUpBindingElementsAndPatterns(declaration);
-      if (!ts.isVariableDeclaration(root)) return [];
-      return readBinding(root.name, root.initializer, checker).bound.filter(({ name }) => name === declaration.name)
-        .flatMap(({ value: taken }) => ts.isMethodDeclaration(taken) ? [taken] : declaredValues(taken, checker, seen));
-    }
-    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return [];
+    // A parameter's caller gives what its declared type allows, as a declared name's type alone describes it, or its default.
+    if (ts.isParameter(declaration)) return declaration.initializer === undefined ? [] : declaredValues(declaration.initializer, checker, seen);
+    if (ts.isBindingElement(declaration)) return destructuredValues(value, declaration, checker, seen);
+    if (ts.isFunctionExpression(declaration)) return [declaration];
+    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
     const key = value.name.text;
     return declaredValues(value.expression, checker, seen)
       .flatMap((literal) => ts.isObjectLiteralExpression(literal) ? keyedValues(literal, key, value, checker, seen) : [value]);
   });
+}
+
+/**
+ * What a for-of name is given: each item of each array literal the value it
+ * iterates may be, as `declaredValues` reads that value. A value not written
+ * here, or a parameter, is read by its declared type alone. The name read is
+ * given back as well, as unread, for a spread among the items, or a value
+ * iterated that is not an array literal, such as a set, since no rule reads
+ * what those give.
+ */
+function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, iterated: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  return declaredValues(iterated, checker, seen).flatMap((one): DeclaredValue[] => {
+    if (!ts.isArrayLiteralExpression(one)) return [value];
+    return one.elements.flatMap((item) => ts.isSpreadElement(item) ? [value] : declaredValues(item, checker, seen));
+  });
+}
+
+/**
+ * Whether a variable or class field declared with no value is given one by
+ * code written here, as an assignment or a for-of gives it, which no rule
+ * reads. A name written under `declare` is given none here, and a `catch`
+ * clause's name is given what was thrown, which its declared type describes.
+ */
+function isGivenLater(declaration: ts.VariableDeclaration | ts.PropertyDeclaration | ts.PropertyAssignment | ts.BindingElement): boolean {
+  const root = ts.isBindingElement(declaration) ? ts.walkUpBindingElementsAndPatterns(declaration) : declaration;
+  return !isAmbient(root) && !ts.isParameter(root) && !ts.isCatchClause(root.parent);
+}
+
+/** Whether a declaration is written under `declare`, its own or that of a statement or namespace around it, or in a declaration file. */
+function isAmbient(declaration: ts.Node): boolean {
+  if (declaration.getSourceFile().isDeclarationFile) return true;
+  return ts.findAncestor(declaration, (node) => ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) !== undefined;
+}
+
+/**
+ * What a name bound by destructuring is given where it is written: what
+ * `readBinding` finds it takes in each literal the value destructured is
+ * given, as `declaredValues` reads that value, so that a pattern that
+ * reads the value of a call of a function written here reads the literal
+ * the function returns, and each default. The name read is given back as
+ * well, as unread, when no rule can read all it may take: when what is
+ * destructured has no initializer and `isGivenLater` finds code here gives
+ * it a value, as a for-of does; or when the name may take its value from
+ * something not written as a literal, from a part of a literal whose key or
+ * position is not known, or from a literal that gives it no value a pattern
+ * reads, as a get accessor does. A value not written here, as a library's
+ * call is not, and what a parameter's caller gives, are read by their
+ * declared type alone, as `namedValues` reads them.
+ */
+function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.BindingElement, checker: ts.TypeChecker,
+  seen: Set<ts.Node>): DeclaredValue[] {
+  const name = declaration.name;
+  if (!ts.isIdentifier(name)) return [value];
+  const root = ts.walkUpBindingElementsAndPatterns(declaration);
+  const given = root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen);
+  const literals = given.filter((one): one is ts.Expression => ts.isExpression(one));
+  // Each default is read once, whatever the value destructured is.
+  const readings = literals.length === 0 ? [readBinding(root.name, undefined, checker)] : literals.map((literal) => readBinding(root.name, literal, checker));
+  const taken = readings.flatMap((reading) => reading.bound).filter((each) => each.name === name)
+    .flatMap(({ value: one }) => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
+  const unknown = readings.some((reading) => [...reading.opaque, ...reading.unknown.map((position) => position.name)].includes(name));
+  const untaken = taken.length === 0 && literals.some((literal) => ts.isObjectLiteralExpression(literal) || ts.isArrayLiteralExpression(literal));
+  const later = root.initializer === undefined && isGivenLater(declaration);
+  const unread = later || unknown || untaken || given.some((one) => !ts.isExpression(one));
+  return unread ? [...taken, value] : taken;
 }
 
 /**
@@ -3197,6 +3320,12 @@ interface Reading {
   rested: ts.Node[];
   /** Each part of a literal read that a name may take, where which name cannot be told. */
   unread: UnreadPart[];
+  /**
+   * Each name a pattern reads from a value that is not an object or array
+   * literal, such as a call or a name, which a binding does not read
+   * through, so that `namedValues` follows it where it is written.
+   */
+  opaque: ts.Identifier[];
 }
 
 /**
@@ -3217,7 +3346,7 @@ interface Reading {
  *     element reads: past the elements before a rest element, for its pattern.
  */
 function readBinding(binding: ts.BindingName, value: ts.Expression | ts.MethodDeclaration | undefined, checker: ts.TypeChecker,
-  reading: Reading = { bound: [], unknown: [], untaken: [], rested: [], unread: [] }, offset = 0): Reading {
+  reading: Reading = { bound: [], unknown: [], untaken: [], rested: [], unread: [], opaque: [] }, offset = 0): Reading {
   if (ts.isIdentifier(binding)) {
     if (value !== undefined) reading.bound.push({ name: binding, value });
     return reading;
@@ -3256,6 +3385,7 @@ function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at:
     if (!ts.isIdentifier(element.name) && ts.isArrayLiteralExpression(literal)) readBinding(element.name, literal, checker, reading, offset + at);
     return;
   }
+  if (!ts.isArrayLiteralExpression(literal) && !ts.isObjectLiteralExpression(literal)) reading.opaque.push(...boundNames(element.name));
   const source = elementSource(pattern, element, at, literal, checker, offset);
   const cause = source.unknownAfter;
   if (cause !== null) reading.unknown.push(...boundNames(element.name).map((name) => ({ name, cause })));
