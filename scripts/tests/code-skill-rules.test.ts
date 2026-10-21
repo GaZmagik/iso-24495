@@ -130,8 +130,8 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    it throws, tested here. A function written as a value is read with the
 //    nearest comment of its own: on it, on a wrapper around it, or on the
 //    property or array item that holds it; failing that, with the comment on
-//    the class field that holds it, or on the statement that binds it to a
-//    name. A JSDoc comment written just before an array item is the item's
+//    the class field that holds it, on the parameter whose default it is,
+//    or on the statement that binds it to a name. A JSDoc comment written just before an array item is the item's
 //    own, as the scanner finds it, whether or not the compiler attaches it.
 //    A rest element with a name binds an array, not a function.
 // 3. Helpers at top level. A reader cannot reach a closure without reading
@@ -567,6 +567,27 @@ describe("the code skill's rules for this repository's own code", () => {
     const thrower = "(): number => {\n    throw new RangeError(\"x\");\n  }";
     for (const text of [`export const reader = {\n${comment}\n  read: ${thrower},\n};`, `export class Reader {\n${comment}\n  read = ${thrower};\n}`]) {
       expect(undocumentedThrows("probe.ts", text), text).toEqual({ read: 1, problems: [] });
+    }
+  });
+
+  test("a parameter's own comment documents the function it is given by default, and must say what it throws", () => {
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    const comments: Array<[comment: string, problems: string[]]> = [
+      ["/** Reads the default size. */", ["probe.ts:7: the comment on read does not say what it throws"]],
+      ["/**\n   * Reads the default size.\n   * @throws A `RangeError` always.\n   */", []],
+    ];
+    const documented = "/**\n * Reads a size.\n * @param read The reader.\n */\n";
+    for (const [comment, problems] of comments) {
+      const lines = comment.split("\n").length - 1;
+      const texts: Array<[text: string, line: number]> = [
+        [`${documented}export function main(\n  ${comment}\n  read: () => number = ${thrower},\n): number {\n  return read();\n}`, 7],
+        [`${documented}export function main(\n  ${comment}\n  { read = ${thrower} }: { read?: () => number },\n): number {\n  return read();\n}`, 7],
+        [`/** Holds a reader. */\nexport class Box {\n  ${documented.replace(/\n/g, "\n  ")}constructor(\n    ${comment.replace(/\n/g, "\n  ")}\n`
+          + `    readonly read: () => number = ${thrower.replace(/\n/g, "\n  ")},\n  ) {}\n}`, 9],
+      ];
+      for (const [text, line] of texts) {
+        expect(undocumentedThrows("probe.ts", text), text).toEqual({ read: 1, problems: problems.map((problem) => problem.replace(":7:", `:${line + lines}:`)) });
+      }
     }
   });
 
@@ -3413,8 +3434,9 @@ function asDocumentedFunction(node: ts.Node, source: ts.SourceFile): DocumentedF
  * that a comment documents, each read with that comment. The comment is the
  * nearest of the function's own: on the function, on a wrapper around it, or
  * on the property, method or array item that holds it. Failing that, it is
- * the comment on the class field that holds the function, or on the
- * statement that binds the function to a name. One comment and one name make
+ * the comment on the class field that holds the function, on the parameter
+ * whose default it is or that destructures it, or on the statement that
+ * binds the function to a name. One comment and one name make
  * one function to the check, whatever number of values it may be.
  */
 function documentedValues(source: ts.SourceFile, checker: ts.TypeChecker): DocumentedFunction[] {
@@ -3449,6 +3471,8 @@ function documentationOf(climbed: Climb, source: ts.SourceFile): Documentation |
   }
   if (climbed.holder === undefined && ts.isPropertyDeclaration(climbed.sink) && hasJsDoc(climbed.sink)) return { commented: climbed.sink, name };
   const place = climbed.place;
+  // A parameter's own comment documents the function it is given by default, or that a name it destructures takes.
+  if (place.kind === "bound" && ts.isParameter(place.declaration) && hasJsDoc(place.declaration)) return { commented: place.declaration, name };
   if (place.kind !== "bound" || !ts.isVariableDeclaration(place.declaration)) return null;
   const statement = place.declaration.parent.parent;
   return ts.isVariableStatement(statement) && hasJsDoc(statement) ? { commented: statement, name: place.name.text } : null;
