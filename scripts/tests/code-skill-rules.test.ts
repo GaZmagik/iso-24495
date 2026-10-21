@@ -131,8 +131,11 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    nearest comment of its own: on it, on a wrapper around it, or on the
 //    property or array item that holds it; failing that, with the comment on
 //    the class field that holds it, on the parameter whose default it is,
-//    or on the statement that binds it to a name or assigns it. A JSDoc comment written just before an array item is the item's
-//    own, as the scanner finds it, whether or not the compiler attaches it.
+//    or on the statement that binds it to a name or assigns it. A JSDoc
+//    comment written just before an array item, a property, a class
+//    member or a statement is its own, as the scanner finds it, whether or
+//    not the compiler attaches it, as it does not to one written on the
+//    line of the brace or comma before it.
 //    A rest element with a name binds an array, not a function.
 // 3. Helpers at top level. A reader cannot reach a closure without reading
 //    its container first. A function declaration, a variable holding a
@@ -1349,6 +1352,27 @@ describe("the code skill's rules for this repository's own code", () => {
       .toEqual({ read: 1, problems: ["probe.ts:2: the comment on an array item does not say what it throws"] });
     // A comment that is not JSDoc documents nothing.
     expect(undocumentedThrows("probe.ts", `export const readers = [\n  /* Throws. */ ${thrower},\n];`)).toEqual({ read: 0, problems: [] });
+  });
+
+  test("a JSDoc comment on the line of the brace or comma before a property, a class member or a statement is its own", () => {
+    const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+    const body = "(): never {\n    throw new RangeError(\"size\");\n  }";
+    for (const [comment, problems] of [
+      ["/** Reads a size. */", ["probe.ts:2: the comment on read does not say what it throws"]],
+      ["/** Reads a size. @throws A `RangeError` always. */", []],
+    ] as Array<[comment: string, problems: string[]]>) {
+      for (const text of [
+        `export const value = { ${comment}\n  read: ${thrower},\n};`,
+        `export const value = { size: 1, ${comment}\n  read: ${thrower},\n};`,
+        `export class Box { ${comment}\n  read = ${thrower};\n}`,
+        `export class Box { ${comment}\n  read${body}\n}`,
+        `export const value = { ${comment}\n  read${body},\n};`,
+        `export const size = 1; ${comment}\nexport const read = ${thrower};`,
+        `export const holder: { read?: () => never } = {}; ${comment}\n(holder.read) = ${thrower};`,
+      ]) {
+        expect(undocumentedThrows("probe.ts", text), text).toEqual({ read: 1, problems });
+      }
+    }
   });
 
   test("a name whose type cannot be a function is not a possible helper, wherever its position is unknown", () => {
@@ -3525,24 +3549,27 @@ function assignedTargetName(target: ts.Expression, source: ts.SourceFile): strin
 
 /**
  * The JSDoc comments attached to a node itself, not those it would inherit
- * from a statement around it; for an item of an array literal that has none
- * attached, the comments `itemComments` finds before it.
+ * from a statement around it; for a node that has none attached, the
+ * comments `writtenComments` finds before it.
  */
 function ownJsDocs(node: ts.Node): ts.JSDoc[] {
   const attached = ts.getJSDocCommentsAndTags(node).filter((comment): comment is ts.JSDoc => ts.isJSDoc(comment) && comment.parent === node);
-  return attached.length > 0 || !ts.isArrayLiteralExpression(node.parent) ? attached : itemComments(node);
+  return attached.length > 0 ? attached : writtenComments(node);
 }
 
 /**
- * The JSDoc comments written just before an item of an array literal, which
- * the compiler attaches to none but a function or parentheses: each comment
- * in the form of JSDoc, opening with two asterisks, that the scanner reports
- * after the comma or bracket before the item, on that line or the lines
- * after it, as the compiler finds the comments of a function.
+ * The JSDoc comments written just before a node that the compiler attaches
+ * to none: to an item of an array literal it attaches none but to a
+ * function or parentheses, and to a property, a class member or a statement
+ * none written on the line of the token before it, such as the brace that
+ * opens the literal or class. Each is a comment in the form of JSDoc,
+ * opening with two asterisks, that the scanner reports after the token
+ * before the node, on that line or the lines after it, as the compiler
+ * finds the comments of a function.
  */
-function itemComments(item: ts.Node): ts.JSDoc[] {
-  const text = item.getSourceFile().text;
-  const ranges = [...ts.getTrailingCommentRanges(text, item.pos) ?? [], ...ts.getLeadingCommentRanges(text, item.pos) ?? []];
+function writtenComments(node: ts.Node): ts.JSDoc[] {
+  const text = node.getSourceFile().text;
+  const ranges = [...ts.getTrailingCommentRanges(text, node.pos) ?? [], ...ts.getLeadingCommentRanges(text, node.pos) ?? []];
   return ranges.filter((range) => text.startsWith("/**", range.pos) && !text.startsWith("/**/", range.pos))
     .flatMap((range) => parsedComment(text.slice(range.pos, range.end)));
 }
