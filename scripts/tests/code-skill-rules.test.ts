@@ -501,6 +501,23 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(boundHelpers("probe.ts", other + implementation)).toEqual(["probe.ts / main / helper"]);
   });
 
+  test("a @param tag documents a parameter wherever the function's own comment is written, the compiler attaches it or not", () => {
+    const reader = "read: () => number = (): number => 1";
+    // Each form, with TAG where its comment names a parameter, and the function the nested-helper check names.
+    const forms: Array<[form: string, owner: string]> = [
+      [`export const bag = { /** Reads a size. TAG */\n  read(${reader}): number {\n    return read();\n  },\n};\n`, "read"],
+      [`export class Bag { /** Reads a size. TAG */\n  read(${reader}): number {\n    return read();\n  }\n}\n`, "read"],
+      [`/** TAG */\n/** Reads a size. */\nexport function main(${reader}): number {\n  return read();\n}\n`, "main"],
+      [`const size = 1; /** Reads a size. TAG */\nexport const main = (${reader}): number => read() + size;\n`, "main"],
+      [`export class Bag { /** Reads a size. TAG */\n  read(read?: () => number): number;\n  read(${reader}): number {\n    return read();\n  }\n}\n`, "read"],
+    ];
+    for (const [form, owner] of forms) {
+      expect(boundHelpers("probe.ts", form.replace("TAG", "@param read The reader.")), form).toEqual([]);
+      // A tag that names another parameter documents nothing here.
+      expect(boundHelpers("probe.ts", form.replace("TAG", "@param other Not this one.")), form).toEqual([`probe.ts / ${owner} / read`]);
+    }
+  });
+
   test("a function a destructuring does not bind to a name, or binds at the top level, is not a nested helper", () => {
     for (const body of [
       "const { helper }: { unused: () => number; helper: number } = { unused: (): number => 1, helper: 2 };",
@@ -2986,7 +3003,7 @@ function boundHelpersIn(file: string, source: ts.SourceFile, checker: ts.TypeChe
     if (assigned !== null && ts.findAncestor(node, ts.isFunctionLike) !== undefined && functionValues(assigned.value, checker).length > 0) {
       found.push(`${file} / ${enclosingFunctionName(assigned.name, source)} / ${assigned.name.text}`);
     }
-    const declaration = helperDeclaration(node);
+    const declaration = helperDeclaration(node, checker);
     if (declaration === null) continue;
     const reading = readBinding(declaration.name, declaration.initializer, checker);
     for (const name of new Set(helperNames(reading, checker))) {
@@ -3034,23 +3051,29 @@ function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
  *
  * @returns The declaration, or null when the node is neither.
  */
-function helperDeclaration(node: ts.Node): ts.ParameterDeclaration | ts.VariableDeclaration | null {
-  if (ts.isParameter(node)) return isDocumentedParameter(node) ? null : node;
+function helperDeclaration(node: ts.Node, checker: ts.TypeChecker): ts.ParameterDeclaration | ts.VariableDeclaration | null {
+  if (ts.isParameter(node)) return isDocumentedParameter(node, checker) ? null : node;
   return ts.isVariableDeclaration(node) && ts.findAncestor(node, ts.isFunctionLike) !== undefined ? node : null;
 }
 
 /**
  * Whether a parameter is named by an `@param` tag of its function's comment,
- * or of the comment on any overload signature of its function. Only a
- * parameter with a name of its own can be.
+ * or of the comment on any overload signature of its function. A comment is
+ * read wherever the throws check reads it: each the compiler attaches, and
+ * each `ownJsDocs` finds on the function or its signatures, or on what
+ * holds or binds the function, as `documentationOf` finds it, so that one
+ * on the line of the brace before a method, or before another comment,
+ * counts. Only a parameter with a name of its own can be named.
  */
-function isDocumentedParameter(parameter: ts.ParameterDeclaration): boolean {
+function isDocumentedParameter(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): boolean {
   const name = parameter.name;
   if (!ts.isIdentifier(name)) return false;
   const owner = parameter.parent;
   const signatures = ts.isFunctionDeclaration(owner) || ts.isMethodDeclaration(owner) || ts.isConstructorDeclaration(owner) ? overloadSignatures(owner) : [];
-  const tags = [...ts.getJSDocParameterTags(parameter), ...signatures.flatMap((signature) => ts.getJSDocTags(signature).filter(ts.isJSDocParameterTag))];
-  return tags.some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
+  const documentation = isWrittenFunction(owner) ? documentationOf(climb(owner, checker), owner.getSourceFile()) : null;
+  const commented = documentation === null ? signatures : [...signatures, documentation.commented];
+  const written = commented.flatMap(ownJsDocs).flatMap((comment) => comment.tags ?? []).filter(ts.isJSDocParameterTag);
+  return [...ts.getJSDocParameterTags(parameter), ...written].some((tag) => ts.isIdentifier(tag.name) && tag.name.text === name.text);
 }
 
 /** Each name a reading gives a function: a name one of whose values may be an arrow function or a function expression, or is a method. */
