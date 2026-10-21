@@ -151,7 +151,8 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    read through its implementation's body, and a function whose type an
 //    annotation declares through the function the annotated name, field or
 //    property holds. A body that passes an argument on, by any use but
-//    calling it, may give it back when the declared result fits it, unless
+//    calling it, or a constructor whose parameter is written as a property,
+//    may give it back when the declared result fits it, unless
 //    each value it returns is a function or literal it writes new, or hold
 //    it, in a literal, a name or a typed return,
 //    when the declared result has a place that may hold a function. A key is
@@ -1408,6 +1409,33 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const read = keep(${thrower});${boxes}`))
       .toEqual({ read: 1, problems: ["probe.ts:2: the comment on read does not say what it throws"] });
   });
+
+  test("a constructor parameter written as a property holds what it is given in the instance", () => {
+    const helper = "(): number => 1";
+    const classes = "\nclass Box {\n  constructor(public reader: () => number) {}\n}\n"
+      + "class Kept {\n  constructor(readonly reader: () => number) {}\n}\n"
+      + "class Sub extends Box {}\n"
+      + "class Counter {\n  size: number;\n  constructor(reader: () => number) {\n    this.size = reader();\n  }\n}\n";
+    const unread = "probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read";
+    const cases: Array<[body: string, found: string[], problems: string[]]> = [];
+    for (const made of ["Box", "Kept", "Sub"]) {
+      cases.push([`const { reader: helper } = new ${made}(${helper});`, [heldByCall("helper", `new ${made}(${helper})`)], [unread]]);
+    }
+    cases.push(
+      [`const helper = new Box(${helper}).reader;`, [], ["probe.ts:2: an arrow function cannot be placed: it is read back out of a value that holds it, which no rule reads"]],
+      // A name bound to the instance binds no function, and a constructor that only calls what it is given holds nothing.
+      [`const box = new Box(${helper});`, [], []],
+      [`const { size } = new Counter(${helper});`, [], []],
+    );
+    for (const [body, found, problems] of cases) {
+      const text = `export function main(): number {\n  ${body}\n  return 0;\n}\n${classes}`;
+      expect(boundHelpers("probe.ts", text), body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, body).toEqual(problems);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { reader: read } = new Box(${thrower});${classes}`))
+      .toEqual({ read: 0, problems: [`probe.ts:2: what read binds cannot be read, as it is read from new Box(${thrower}), a call whose value may hold a function`] });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1813,9 +1841,13 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
  * Whether a function's body, or the default of one of its parameters,
  * passes on the value of one of its parameters: uses a name the parameter
  * binds anywhere but as the function a call calls. A use inside a function
- * nested in the body counts, since that function may pass it on.
+ * nested in the body counts, since that function may pass it on. A
+ * constructor's parameter written as a property, with an accessibility
+ * modifier or `readonly`, passes its value on to the instance, which holds
+ * it as that property, though the body never names it.
  */
 function passesOn(declaration: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): boolean {
+  if (ts.isParameterPropertyDeclaration(parameter, parameter.parent)) return true;
   const symbols = new Set(boundNames(parameter.name).map((name) => checker.getSymbolAtLocation(name)));
   const body = bodyOf(declaration);
   const pending: ts.Node[] = declaration.parameters.flatMap((each) => each.initializer ?? []);
