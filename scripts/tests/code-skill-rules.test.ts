@@ -108,7 +108,7 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
   "a part of a literal no name takes": "A destructuring binds no name to it, so nothing keeps it.",
   "stored on a property": "An assignment to a property, as a statement of its own, hands it on as a property that holds it does.",
   "a member of a value that holds it, which by its declared type is not the function":
-    "The member's declared type uses neither the receiver nor a type parameter that carries the function, so its value is neither the function nor a value holding it, as expect(check).toThrow() returns nothing.",
+    "The member's declared type uses neither the receiver nor a type parameter that carries the function, and its type has no place that may be or hold a function, so its value is neither the function nor a value holding it, as expect(check).toThrow() returns nothing.",
 };
 
 // This file is the record of the four rules this plugin's own TypeScript is
@@ -158,8 +158,8 @@ const ALLOWED_POSITIONS: Readonly<Record<string, string>> = {
 //    when the declared result has a place that may hold a function. A key is
 //    read whatever its spelling: against an array literal, an index key
 //    reads the item there. A name a spread of unknown extent, a key not
-//    known, or a call that may hold a function written in its arguments, may
-//    give its value cannot be read, so it fails the test, naming the name and
+//    known, or a call that may hold a function written in its arguments, or
+//    a member of such a call, may give its value cannot be read, so it fails the test, naming the name and
 //    why; the same holds for the other two tests. A name whose type cannot
 //    be a function, such as a number, a string, an array, or an object that
 //    asks for a property a function lacks, binds no function, so the
@@ -1436,6 +1436,34 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { reader: read } = new Box(${thrower});${classes}`))
       .toEqual({ read: 0, problems: [`probe.ts:2: what read binds cannot be read, as it is read from new Box(${thrower}), a call whose value may hold a function`] });
   });
+
+  test("a member of a call that holds a function is followed when its type may hold one, and a name destructured from it is reported", () => {
+    const helper = "(): number => 1";
+    // Each member's type is written out with no type parameter, so only what the type may hold says whether the member holds the function.
+    const wrapped = "\ninterface Wrapped {\n  value: { reader: () => number };\n  items: [() => number];\n  get(): { reader: () => number };\n  size: number;\n}\n"
+      + "function wrap(reader: () => number): Wrapped {\n  return { value: { reader }, items: [reader], get: () => ({ reader }), size: 1 };\n}\n";
+    const unread = "probe.ts:2: an arrow function cannot be placed: its destructuring reads it from a value that is not a literal, such as a call that holds it, which no rule can read";
+    const cases: Array<[body: string, found: string[], problems: string[]]> = [
+      [`const { reader: helper } = wrap(${helper}).value;`, [memberOfCall("helper", `wrap(${helper}).value`)], [unread]],
+      [`const [helper] = wrap(${helper}).items;`, [memberOfCall("helper", `wrap(${helper}).items`)], [unread]],
+      [`const { reader: helper } = wrap(${helper})["value"];`, [memberOfCall("helper", `wrap(${helper})["value"]`)], [unread]],
+      [`const { reader: helper } = wrap(${helper}).value!;`, [memberOfCall("helper", `wrap(${helper}).value`)], [unread]],
+      [`const { reader: helper } = wrap(${helper}).get();`, [heldByCall("helper", `wrap(${helper}).get()`)], [unread]],
+      // A member whose type has no place for a function holds none, and a name bound to a member that holds one binds no function.
+      [`const size = wrap(${helper}).size;`, [], []],
+      [`const value = wrap(${helper}).value;`, [], []],
+    ];
+    for (const [body, found, problems] of cases) {
+      const text = `export function main(): number {\n  ${body}\n  return 0;\n}\n${wrapped}`;
+      expect(boundHelpers("probe.ts", text), body).toEqual(found);
+      expect(unplacedFunctions("probe.ts", text).problems, body).toEqual(problems);
+    }
+    const thrower = "(): never => {\n  throw new RangeError(\"size\");\n}";
+    expect(undocumentedThrows("probe.ts", `/** Reads a size. */\nexport const { reader: read } = wrap(${thrower}).value;${wrapped}`)).toEqual({
+      read: 0,
+      problems: [`probe.ts:2: what read binds cannot be read, as it is read from wrap(${thrower}).value, a member of a call whose value may hold a function`],
+    });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -1446,6 +1474,11 @@ function positionNotKnown(name: string, spread: string): string {
 /** The entry the nested-helper check gives a name of main in probe.ts that a destructuring takes from a call whose value may hold a function. */
 function heldByCall(name: string, call: string): string {
   return `probe.ts / main / ${name}: it is read from ${call}, a call whose value may hold a function, so what it holds cannot be read`;
+}
+
+/** The entry the nested-helper check gives a name of main in probe.ts that a destructuring takes from a member of a call whose value may hold a function. */
+function memberOfCall(name: string, member: string): string {
+  return `probe.ts / main / ${name}: it is read from ${member}, a member of a call whose value may hold a function, so what it holds cannot be read`;
 }
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose key a spread of unknown keys may give. */
@@ -2570,10 +2603,9 @@ function valuesOf(value: ts.Expression | ts.MethodDeclaration | undefined, check
 /** Reads what one element of a pattern takes from one literal, adding it to the reading. */
 function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression | ts.MethodDeclaration,
   checker: ts.TypeChecker, reading: Reading, offset: number): void {
-  // A call whose value may hold a function written in its arguments cannot be read as a literal can, so no name it gives can be read,
-  // unless a rest element's name binds what is left.
-  if ((ts.isCallExpression(literal) || ts.isNewExpression(literal)) && (element.dotDotDotToken === undefined || !ts.isIdentifier(element.name))
-    && callValues(literal, checker, NOTHING_FOLLOWED).held.some(writesFunction)) {
+  // A call whose value may hold a function written in its arguments cannot be read as a literal can, nor can a member of it, so no name
+  // either gives can be read, unless a rest element's name binds what is left.
+  if (!ts.isMethodDeclaration(literal) && (element.dotDotDotToken === undefined || !ts.isIdentifier(element.name)) && isReadFromHoldingCall(literal, checker)) {
     reading.unknown.push(...boundNames(element.name).map((name) => ({ name, cause: literal })));
     return;
   }
@@ -2588,6 +2620,19 @@ function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at:
   for (const holder of source.holders) {
     readBinding(element.name, heldBy(holder), checker, reading);
   }
+}
+
+/**
+ * Whether a value is a call whose value may hold a function written in its
+ * arguments, as `callValues` finds, or is read from one through members, as
+ * `wrap(reader).value` and `wrap(reader).get()` are read from `wrap(reader)`.
+ */
+function isReadFromHoldingCall(value: ts.Expression, checker: ts.TypeChecker): boolean {
+  if ((ts.isCallExpression(value) || ts.isNewExpression(value)) && callValues(value, checker, NOTHING_FOLLOWED).held.some(writesFunction)) return true;
+  const inner = ts.isCallExpression(value) ? heldValue(value.expression) : value;
+  if (inner === undefined || (!ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner))) return false;
+  const receiver = heldValue(inner.expression);
+  return receiver !== undefined && isReadFromHoldingCall(receiver, checker);
 }
 
 /** A property, method or array item of a literal that gives a name its value. */
@@ -2870,6 +2915,7 @@ function unknownReason(cause: UnknownCause, source: ts.SourceFile): string {
   if (ts.isComputedPropertyName(cause) && ts.isBindingElement(cause.parent)) return `its key, ${text}, is not known`;
   if (ts.isComputedPropertyName(cause)) return `its key may be given by ${text}, whose value is not known`;
   if (ts.isCallExpression(cause) || ts.isNewExpression(cause)) return `it is read from ${text}, a call whose value may hold a function`;
+  if (ts.isPropertyAccessExpression(cause) || ts.isElementAccessExpression(cause)) return `it is read from ${text}, a member of a call whose value may hold a function`;
   if (ts.isObjectLiteralExpression(cause)) return "it is read by position from an object literal";
   return "it is read from a function as though the function were a literal";
 }
@@ -3262,9 +3308,11 @@ interface MemberStep {
  * itself, takes the function. A member, or a call of a method, whose value
  * may be the function fails, since no rule reads a function read back out.
  * One whose declared type uses neither the receiver nor a type parameter the
- * receiver's type can use is not the function and holds none, as
- * `expect(check).toThrow()` returns nothing. Any other holds the function,
- * as `[...].map(...)` gives an array, and is followed on.
+ * receiver's type can use, and whose type has no place that may be or hold
+ * a function, as `mayBeOrHoldFunction` reads it, is not the function and
+ * holds none, as `expect(check).toThrow()` returns nothing. Any other may
+ * hold the function, as `[...].map(...)` gives an array and a member typed
+ * `{ reader: () => number }` may be an object holding it, and is followed on.
  */
 function memberStep(access: ts.PropertyAccessExpression | ts.ElementAccessExpression, written: ts.FunctionLikeDeclaration, checker: ts.TypeChecker): MemberStep {
   const call = ts.isCallExpression(access.parent) && access.parent.expression === access ? access.parent : undefined;
@@ -3278,7 +3326,8 @@ function memberStep(access: ts.PropertyAccessExpression | ts.ElementAccessExpres
   if (declaration === undefined || type === undefined) return { place: undefined, target, steps };
   const usable = typeParametersInScope(declaration);
   const uses = [...typeNamesOutsideFunctions(type)].some((name) => name === "this" || usable.has(name));
-  return { place: uses ? undefined : position("a member of a value that holds it, which by its declared type is not the function"), target, steps };
+  const holds = mayBeOrHoldFunction(checker.getTypeAtLocation(target), checker, target);
+  return { place: uses || holds ? undefined : position("a member of a value that holds it, which by its declared type is not the function"), target, steps };
 }
 
 /** A place on the allowed list. */
