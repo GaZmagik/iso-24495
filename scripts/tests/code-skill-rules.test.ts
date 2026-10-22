@@ -2195,6 +2195,52 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(unplacedFunctions("probe.ts", text).problems, call).toEqual([]);
       }
     });
+
+    test("a spread is read through what the value spread holds, wherever its items can be read", () => {
+      const iterated: Array<[before: string, collection: string, found: string[]]> = [
+        ["const list: Boxer[] = [boxing];", "[...list]", reported],
+        ["const list: Boxer[] = [consuming];", "[...list]", []],
+        ["const list: Boxer[] = [consuming];\n  list.push(boxing);", "[...list]", reported],
+        ["const list: Boxer[] = [consuming];\n  list.push(consuming);", "[...list]", []],
+        ["const list: Boxer[] = [boxing];", "new Set([...list])", reported],
+        ["const list: Boxer[] = [consuming];", "new Set([...list])", []],
+        ["const map = new Map<string, Boxer>([[\"k\", boxing]]);", "[...map.values()]", reported],
+        ["const map = new Map<string, Boxer>([[\"k\", consuming]]);", "[...map.values()]", []],
+        ["const base = { box: boxing };\n  const holder = { ...base };", "Object.values(holder)", reported],
+        ["const base = { box: consuming };\n  const holder = { ...base };", "Object.values(holder)", []],
+        ["const holder = { get box(): Boxer {\n    return boxing;\n  } };", "Object.values(holder)", reported],
+        ["const holder = { get box(): Boxer {\n    return consuming;\n  } };", "Object.values(holder)", []],
+      ];
+      for (const [before, collection, found] of iterated) {
+        const text = `export function main(): number {\n  ${before}\n  for (const box of ${collection}) {\n    const helper = box((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), before + collection).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, before + collection).toEqual([]);
+      }
+      // A position after a spread may hold any item the spread gives, or any item written after it.
+      const called: Array<[before: string, call: string, found: string[]]> = [
+        ["const list: Boxer[] = [boxing];", "[...list][0]!", reported],
+        ["const list: Boxer[] = [consuming];", "[...list][0]!", []],
+        ["const list: Boxer[] = [boxing];\n  const [box] = [...list];", "box!", reported],
+        ["const list: Boxer[] = [consuming];\n  const [box] = [...list];", "box!", []],
+        ["const list: Boxer[] = [consuming];\n  const [, box] = [...list, boxing];", "box!", reported],
+        ["const list: Boxer[] = [consuming];\n  const [, box] = [...list, consuming];", "box!", []],
+        ["const base = { box: boxing };\n  const holder = { ...base };", "holder.box", reported],
+        ["const base = { box: consuming };\n  const holder = { ...base, box: boxing };", "holder.box", reported],
+        ["const base = { box: consuming };\n  const holder = { ...base, box: consuming };", "holder.box", []],
+      ];
+      for (const [before, call, found] of called) {
+        const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), before + call).toEqual(found);
+      }
+      // A spread of a parameter is read through what every call gives it.
+      for (const [list, found] of [["[boxing]", ["probe.ts / use / helper"]], ["[consuming]", []]] as Array<[list: string, found: string[]]>) {
+        const text = `export function main(): number {\n  return use(${list});\n}\nfunction use(list: Boxer[]): number {\n  for (const box of [...list]) {\n    const helper = box((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), list).toEqual(found);
+      }
+      // A spread of a value not written here still leaves a later position unknown, naming the spread.
+      const declared = `export function main(): number {\n  const [box] = [...outside];\n  const helper = box!((): number => 1);\n  void helper;\n  return 0;\n}\ndeclare const outside: Boxer[];\n${wrappers}`;
+      expect(boundHelpers("probe.ts", declared)).toEqual([positionNotKnown("box", "...outside"), "probe.ts / main / helper"]);
+    });
   });
 });
 
@@ -3261,29 +3307,60 @@ function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefin
 }
 
 /**
- * What a for-of name is given: each item each value iterated may hold, as
- * `declaredValues` reads that value. An array literal gives its items and
- * each item code adds to it, as `placeContents` finds them. A call or `new`
- * of a library function gives each value `libraryContents` finds that the
- * values it is handed hold, whose type fits the name, as `new Set(list)`,
- * `list.slice()` and `map.values()` give those of `list` and `map`. Any
- * other call or `new` is read through each array literal `callValues` finds
- * it holds. A value not written here is read by its declared type alone.
- * The name read is given back as well, as unread, for a spread among the
- * items, a container changed in a way no rule reads, a call that holds
- * anything but array literals, or any other value iterated that is not an
- * array literal, since no rule reads what those give.
+ * What a for-of name is given: each item `iteratedContents` finds the value
+ * iterated gives, as `declaredValues` reads it, with the name read given
+ * back as well, as unread, where it may give what no rule reads.
  */
 function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, iterated: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
-  const wanted = checker.getTypeAtLocation(value);
-  return declaredValues(iterated, checker, seen).flatMap((one): DeclaredValue[] => {
-    if (ts.isArrayLiteralExpression(one)) return readContents(placeContents(one, checker, seen), value, checker, seen);
-    if (isLibraryCall(one, checker)) return readContents(libraryContents(one, wanted, checker, seen), value, checker, seen);
-    const held = ts.isCallExpression(one) || ts.isNewExpression(one) ? callValues(one, checker, NOTHING_FOLLOWED).held.flatMap((each) => declaredValues(each, checker, seen)) : [];
-    const lists = held.filter(ts.isArrayLiteralExpression);
-    if (lists.length === 0 || lists.length < held.length) return [value];
-    return lists.flatMap((list) => readContents(placeContents(list, checker, seen), value, checker, seen));
-  });
+  return readContents(iteratedContents(iterated, checker.getTypeAtLocation(value), checker, seen), value, checker, seen);
+}
+
+/**
+ * Each item iterating a value gives, as a for-of or a spread in an array
+ * iterates it: each item each value it may be holds, as `declaredValues`
+ * reads that value. An array literal gives its items and each item code adds
+ * to it, as `placeContents` finds them. A call or `new` of a library
+ * function gives each value `libraryContents` finds that the values it is
+ * handed hold, whose type fits the type wanted, as `new Set(list)`,
+ * `list.slice()` and `map.values()` give those of `list` and `map`. Any
+ * other call or `new` is read through each array literal `callValues` finds
+ * it holds. A value not written here is read by its declared type alone. A
+ * container changed in a way no rule reads, a call that holds anything but
+ * array literals, or any other value that is not an array literal, gives
+ * what no rule reads.
+ *
+ * @param wanted The type of each item read.
+ */
+function iteratedContents(iterated: ts.Expression, wanted: ts.Type, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
+  const found: ReachedContents = { values: [], unread: null, reached: false };
+  for (const one of declaredValues(iterated, checker, seen)) {
+    found.reached = true;
+    const lists: ts.ArrayLiteralExpression[] = [];
+    if (ts.isArrayLiteralExpression(one)) {
+      lists.push(one);
+    } else if (isLibraryCall(one, checker)) {
+      const held = libraryContents(one, wanted, checker, seen);
+      found.values.push(...held.values);
+      found.unread ??= held.unread;
+      continue;
+    } else {
+      const held = ts.isCallExpression(one) || ts.isNewExpression(one) ? callValues(one, checker, NOTHING_FOLLOWED).held.flatMap((each) => declaredValues(each, checker, seen)) : [];
+      lists.push(...held.filter(ts.isArrayLiteralExpression));
+      if (lists.length === 0 || lists.length < held.length) found.unread ??= iterated;
+    }
+    for (const list of lists) {
+      const held = placeContents(list, checker, seen);
+      found.values.push(...held.values);
+      found.unread ??= held.unread;
+    }
+  }
+  return found;
+}
+
+/** The type of each item an array literal holds, or the literal's own type where it declares none. */
+function itemType(literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker): ts.Type {
+  const type = checker.getTypeAtLocation(literal);
+  return type.getNumberIndexType() ?? type;
 }
 
 /** A value whose contents the rules read where it is written: an object or array literal, a collection a library call makes, or a class, whose instances share each member the class declares. */
@@ -3323,8 +3400,11 @@ function readContents(contents: Contents, value: ts.Expression, checker: ts.Type
  * call is handed holds, as `reachedContents` finds it, so that
  * `new Set(list)` holds what `list` holds, and what each callback it is
  * handed returns, as `callbackResults` reads it; and each value code gives the
- * container after it is made, as `writtenTo` finds it. A spread, or an
- * accessor, gives what no rule here reads.
+ * container after it is made, as `writtenTo` finds it. A spread in an array
+ * literal gives what `iteratedContents` finds iterating it gives, and one in
+ * an object literal what `reachedContents` finds the value spread holds. A
+ * get accessor gives each value it returns; a set accessor holds nothing,
+ * since what it is given goes where its body writes it.
  */
 function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
   const found: Contents = { values: [], unread: null };
@@ -3333,7 +3413,9 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
   if (ts.isArrayLiteralExpression(container)) {
     for (const item of container.elements) {
       if (ts.isSpreadElement(item)) {
-        found.unread ??= item;
+        const spread = iteratedContents(item.expression, itemType(container, checker), checker, seen);
+        found.values.push(...spread.values);
+        found.unread ??= spread.unread;
       } else if (!ts.isOmittedExpression(item)) {
         found.values.push(item);
       }
@@ -3346,8 +3428,12 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
         found.values.push(property.name);
       } else if (ts.isMethodDeclaration(property)) {
         found.values.push(property);
-      } else {
-        found.unread ??= property;
+      } else if (ts.isGetAccessorDeclaration(property)) {
+        found.values.push(...returnedExpressions(property));
+      } else if (ts.isSpreadAssignment(property)) {
+        const spread = reachedContents(property.expression, checker, seen);
+        found.values.push(...spread.values);
+        found.unread ??= spread.unread;
       }
     }
   } else if (ts.isClassLike(container)) {
@@ -5205,12 +5291,40 @@ function isIndexKey(key: string): boolean {
  */
 function itemSource(literal: ts.Expression, at: number, checker: ts.TypeChecker): ElementSource {
   if (!ts.isArrayLiteralExpression(literal)) return { holders: [], unknownAfter: null };
-  const { items, unknownAfter } = spreadItems(literal, checker);
+  const { items, unknownAfter, after } = spreadItems(literal, checker);
   const placed = writtenTo(literal, String(at), checker);
   // An item code moved may now be at any position, and so may one written to a position not known.
   const written = placed.moved ? writtenTo(literal, undefined, checker) : placed;
   const known = (written.moved ? items : [items[at]]).filter((item): item is ts.Expression => item !== undefined);
-  return { holders: [...known, ...written.values], unknownAfter: written.unread ?? (at < items.length && !written.moved ? null : unknownAfter) };
+  const later = at < items.length && !written.moved ? null : unknownAfter;
+  const following = later === null ? undefined : followingItems(literal, after, checker);
+  if (following !== undefined) return { holders: [...known, ...following, ...written.values], unknownAfter: written.unread };
+  return { holders: [...known, ...written.values], unknownAfter: written.unread ?? later };
+}
+
+/**
+ * Each item that may sit at a position after a spread whose length is not
+ * known: each item iterating each spread among the elements after it gives,
+ * as `iteratedContents` finds them, and each item written after it. Where
+ * a spread's value is not written here, or gives what no rule reads, which
+ * position each item sits at cannot be read.
+ *
+ * @param after The spread, and each element written after it at any depth, as `spreadItems` lists them.
+ * @returns The items, or undefined when they cannot all be read.
+ */
+function followingItems(literal: ts.ArrayLiteralExpression, after: readonly ts.Node[], checker: ts.TypeChecker): WrittenValue[] | undefined {
+  const items: WrittenValue[] = [];
+  for (const node of after) {
+    if (ts.isOmittedExpression(node) || !ts.isExpression(node)) continue;
+    if (!ts.isSpreadElement(node)) {
+      items.push(node);
+      continue;
+    }
+    const spread = iteratedContents(node.expression, itemType(literal, checker), checker, new Set());
+    if (!spread.reached || spread.unread !== null) return undefined;
+    items.push(...spread.values);
+  }
+  return items;
 }
 
 /** The value a property gives, or the method or array item itself. */
@@ -5230,15 +5344,15 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
   const found: ElementSource = { holders: [], unknownAfter: null };
   for (const property of literal.properties) {
     if (ts.isSpreadAssignment(property)) {
-      const spread = singleValue(property.expression, checker);
-      if (spread === undefined || !ts.isObjectLiteralExpression(spread)) {
+      const spreads = spreadLiterals(property.expression, checker);
+      if (spreads === undefined) {
         found.unknownAfter = property;
         continue;
       }
-      const inner = keyedProperties(spread, key, checker);
-      found.holders.push(...inner.holders);
-      // A key the inner literal gives is settled there, unless something inside it that may give any key comes later.
-      if (inner.holders.length > 0 || inner.unknownAfter !== null) found.unknownAfter = inner.unknownAfter;
+      const inner = spreads.map((spread) => keyedProperties(spread, key, checker));
+      found.holders.push(...inner.flatMap((each) => each.holders));
+      // A key an inner literal gives is settled there, unless something inside one that may give any key comes later.
+      if (inner.some((each) => each.holders.length > 0 || each.unknownAfter !== null)) found.unknownAfter = inner.find((each) => each.unknownAfter !== null)?.unknownAfter ?? null;
       continue;
     }
     const given = propertyKey(property.name, checker);
@@ -5254,6 +5368,20 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
   found.holders.push(...written.values);
   if (written.unread !== null) found.unknownAfter = written.unread;
   return found;
+}
+
+/**
+ * The object literals a value spread into an object literal may be: the
+ * value itself when it is one, or, for a name or a member, each value
+ * `declaredValues` finds it may be, when every one is an object literal.
+ *
+ * @returns The literals, or undefined when a value it may be is no object literal, or none is written here.
+ */
+function spreadLiterals(spread: ts.Expression, checker: ts.TypeChecker): ts.ObjectLiteralExpression[] | undefined {
+  const single = singleValue(spread, checker);
+  if (single !== undefined && ts.isObjectLiteralExpression(single)) return [single];
+  const values = declaredValues(spread, checker, new Set());
+  return values.length > 0 && values.every(ts.isObjectLiteralExpression) ? values.filter(ts.isObjectLiteralExpression) : undefined;
 }
 
 /** The key a binding element reads from an object, or undefined when it cannot be known without running the code. */
