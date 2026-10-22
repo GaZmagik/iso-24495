@@ -2265,6 +2265,8 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const entry: [string, Boxer] = [\"a\", boxing];\n  const map = new Map<string, Boxer>([entry]);", "map.get(\"a\")!", reported],
         ["const entry: [string, Boxer] = [\"other\", boxing];\n  entry[0] = \"a\";\n  const map = new Map<string, Boxer>([entry]);", "map.get(\"a\")!", reported],
         ["const entry: [string, Boxer] = [\"a\", consuming];\n  const map = new Map<string, Boxer>([entry]);", "map.get(\"a\")!", []],
+        ["const entries: Array<[string, Boxer]> = [[\"other\", boxing]];\n  entries[0]![0] = \"a\";\n  const map = new Map<string, Boxer>(entries);", "map.get(\"a\")!", reported],
+        ["const entries: Array<[string, Boxer]> = [[\"a\", consuming]];\n  const map = new Map<string, Boxer>(entries);", "map.get(\"a\")!", []],
       ];
       for (const [before, call, found] of called) {
         const text = `export function main(either: "a" | "b", name: string): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
