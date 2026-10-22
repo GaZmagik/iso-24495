@@ -2292,8 +2292,44 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), before + collection).toEqual(found);
       }
     });
+
+    test("a class's static members and its instances' members are each read through the changes made to that side alone", () => {
+      const statically = "  static change(): void {\n    this.box = boxing;\n  }\n";
+      const instance = "  change(): void {\n    this.box = boxing;\n  }\n";
+      const block = "  static {\n    this.box = boxing;\n  }\n";
+      const called: Array<[before: string, call: string, after: string, found: string[]]> = [
+        ["Holder.box = boxing;", "Holder.box", holderClass(""), reported],
+        ["Holder.box = boxing;", "new Holder().box", holderClass(""), []],
+        ["const made = new Holder();\n  made.box = boxing;", "made.box", holderClass(""), reported],
+        ["const made = new Holder();\n  made.box = boxing;", "Holder.box", holderClass(""), []],
+        ["Holder.change();", "Holder.box", holderClass(statically), reported],
+        ["Holder.change();", "new Holder().box", holderClass(statically), []],
+        ["const made = new Holder();\n  made.change();", "made.box", holderClass(instance), reported],
+        ["const made = new Holder();\n  made.change();", "Holder.box", holderClass(instance), []],
+        ["", "Holder.box", holderClass(block), reported],
+        ["", "new Holder().box", holderClass(block), []],
+        ["Reflect.set(Holder, \"box\", boxing);", "Holder.box", holderClass(""), reported],
+        ["Reflect.set(Holder, \"box\", boxing);", "new Holder().box", holderClass(""), []],
+        ["Object.assign(Holder, { box: boxing });", "Holder.box", holderClass(""), reported],
+        ["Object.assign(Holder, { box: boxing });", "new Holder().box", holderClass(""), []],
+        // A change through a value whose type either side fits may reach either side.
+        ["give(Holder);", "Holder.box", `${holderClass("")}function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n`, reported],
+        ["give(new Holder());", "new Holder().box", `${holderClass("")}function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n`, reported],
+        ["Sub.box = boxing;", "Sub.box", `${holderClass("")}class Sub extends Holder {}\n`, reported],
+      ];
+      for (const [before, call, after, found] of called) {
+        const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+        expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, before + call + after).toEqual([]);
+      }
+    });
   });
 });
+
+/** A class Holder whose static box and instance box both hold `consuming`, with the members given written after them. */
+function holderClass(members: string): string {
+  return `class Holder {\n  static box: Boxer = consuming;\n  box: Boxer = consuming;\n${members}}\n`;
+}
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
 function positionNotKnown(name: string, spread: string): string {
@@ -3808,10 +3844,15 @@ function mayCarryFunction(value: DeclaredValue, checker: ts.TypeChecker): boolea
   return !ts.isExpression(value) || mayBeOrHoldFunction(checker.getTypeAtLocation(value), checker, value);
 }
 
+/** The side of a class a value is: the class itself, whose static members it holds, or an instance, which holds the others. */
+type ClassSide = "static" | "instance";
+
 /** The containers an expression may be, as `placesOf` finds them. */
 interface Reach {
   /** Each container one of its values is. */
   containers: Container[];
+  /** For each container, at the same position, the side of it the value is, as `classSide` reads it, or undefined for one that is no class. */
+  sides: Array<ClassSide | undefined>;
   /** Whether a value it may be is written here, or is no rule's to read, and is no container, so that what it reaches cannot be told. */
   unknown: boolean;
   /** Whether it has no value written here, as a library's value has none, so that it reaches no container written here, though what it holds cannot be read. */
@@ -3820,20 +3861,44 @@ interface Reach {
 
 /**
  * The containers each value an expression may be is, as `declaredValues`
- * finds the values and `containersOfValue` reads each.
+ * finds the values and `containersOfValue` reads each, with the side of a
+ * class each is, as `classSide` reads it.
  */
 function placesOf(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): Reach {
   const values = declaredValues(expression, checker, seen);
-  const found: Reach = { containers: [], unknown: false, empty: values.length === 0 };
+  const found: Reach = { containers: [], sides: [], unknown: false, empty: values.length === 0 };
   for (const value of values) {
     const containers = containersOfValue(value, checker);
     if (containers === undefined) {
       found.unknown = true;
     } else {
       found.containers.push(...containers);
+      found.sides.push(...containers.map(() => classSide(value)));
     }
   }
   return found;
+}
+
+/**
+ * The side of a class a value is: the class itself, read by its name; an
+ * instance, which `new` makes; or, for `this`, the class itself where a
+ * static member or a static block holds it, and an instance anywhere else
+ * in the class.
+ *
+ * @returns The side, or undefined for a value that is neither.
+ */
+function classSide(value: DeclaredValue): ClassSide | undefined {
+  if (ts.isClassLike(value)) return "static";
+  if (ts.isNewExpression(value)) return "instance";
+  if (value.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+  const holder = thisHolder(value);
+  if (holder === undefined || !ts.isClassLike(holder.parent)) return undefined;
+  return ts.isClassStaticBlockDeclaration(holder) || isStatic(holder) ? "static" : "instance";
+}
+
+/** Whether a declaration is written with `static`. */
+function isStatic(declaration: ts.Node): boolean {
+  return ts.canHaveModifiers(declaration) && (ts.getModifiers(declaration) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
 }
 
 /** Whether every value an expression may be is a container `placesOf` finds, and it has one. */
@@ -3871,10 +3936,15 @@ function containersOfValue(value: DeclaredValue, checker: ts.TypeChecker): Conta
  * @returns The container, or undefined when `this` is read anywhere else, as in a function declaration.
  */
 function thisOwner(node: ts.Node): Container | undefined {
-  const holder = ts.findAncestor(node.parent, (each) => (ts.isFunctionLike(each) && !ts.isArrowFunction(each)) || ts.isPropertyDeclaration(each) || ts.isClassStaticBlockDeclaration(each));
+  const holder = thisHolder(node);
   const owner = holder?.parent;
   if (owner !== undefined && ts.isClassLike(owner)) return owner;
   return owner !== undefined && ts.isObjectLiteralExpression(owner) && holder !== undefined && (ts.isMethodDeclaration(holder) || ts.isAccessor(holder)) ? owner : undefined;
+}
+
+/** The function, property or static block whose `this` a node reads, through any arrow function between, or undefined where there is none. */
+function thisHolder(node: ts.Node): ts.Node | undefined {
+  return ts.findAncestor(node.parent, (each) => (ts.isFunctionLike(each) && !ts.isArrowFunction(each)) || ts.isPropertyDeclaration(each) || ts.isClassStaticBlockDeclaration(each));
 }
 
 /**
@@ -3902,6 +3972,12 @@ interface Change {
    * the receiver's type takes, as `mayReach` would say.
    */
   containersOnly?: true;
+  /**
+   * Set when the change is placed on a class, for the side of it its
+   * receiver is: the class itself, whose static members it changes, or an
+   * instance, whose other members it changes.
+   */
+  side?: ClassSide;
 }
 
 /** The changes each container is given, for one checker, once every change is placed. */
@@ -3956,18 +4032,26 @@ function placedCount(table: WriteTable): number {
   return [...table.placed.values()].reduce((count, changes) => count + changes.length, table.unplaced.length);
 }
 
-/** Each change placed on each container its receiver may be, and on each class that container extends, or kept with its receiver's type. */
+/**
+ * Each change placed on each container its receiver may be, and on each
+ * class that container extends, for each side of a class the receiver is
+ * there, or kept with its receiver's type.
+ */
 function placeChanges(changes: readonly Change[], checker: ts.TypeChecker): WriteTable {
   const table: WriteTable = { placed: new Map(), unplaced: [] };
   for (const change of changes) {
     const reach = placesOf(change.receiver, checker, new Set());
-    for (const container of new Set(reach.containers.flatMap((each) => [each, ...extendedClasses(each, checker)]))) {
-      const kept = table.placed.get(container);
-      if (kept === undefined) {
-        table.placed.set(container, [change]);
-      } else {
-        kept.push(change);
+    const sides = new Map<Container, Set<ClassSide | undefined>>();
+    for (const [at, each] of reach.containers.entries()) {
+      for (const container of [each, ...extendedClasses(each, checker)]) {
+        const kept = sides.get(container) ?? new Set<ClassSide | undefined>();
+        kept.add(reach.sides[at]);
+        sides.set(container, kept);
       }
+    }
+    for (const [container, each] of sides) {
+      const placed = [...each].map((side): Change => side === undefined ? change : { ...change, side });
+      table.placed.set(container, [...table.placed.get(container) ?? [], ...placed]);
     }
     if (reach.unknown && change.containersOnly === undefined) table.unplaced.push({ change, type: receiverType(change.receiver, checker) });
   }
@@ -4250,11 +4334,16 @@ const COPIES_BEING_READ = new Set<ts.Node>();
  * each value a copied value holds under that key, as `copiedValues` reads
  * it; whether a change may move its items; and the first change no rule
  * reads, if any. A change kept unplaced counts for the container when the
- * container's type fits its receiver's, as `mayReach` says.
+ * container's type fits its receiver's, as `mayReach` says. For one side of
+ * a class, only a change made through that side counts, or one whose side
+ * is not known.
+ *
+ * @param side The side of a class read, or undefined for every side.
  */
-function writtenTo(container: Container, key: string | undefined, checker: ts.TypeChecker): Written {
+function writtenTo(container: Container, key: string | undefined, checker: ts.TypeChecker, side?: ClassSide): Written {
   const table = writeTable(checker, container);
-  const changes = [...table.placed.get(container) ?? [], ...table.unplaced.filter(({ type }) => mayReach(type, container, checker)).map(({ change }) => change)];
+  const placed = (table.placed.get(container) ?? []).filter((change) => side === undefined || change.side === undefined || change.side === side);
+  const changes = [...placed, ...table.unplaced.filter(({ type }) => mayReach(type, container, checker, side)).map(({ change }) => change)];
   const found: Written = { values: [], unread: null, moved: false };
   for (const { write, at } of changes) {
     if (write.kind === "value") {
@@ -4307,12 +4396,17 @@ function copiedValues(source: ts.Expression, key: string | undefined, checker: t
  * Whether a change whose receiver may be no container may reach one: its
  * receiver's type takes the container's type, widened as a name declared
  * with it would be, so that a parameter typed `Boxer[]` may be any array of
- * such functions. A class is read by the type of its instances.
+ * such functions. A class is read by the type of its instances, by the type
+ * of the class itself, or by either when no side is given.
+ *
+ * @param side The side of a class read, or undefined for every side.
  */
-function mayReach(type: ts.Type, container: Container, checker: ts.TypeChecker): boolean {
+function mayReach(type: ts.Type, container: Container, checker: ts.TypeChecker, side?: ClassSide): boolean {
   if (!ts.isClassLike(container)) return checker.isTypeAssignableTo(checker.getWidenedType(checker.getTypeAtLocation(container)), type);
   const symbol = container.name === undefined ? undefined : checker.getSymbolAtLocation(container.name);
-  return symbol !== undefined && checker.isTypeAssignableTo(checker.getDeclaredTypeOfSymbol(symbol), type);
+  if (symbol === undefined) return false;
+  const instance = side !== "static" && checker.isTypeAssignableTo(checker.getDeclaredTypeOfSymbol(symbol), type);
+  return instance || (side !== "instance" && checker.isTypeAssignableTo(checker.getTypeOfSymbol(symbol), type));
 }
 
 /**
@@ -4320,15 +4414,18 @@ function mayReach(type: ts.Type, container: Container, checker: ts.TypeChecker):
  * declaration and each assignment to its name give it: each value
  * `writtenTo` finds given its key, as `declaredValues` reads it, and the
  * member read as well, as unread, where a change no rule reads may reach
- * it. A member of anything else, or with a key not known, is given nothing
- * more here.
+ * it. A member of a class is given what changes made through its own side
+ * give: a static member those made through the class, and any other member
+ * those made through an instance. A member of anything else, or with a key
+ * not known, is given nothing more here.
  */
 function memberWrites(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.Declaration, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   const owner = ts.isParameter(declaration) ? declaration.parent.parent : declaration.parent;
   const name = ts.getNameOfDeclaration(declaration);
   if (name === undefined || owner === undefined || !(ts.isObjectLiteralExpression(owner) || ts.isClassLike(owner))) return [];
   const key = ts.isPrivateIdentifier(name) ? name.text : ts.isPropertyName(name) ? propertyKey(name, checker) : undefined;
-  return key === undefined ? [] : readContents(writtenTo(owner, key, checker), value, checker, seen);
+  const side: ClassSide | undefined = ts.isClassLike(owner) ? isStatic(declaration) ? "static" : "instance" : undefined;
+  return key === undefined ? [] : readContents(writtenTo(owner, key, checker, side), value, checker, seen);
 }
 
 /**
