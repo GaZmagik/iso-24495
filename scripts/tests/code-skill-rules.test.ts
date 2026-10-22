@@ -2293,6 +2293,44 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a destructuring assignment, or a for-of, gives each target what the value destructured holds at its key or position", () => {
+      const holder = "const holder = { box: consuming as Boxer };";
+      const called: Array<[before: string, call: string, after: string, found: string[]]> = [
+        [`${holder}\n  [holder.box] = [boxing];`, "holder.box", "", reported],
+        [`${holder}\n  [holder.box] = [consuming];`, "holder.box", "", []],
+        [`${holder}\n  ({ box: holder.box } = { box: boxing });`, "holder.box", "", reported],
+        [`${holder}\n  ({ box: holder.box } = { box: consuming });`, "holder.box", "", []],
+        ["const holder = { box: consuming as Boxer, other: consuming as Boxer };\n  ({ box: holder.box, other: holder.other } = { box: boxing, other: consuming });", "holder.box", "", reported],
+        ["const holder = { box: consuming as Boxer, other: consuming as Boxer };\n  ({ box: holder.box, other: holder.other } = { box: consuming, other: boxing });", "holder.box", "", []],
+        [`${holder}\n  [holder.box = boxing] = [];`, "holder.box", "", reported],
+        [`${holder}\n  [holder.box = consuming] = [boxing];`, "holder.box", "", reported],
+        [`${holder}\n  [holder.box = consuming] = [];`, "holder.box", "", []],
+        // A name a destructuring gives a value is read as one given what no rule reads, as the test of wrappers followed to every assignment pins.
+        ["let box: Boxer = consuming;\n  ({ box } = { box: boxing });", "box", "", reported],
+        [`${holder}\n  ({ inner: [holder.box] } = { inner: [boxing] });`, "holder.box", "", reported],
+        [`${holder}\n  ({ inner: [holder.box] } = { inner: [consuming] });`, "holder.box", "", []],
+        [`${holder}\n  const source: Boxer[] = [boxing];\n  [holder.box = consuming] = source;`, "holder.box", "", reported],
+        [`${holder}\n  const source: Boxer[] = [consuming];\n  source.push(boxing);\n  [holder.box = consuming] = source;`, "holder.box", "", reported],
+        [`${holder}\n  const source: Boxer[] = [consuming];\n  [holder.box = consuming] = source;`, "holder.box", "", []],
+        ["const list: Boxer[] = [consuming];\n  [list[0]] = [boxing];", "list[0]!", "", reported],
+        ["const list: Boxer[] = [consuming];\n  [list[0]] = [consuming];", "list[0]!", "", []],
+        [`${holder}\n  [holder.box = consuming] = make([boxing]);`, "holder.box", "function make(list: Boxer[]): Boxer[] {\n  return list;\n}\n", reported],
+        [`${holder}\n  [holder.box = consuming] = make([consuming]);`, "holder.box", "function make(list: Boxer[]): Boxer[] {\n  return list;\n}\n", []],
+        [`${holder}\n  for (holder.box of [boxing]) void holder;`, "holder.box", "", reported],
+        [`${holder}\n  for (holder.box of [consuming]) void holder;`, "holder.box", "", []],
+        [`${holder}\n  for ([holder.box = consuming] of [[boxing]]) void holder;`, "holder.box", "", reported],
+        [`${holder}\n  for ([holder.box = consuming] of [[consuming]]) void holder;`, "holder.box", "", []],
+        // A rest element, or a key not known, gives what no rule reads.
+        ["let rest: Boxer[] = [];\n  [, ...rest] = [consuming, boxing];", "rest[0]!", "", reported],
+        ["let box: Boxer = consuming;\n  ({ [name]: box = consuming } = { a: boxing });", "box", "", reported],
+      ];
+      for (const [before, call, after, found] of called) {
+        const text = `export function main(name: string): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+        expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, before + call + after).toEqual([]);
+      }
+    });
+
     test("a class's static members and its instances' members are each read through the changes made to that side alone", () => {
       const statically = "  static change(): void {\n    this.box = boxing;\n  }\n";
       const instance = "  change(): void {\n    this.box = boxing;\n  }\n";
@@ -3141,25 +3179,143 @@ interface Assigned {
  * field, a property or a parameter, wherever it is written, as
  * `assignmentsOf` finds them: each value, as `declaredValues` reads the
  * assignment, so that `box = boxing` gives `boxing`, `box ??= boxing` gives
- * `boxing` too, and `size += 1` gives a number. An assignment that a
- * destructuring, or a for-in or for-of, makes cannot be read, so the name
- * read is given back as well, as unread.
+ * `boxing` too, and `size += 1` gives a number. A destructuring, or a
+ * for-of, gives a member each value `destructuredTargetValues` finds it
+ * gives the target, and gives a name what no rule reads. Where an
+ * assignment gives what no rule reads, the name read is given back as
+ * well, as unread.
  */
 function assignedValues(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.Declaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Assigned {
   const written = assignmentsOf(declaration, checker);
   const values = written.assignments.flatMap((assignment) => declaredValues(assignment, checker, seen));
-  return { values: written.unread ? [...values, value] : values, found: written.assignments.length > 0 || written.unread };
+  let unread = written.unread;
+  for (const target of written.destructured) {
+    const given = destructuredTargetValues(target, checker, seen);
+    values.push(...given.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)));
+    unread ||= given.unread !== null;
+  }
+  return { values: unread ? [...values, value] : values, found: written.assignments.length > 0 || written.destructured.length > 0 || unread };
+}
+
+/** One step from a value down to what a destructuring gives a target: the value of a key of an object, or the item at a position of an array. */
+type DestructuringStep = { key: string } | { at: number };
+
+/** Where a target a destructuring, or a for-of, gives a value takes it from, as `destructuringPath` finds it. */
+interface DestructuringPath {
+  /** The value destructured: the right of the `=`, or what a for-of iterates. */
+  source: ts.Expression;
+  /** Whether the target takes an item the source gives when iterated, as a for-of's target does, rather than the source itself. */
+  iterated: boolean;
+  /** Each step from the source down to the target, in order. */
+  steps: DestructuringStep[];
+  /** Each default written on the way, any of which the target may take instead. */
+  defaults: ts.Expression[];
+  /** What makes the value the target takes one no rule reads: a rest element, a key not known, or a for-in; or null. */
+  unknown: ts.Node | null;
+}
+
+/**
+ * Where a target a destructuring assignment or a for-of gives a value takes
+ * it from: climbing from the target through each array literal, by its
+ * position, each property, by its key, each default and each parenthesis,
+ * to the `=` whose left the pattern is, or to the for-of whose target it
+ * is. A rest element, or a spread before the target, takes what no rule
+ * reads, and so does a key not known and a for-in, which gives a key.
+ *
+ * @returns The path, or undefined when the node is no such target.
+ */
+function destructuringPath(target: ts.Node, checker: ts.TypeChecker): DestructuringPath | undefined {
+  const steps: DestructuringStep[] = [];
+  const defaults: ts.Expression[] = [];
+  let unknown: ts.Node | null = null;
+  for (let inner = target, outer = target.parent; ; inner = outer, outer = outer.parent) {
+    if (ts.isForOfStatement(outer) || ts.isForInStatement(outer)) {
+      if (outer.initializer !== inner) return undefined;
+      return { source: outer.expression, iterated: true, steps, defaults, unknown: unknown ?? (ts.isForInStatement(outer) ? outer : null) };
+    }
+    if (ts.isBinaryExpression(outer) && outer.operatorToken.kind === ts.SyntaxKind.EqualsToken && outer.left === inner) {
+      const isDefault = ts.isArrayLiteralExpression(outer.parent) || (ts.isPropertyAssignment(outer.parent) && outer.parent.initializer === outer);
+      if (!isDefault) return steps.length === 0 && unknown === null ? undefined : { source: outer.right, iterated: false, steps, defaults, unknown };
+      defaults.push(outer.right);
+    } else if (ts.isArrayLiteralExpression(outer)) {
+      const at = outer.elements.indexOf(inner as ts.Expression);
+      if (outer.elements.slice(0, at).some(ts.isSpreadElement)) unknown ??= outer;
+      steps.unshift({ at });
+    } else if (ts.isPropertyAssignment(outer) && outer.initializer === inner) {
+      const key = propertyKey(outer.name, checker);
+      if (key === undefined) unknown ??= outer.name;
+      steps.unshift({ key: key ?? "" });
+    } else if (ts.isShorthandPropertyAssignment(outer) && outer.name === inner) {
+      if (outer.objectAssignmentInitializer !== undefined) defaults.push(outer.objectAssignmentInitializer);
+      steps.unshift({ key: outer.name.text });
+    } else if (ts.isSpreadElement(outer) || ts.isSpreadAssignment(outer)) {
+      unknown ??= outer;
+    } else if (!ts.isObjectLiteralExpression(outer) && !ts.isParenthesizedExpression(outer)) {
+      return undefined;
+    }
+  }
+}
+
+/**
+ * What a destructuring assignment, or a for-of, gives a target, as
+ * `destructuringPath` finds where it takes it from: the source, or each item
+ * iterating it gives, as `iteratedContents` finds them, read down each step
+ * through each object literal, by its key as `keyedProperties` reads it, and
+ * each array literal, by its position as `itemSource` reads it, that each
+ * value at that step may be, as `declaredValues` finds them; and each
+ * default. A value at a step that is no literal of the kind the step reads,
+ * and may be or hold a function, gives what no rule reads.
+ *
+ * @returns The values the target may take, written as they are, with what no rule reads, or null.
+ */
+function destructuredTargetValues(target: ts.Node, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const path = destructuringPath(target, checker);
+  if (path === undefined) return { values: [], unread: target };
+  const found: Contents = { values: [], unread: path.unknown };
+  if (path.unknown !== null) return { values: path.defaults, unread: path.unknown };
+  let level: WrittenValue[] = [path.source];
+  if (path.iterated) {
+    const items = iteratedContents(path.source, checker.getTypeAtLocation(target), checker, seen);
+    level = items.values;
+    found.unread ??= items.unread;
+  }
+  for (const step of path.steps) {
+    const next: WrittenValue[] = [];
+    for (const value of level) {
+      if (ts.isMethodDeclaration(value)) {
+        found.unread ??= value;
+        continue;
+      }
+      for (const literal of declaredValues(value, checker, seen)) {
+        const source = !ts.isExpression(literal) ? undefined
+          : "at" in step ? ts.isArrayLiteralExpression(literal) ? itemSource(literal, step.at, checker) : undefined
+            : ts.isObjectLiteralExpression(literal) ? keyedProperties(literal, step.key, checker)
+              : ts.isArrayLiteralExpression(literal) && isIndexKey(step.key) ? itemSource(literal, Number(step.key), checker) : undefined;
+        if (source === undefined) {
+          if (mayCarryFunction(literal, checker)) found.unread ??= value;
+          continue;
+        }
+        next.push(...source.holders.map(heldBy));
+        found.unread ??= source.unknownAfter;
+      }
+    }
+    level = next;
+  }
+  found.values.push(...level, ...path.defaults);
+  return found;
 }
 
 /** The assignments to one declaration, as `assignmentsOf` finds them. */
 interface Assignments {
   /** Each assignment written as `name = value`, or with a compound operator, whose target is the declaration. */
   assignments: ts.BinaryExpression[];
+  /** Each member that refers to the declaration that a destructuring, a for-in or a for-of gives a value, as `destructuredTargetValues` reads it. */
+  destructured: ts.Node[];
   /**
-   * Whether a destructuring, a for-in or a for-of assigns it as well, or
-   * code may change what it holds through a member, as `list.push(boxing)`
-   * and `list[0] = boxing` do, where what it holds is not a place whose
-   * changes `writtenTo` reads.
+   * Whether a destructuring, a for-in or a for-of gives it, as a name, a
+   * value, or code may change what it holds through a member, as
+   * `list.push(boxing)` and `list[0] = boxing` do, where what it holds is
+   * not a place whose changes `writtenTo` reads.
    */
   unread: boolean;
 }
@@ -3172,30 +3328,38 @@ const ASSIGNMENTS = new WeakMap<ts.TypeChecker, Map<ts.Node, Assignments>>();
  * declaration: a name, or a property read by name or by a key written as a
  * literal, as `this.box = boxing` and `holder["box"] = boxing` are, through
  * any wrapper `heldValue` looks through, that `usesOf` finds refers to it.
- * One that a destructuring or a for-in or for-of makes is noted as unread,
- * and so is a use that may change what the declaration holds through a
+ * One that a destructuring or a for-in or for-of makes to a member is
+ * noted with its target; one it makes to a name is noted as unread. A use
+ * that may change what the declaration holds through a
  * member, as `changesThrough` reads it, unless every value the declaration
  * may hold is a container, as `reachesOnlyContainers` says, whose every
- * change `writtenTo` reads. `++` and `--` give a number, so they are not read.
+ * change `writtenTo` reads, is noted as unread. `++` and `--` give a
+ * number, so they are not read.
  */
 function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): Assignments {
   const known = ASSIGNMENTS.get(checker) ?? new Map<ts.Node, Assignments>();
   ASSIGNMENTS.set(checker, known);
   const kept = known.get(declaration);
   if (kept !== undefined) return kept;
-  const found: Assignments = { assignments: [], unread: false };
+  const found: Assignments = { assignments: [], destructured: [], unread: false };
   known.set(declaration, found);
   for (const use of usesOf(declaration, checker)) {
     const target = outerValue(memberRead(use));
     const parent = target.parent;
     if (ts.isBinaryExpression(parent) && isAssignmentOperator(parent.operatorToken.kind) && parent.left === target) {
-      if (isDestructuringTarget(parent)) {
+      if (!isDestructuringTarget(parent)) {
+        found.assignments.push(parent);
+      } else if (ts.isIdentifier(target)) {
         found.unread = true;
       } else {
-        found.assignments.push(parent);
+        found.destructured.push(target);
       }
     } else if (isDestructuringTarget(target)) {
-      found.unread = true;
+      if (ts.isIdentifier(target)) {
+        found.unread = true;
+      } else {
+        found.destructured.push(target);
+      }
     } else if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === target && changesThrough(parent, checker)
       && !reachesOnlyContainers(parent.expression, checker)) {
       found.unread = true;
@@ -3955,13 +4119,16 @@ function thisHolder(node: ts.Node): ts.Node | undefined {
 /**
  * One change code makes to what a value holds, as `changesAt` finds it. A
  * "value" write gives a value each key named, or, with no keys, any key or
- * a new item, as `list.push(boxing)` adds one; a "copy" gives each key of
+ * a new item, as `list.push(boxing)` adds one; a "destructured" write gives
+ * each key named what a destructuring, or a for-of, gives its target, as
+ * `[holder.box] = [boxing]` gives `box`; a "copy" gives each key of
  * another value, as `Object.assign(holder, source)` gives those of
  * `source`; "moved" moves items to other positions, as `sort` does; and
  * "unread" is a change no rule reads.
  */
 type Write =
   | { kind: "value"; keys: readonly string[] | undefined; value: WrittenValue }
+  | { kind: "destructured"; keys: readonly string[] | undefined; target: ts.Expression }
   | { kind: "copy"; source: ts.Expression }
   | { kind: "moved" }
   | { kind: "unread" };
@@ -4110,7 +4277,7 @@ function changesAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
       changes = [{ receiver: target.expression, write: { kind: "value", keys: memberKeys(target, checker), value: node.right }, at: node }];
     }
   } else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isDestructuringTarget(node)) {
-    changes = [{ receiver: node.expression, write: { kind: "unread" }, at: node }];
+    changes = [{ receiver: node.expression, write: { kind: "destructured", keys: memberKeys(node, checker), target: node }, at: node }];
   } else if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
     changes = callChanges(node, checker);
   }
@@ -4121,10 +4288,15 @@ function changesAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   return carried;
 }
 
-/** Whether a change may give a value a function: a value or a copy that may be or hold one, or a move or an unread change to a value that may hold one. */
+/**
+ * Whether a change may give a value a function: a value or a copy that may
+ * be or hold one, a destructuring whose target's type may be or hold one, or
+ * a move or an unread change to a value that may hold one.
+ */
 function carriesFunction(change: Change, checker: ts.TypeChecker): boolean {
   const write = change.write;
   if (write.kind === "value") return mayCarryFunction(write.value, checker);
+  if (write.kind === "destructured") return mayBeOrHoldFunction(checker.getTypeAtLocation(write.target), checker, write.target);
   if (write.kind === "copy") return mayBeOrHoldFunction(checker.getTypeAtLocation(write.source), checker, write.source);
   return mayBeOrHoldFunction(receiverType(change.receiver, checker), checker, change.receiver);
 }
@@ -4336,8 +4508,9 @@ const COPIES_BEING_READ = new Set<ts.Node>();
  * What code written in the program gives a container after it is made, for
  * one key, or for every key and item when no key is given: each value a
  * change placed on the container gives that key, any key or a new item;
- * each value a copied value holds under that key, as `copiedValues` reads
- * it; whether a change may move its items; and the first change no rule
+ * each value a destructuring gives that key, as `destructuredTargetValues`
+ * reads it; each value a copied value holds under that key, as
+ * `copiedValues` reads it; whether a change may move its items; and the first change no rule
  * reads, if any. A change kept unplaced counts for the container when the
  * container's type fits its receiver's, as `mayReach` says. For one side of
  * a class, only a change made through that side counts, or one whose side
@@ -4353,6 +4526,11 @@ function writtenTo(container: Container, key: string | undefined, checker: ts.Ty
   for (const { write, at } of changes) {
     if (write.kind === "value") {
       if (key === undefined || write.keys === undefined || write.keys.includes(key)) found.values.push(write.value);
+    } else if (write.kind === "destructured") {
+      if (key !== undefined && write.keys !== undefined && !write.keys.includes(key)) continue;
+      const given = destructuredTargetValues(write.target, checker, new Set());
+      found.values.push(...given.values);
+      found.unread ??= given.unread;
     } else if (write.kind === "copy") {
       const copied = copiedValues(write.source, key, checker);
       found.values.push(...copied.values);
