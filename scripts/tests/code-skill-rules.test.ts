@@ -2332,9 +2332,9 @@ describe("the code skill's rules for this repository's own code", () => {
     });
 
     test("a set accessor's parameter is given what every route that writes its key gives", () => {
-      const setter = "class Holder {\n  box: Boxer = consuming;\n  set value(value: Boxer) {\n    this.box = value;\n  }\n}\n";
-      const statically = "class Holder {\n  static box: Boxer = consuming;\n  static set value(value: Boxer) {\n    this.box = value;\n  }\n}\n";
-      const literal = "const holder = { box: consuming as Boxer, set value(value: Boxer) {\n    this.box = value;\n  } };";
+      const setter = "class Holder {\n  box: Boxer = consuming;\n  set value(next: Boxer) {\n    this.box = next;\n  }\n}\n";
+      const statically = "class Holder {\n  static box: Boxer = consuming;\n  static set value(next: Boxer) {\n    this.box = next;\n  }\n}\n";
+      const literal = "const holder = { box: consuming as Boxer, set value(next: Boxer) {\n    this.box = next;\n  } };";
       const made = "const holder = new Holder();";
       const called: Array<[before: string, call: string, after: string, found: string[]]> = [
         [`${made}\n  holder.value = boxing;`, "holder.box", setter, reported],
@@ -2355,6 +2355,15 @@ describe("the code skill's rules for this repository's own code", () => {
         ["", "new Holder().box", `${setter}export function give(target: { value: Boxer }): void {\n  target.value = boxing;\n}\n`, reported],
         ["", "new Holder().box", `${setter}export function give(target: Holder, box: Boxer): void {\n  target.value = box;\n}\n`, reported],
       ];
+      // A constructor's parameter not written as a property is given what each call gives, not what is written to a field of its name.
+      const field = "class Holder {\n  box: Boxer = consuming;\n  size: object;\n  constructor(box: Boxer) {\n    const helper = box((): number => 1);\n    this.size = helper;\n  }\n}\n";
+      for (const [before, found] of [
+        ["const made = new Holder(boxing);", ["probe.ts / (an unnamed function) / helper"]],
+        ["const made = new Holder(consuming);\n  made.box = boxing;", []],
+      ] as Array<[before: string, found: string[]]>) {
+        const text = `export function main(): object {\n  ${before}\n  return made.size;\n}\n${wrappers}${field}`;
+        expect(boundHelpers("probe.ts", text), before).toEqual(found);
+      }
       for (const [before, call, after, found] of called) {
         const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
         expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
@@ -4630,10 +4639,13 @@ function mayReach(type: ts.Type, container: Container, checker: ts.TypeChecker, 
  * member read as well, as unread, where a change no rule reads may reach
  * it. A member of a class is given what changes made through its own side
  * give: a static member those made through the class, and any other member
- * those made through an instance. A member of anything else, or with a key
- * not known, is given nothing more here.
+ * those made through an instance. A constructor's parameter written as a
+ * property is such a member; any other parameter is given what its callers
+ * give, which `passedValues` reads. A member of anything else, or with a
+ * key not known, is given nothing more here.
  */
 function memberWrites(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.Declaration, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  if (ts.isParameter(declaration) && !ts.isParameterPropertyDeclaration(declaration, declaration.parent)) return [];
   const owner = ts.isParameter(declaration) ? declaration.parent.parent : declaration.parent;
   const name = ts.getNameOfDeclaration(declaration);
   if (name === undefined || owner === undefined || !(ts.isObjectLiteralExpression(owner) || ts.isClassLike(owner))) return [];
