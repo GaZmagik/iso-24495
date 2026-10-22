@@ -1875,10 +1875,13 @@ describe("the code skill's rules for this repository's own code", () => {
       ["const holder = { box: consuming as Boxer };\n  holder.box = boxing;", "holder.box", "", ["probe.ts / main / helper"]],
       ["const holder = { box: consuming as Boxer };\n  holder[\"box\"] = boxing;", "holder.box", "", ["probe.ts / main / helper"]],
       ["const holder = { box: consuming as Boxer };\n  holder.box = consumingNext;", "holder.box", "", []],
-      // An assignment a destructuring or a for-of makes cannot be read, so the wrapper may give back what it is given.
-      ["let box: Boxer = consuming;\n  [box] = [consumingNext];", "box", "", ["probe.ts / main / helper"]],
-      ["let box: Boxer = consuming;\n  ({ box } = { box: consumingNext });", "box", "", ["probe.ts / main / helper"]],
-      ["let box: Boxer = consuming;\n  for (box of [consumingNext]) void box;", "box", "", ["probe.ts / main / helper"]],
+      // An assignment a destructuring or a for-of makes gives the name what it takes from the value destructured, as any other assignment does.
+      ["let box: Boxer = consuming;\n  [box] = [consumingNext];", "box", "", []],
+      ["let box: Boxer = consuming;\n  [box] = [boxing];", "box", "", ["probe.ts / main / helper"]],
+      ["let box: Boxer = consuming;\n  ({ box } = { box: consumingNext });", "box", "", []],
+      ["let box: Boxer = consuming;\n  ({ box } = { box: boxing });", "box", "", ["probe.ts / main / helper"]],
+      ["let box: Boxer = consuming;\n  for (box of [consumingNext]) void box;", "box", "", []],
+      ["let box: Boxer = consuming;\n  for (box of [boxing]) void box;", "box", "", ["probe.ts / main / helper"]],
     ];
     for (const [before, call, after, found] of cases) {
       const text = `export function main(): number {\n  ${before}\n  const helper = ${call}(${helper});\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
@@ -2431,6 +2434,33 @@ describe("the code skill's rules for this repository's own code", () => {
         const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
         expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
         expect(unplacedFunctions("probe.ts", text).problems, before + call + after).toEqual([]);
+      }
+    });
+
+    test("a name a destructuring assignment, or a for-of, gives a value is given what it takes, beside its breach", () => {
+      // Each form gives `box` the value written as VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[before: string, after: string]> = [
+        ["[box] = [VALUE];", ""],
+        ["({ box } = { box: VALUE });", ""],
+        ["for (box of [VALUE]) void box;", ""],
+        ["[box = VALUE] = [];", ""],
+        ["({ box = VALUE } = {});", ""],
+        ["[[box]] = [[VALUE]];", ""],
+        ["({ inner: { box } } = { inner: { box: VALUE } });", ""],
+        ["const list: Boxer[] = [VALUE];\n  for (box of list) void box;", ""],
+        ["[box] = make();", "function make(): Boxer[] {\n  return [VALUE];\n}\n"],
+      ];
+      for (const [before, after] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  let box: Boxer = consuming;\n  ${before.replace("VALUE", value)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after.replace("VALUE", value)}`;
+          expect(boundHelpers("probe.ts", text), before + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, before + value).toEqual([]);
+        }
+      }
+      // A parameter a destructuring assignment gives a value is given what it takes as well as what each caller gives.
+      for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / run / helper"]]] as Array<[value: string, found: string[]]>) {
+        const text = `export function main(): number {\n  return run(consuming);\n}\nfunction run(box: Boxer): number {\n  [box] = [${value}];\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), value).toEqual(found);
       }
     });
   });
@@ -3247,10 +3277,10 @@ interface Assigned {
  * `assignmentsOf` finds them: each value, as `declaredValues` reads the
  * assignment, so that `box = boxing` gives `boxing`, `box ??= boxing` gives
  * `boxing` too, and `size += 1` gives a number. A destructuring, or a
- * for-of, gives a member each value `destructuredTargetValues` finds it
- * gives the target, and gives a name what no rule reads. Where an
- * assignment gives what no rule reads, the name read is given back as
- * well, as unread.
+ * for-of, gives a name or a member each value `destructuredTargetValues`
+ * finds it gives the target, so that `[box] = [boxing]` gives `boxing`.
+ * Where an assignment gives what no rule reads, the name read is given
+ * back as well, as unread.
  */
 function assignedValues(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.Declaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Assigned {
   const written = assignmentsOf(declaration, checker);
@@ -3376,11 +3406,10 @@ function destructuredTargetValues(target: ts.Node, checker: ts.TypeChecker, seen
 interface Assignments {
   /** Each assignment written as `name = value`, or with a compound operator, whose target is the declaration. */
   assignments: ts.BinaryExpression[];
-  /** Each member that refers to the declaration that a destructuring, a for-in or a for-of gives a value, as `destructuredTargetValues` reads it. */
+  /** Each name or member that refers to the declaration that a destructuring, a for-in or a for-of gives a value, as `destructuredTargetValues` reads it. */
   destructured: ts.Node[];
   /**
-   * Whether a destructuring, a for-in or a for-of gives it, as a name, a
-   * value, or code may change what it holds through a member, as
+   * Whether code may change what it holds through a member, as
    * `list.push(boxing)` and `list[0] = boxing` do, where what it holds is
    * not a place whose changes `writtenTo` reads.
    */
@@ -3395,11 +3424,10 @@ const ASSIGNMENTS = new WeakMap<ts.TypeChecker, Map<ts.Node, Assignments>>();
  * declaration: a name, or a property read by name or by a key written as a
  * literal, as `this.box = boxing` and `holder["box"] = boxing` are, through
  * any wrapper `heldValue` looks through, that `usesOf` finds refers to it.
- * One that a destructuring or a for-in or for-of makes to a member is
- * noted with its target; one it makes to a name is noted as unread. A use
- * that may change what the declaration holds through a
- * member, as `changesThrough` reads it, unless every value the declaration
- * may hold is a container, as `reachesOnlyContainers` says, whose every
+ * One that a destructuring or a for-in or for-of makes is noted with its
+ * target, a name or a member. A use that may change what the declaration
+ * holds through a member, as `changesThrough` reads it, unless every value
+ * the declaration may hold is a container, as `reachesOnlyContainers` says, whose every
  * change `writtenTo` reads, is noted as unread. `++` and `--` give a
  * number, so they are not read.
  */
@@ -3414,19 +3442,13 @@ function assignmentsOf(declaration: ts.Declaration, checker: ts.TypeChecker): As
     const target = outerValue(memberRead(use));
     const parent = target.parent;
     if (ts.isBinaryExpression(parent) && isAssignmentOperator(parent.operatorToken.kind) && parent.left === target) {
-      if (!isDestructuringTarget(parent)) {
-        found.assignments.push(parent);
-      } else if (ts.isIdentifier(target)) {
-        found.unread = true;
-      } else {
+      if (isDestructuringTarget(parent)) {
         found.destructured.push(target);
+      } else {
+        found.assignments.push(parent);
       }
     } else if (isDestructuringTarget(target)) {
-      if (ts.isIdentifier(target)) {
-        found.unread = true;
-      } else {
-        found.destructured.push(target);
-      }
+      found.destructured.push(target);
     } else if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === target && changesThrough(parent, checker)
       && !reachesOnlyContainers(parent.expression, checker)) {
       found.unread = true;
