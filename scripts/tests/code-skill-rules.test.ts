@@ -2661,6 +2661,36 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), statement).toEqual(reported);
       }
     });
+
+    test("a rest element's name holds what the value destructured holds past the other elements, beside its breach", () => {
+      // Each form puts `consuming` where the read takes its value from in the valid form, and `boxing` there in its breach.
+      const forms: Array<[valid: string, breach: string, read: string, after: string]> = [
+        ["let rest: Boxer[] = [];\n  [, ...rest] = [boxing, consuming];", "let rest: Boxer[] = [];\n  [, ...rest] = [consuming, boxing];", "rest[0]!", ""],
+        ["const [, ...rest] = [boxing, consuming];", "const [, ...rest] = [consuming, boxing];", "rest[0]!", ""],
+        ["let a: Boxer = consuming;\n  let rest: { b: Boxer } = { b: consuming };\n  ({ a, ...rest } = { a: boxing, b: consuming });\n  void a;",
+          "let a: Boxer = consuming;\n  let rest: { b: Boxer } = { b: consuming };\n  ({ a, ...rest } = { a: consuming, b: boxing });\n  void a;", "rest.b", ""],
+        ["const { a, ...rest } = { a: boxing, b: consuming };\n  void a;", "const { a, ...rest } = { a: consuming, b: boxing };\n  void a;", "rest.b", ""],
+        ["const [, ...rest] = make(consuming);", "const [, ...rest] = make(boxing);", "rest[0]!", "function make(last: Boxer): Boxer[] {\n  return [boxing, last];\n}\n"],
+        ["const [, ...rest]: Boxer[] = [boxing, consuming];\n  rest.push(consuming);", "const [, ...rest]: Boxer[] = [boxing, consuming];\n  rest.push(boxing);", "rest[1]!", ""],
+      ];
+      for (const [valid, breach, read, after] of forms) {
+        for (const [statement, found] of [[valid, []], [breach, reported]] as Array<[statement: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${statement}\n  const helper = ${read}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+          expect(boundHelpers("probe.ts", text), statement).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual([]);
+        }
+      }
+      // A loop over a rest element's array, and a rest element a for-of declares, are read the same way.
+      for (const [statement, found] of [
+        ["const [, ...rest] = [boxing, consuming];\n  for (const box of rest) {\n    const inner = box((): number => 1);\n    void inner;\n  }", []],
+        ["const [, ...rest] = [consuming, boxing];\n  for (const box of rest) {\n    const inner = box((): number => 1);\n    void inner;\n  }", ["probe.ts / main / inner"]],
+        ["for (const [, ...rest] of [[boxing, consuming]]) {\n    const inner = rest[0]!((): number => 1);\n    void inner;\n  }", []],
+        ["for (const [, ...rest] of [[consuming, boxing]]) {\n    const inner = rest[0]!((): number => 1);\n    void inner;\n  }", ["probe.ts / main / inner"]],
+      ] as Array<[statement: string, found: string[]]>) {
+        const text = `export function main(): number {\n  ${statement}\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), statement).toEqual(found);
+      }
+    });
   });
 });
 
@@ -3302,12 +3332,15 @@ type DeclaredValue = ts.Expression | ts.SignatureDeclaration | ts.ClassLikeDecla
  * where it is declared, as `namedValues` reads it; each item read by index
  * followed as `indexedValues` reads it; each call followed to what it
  * returns, as `calledValues` reads it; and each `await` followed to what it
- * gives, as `awaitedValues` reads it.
+ * gives, as `awaitedValues` reads it. The name a rest element binds, where it
+ * is written, is a value of its own, the array or object the rest element
+ * makes, which `restValues` reads.
  *
  * @param seen The declarations read already, so that names given each other are read once.
  */
 function declaredValues(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   return possibleValues(expression, checker).flatMap((value): DeclaredValue[] => {
+    if (isRestTarget(value)) return [value];
     if (ts.isIdentifier(value) || ts.isPropertyAccessExpression(value)) return namedValues(value, checker, seen);
     if (ts.isElementAccessExpression(value)) return indexedValues(value, checker, seen);
     if (ts.isAwaitExpression(value)) return awaitedValues(value.expression, value, checker, seen);
@@ -3432,6 +3465,11 @@ function indexedValues(access: ts.ElementAccessExpression, checker: ts.TypeCheck
       if (held.unread !== null) unread = true;
       return readContents({ values: held.values, unread: null }, access, checker, seen);
     }
+    if (isRestTarget(literal)) {
+      const rested = restValues(literal, key, checker, seen);
+      if (rested.unread !== null) unread = true;
+      return readContents({ values: rested.values, unread: null }, access, checker, seen);
+    }
     if (!ts.isArrayLiteralExpression(literal) || !isIndexKey(key)) {
       unread = true;
       return [];
@@ -3524,7 +3562,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
     const key = value.name.text;
     return [...declaredValues(value.expression, checker, seen)
-      .flatMap((literal) => ts.isObjectLiteralExpression(literal) ? keyedValues(literal, key, value, checker, seen) : [value]), ...assigned.values];
+      .flatMap((literal) => keyOfValue(literal, key, value, checker, seen)), ...assigned.values];
   });
 }
 
@@ -3543,7 +3581,9 @@ interface Assigned {
  * assignment, so that `box = boxing` gives `boxing`, `box ??= boxing` gives
  * `boxing` too, and `size += 1` gives a number. A destructuring, or a
  * for-of, gives a name or a member each value `destructuredTargetValues`
- * finds it gives the target, so that `[box] = [boxing]` gives `boxing`.
+ * finds it gives the target, so that `[box] = [boxing]` gives `boxing`; a
+ * rest element gives the name the array or object it makes, as
+ * `restValues` reads it.
  * Where an assignment gives what no rule reads, the name read is given
  * back as well, as unread.
  */
@@ -3552,6 +3592,10 @@ function assignedValues(value: ts.Identifier | ts.PropertyAccessExpression, decl
   const values = written.assignments.flatMap((assignment) => declaredValues(assignment, checker, seen));
   let unread = written.unread;
   for (const target of written.destructured) {
+    if (isRestTarget(target)) {
+      values.push(target);
+      continue;
+    }
     const given = destructuredTargetValues(target, checker, seen);
     values.push(...given.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)));
     unread ||= given.unread !== null;
@@ -3948,6 +3992,11 @@ function iteratedContents(iterated: ts.Expression, wanted: ts.Type, checker: ts.
     const lists: ts.ArrayLiteralExpression[] = [];
     if (ts.isArrayLiteralExpression(one)) {
       lists.push(one);
+    } else if (isRestTarget(one)) {
+      const held = placeContents(one, checker, seen);
+      found.values.push(...held.values);
+      found.unread ??= held.unread;
+      continue;
     } else if (isLibraryCall(one, checker)) {
       const held = libraryContents(one, wanted, checker, seen);
       found.values.push(...held.values);
@@ -3973,8 +4022,14 @@ function itemType(literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker): 
   return type.getNumberIndexType() ?? type;
 }
 
-/** A value whose contents the rules read where it is written: an object or array literal, a collection a library call makes, or a class, whose instances share each member the class declares. */
-type Container = ts.ArrayLiteralExpression | ts.ObjectLiteralExpression | ts.CallExpression | ts.NewExpression | ts.ClassLikeDeclaration;
+/**
+ * A value whose contents the rules read where it is written: an object or
+ * array literal, a collection a library call makes, a class, whose
+ * instances share each member the class declares, or the name a rest
+ * element binds, as `isRestTarget` finds it, which holds what `restValues`
+ * finds.
+ */
+type Container = ts.ArrayLiteralExpression | ts.ObjectLiteralExpression | ts.CallExpression | ts.NewExpression | ts.ClassLikeDeclaration | ts.Identifier;
 
 /** A value a container is given: an expression, or a method an object literal writes. */
 type WrittenValue = ts.Expression | ts.MethodDeclaration;
@@ -4049,6 +4104,10 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
     }
   } else if (ts.isClassLike(container)) {
     found.values.push(...container.members.filter(ts.isPropertyDeclaration).flatMap((member) => member.initializer === undefined ? [] : [member.initializer]));
+  } else if (ts.isIdentifier(container)) {
+    const rested = restValues(container, undefined, checker, seen);
+    found.values.push(...rested.values);
+    found.unread ??= rested.unread;
   } else {
     for (const source of librarySources(container, checker)) {
       const reached = reachedContents(source, checker, seen, keys);
@@ -4593,15 +4652,15 @@ function reachesOnlyContainers(expression: ts.Expression, checker: ts.TypeChecke
 }
 
 /**
- * The containers one value is: itself for an object or array literal, or for
- * a class; each class a `new` makes an instance of; the class, or the object
+ * The containers one value is: itself for an object or array literal, for
+ * a class, or for the name a rest element binds; each class a `new` makes an instance of; the class, or the object
  * literal, whose method `this` is read in; and itself for a call or `new` of
  * a library function whose value is an array, a set, a map or a promise.
  *
  * @returns The containers, or undefined when the value is none of these.
  */
 function containersOfValue(value: DeclaredValue, checker: ts.TypeChecker): Container[] | undefined {
-  if (ts.isArrayLiteralExpression(value) || ts.isObjectLiteralExpression(value) || ts.isClassLike(value)) return [value];
+  if (ts.isArrayLiteralExpression(value) || ts.isObjectLiteralExpression(value) || ts.isClassLike(value) || isRestTarget(value)) return [value];
   if (value.kind === ts.SyntaxKind.ThisKeyword) {
     const owner = thisOwner(value);
     return owner === undefined ? undefined : [owner];
@@ -5181,7 +5240,7 @@ function memberWrites(value: ts.Identifier | ts.PropertyAccessExpression, declar
  */
 function unnamedMemberValues(value: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   return declaredValues(value.expression, checker, seen)
-    .flatMap((literal) => ts.isObjectLiteralExpression(literal) ? keyedValues(literal, value.name.text, value, checker, seen) : [value]);
+    .flatMap((literal) => keyOfValue(literal, value.name.text, value, checker, seen));
 }
 
 /**
@@ -5215,7 +5274,8 @@ function isAmbient(declaration: ts.Node): boolean {
  * reads, as a get accessor does, or when what a parameter is destructured
  * from is unread, as `passedValues` reads it. A value not written here, as
  * a library's call is not, is read by its declared type alone, as
- * `namedValues` reads it. A callback's parameter that a library gives a
+ * `namedValues` reads it. A rest element's name is given the array or
+ * object the rest element makes, as `restValues` reads it. A callback's parameter that a library gives a
  * value, as `passedValues` finds, is given what the library builds from what
  * it is handed, as `Object.entries` builds pairs: each object or array
  * literal it is handed is read as any other, and each value handed that is
@@ -5225,6 +5285,7 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   seen: Set<ts.Node>): DeclaredValue[] {
   const name = declaration.name;
   if (!ts.isIdentifier(name)) return [value];
+  if (declaration.dotDotDotToken !== undefined) return [name];
   const root = ts.walkUpBindingElementsAndPatterns(declaration);
   const passed: Passed = ts.isParameter(root) ? passedValues(root, checker, seen)
     : { values: root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen), handed: [], unread: false };
@@ -5239,6 +5300,145 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   const later = root.initializer === undefined && isGivenLater(declaration);
   const unread = passed.unread || later || unknown || untaken || passed.values.some((one) => !ts.isExpression(one));
   return unread ? [...taken, ...built, value] : [...taken, ...built];
+}
+
+/**
+ * What one key of a value a member is read from gives: what it gives in an
+ * object literal, as `keyedValues` reads it, or in the object a rest element
+ * makes, as `restValues` reads it, with what code writes to it there, as
+ * `writtenTo` finds it; and the member read, as unread, for any other value.
+ */
+function keyOfValue(literal: DeclaredValue, key: string, read: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  if (ts.isObjectLiteralExpression(literal)) return keyedValues(literal, key, read, checker, seen);
+  if (!isRestTarget(literal)) return [read];
+  const rested = restValues(literal, key, checker, seen);
+  return readContents(rested, read, checker, seen);
+}
+
+/**
+ * Whether a node is the name a rest element binds, where it is written: the
+ * name of a binding element written with `...`, or the name a spread in an
+ * array or object literal written as a destructuring target assigns.
+ */
+function isRestTarget(node: ts.Node): node is ts.Identifier {
+  if (!ts.isIdentifier(node)) return false;
+  const parent = node.parent;
+  if (ts.isBindingElement(parent)) return parent.dotDotDotToken !== undefined && parent.name === node;
+  return (ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) && parent.expression === node && isDestructuringTarget(node);
+}
+
+/** Where a rest element takes what it holds from, as `restOrigin` finds it. */
+interface RestOrigin {
+  /** Each value the pattern holding the rest element destructures may be, as `declaredValues` reads it. */
+  sources: DeclaredValue[];
+  /** For an array pattern, the position of the rest element, from which it takes each item; undefined for an object pattern. */
+  at: number | undefined;
+  /** For an object pattern, each key another element of the pattern takes, which the rest element does not. */
+  taken: ReadonlySet<string>;
+  /** What makes what the pattern destructures one no rule reads, or null. */
+  unread: ts.Node | null;
+}
+
+/**
+ * Where the rest element that binds a name takes what it holds from: the
+ * pattern it sits in, the position or keys the other elements take, and
+ * each value the pattern destructures. A declaration's pattern destructures
+ * the value it is declared with, or, in a for-of, each item iterating its
+ * value gives, as `iteratedContents` finds them; a parameter's, or one
+ * nested in another pattern, destructures what no rule reads. A destructuring assignment's pattern destructures what its `=`
+ * assigns, or, nested or in a for-of, what `destructuredTargetValues` finds
+ * it is given. A key another element takes that is not known may be any
+ * key, so the rest element may hold every key but those known.
+ */
+function restOrigin(target: ts.Identifier, checker: ts.TypeChecker, seen: Set<ts.Node>): RestOrigin {
+  const element = target.parent;
+  const pattern = element.parent;
+  const elements: readonly ts.Node[] = ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern) ? pattern.elements
+    : ts.isObjectBindingPattern(pattern) ? pattern.elements : ts.isObjectLiteralExpression(pattern) ? pattern.properties : [];
+  const array = ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern);
+  const taken = new Set(elements.flatMap((each): string[] => {
+    const key = ts.isBindingElement(each) && each.dotDotDotToken === undefined ? boundKey(each, checker)
+      : (ts.isPropertyAssignment(each) || ts.isShorthandPropertyAssignment(each)) ? propertyKey(each.name, checker) : undefined;
+    return key === undefined ? [] : [key];
+  }));
+  const origin: RestOrigin = { sources: [], at: array ? elements.indexOf(element) : undefined, taken, unread: null };
+  if (ts.isBindingElement(element)) {
+    const holder = pattern.parent;
+    const loop = holder.parent.parent;
+    if (ts.isVariableDeclaration(holder) && holder.initializer === undefined && ts.isForOfStatement(loop)) {
+      const items = iteratedContents(loop.expression, checker.getTypeAtLocation(pattern), checker, seen);
+      return { ...origin, sources: items.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)), unread: items.unread };
+    }
+    if (!ts.isVariableDeclaration(holder) || holder.initializer === undefined) return { ...origin, unread: element };
+    return { ...origin, sources: declaredValues(holder.initializer, checker, seen) };
+  }
+  const outer = outerValue(pattern);
+  const assignment = outer.parent;
+  if (ts.isBinaryExpression(assignment) && assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken && assignment.left === outer) {
+    return { ...origin, sources: declaredValues(assignment.right, checker, seen) };
+  }
+  const given = destructuredTargetValues(pattern, checker, seen);
+  return { ...origin, sources: given.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)), unread: given.unread };
+}
+
+/**
+ * What the array or object a rest element makes holds, as `restOrigin`
+ * finds where it takes it from, under one key, or under every key when no
+ * key is given. From an array literal, the rest element takes each item at
+ * or after its position, as `itemSource` reads the item that many places on
+ * for a key, with what code writes to the literal; from an object literal,
+ * each property whose key no other element takes, as `keyedProperties`
+ * reads it for a key. Any other value it is made from gives what it holds,
+ * as `placeContents` or `reachedContents` finds it, which includes what the
+ * rest element takes. What code writes to the rest element's own array or
+ * object is read where `placeContents` and `writtenTo` read a container's.
+ */
+function restValues(target: ts.Identifier, key: string | undefined, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const origin = restOrigin(target, checker, seen);
+  const found: Contents = { values: [], unread: origin.unread };
+  for (const source of origin.sources) {
+    if (!ts.isExpression(source)) {
+      found.unread ??= target;
+      continue;
+    }
+    if (origin.at !== undefined && ts.isArrayLiteralExpression(source)) {
+      if (key !== undefined && isIndexKey(key)) {
+        const item = itemSource(source, origin.at + Number(key), checker);
+        found.values.push(...item.holders.map(heldBy));
+        found.unread ??= item.unknownAfter;
+        continue;
+      }
+      const { items, unknownAfter } = spreadItems(source, checker);
+      const skipped = unknownAfter !== null && items.length < origin.at ? [] : items.slice(0, origin.at);
+      const held = placeContents(source, checker, seen);
+      found.values.push(...held.values.filter((value) => !skipped.includes(value as ts.Expression)));
+      found.unread ??= held.unread;
+      continue;
+    }
+    if (origin.at === undefined && ts.isObjectLiteralExpression(source) && key !== undefined) {
+      if (origin.taken.has(key)) continue;
+      const keyed = keyedProperties(source, key, checker);
+      found.values.push(...keyed.holders.map(heldBy));
+      found.unread ??= keyed.unknownAfter;
+      continue;
+    }
+    if (origin.at === undefined && ts.isObjectLiteralExpression(source)) {
+      const held = placeContents(source, checker, seen);
+      found.values.push(...held.values);
+      found.unread ??= held.unread;
+      continue;
+    }
+    const held = reachedContents(source, checker, seen);
+    found.values.push(...held.values);
+    found.unread ??= held.unread;
+    if (!held.reached && mayCarryFunction(source, checker)) found.unread ??= target;
+  }
+  if (key !== undefined) {
+    const written = writtenTo(target, key, checker);
+    found.values.push(...written.values);
+    found.unread ??= written.unread;
+  }
+  return found;
 }
 
 /** Whether a value is an object literal or an array literal. */
