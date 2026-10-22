@@ -2331,6 +2331,37 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a set accessor's parameter is given what every route that writes its key gives", () => {
+      const setter = "class Holder {\n  box: Boxer = consuming;\n  set value(value: Boxer) {\n    this.box = value;\n  }\n}\n";
+      const statically = "class Holder {\n  static box: Boxer = consuming;\n  static set value(value: Boxer) {\n    this.box = value;\n  }\n}\n";
+      const literal = "const holder = { box: consuming as Boxer, set value(value: Boxer) {\n    this.box = value;\n  } };";
+      const made = "const holder = new Holder();";
+      const called: Array<[before: string, call: string, after: string, found: string[]]> = [
+        [`${made}\n  holder.value = boxing;`, "holder.box", setter, reported],
+        [`${made}\n  holder.value = consuming;`, "holder.box", setter, []],
+        [`${made}\n  Reflect.set(holder, "value", boxing);`, "holder.box", setter, reported],
+        [`${made}\n  Reflect.set(holder, "value", consuming);`, "holder.box", setter, []],
+        [`${made}\n  Object.assign(holder, { value: boxing });`, "holder.box", setter, reported],
+        [`${made}\n  Object.assign(holder, { value: consuming });`, "holder.box", setter, []],
+        [`${made}\n  const alias: { value: Boxer } = holder;\n  alias.value = boxing;`, "holder.box", setter, reported],
+        [`${made}\n  const alias: { value: Boxer } = holder;\n  alias.value = consuming;`, "holder.box", setter, []],
+        [`${made}\n  [holder.value] = [boxing];`, "holder.box", setter, reported],
+        [`${made}\n  [holder.value] = [consuming];`, "holder.box", setter, []],
+        [`${literal}\n  holder.value = boxing;`, "holder.box", "", reported],
+        [`${literal}\n  holder.value = consuming;`, "holder.box", "", []],
+        ["Holder.value = boxing;", "Holder.box", statically, reported],
+        ["Holder.value = consuming;", "Holder.box", statically, []],
+        // A write whose value cannot all be read, or that a function no code here calls makes, may give the setter anything its type allows.
+        ["", "new Holder().box", `${setter}export function give(target: { value: Boxer }): void {\n  target.value = boxing;\n}\n`, reported],
+        ["", "new Holder().box", `${setter}export function give(target: Holder, box: Boxer): void {\n  target.value = box;\n}\n`, reported],
+      ];
+      for (const [before, call, after, found] of called) {
+        const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+        expect(boundHelpers("probe.ts", text), before + call + after).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, before + call + after).toEqual([]);
+      }
+    });
+
     test("a class's static members and its instances' members are each read through the changes made to that side alone", () => {
       const statically = "  static change(): void {\n    this.box = boxing;\n  }\n";
       const instance = "  change(): void {\n    this.box = boxing;\n  }\n";
@@ -4700,9 +4731,10 @@ interface Passed {
  * `callsOf` finds, as `declaredValues` reads them. What a caller gives is
  * read where the caller writes it, so a wrapper handed to a function is
  * read as the wrapper it is. A callback a library calls, as `handingCall`
- * finds it, is given what `handedValues` finds the library is handed. Where
- * no rule can find every call, as for a function that no code here calls,
- * one handed on as a value, or a method, or where a spread at or before its
+ * finds it, is given what `handedValues` finds the library is handed, and a
+ * set accessor's parameter what `setValues` finds is written to its key.
+ * Where no rule can find every call, as for a function that no code here
+ * calls, one handed on as a value, or a method, or where a spread at or before its
  * position hides which argument it takes, or where it is a rest parameter
  * or `this`, a caller may give it anything its type allows, so it is unread.
  */
@@ -4713,6 +4745,10 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
   if (handing !== undefined) {
     const handed = handedValues(handing, checker, seen);
     return { values: [...values, ...handed.values], unread: handed.unread };
+  }
+  if (ts.isSetAccessorDeclaration(owner)) {
+    const set = setValues(owner, checker, seen);
+    return { values: [...values, ...set.values], unread: set.unread };
   }
   const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
   const calls = at < 0 || parameter.dotDotDotToken !== undefined ? undefined : callsOf(owner, checker);
@@ -4728,6 +4764,31 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
     }
   }
   return { values, unread };
+}
+
+/**
+ * What a set accessor is given, since writing its key runs it with the
+ * value written: each value each assignment to it gives, and each value a
+ * destructuring gives a member that names it, as `assignmentsOf` finds
+ * them; and each value code writes to its key in the object literal or
+ * class that declares it, through any name, by any route, as `writtenTo`
+ * finds it for the accessor's own side of a class. Where any of these gives
+ * what no rule reads, or the accessor's key is not known, it is unread.
+ */
+function setValues(accessor: ts.SetAccessorDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
+  const written = assignmentsOf(accessor, checker);
+  const set: Passed = { values: written.assignments.flatMap((assignment) => declaredValues(assignment, checker, seen)), unread: written.unread };
+  const given = written.destructured.map((target) => destructuredTargetValues(target, checker, seen));
+  const key = propertyKey(accessor.name, checker);
+  const holder = accessor.parent;
+  if (key === undefined || (!ts.isObjectLiteralExpression(holder) && !ts.isClassLike(holder))) return { values: set.values, unread: true };
+  const side: ClassSide | undefined = ts.isClassLike(holder) ? isStatic(accessor) ? "static" : "instance" : undefined;
+  given.push(writtenTo(holder, key, checker, side));
+  for (const contents of given) {
+    set.values.push(...contents.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)));
+    set.unread ||= contents.unread !== null;
+  }
+  return set;
 }
 
 /**
