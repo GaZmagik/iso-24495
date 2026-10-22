@@ -2553,6 +2553,58 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), holder).toEqual([`probe.ts / ${name} / helper`]);
       }
     });
+
+    test("an awaited value and a promise are read through what each resolves to, beside its breach", () => {
+      // Each form gives `box` the value written as VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[statement: string, after: string]> = [
+        ["const helper = (await make())((): number => 1);", "async function make(): Promise<Boxer> {\n  return VALUE;\n}\n"],
+        ["const helper = (await make())((): number => 1);", "function make(): Boxer {\n  return VALUE;\n}\n"],
+        ["const box = await VALUE;\n  const helper = box((): number => 1);", ""],
+        ["const box = await new Promise<Boxer>((resolve) => resolve(VALUE));\n  const helper = box((): number => 1);", ""],
+        ["const box = await new Promise<Boxer>((resolve) => {\n    setTimeout(() => resolve(VALUE), 1);\n  });\n  const helper = box((): number => 1);", ""],
+        ["const box = await Promise.resolve(Promise.resolve(VALUE));\n  const helper = box((): number => 1);", ""],
+        ["const box = await new Promise<Boxer>((resolve) => resolve(Promise.resolve(VALUE)));\n  const helper = box((): number => 1);", ""],
+        ["const box = await Promise.race([Promise.resolve(VALUE)]);\n  const helper = box((): number => 1);", ""],
+      ];
+      for (const [statement, after] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export async function main(): Promise<number> {\n  ${statement.replace("VALUE", value)}\n  void helper;\n  return 0;\n}\n${wrappers}${after.replace("VALUE", value)}`;
+          expect(boundHelpers("probe.ts", text), statement + after + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + after + value).toEqual([]);
+        }
+      }
+      // A callback `then` is handed is given what the promise it is called on resolves to.
+      for (const promise of ["Promise.resolve(VALUE)", "new Promise<Boxer>((resolve) => resolve(VALUE))", "make()"]) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / (an unnamed function) / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export async function main(): Promise<number> {\n  await ${promise.replace("VALUE", value)}.then((box) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  return 0;\n}\n`
+            + `async function make(): Promise<Boxer> {\n  return ${value};\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), promise + value).toEqual(found);
+        }
+      }
+    });
+
+    test("a callback a library may give what it keeps from another call is unread, and a promise's resolve is read, beside its breach", () => {
+      // The library keeps what `register`, `emit` and `resolve` are handed for a callback handed to another call, which no rule reads.
+      for (const [statement, name] of [
+        ["const registry = new FinalizationRegistry((box: Boxer) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  registry.register({}, consuming);", "(an unnamed function)"],
+        ["process.on(\"message\", (box: Boxer) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  process.emit(\"message\", consuming as never);", "(an unnamed function)"],
+        ["const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);\n  await promise.then((box) => {\n    const helper = box((): number => 1);\n    void helper;\n  });", "(an unnamed function)"],
+        ["const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);\n  const box = await promise;\n  const helper = box((): number => 1);\n  void helper;", "main"],
+        ["const box = await new Promise<Boxer>((resolve) => {\n    setTimeout(resolve, 1, consuming);\n  });\n  const helper = box((): number => 1);\n  void helper;", "main"],
+      ] as Array<[statement: string, name: string]>) {
+        const text = `export async function main(): Promise<number> {\n  ${statement}\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), statement).toEqual([`probe.ts / ${name} / helper`]);
+      }
+      // The executor's own `resolve` and `reject` are functions the library makes, so a function a call of either is handed is held by the promise.
+      for (const [statement, problems] of [
+        ["const promise = new Promise<number>((resolve, reject) => {\n    if (Math.random() > 0.5) resolve(1);\n    else reject(new Error(\"no\"));\n  });\n  void promise;", []],
+        ["const helper = await new Promise<() => number>((resolve) => resolve((): number => 1));\n  void helper;", ["probe.ts:2: an arrow function cannot be placed: it sits in an AwaitExpression, a place the allowed list does not name"]],
+      ] as Array<[statement: string, problems: string[]]>) {
+        const text = `export async function main(): Promise<number> {\n  ${statement}\n  return 0;\n}\n`;
+        expect(boundHelpers("probe.ts", text), statement).toEqual([]);
+        expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual(problems);
+      }
+    });
   });
 });
 
@@ -3192,8 +3244,9 @@ type DeclaredValue = ts.Expression | ts.SignatureDeclaration | ts.ClassLikeDecla
  * Each value an expression may be, as `possibleValues` reads it, with each
  * name, and each property read from a value, followed to what it is given
  * where it is declared, as `namedValues` reads it; each item read by index
- * followed as `indexedValues` reads it; and each call followed to what it
- * returns, as `calledValues` reads it.
+ * followed as `indexedValues` reads it; each call followed to what it
+ * returns, as `calledValues` reads it; and each `await` followed to what it
+ * gives, as `awaitedValues` reads it.
  *
  * @param seen The declarations read already, so that names given each other are read once.
  */
@@ -3201,8 +3254,68 @@ function declaredValues(expression: ts.Expression, checker: ts.TypeChecker, seen
   return possibleValues(expression, checker).flatMap((value): DeclaredValue[] => {
     if (ts.isIdentifier(value) || ts.isPropertyAccessExpression(value)) return namedValues(value, checker, seen);
     if (ts.isElementAccessExpression(value)) return indexedValues(value, checker, seen);
+    if (ts.isAwaitExpression(value)) return awaitedValues(value.expression, value, checker, seen);
     return ts.isCallExpression(value) ? calledValues(value, checker, seen) : [value];
   });
+}
+
+/**
+ * What `await` gives: each value the value awaited may be, as
+ * `declaredValues` reads it, that is no promise, as a function or a call of
+ * an `async` function written here is not, since `calledValues` reads that
+ * call as what the function returns; and, for a promise a library call
+ * makes, as `isPromiseCall` finds it, what `awaitedValues` finds each value
+ * the promise holds gives, as `placeContents` finds them, since a promise
+ * that resolves to another promise gives what that one gives. A promise of
+ * any other kind, one that holds what no rule reads, and a value awaited
+ * that has no value written here, give the `await` itself, as unread.
+ *
+ * @param at The `await`, given back where what it gives cannot be read.
+ * @param seen The declarations and containers read already, so that each is read once.
+ */
+function awaitedValues(awaited: ts.Expression, at: ts.AwaitExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  const values = declaredValues(awaited, checker, seen);
+  if (values.length === 0) return [at];
+  return values.flatMap((value): DeclaredValue[] => {
+    if (!ts.isExpression(value)) return [value];
+    if (isPromiseCall(value, checker)) {
+      const held = placeContents(value, checker, seen);
+      const given = held.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : awaitedValues(one, at, checker, seen));
+      return held.unread === null ? given : [...given, at];
+    }
+    const type = checker.getTypeAtLocation(value);
+    return checker.getAwaitedType(type) === type ? [value] : [at];
+  });
+}
+
+/** Whether a node is a call, or `new`, of a library function whose value is a promise, which the rules read as a container of what it resolves to. */
+function isPromiseCall(node: ts.Node, checker: ts.TypeChecker): node is ts.CallExpression | ts.NewExpression {
+  if (!isLibraryCall(node, checker)) return false;
+  const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  return (type.isUnion() ? type.types : [type]).some((part) => part.getSymbol()?.name === "Promise");
+}
+
+/** Whether a `new` makes a promise with the library's Promise constructor, which runs the executor it is handed once, at once, with `resolve` and `reject`. */
+function isPromiseConstructor(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): call is ts.NewExpression {
+  if (!ts.isNewExpression(call) || !isLibraryCall(call, checker)) return false;
+  const owner = invocationOf(call, checker).declaration?.parent;
+  return owner !== undefined && ts.isInterfaceDeclaration(owner) && owner.name.text === "PromiseConstructor";
+}
+
+/**
+ * The promise a call gives what it is handed to: the `new` of the library's
+ * Promise constructor whose executor, written in place, takes the function
+ * called as its first or second parameter, `resolve` or `reject`.
+ *
+ * @returns The `new`, or undefined when the function called is none such.
+ */
+function resolvedPromise(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): ts.NewExpression | undefined {
+  const callee = heldValue(call.expression);
+  const parameter = callee !== undefined && ts.isIdentifier(callee) ? usedSymbol(callee, checker)?.declarations?.find(ts.isParameter) : undefined;
+  const executor = parameter?.parent;
+  if (parameter === undefined || executor === undefined || (!ts.isArrowFunction(executor) && !ts.isFunctionExpression(executor)) || executor.parameters.indexOf(parameter) > 1) return undefined;
+  const made = outerValue(executor).parent;
+  return ts.isNewExpression(made) && made.arguments?.[0] === outerValue(executor) && isPromiseConstructor(made, checker) ? made : undefined;
 }
 
 /**
@@ -4259,7 +4372,7 @@ function reachesOnlyContainers(expression: ts.Expression, checker: ts.TypeChecke
  * The containers one value is: itself for an object or array literal, or for
  * a class; each class a `new` makes an instance of; the class, or the object
  * literal, whose method `this` is read in; and itself for a call or `new` of
- * a library function whose value is an array, a set or a map.
+ * a library function whose value is an array, a set, a map or a promise.
  *
  * @returns The containers, or undefined when the value is none of these.
  */
@@ -4273,7 +4386,7 @@ function containersOfValue(value: DeclaredValue, checker: ts.TypeChecker): Conta
     const made = declaredValues(value.expression, checker, new Set());
     if (made.length > 0 && made.every(ts.isClassLike)) return made.filter(ts.isClassLike);
   }
-  return isLibraryCall(value, checker) && isCollection(checker.getTypeAtLocation(value), checker) ? [value] : undefined;
+  return isPromiseCall(value, checker) || (isLibraryCall(value, checker) && isCollection(checker.getTypeAtLocation(value), checker)) ? [value] : undefined;
 }
 
 /**
@@ -4458,13 +4571,47 @@ function changesAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   } else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isDestructuringTarget(node)) {
     changes = [{ receiver: node.expression, write: { kind: "destructured", keys: memberKeys(node, checker), target: node }, at: node }];
   } else if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-    changes = callChanges(node, checker);
+    changes = isPromiseConstructor(node, checker) ? promiseChanges(node, checker) : callChanges(node, checker);
   }
   const carried = changes.filter((change) => carriesFunction(change, checker));
   for (const change of carried) {
     if (change.write.kind === "unread") UNREAD_CHANGES.add(change.at);
   }
   return carried;
+}
+
+/**
+ * The changes a promise the library's Promise constructor makes is given:
+ * each value a call of `resolve` or `reject`, the executor's first two
+ * parameters, hands on, wherever the call is written, since the promise
+ * resolves to it, or is rejected with it. A use of either that is no call,
+ * as handing `resolve` to a timer is not, a spread among what one is handed,
+ * or an executor not written in place as a function, gives what no rule reads.
+ */
+function promiseChanges(promise: ts.NewExpression, checker: ts.TypeChecker): Change[] {
+  const executor = heldValue(promise.arguments?.[0]);
+  if (executor === undefined || (!ts.isArrowFunction(executor) && !ts.isFunctionExpression(executor))) return [{ receiver: promise, write: { kind: "unread" }, at: promise }];
+  const changes: Change[] = [];
+  for (const parameter of executor.parameters.slice(0, 2)) {
+    if (!ts.isIdentifier(parameter.name)) {
+      changes.push({ receiver: promise, write: { kind: "unread" }, at: parameter });
+      continue;
+    }
+    for (const use of usesOf(parameter, checker)) {
+      if (use === parameter.name) continue;
+      const outer = outerValue(use);
+      const call = outer.parent;
+      const value = ts.isCallExpression(call) && call.expression === outer ? call.arguments[0] : undefined;
+      if (value !== undefined && ts.isSpreadElement(value)) {
+        changes.push({ receiver: promise, write: { kind: "unread" }, at: call });
+      } else if (ts.isCallExpression(call) && call.expression === outer) {
+        if (value !== undefined) changes.push({ receiver: promise, write: { kind: "value", keys: undefined, value }, at: call });
+      } else {
+        changes.push({ receiver: promise, write: { kind: "unread" }, at: use });
+      }
+    }
+  }
+  return changes;
 }
 
 /**
@@ -4883,7 +5030,9 @@ interface Passed {
  * read where the caller writes it, so a wrapper handed to a function is
  * read as the wrapper it is. Each call of a library that `callsOf` finds the
  * function is handed to as a callback, written in place or by its name, gives
- * what `handedValues` finds the library is handed, and a set accessor's
+ * what `handedValues` finds the library is handed, unless the library may
+ * give the callback what it keeps from another call, as `keepsForCallbacks`
+ * says, which no rule reads; and a set accessor's
  * parameter is given what `setValues` finds is written to its key. Where no
  * rule can find every call, as for a function that no code here calls, or
  * one handed on as a value anywhere but to a library as a callback, or
@@ -4902,7 +5051,7 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
   if (sites === undefined) return { values, handed: [], unread: true };
   const passed: Passed = { values, handed: [], unread: false };
   for (const call of sites.handing) {
-    const handed = handedValues(call, checker, seen);
+    const handed = keepsForCallbacks(call, checker) ? { values: [], unread: true } : handedValues(call, checker, seen);
     passed.handed.push(...handed.values);
     passed.unread ||= handed.unread;
   }
@@ -4983,6 +5132,50 @@ function handedValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Ty
   handed.values.push(...readContents({ values: returned.values, unread: null }, call, checker, seen));
   handed.unread ||= returned.unread !== null;
   return handed;
+}
+
+/**
+ * What `keepsForCallbacks` found of each call, for each checker. One read
+ * while the table of changes is being made may find fewer values than the
+ * finished table gives, and so may say a call keeps what it does not, never
+ * the reverse.
+ */
+const KEEPS = new WeakMap<ts.TypeChecker, Map<ts.Node, boolean>>();
+
+/** The calls whose receiver `keepsForCallbacks` is reading, so that a call met again inside that reading is not read twice. */
+const RECEIVERS_BEING_READ = new Set<ts.Node>();
+
+/**
+ * Whether a library may give a callback it is handed a value it keeps from
+ * another call, which no rule reads, as a FinalizationRegistry gives its
+ * callback each value `register` is handed, and an event emitter its
+ * listener each value `emit` is handed. A `new` of a library class, which
+ * may keep the callback for the object it makes, may, besides the library's
+ * Promise constructor, which runs its executor once, at once, and gives it
+ * only `resolve` and `reject`, which it makes itself. A method of a value
+ * that has no value written here, as `process` has none, may, unless the
+ * value is a class, such as Array or Object, whose own functions keep
+ * nothing. A method of a value written here gives what that value holds, as
+ * `handedValues` reads it. A call met again while its value is being read
+ * may keep anything, since what it is handed cannot be read until then.
+ */
+function keepsForCallbacks(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): boolean {
+  if (ts.isNewExpression(call)) return !isPromiseConstructor(call, checker);
+  const receiver = invocationOf(call, checker).callee === call.expression ? memberReceiver(call.expression) : undefined;
+  if (receiver === undefined) return false;
+  const known = KEEPS.get(checker) ?? new Map<ts.Node, boolean>();
+  KEEPS.set(checker, known);
+  const kept = known.get(call);
+  if (kept !== undefined) return kept;
+  if (RECEIVERS_BEING_READ.has(call)) return true;
+  RECEIVERS_BEING_READ.add(call);
+  try {
+    const keeps = declaredValues(receiver, checker, new Set()).length === 0 && checker.getTypeAtLocation(receiver).getConstructSignatures().length === 0;
+    known.set(call, keeps);
+    return keeps;
+  } finally {
+    RECEIVERS_BEING_READ.delete(call);
+  }
 }
 
 /** Where a function runs, as `callsOf` finds it. */
@@ -6844,6 +7037,14 @@ function climb(written: ts.FunctionLikeDeclaration, checker: ts.TypeChecker): Cl
       path.push(...nodesUpTo(parent, taker));
       value = taker;
       top = taker;
+      continue;
+    }
+    // A promise holds what its executor's `resolve` or `reject` is handed, as a call holds what it keeps.
+    const promise = taker === undefined ? undefined : resolvedPromise(taker, checker);
+    if (promise !== undefined) {
+      path.push(...nodesUpTo(parent, promise));
+      value = promise;
+      top = promise;
       continue;
     }
     if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === top) {
