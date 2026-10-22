@@ -2243,6 +2243,53 @@ describe("the code skill's rules for this repository's own code", () => {
       const declared = `export function main(): number {\n  const [box] = [...outside];\n  const helper = box!((): number => 1);\n  void helper;\n  return 0;\n}\ndeclare const outside: Boxer[];\n${wrappers}`;
       expect(boundHelpers("probe.ts", declared)).toEqual([positionNotKnown("box", "...outside"), "probe.ts / main / helper"]);
     });
+
+    test("a map is read under the key it is read by, wherever that key and each entry's key are known", () => {
+      const map = "const map = new Map<string, Boxer>([[\"wanted\", consuming], [\"other\", boxing]]);";
+      const called: Array<[before: string, call: string, found: string[]]> = [
+        [map, "map.get(\"other\")!", reported],
+        [map, "map.get(\"wanted\")!", []],
+        [`${map}\n  const box = map.get("wanted");\n  if (box === undefined) return 0;`, "box", []],
+        ["const map = new Map<string, Boxer>([[\"wanted\", consuming]]);\n  map.set(\"wanted\", boxing);", "map.get(\"wanted\")!", reported],
+        ["const map = new Map<string, Boxer>([[\"wanted\", consuming]]);\n  map.set(\"other\", boxing);", "map.get(\"wanted\")!", []],
+        ["const map = new Map<string, Boxer>([[\"a\", consuming], [\"b\", boxing], [\"c\", consuming]]);", "map.get(either)!", reported],
+        ["const map = new Map<string, Boxer>([[\"a\", consuming], [\"b\", consuming], [\"c\", boxing]]);", "map.get(either)!", []],
+        ["const map = new Map<number, Boxer>([[1, consuming], [2, boxing]]);", "map.get(2)!", reported],
+        ["const map = new Map<number, Boxer>([[1, consuming], [2, boxing]]);", "map.get(1)!", []],
+        ["const inner = new Map<string, Boxer>([[\"a\", boxing], [\"b\", consuming]]);\n  const map = new Map(inner);", "map.get(\"a\")!", reported],
+        ["const inner = new Map<string, Boxer>([[\"a\", consuming], [\"b\", boxing]]);\n  const map = new Map(inner);", "map.get(\"a\")!", []],
+        // A key not written so that it is known may be any key, whether it is read or written.
+        ["const map = new Map<string, Boxer>([[\"a\", consuming], [\"c\", boxing]]);", "map.get(name)!", reported],
+        ["const map = new Map<string, Boxer>([[\"a\", consuming]]);\n  map.set(name, boxing);", "map.get(\"a\")!", reported],
+        // An entry a name holds may be given another key later, which no rule reads, so it may be under any key.
+        ["const entry: [string, Boxer] = [\"a\", boxing];\n  const map = new Map<string, Boxer>([entry]);", "map.get(\"a\")!", reported],
+        ["const entry: [string, Boxer] = [\"other\", boxing];\n  entry[0] = \"a\";\n  const map = new Map<string, Boxer>([entry]);", "map.get(\"a\")!", reported],
+        ["const entry: [string, Boxer] = [\"a\", consuming];\n  const map = new Map<string, Boxer>([entry]);", "map.get(\"a\")!", []],
+      ];
+      for (const [before, call, found] of called) {
+        const text = `export function main(either: "a" | "b", name: string): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), before + call).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, before + call).toEqual([]);
+      }
+      // A container a name holds is read through what it holds, wherever a library call is handed it.
+      const iterated: Array<[before: string, collection: string, found: string[]]> = [
+        ["const entries: Array<[string, Boxer]> = [[\"a\", boxing]];", "new Map(entries).values()", reported],
+        ["const entries: Array<[string, Boxer]> = [[\"a\", consuming]];", "new Map(entries).values()", []],
+        ["const pair: Boxer[] = [boxing];", "[pair].flat()", reported],
+        ["const pair: Boxer[] = [consuming];", "[pair].flat()", []],
+        ["", "[make([boxing])].flat()", reported],
+        ["", "[make([consuming])].flat()", []],
+        ["const left: Boxer[] = [boxing];\n  const right: Boxer[] = [consuming];", "[ready ? left : right].flat()", reported],
+        ["const left: Boxer[] = [consuming];\n  const right: Boxer[] = [consuming];", "[ready ? left : right].flat()", []],
+        ["", "new Map<string, Boxer>([entry(boxing)]).values()", reported],
+        ["", "new Map<string, Boxer>([entry(consuming)]).values()", []],
+      ];
+      const makers = "function make(list: Boxer[]): Boxer[] {\n  return list;\n}\nfunction entry(box: Boxer): [string, Boxer] {\n  return [\"a\", box];\n}\n";
+      for (const [before, collection, found] of iterated) {
+        const text = `export function main(ready: boolean): number {\n  ${before}\n  for (const box of ${collection}) {\n    const helper = box((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}${makers}`;
+        expect(boundHelpers("probe.ts", text), before + collection).toEqual(found);
+      }
+    });
   });
 });
 
@@ -3408,10 +3455,11 @@ function readContents(contents: Contents, value: ts.Expression, checker: ts.Type
  * get accessor gives each value it returns; a set accessor holds nothing,
  * since what it is given goes where its body writes it.
  */
-function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<ts.Node>, mapKeys?: readonly string[]): Contents {
   const found: Contents = { values: [], unread: null };
   if (seen.has(container)) return found;
   seen.add(container);
+  const keys = isMapContainer(container, checker) ? mapKeys : undefined;
   if (ts.isArrayLiteralExpression(container)) {
     for (const item of container.elements) {
       if (ts.isSpreadElement(item)) {
@@ -3442,18 +3490,71 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
     found.values.push(...container.members.filter(ts.isPropertyDeclaration).flatMap((member) => member.initializer === undefined ? [] : [member.initializer]));
   } else {
     for (const source of librarySources(container, checker)) {
-      const reached = reachedContents(source, checker, seen);
-      found.values.push(...reached.values);
+      const reached = reachedContents(source, checker, seen, keys);
+      found.values.push(...reached.values.filter((value) => keys === undefined || mayHaveKey(value, keys, container, checker)));
       found.unread ??= reached.unread;
     }
     const returned = callbackResults(container, checker, seen);
     found.values.push(...returned.values);
     found.unread ??= returned.unread;
   }
-  const written = writtenTo(container, undefined, checker);
+  const written = keys === undefined ? writtenTo(container, undefined, checker) : writtenToKeys(container, keys, checker);
   found.values.push(...written.values);
   found.unread ??= written.unread;
   return found;
+}
+
+/** Whether a container is a map a library call makes, whose read-only form is ReadonlyMap. */
+function isMapContainer(container: Container, checker: ts.TypeChecker): boolean {
+  if (!ts.isCallExpression(container) && !ts.isNewExpression(container)) return false;
+  const type = checker.getNonNullableType(checker.getTypeAtLocation(container));
+  return (type.isUnion() ? type.types : [type]).some((part) => (part.flags & ts.TypeFlags.Object) !== 0 && readOnlyForm(part, checker) === "ReadonlyMap");
+}
+
+/**
+ * Whether a value a map is made from may be an entry under one of some
+ * keys. An entry written as an array literal, in a list of entries written
+ * as an array literal that the map is made from where it is written, is one
+ * no code can reach to change, so its first item says its key: it is under
+ * none of those keys when `keysOf` finds every key that item may be, and
+ * none is one of them. Any other value may be under any key, since a key
+ * code writes later, as `entry[0] = "wanted"` writes one, is read by no
+ * rule. A value `set` gives a map is read under its key where it is written.
+ */
+function mayHaveKey(value: WrittenValue, keys: readonly string[], map: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): boolean {
+  if (!ts.isArrayLiteralExpression(value)) return true;
+  const list = value.parent;
+  if (!ts.isArrayLiteralExpression(list) || !(map.arguments ?? []).some((argument) => heldValue(argument) === list)) return true;
+  const [first] = value.elements;
+  const given = first === undefined || ts.isOmittedExpression(first) ? undefined : keysOf(first, checker);
+  return given === undefined || given.some((key) => keys.includes(key));
+}
+
+/** What code gives a container under any of some keys, as `writtenTo` finds it for each. */
+function writtenToKeys(container: Container, keys: readonly string[], checker: ts.TypeChecker): Written {
+  const found: Written = { values: [], unread: null, moved: false };
+  for (const key of keys) {
+    const written = writtenTo(container, key, checker);
+    found.values.push(...written.values.filter((value) => !found.values.includes(value)));
+    found.unread ??= written.unread;
+    found.moved ||= written.moved;
+  }
+  return found;
+}
+
+/**
+ * The keys a call reads from a map: the keys `keysOf` finds the key handed
+ * to `get` of the library's Map or ReadonlyMap may be.
+ *
+ * @returns The keys, or undefined for any other call, or a key not written so that its keys are known.
+ */
+function mapReadKeys(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): readonly string[] | undefined {
+  const invocation = invocationOf(call, checker);
+  const declaration = invocation.declaration;
+  if (declaration === undefined || !declaration.getSourceFile().isDeclarationFile || declaration.name === undefined || !ts.isIdentifier(declaration.name)) return undefined;
+  const owner = declaration.parent;
+  if (declaration.name.text !== "get" || !ts.isInterfaceDeclaration(owner) || (owner.name.text !== "Map" && owner.name.text !== "ReadonlyMap")) return undefined;
+  return keysOf(invocation.args[0], checker);
 }
 
 /**
@@ -3464,7 +3565,7 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
  * is no container, as a parameter whose callers cannot all be found is not,
  * holds what no rule reads.
  */
-function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
+function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>, mapKeys?: readonly string[]): ReachedContents {
   const found: ReachedContents = { values: [], unread: null, reached: false };
   // A function found here is read again where its holder is read, so the declarations read to find it are not marked as read for that.
   for (const value of declaredValues(expression, checker, new Set(seen))) {
@@ -3482,7 +3583,7 @@ function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, see
       continue;
     }
     for (const container of containers) {
-      const held = placeContents(container, checker, seen);
+      const held = placeContents(container, checker, seen, mapKeys);
       found.values.push(...held.values);
       found.unread ??= held.unread;
     }
@@ -3507,8 +3608,9 @@ function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, see
 function libraryContents(call: ts.CallExpression | ts.NewExpression, wanted: ts.Type, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
   const found: ReachedContents = { values: [], unread: null, reached: false };
   const held: Contents[] = [];
+  const keys = mapReadKeys(call, checker);
   for (const source of librarySources(call, checker)) {
-    const reached = reachedContents(source, checker, seen);
+    const reached = reachedContents(source, checker, seen, keys);
     found.reached ||= reached.reached;
     held.push(reached);
   }
@@ -3519,10 +3621,49 @@ function libraryContents(call: ts.CallExpression | ts.NewExpression, wanted: ts.
     for (const value of contents.values) {
       const fitting = fittingValues(value, wanted, checker);
       found.values.push(...fitting);
-      if (fitting.length === 0 && mayCarryFunction(value, checker) && mayHoldFunction(wanted, checker, call)) found.unread ??= call;
+      if (fitting.length > 0 || !mayCarryFunction(value, checker)) continue;
+      const parts = fittingParts(value, wanted, checker, seen);
+      found.values.push(...parts.values);
+      found.unread ??= parts.unread;
+      if (parts.values.length === 0 && mayHoldFunction(wanted, checker, call)) found.unread ??= call;
     }
   }
   found.reached ||= found.values.length > 0 || found.unread !== null;
+  return found;
+}
+
+/**
+ * The parts of a value held that fits nothing that may fit the type wanted,
+ * where the value's type is an array, a set or a map and it is not written
+ * in place as an array literal, as an entry `[key, boxing]` named by `entry`
+ * holds `boxing`, or `make()` holds what `make` returns: each value each
+ * container it may be holds, as `declaredValues`, `containersOfValue` and
+ * `placeContents` find them, that `fittingValues` finds fits. A value it may
+ * be that is no container, or a part that fits nothing, that may be or hold
+ * a function and cannot be called, gives what no rule reads. Any other value
+ * has no parts besides those `fittingValues` reads.
+ *
+ * @param seen The declarations read already, which this adds to, so that a value is read once however many times it is held.
+ */
+function fittingParts(value: WrittenValue, wanted: ts.Type, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const found: Contents = { values: [], unread: null };
+  if (!ts.isExpression(value) || ts.isArrayLiteralExpression(value) || !isCollection(checker.getTypeAtLocation(value), checker)) return found;
+  for (const one of declaredValues(value, checker, seen)) {
+    const containers = containersOfValue(one, checker);
+    if (containers === undefined) {
+      if (ts.isExpression(one) && !mayBeCalled(checker.getTypeAtLocation(one)) && mayCarryFunction(one, checker)) found.unread ??= value;
+      continue;
+    }
+    for (const container of containers) {
+      const held = placeContents(container, checker, seen);
+      found.unread ??= held.unread;
+      for (const part of held.values) {
+        const fitting = fittingValues(part, wanted, checker);
+        found.values.push(...fitting);
+        if (fitting.length === 0 && !mayBeCalled(checker.getTypeAtLocation(part)) && mayCarryFunction(part, checker)) found.unread ??= value;
+      }
+    }
+  }
   return found;
 }
 
@@ -3951,7 +4092,7 @@ function callChanges(call: ts.CallExpression | ts.NewExpression, checker: ts.Typ
     if (forwarded && invocation.declaration === undefined) return self === undefined || ts.isSpreadElement(self) ? [] : [{ receiver: self, write: { kind: "unread" }, at: call }];
     const receiver = forwarded ? invocation.unread[0] : callee.expression;
     const keys = memberKeys(callee, checker);
-    return receiver === undefined ? [] : collectionChanges(receiver, keys?.length === 1 ? keys[0] : undefined, invocation.args, call);
+    return receiver === undefined ? [] : collectionChanges(receiver, keys?.length === 1 ? keys[0] : undefined, invocation.args, call, checker);
   }
   const declaration = invocation.declaration;
   return declaration === undefined || !declaration.getSourceFile().isDeclarationFile ? [] : libraryChanges(call, declaration, invocation, checker);
@@ -3959,16 +4100,18 @@ function callChanges(call: ts.CallExpression | ts.NewExpression, checker: ts.Typ
 
 /**
  * The changes one method of an array, a set or a map makes: each value an
- * adding method adds, a move for a method that may move items, and an
- * unread change for a spread among the values added, or a method that
- * KNOWN_CHANGES does not name, or one whose name is not known.
+ * adding method adds, under the keys `keysOf` finds the key a map's `set`
+ * is given may be, or under any key; a move for a method that may move
+ * items; and an unread change for a spread among the values added, or a
+ * method that KNOWN_CHANGES does not name, or one whose name is not known.
  */
-function collectionChanges(receiver: ts.Expression, method: string | undefined, args: readonly ts.Expression[], at: ts.Node): Change[] {
+function collectionChanges(receiver: ts.Expression, method: string | undefined, args: readonly ts.Expression[], at: ts.Node, checker: ts.TypeChecker): Change[] {
   const changes: Change[] = [];
   const first = method === undefined ? undefined : ADDING_METHODS.get(method);
   const added = first === undefined ? [] : args.slice(first, method === "fill" || method === "set" ? first + 1 : undefined);
+  const keys = method === "set" ? keysOf(args[0], checker) : undefined;
   for (const value of added) {
-    changes.push({ receiver, write: ts.isSpreadElement(value) ? { kind: "unread" } : { kind: "value", keys: undefined, value }, at });
+    changes.push({ receiver, write: ts.isSpreadElement(value) ? { kind: "unread" } : { kind: "value", keys, value }, at });
   }
   if (method !== undefined && MOVING_METHODS.has(method)) changes.push({ receiver, write: { kind: "moved" }, at });
   if (method === undefined || !KNOWN_CHANGES.has(method)) changes.push({ receiver, write: { kind: "unread" }, at });
