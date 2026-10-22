@@ -2316,6 +2316,11 @@ describe("the code skill's rules for this repository's own code", () => {
         ["give(Holder);", "Holder.box", `${holderClass("")}function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n`, reported],
         ["give(new Holder());", "new Holder().box", `${holderClass("")}function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n`, reported],
         ["Sub.box = boxing;", "Sub.box", `${holderClass("")}class Sub extends Holder {}\n`, reported],
+        // A function whose every call cannot be found changes each side its parameter's type takes.
+        ["", "new Holder().box", `${holderClass("")}export function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n`, reported],
+        ["", "Holder.box", `${holderClass("")}export function give(target: { box: Boxer }): void {\n  target.box = boxing;\n}\n`, reported],
+        ["", "Holder.box", `${holderClass("")}export function give(target: typeof Holder): void {\n  target.box = boxing;\n}\n`, reported],
+        ["", "new Holder().box", `${holderClass("")}export function give(target: typeof Holder): void {\n  target.box = boxing;\n}\n`, []],
       ];
       for (const [before, call, after, found] of called) {
         const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
