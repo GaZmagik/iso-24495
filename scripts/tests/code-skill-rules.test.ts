@@ -2463,6 +2463,96 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), value).toEqual(found);
       }
     });
+
+    test("a function handed by its name to a library as a callback is given what the library is handed, beside its breach", () => {
+      const callbacks = [
+        "const cb = (box: Boxer): object => {\n  const helper = box((): number => 1);\n  return helper;\n};\n",
+        "function cb(box: Boxer): object {\n  const helper = box((): number => 1);\n  return helper;\n}\n",
+      ];
+      const handings: Array<[valid: string, breach: string]> = [
+        ["void [consuming].map(cb);", "void [boxing].map(cb);"],
+        ["[consuming].forEach(cb);", "[boxing].forEach(cb);"],
+        ["void Array.from([consuming], cb);", "void Array.from([boxing], cb);"],
+        ["void cb(consuming);\n  void [consuming].map(cb);", "void cb(consuming);\n  void [boxing].map(cb);"],
+        ["void [consuming].map(cb);\n  void cb(consuming);", "void [consuming].map(cb);\n  void cb(boxing);"],
+      ];
+      for (const callback of callbacks) {
+        for (const [valid, breach] of handings) {
+          for (const [statement, found] of [[valid, []], [breach, ["probe.ts / cb / helper"]]] as Array<[statement: string, found: string[]]>) {
+            const text = `export function main(): number {\n  ${statement}\n  return 0;\n}\n${callback}${wrappers}`;
+            expect(boundHelpers("probe.ts", text), callback + statement).toEqual(found);
+          }
+        }
+        // Handed on anywhere else, as to a function written here, it may be given anything its type allows.
+        const text = `export function main(): number {\n  return apply(cb);\n}\nfunction apply(each: (box: Boxer) => object): number {\n  void each(consuming);\n  return 0;\n}\n${callback}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), callback).toEqual(["probe.ts / cb / helper"]);
+      }
+    });
+
+    test("a method's parameter is given what each call of the method gives, wherever every call can be found, beside its breach", () => {
+      const runner = "class Runner {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n"
+        + "  other(box: Boxer): number {\n    return box === consuming ? 0 : 1;\n  }\n  static go(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\n";
+      const sub = "class Sub extends Runner {\n  more(): number {\n    return super.run(consuming);\n  }\n}\n";
+      // Each form calls the method with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[statement: string, method: string, after: string]> = [
+        ["new Runner().run(VALUE);", "run", ""],
+        ["new Runner()?.run(VALUE);", "run", ""],
+        ["new Runner()[\"run\"](VALUE);", "run", ""],
+        ["const key = Math.random() > 0.5 ? \"run\" : \"other\";\n  new Runner()[key](VALUE);", "run", ""],
+        ["const made: { run(box: Boxer): number } = new Runner();\n  made.run(VALUE);", "run", ""],
+        ["const made = new Runner() as unknown as { run(box: Boxer): number };\n  made.run(VALUE);", "run", ""],
+        ["const made: { run(box: Boxer): number; more(): number } = new Sub();\n  made.run(VALUE);", "run", sub],
+        ["new Sub().run(VALUE);", "run", sub],
+        ["void [VALUE].map(new Runner().run);", "run", ""],
+        ["Runner.go(VALUE);", "go", ""],
+        ["give(Runner);", "go", "function give(made: { go(box: Boxer): number }): number {\n  return made.go(VALUE);\n}\n"],
+      ];
+      for (const [statement, method, after] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", [`probe.ts / ${method} / helper`]]] as Array<[value: string, found: string[]]>) {
+          const calls = method === "run" ? `${statement}\n  Runner.go(consuming);` : `${statement}\n  new Runner().run(consuming);`;
+          const text = `export function main(): number {\n  ${calls.replace("VALUE", value)}\n  return 0;\n}\n${runner}${wrappers}${after.replace("VALUE", value)}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+      // A method `this` calls, a private method, a generic class's method, an object literal's method or arrow, and one a copy of the literal holds, are read the same way.
+      const holders: Array<[holder: string, call: string, name: string]> = [
+        ["class Runner {\n  start(): number {\n    return this.run(VALUE);\n  }\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\n", "new Runner().start()", "run"],
+        ["class Runner {\n  start(): number {\n    return this.#run(VALUE);\n  }\n  #run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\n", "new Runner().start()", "#run"],
+        ["class Runner<T> {\n  item: T | undefined;\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\n", "new Runner<number>().run(VALUE)", "run"],
+        ["const bag = {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\n", "bag.run(VALUE)", "run"],
+        ["const bag = {\n  start(): number {\n    return this.run(VALUE);\n  },\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\n", "bag.start()", "run"],
+        ["const bag = {\n  run: (box: Boxer): number => {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\n", "bag.run(VALUE)", "(an unnamed function)"],
+        ["const bag = {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\nconst copy = { ...bag };\n", "copy.run(VALUE)", "run"],
+      ];
+      for (const [holder, call, name] of holders) {
+        for (const [value, found] of [["consuming", []], ["boxing", [`probe.ts / ${name} / helper`]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  return ${call.replace("VALUE", value)};\n}\n${holder.replace("VALUE", value)}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), holder + value).toEqual(found);
+        }
+      }
+      // Where a method is handed on as a value, or its key is one a library calls by protocol, a caller may give it anything its type allows.
+      for (const statement of [
+        "const run = new Runner().run;\n  run(consuming);",
+        "const { run } = new Runner();\n  run(consuming);",
+        "const { run: go } = new Runner();\n  go(consuming);",
+        "let go: Boxer | undefined;\n  ({ run: go } = new Runner());\n  void go;\n  new Runner().run(consuming);",
+        "new Runner().run.call(undefined, consuming);",
+        "const key = Math.random() > 0.5 ? \"run\" : \"other\";\n  void new Runner()[key];\n  new Runner().run(consuming);",
+        "const made: { run(box: Boxer): number } = new Runner();\n  void made.run;\n  new Runner().run(consuming);",
+      ]) {
+        const text = `export function main(): number {\n  ${statement}\n  Runner.go(consuming);\n  return 0;\n}\n${runner}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), statement).toEqual(["probe.ts / run / helper"]);
+      }
+      for (const [holder, name] of [
+        ["class Runner {\n  then(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\nvoid new Runner().then(consuming);\n", "then"],
+        ["const bag = {\n  then(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\nvoid bag.then(consuming);\n", "then"],
+        ["const bag = {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\nvoid Object.values(bag)[0]!(consuming);\n", "run"],
+      ] as Array<[holder: string, name: string]>) {
+        const text = `export function main(): number {\n  return 0;\n}\n${holder}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), holder).toEqual([`probe.ts / ${name} / helper`]);
+      }
+    });
   });
 });
 
@@ -3253,7 +3343,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values, ...written];
     if (ts.isParameter(declaration)) {
       const passed = passedValues(declaration, checker, seen);
-      return [...passed.values, ...passed.unread ? [value] : [], ...assigned.values, ...written];
+      return [...passed.values, ...passed.handed, ...passed.unread ? [value] : [], ...assigned.values, ...written];
     }
     if (ts.isBindingElement(declaration)) return [...destructuredValues(value, declaration, checker, seen), ...assigned.values];
     if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
@@ -4746,7 +4836,7 @@ function isAmbient(declaration: ts.Node): boolean {
  * from is unread, as `passedValues` reads it. A value not written here, as
  * a library's call is not, is read by its declared type alone, as
  * `namedValues` reads it. A callback's parameter that a library gives a
- * value, as `handingCall` finds, is given what the library builds from what
+ * value, as `passedValues` finds, is given what the library builds from what
  * it is handed, as `Object.entries` builds pairs: each object or array
  * literal it is handed is read as any other, and each value handed that is
  * no such literal may be the name's value wherever its type fits the name's.
@@ -4756,20 +4846,18 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   const name = declaration.name;
   if (!ts.isIdentifier(name)) return [value];
   const root = ts.walkUpBindingElementsAndPatterns(declaration);
-  const passed = ts.isParameter(root) ? passedValues(root, checker, seen)
-    : { values: root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen), unread: false };
-  const given = passed.values;
-  const handed = ts.isParameter(root) && handingCall(root.parent, checker) !== undefined;
-  const literals = given.filter((one): one is ts.Expression => ts.isExpression(one) && (!handed || isLiteralContainer(one)));
+  const passed: Passed = ts.isParameter(root) ? passedValues(root, checker, seen)
+    : { values: root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen), handed: [], unread: false };
+  const literals = [...passed.values.filter(ts.isExpression), ...passed.handed.filter((one): one is ts.Expression => ts.isExpression(one) && isLiteralContainer(one))];
   // Each default is read once, whatever the value destructured is.
   const readings = literals.length === 0 ? [readBinding(root.name, undefined, checker)] : literals.map((literal) => readBinding(root.name, literal, checker));
   const taken = readings.flatMap((reading) => reading.bound).filter((each) => each.name === name)
     .flatMap(({ value: one }) => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
-  const built = handed ? given.filter((one) => !isLiteralContainer(one) && fitsResult(checker.getTypeAtLocation(one), checker.getTypeAtLocation(name), checker)) : [];
+  const built = passed.handed.filter((one) => !isLiteralContainer(one) && fitsResult(checker.getTypeAtLocation(one), checker.getTypeAtLocation(name), checker));
   const unknown = readings.some((reading) => [...reading.opaque, ...reading.unknown.map((position) => position.name)].includes(name));
   const untaken = taken.length === 0 && built.length === 0 && literals.some(isLiteralContainer);
   const later = root.initializer === undefined && isGivenLater(declaration);
-  const unread = passed.unread || later || unknown || untaken || (!handed && given.some((one) => !ts.isExpression(one)));
+  const unread = passed.unread || later || unknown || untaken || passed.values.some((one) => !ts.isExpression(one));
   return unread ? [...taken, ...built, value] : [...taken, ...built];
 }
 
@@ -4782,6 +4870,8 @@ function isLiteralContainer(value: DeclaredValue): boolean {
 interface Passed {
   /** Each value its default, or an argument a call passes it, may be. */
   values: DeclaredValue[];
+  /** Each value a library that calls its function as a callback may give it, as `handedValues` finds them. */
+  handed: DeclaredValue[];
   /** Whether a caller may give it a value no rule reads. */
   unread: boolean;
 }
@@ -4791,40 +4881,44 @@ interface Passed {
  * of the argument at its position in every call of its function that
  * `callsOf` finds, as `declaredValues` reads them. What a caller gives is
  * read where the caller writes it, so a wrapper handed to a function is
- * read as the wrapper it is. A callback a library calls, as `handingCall`
- * finds it, is given what `handedValues` finds the library is handed, and a
- * set accessor's parameter what `setValues` finds is written to its key.
- * Where no rule can find every call, as for a function that no code here
- * calls, one handed on as a value, or a method, or where a spread at or before its
- * position hides which argument it takes, or where it is a rest parameter
- * or `this`, a caller may give it anything its type allows, so it is unread.
+ * read as the wrapper it is. Each call of a library that `callsOf` finds the
+ * function is handed to as a callback, written in place or by its name, gives
+ * what `handedValues` finds the library is handed, and a set accessor's
+ * parameter is given what `setValues` finds is written to its key. Where no
+ * rule can find every call, as for a function that no code here calls, or
+ * one handed on as a value anywhere but to a library as a callback, or
+ * where a spread at or before its position hides which argument it takes,
+ * or where a call passes a rest parameter or `this`, a caller may give it
+ * anything its type allows, so it is unread.
  */
 function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
   const values = parameter.initializer === undefined ? [] : declaredValues(parameter.initializer, checker, seen);
   const owner = parameter.parent;
-  const handing = handingCall(owner, checker);
-  if (handing !== undefined) {
-    const handed = handedValues(handing, checker, seen);
-    return { values: [...values, ...handed.values], unread: handed.unread };
-  }
   if (ts.isSetAccessorDeclaration(owner)) {
     const set = setValues(owner, checker, seen);
-    return { values: [...values, ...set.values], unread: set.unread };
+    return { values: [...values, ...set.values], handed: [], unread: set.unread };
   }
+  const sites = callsOf(owner, checker);
+  if (sites === undefined) return { values, handed: [], unread: true };
+  const passed: Passed = { values, handed: [], unread: false };
+  for (const call of sites.handing) {
+    const handed = handedValues(call, checker, seen);
+    passed.handed.push(...handed.values);
+    passed.unread ||= handed.unread;
+  }
+  if (sites.calls.length === 0) return passed;
   const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
-  const calls = at < 0 || parameter.dotDotDotToken !== undefined ? undefined : callsOf(owner, checker);
-  if (calls === undefined) return { values, unread: true };
-  let unread = false;
-  for (const call of calls) {
+  if (at < 0 || parameter.dotDotDotToken !== undefined) return { ...passed, unread: true };
+  for (const call of sites.calls) {
     const given = call.arguments ?? [];
     const argument = given[at];
     if (given.slice(0, at + 1).some(ts.isSpreadElement)) {
-      unread = true;
+      passed.unread = true;
     } else if (argument !== undefined) {
       values.push(...declaredValues(argument, checker, seen));
     }
   }
-  return { values, unread };
+  return passed;
 }
 
 /**
@@ -4838,11 +4932,11 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
  */
 function setValues(accessor: ts.SetAccessorDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
   const written = assignmentsOf(accessor, checker);
-  const set: Passed = { values: written.assignments.flatMap((assignment) => declaredValues(assignment, checker, seen)), unread: written.unread };
+  const set: Passed = { values: written.assignments.flatMap((assignment) => declaredValues(assignment, checker, seen)), handed: [], unread: written.unread };
   const given = written.destructured.map((target) => destructuredTargetValues(target, checker, seen));
   const key = propertyKey(accessor.name, checker);
   const holder = accessor.parent;
-  if (key === undefined || (!ts.isObjectLiteralExpression(holder) && !ts.isClassLike(holder))) return { values: set.values, unread: true };
+  if (key === undefined || (!ts.isObjectLiteralExpression(holder) && !ts.isClassLike(holder))) return { values: set.values, handed: [], unread: true };
   const side: ClassSide | undefined = ts.isClassLike(holder) ? isStatic(accessor) ? "static" : "instance" : undefined;
   given.push(writtenTo(holder, key, checker, side));
   for (const contents of given) {
@@ -4853,16 +4947,14 @@ function setValues(accessor: ts.SetAccessorDeclaration, checker: ts.TypeChecker,
 }
 
 /**
- * The call of a library function that a function is handed to as a
- * callback: written in place as an argument, through any wrapper
- * `heldValue` looks through, at a parameter `isCallbackParameter` finds the
- * library calls.
+ * The call of a library function that a value is handed to as a callback:
+ * the value is an argument, through any wrapper `heldValue` looks through,
+ * at a parameter `isCallbackParameter` finds the library calls.
  *
- * @returns The call, or undefined when the function is none such.
+ * @param outer The value, outside every wrapper `heldValue` looks through.
+ * @returns The call, or undefined when the value is handed to none such.
  */
-function handingCall(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): ts.CallExpression | ts.NewExpression | undefined {
-  if (!ts.isArrowFunction(owner) && !ts.isFunctionExpression(owner)) return undefined;
-  const outer = outerValue(owner);
+function handingCall(outer: ts.Node, checker: ts.TypeChecker): ts.CallExpression | ts.NewExpression | undefined {
   const call = outer.parent;
   if ((!ts.isCallExpression(call) && !ts.isNewExpression(call)) || !isLibraryCall(call, checker)) return undefined;
   const invocation = invocationOf(call, checker);
@@ -4881,7 +4973,7 @@ function handingCall(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): t
  * parameter unread.
  */
 function handedValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
-  const handed: Passed = { values: [], unread: false };
+  const handed: Passed = { values: [], handed: [], unread: false };
   for (const source of librarySources(call, checker)) {
     const reached = reachedContents(source, checker, seen);
     handed.values.push(...readContents({ values: reached.values, unread: null }, source, checker, seen));
@@ -4893,41 +4985,311 @@ function handedValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Ty
   return handed;
 }
 
-/** The calls found of each function, for each checker, or undefined where they cannot all be found. */
-const CALLS = new WeakMap<ts.TypeChecker, Map<ts.Node, ReadonlyArray<ts.CallExpression | ts.NewExpression> | undefined>>();
+/** Where a function runs, as `callsOf` finds it. */
+interface CallSites {
+  /** Each call, or `new`, of the function, whose arguments its parameters take in order. */
+  calls: Array<ts.CallExpression | ts.NewExpression>;
+  /** Each call of a library function that the function is handed to as a callback, which gives its parameters what `handedValues` finds. */
+  handing: Array<ts.CallExpression | ts.NewExpression>;
+}
 
 /**
- * Every call of a function, in each file of its program, when every one can
- * be found: each use of the name it is called by, as `usesOf` finds them,
- * through an import alias, is a call or `new` of it, through any wrapper
- * `heldValue` looks through, or an import, an export, or a `typeof`, none of
- * which calls it. The name is that of a function declaration, of the class
- * whose constructor it is, or of the variable an arrow or function
- * expression is the value of.
- *
- * @returns The calls; undefined when the function has no such name, as a
- *     method or a callback has not, or a use of it hands it on as a value,
- *     as `f.call` or `[f]` does, or nothing here calls it, so that what a
- *     caller gives cannot be read.
+ * The names of the methods a library calls on a value it is handed by a
+ * protocol, not by a call written here: a thenable's `then`, the
+ * conversions, JSON's `toJSON`, an iterator's own methods, an event listener
+ * object's `handleEvent`, and the traps of a proxy's handler.
  */
-function callsOf(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): ReadonlyArray<ts.CallExpression | ts.NewExpression> | undefined {
-  const known = CALLS.get(checker) ?? new Map<ts.Node, ReadonlyArray<ts.CallExpression | ts.NewExpression> | undefined>();
+const PROTOCOL_METHODS: ReadonlySet<string> = new Set([
+  "then", "toString", "valueOf", "toLocaleString", "toJSON", "next", "return", "throw", "handleEvent",
+  "apply", "construct", "defineProperty", "deleteProperty", "get", "getOwnPropertyDescriptor", "getPrototypeOf",
+  "has", "isExtensible", "ownKeys", "preventExtensions", "set", "setPrototypeOf",
+]);
+
+/** The places found where each function runs, for each checker, or undefined where they cannot all be found. */
+const CALLS = new WeakMap<ts.TypeChecker, Map<ts.Node, CallSites | undefined>>();
+
+/**
+ * Every place a function runs, in each file of its program, when every one
+ * can be found. A function written in place as a callback a library calls
+ * runs there, as `handingCall` finds it. A function with a name runs where
+ * each use of the name it is called by, as `usesOf` finds them, through an
+ * import alias, is a call or `new` of it, through any wrapper `heldValue`
+ * looks through, or hands it to a library as a callback; an import, an
+ * export or a `typeof` runs nothing. The name is that of a function
+ * declaration, of the class whose constructor it is, or of the variable an
+ * arrow or function expression is the value of. A method, or a function an
+ * object literal's property holds, runs where `methodSites` finds it does.
+ *
+ * @returns The places; undefined when the function has no such name, as a
+ *     callback handed to a function written here has not, or a use of it
+ *     hands it on as a value anywhere else, as `f.call` or `[f]` does, or
+ *     nothing here runs it, so that what a caller gives cannot be read.
+ */
+function callsOf(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): CallSites | undefined {
+  const known = CALLS.get(checker) ?? new Map<ts.Node, CallSites | undefined>();
   CALLS.set(checker, known);
   if (known.has(owner)) return known.get(owner);
-  const named = calledByName(owner);
-  const calls: Array<ts.CallExpression | ts.NewExpression> = [];
-  let readable = named !== undefined;
-  for (const use of named === undefined ? [] : usesOf(named, checker)) {
-    if (use === ts.getNameOfDeclaration(named) || isAliasOrType(use)) continue;
-    const call = calledAt(use);
-    if (call === undefined) {
-      readable = false;
-    } else {
-      calls.push(call);
+  known.set(owner, undefined);
+  const found = ts.isMethodDeclaration(owner) ? methodSites(owner, checker) : namedSites(owner, checker);
+  known.set(owner, found !== undefined && found.calls.length + found.handing.length > 0 ? found : undefined);
+  return known.get(owner);
+}
+
+/** Where a function that is no method runs, as `callsOf` says, or undefined where that cannot all be found. */
+function namedSites(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): CallSites | undefined {
+  const sites: CallSites = { calls: [], handing: [] };
+  if (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) {
+    const outer = outerValue(owner);
+    const handing = handingCall(outer, checker);
+    if (handing !== undefined) return { calls: [], handing: [handing] };
+    const property = outer.parent;
+    // A function an object literal's property holds runs as a method of the literal does.
+    if (ts.isPropertyAssignment(property) && property.initializer === outer && ts.isObjectLiteralExpression(property.parent)) {
+      const key = propertyKey(property.name, checker);
+      return key === undefined || PROTOCOL_METHODS.has(key) ? undefined : literalMethodSites(property.parent, key, checker);
     }
   }
-  const found = readable && calls.length > 0 ? calls : undefined;
-  known.set(owner, found);
+  const named = calledByName(owner);
+  if (named === undefined) return undefined;
+  for (const use of usesOf(named, checker)) {
+    if (use === ts.getNameOfDeclaration(named) || isAliasOrType(use)) continue;
+    if (!addSite(sites, memberRead(use), checker)) return undefined;
+  }
+  return sites;
+}
+
+/**
+ * Notes where a function read as a value runs: the call, or `new`, it is
+ * the function of, or the call of a library it is handed to as a callback,
+ * through any wrapper `heldValue` looks through.
+ *
+ * @returns Whether it runs at one of these, and nowhere else it may be handed on.
+ */
+function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker): boolean {
+  const outer = outerValue(read);
+  const parent = outer.parent;
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === outer) {
+    sites.calls.push(parent);
+    return true;
+  }
+  const handing = handingCall(outer, checker);
+  if (handing !== undefined) sites.handing.push(handing);
+  return handing !== undefined;
+}
+
+/**
+ * Where a method runs, when every place can be found. A method of an
+ * object literal runs where `literalMethodSites` finds it does. For a
+ * method of a class, each read of its key, in each file of its program,
+ * that `methodRead` finds may read this method is a call of it, or hands
+ * it to a library as a callback, as `addSite` notes. A read by name, by a
+ * key written as a literal, or by a key whose type allows its name, counts
+ * wherever the value it is read from refers to the method or may be an
+ * instance of its class, or the class itself for a static method, as
+ * `mayHoldMethod` reads its type; so does a destructuring that takes the
+ * key, which hands the method on.
+ *
+ * @returns The places; undefined when a read hands the method on in any
+ *     other way, or its class has no name, so that its type cannot be
+ *     compared, or its key is not known, or is one a library calls by
+ *     protocol, as PROTOCOL_METHODS names them.
+ */
+function methodSites(method: ts.MethodDeclaration, checker: ts.TypeChecker): CallSites | undefined {
+  const holder = method.parent;
+  const key = ts.isPrivateIdentifier(method.name) ? method.name.text : propertyKey(method.name, checker);
+  if (key === undefined || PROTOCOL_METHODS.has(key)) return undefined;
+  if (ts.isObjectLiteralExpression(holder)) return literalMethodSites(holder, key, checker);
+  if (!ts.isClassLike(holder) || holder.name === undefined) return undefined;
+  const side: ClassSide = isStatic(method) ? "static" : "instance";
+  const sites: CallSites = { calls: [], handing: [] };
+  for (const file of PROGRAM_SOURCES.get(checker) ?? [method.getSourceFile()]) {
+    for (const node of [...writtenNames(file).byText.get(key) ?? [], ...dynamicKeys(file)]) {
+      const read = methodRead(node, method, key, side, checker);
+      if (read === undefined) continue;
+      if (read === null || !addSite(sites, read, checker)) return undefined;
+    }
+  }
+  return sites;
+}
+
+/**
+ * Where a method of an object literal runs, when every place can be found:
+ * the literal is the value a variable is declared with, through any wrapper
+ * `heldValue` looks through, so it is reached only through that name, and
+ * through `this` in its own methods and accessors; and each use of the name,
+ * as `usesOf` finds them, and each such `this`, is the value a member is
+ * read from, as `memberSite` reads it, or is spread into another object
+ * literal, which holds the method too and is read in the same way.
+ *
+ * @param seen The literals read already, so that literals spread into each other are read once.
+ * @returns The places; undefined when the literal is held anywhere else, or
+ *     a use of its name, or of `this`, hands it on as a value.
+ */
+function literalMethodSites(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker, seen = new Set<ts.Node>()): CallSites | undefined {
+  const sites: CallSites = { calls: [], handing: [] };
+  if (seen.has(literal)) return sites;
+  seen.add(literal);
+  const outer = outerValue(literal);
+  const holder = outer.parent;
+  if (!ts.isVariableDeclaration(holder) || holder.initializer !== outer || !ts.isIdentifier(holder.name)) return undefined;
+  const uses = usesOf(holder, checker).filter((use) => use !== holder.name && !isAliasOrType(use));
+  const selves = writtenThis(literal).filter((self) => {
+    const owner = thisHolder(self);
+    return owner !== undefined && owner.parent === literal;
+  });
+  for (const receiver of [...uses, ...selves]) {
+    const spread = outerValue(receiver).parent;
+    if (!ts.isSpreadAssignment(spread)) {
+      if (!memberSite(sites, receiver, key, checker)) return undefined;
+      continue;
+    }
+    const copied = literalMethodSites(spread.parent, key, checker, seen);
+    if (copied === undefined) return undefined;
+    sites.calls.push(...copied.calls);
+    sites.handing.push(...copied.handing);
+  }
+  return sites;
+}
+
+/** Each `this` written in a node, at any depth. */
+function writtenThis(node: ts.Node): ts.Node[] {
+  const found: ts.Node[] = [];
+  const pending: ts.Node[] = [node];
+  for (let each = pending.pop(); each !== undefined; each = pending.pop()) {
+    if (each.kind === ts.SyntaxKind.ThisKeyword) found.push(each);
+    ts.forEachChild(each, (child) => {
+      pending.push(child);
+    });
+  }
+  return found;
+}
+
+/**
+ * Notes where a value that holds a method is read from, as
+ * `literalMethodSites` reads it: a member read by name, or by a key whose
+ * type allows only other names, reads another member; one that may read the
+ * method's key runs the method where `addSite` notes it does.
+ *
+ * @param receiver The value, written where a member of it may be read.
+ * @returns Whether the value is read from, and the method, if read, runs there and is handed on nowhere else.
+ */
+function memberSite(sites: CallSites, receiver: ts.Node, key: string, checker: ts.TypeChecker): boolean {
+  const outer = outerValue(receiver);
+  const access = outer.parent;
+  if (ts.isPropertyAccessExpression(access) && access.expression === outer) return access.name.text !== key || addSite(sites, access, checker);
+  if (!ts.isElementAccessExpression(access) || access.expression !== outer) return false;
+  return !mayBeKey(access.argumentExpression, key, checker) || addSite(sites, access, checker);
+}
+
+/**
+ * What one node does with a method, as `methodSites` reads it: the member
+ * access that reads it, when the node is the name or key of an access that
+ * may read it; null when the node is a key a destructuring takes from a
+ * value that may hold it, which hands the method on to a name; and
+ * undefined when the node reads no member that may be this method, as a
+ * declaration of another member of that name does not.
+ */
+function methodRead(node: ts.Node, method: ts.MethodDeclaration, key: string, side: ClassSide, checker: ts.TypeChecker): ts.Node | null | undefined {
+  const parent = node.parent;
+  if ((ts.isPropertyAccessExpression(parent) && parent.name === node) || (ts.isElementAccessExpression(parent) && parent.argumentExpression === node)) {
+    if (ts.isElementAccessExpression(parent) && !ts.isStringLiteralLike(node) && !mayBeKey(parent.argumentExpression, key, checker)) return undefined;
+    return readsMethod(node, receiverType(parent.expression, checker), method, side, checker) ? parent : undefined;
+  }
+  if (ts.isComputedPropertyName(parent) && parent.expression === node) {
+    const element = parent.parent;
+    if (!mayBeKey(parent.expression, key, checker)) return undefined;
+    if (ts.isBindingElement(element) && element.propertyName === parent) return readsMethod(node, checker.getTypeAtLocation(element.parent), method, side, checker) ? null : undefined;
+    return ts.isPropertyAssignment(element) && isDestructuringTarget(element.initializer) ? null : undefined;
+  }
+  if (ts.isBindingElement(parent) && ts.isObjectBindingPattern(parent.parent) && (parent.propertyName === node || (parent.propertyName === undefined && parent.name === node))) {
+    return readsMethod(node, checker.getTypeAtLocation(parent.parent), method, side, checker) ? null : undefined;
+  }
+  // A key an object literal written as a destructuring target takes hands the method on wherever that literal is assigned from.
+  if (ts.isPropertyAssignment(parent) && parent.name === node && isDestructuringTarget(parent.initializer)) return null;
+  return ts.isShorthandPropertyAssignment(parent) && parent.name === node && isDestructuringTarget(node) ? null : undefined;
+}
+
+/** Whether a key read from a value of a type may read a method: the key refers to the method, or the value may hold it, as `mayHoldMethod` says. */
+function readsMethod(key: ts.Node, receiver: ts.Type, method: ts.MethodDeclaration, side: ClassSide, checker: ts.TypeChecker): boolean {
+  return refersTo(key, method, checker) || mayHoldMethod(receiver, method, side, checker);
+}
+
+/** Whether a key whose value is not written as a literal may be a method's key: `keysOf` finds it may be any key, or that one. */
+function mayBeKey(key: ts.Expression, method: string, checker: ts.TypeChecker): boolean {
+  const keys = keysOf(key, checker);
+  return keys === undefined || keys.includes(method);
+}
+
+/**
+ * Whether a value of a type may hold a method of a class: an instance of
+ * the class, or the class itself for a static method, or of a class written
+ * here that extends it, or whose base cannot be read, may be a value of the
+ * type, as `mayReach` says. Where any of those classes is generic, its type
+ * names type parameters no value's type can be compared with, so a value of
+ * any type may hold the method.
+ */
+function mayHoldMethod(type: ts.Type, method: ts.MethodDeclaration, side: ClassSide, checker: ts.TypeChecker): boolean {
+  const holder = method.parent;
+  if (!ts.isClassLike(holder)) return true;
+  const classes = [holder, ...classesExtending(holder, checker)];
+  return classes.some((each) => each.typeParameters !== undefined || mayReach(type, each, checker, side));
+}
+
+/** Each class written in a program that extends a class, through any class between, or whose base no rule reads, read once for each checker. */
+function classesExtending(base: ts.ClassLikeDeclaration, checker: ts.TypeChecker): ts.ClassLikeDeclaration[] {
+  return programClasses(checker, base).filter((each) => {
+    const extended = each.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+    if (extended === undefined) return false;
+    const made = declaredValues(extended.expression, checker, new Set());
+    return made.length === 0 || !made.every(ts.isClassLike) || extendedClasses(each, checker).includes(base);
+  });
+}
+
+/** Each class written in the files of each program, read once for each checker. */
+const PROGRAM_CLASSES = new WeakMap<ts.TypeChecker, readonly ts.ClassLikeDeclaration[]>();
+
+/**
+ * Each class written in the files of a program, a class expression included.
+ *
+ * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
+ */
+function programClasses(checker: ts.TypeChecker, location: ts.Node): readonly ts.ClassLikeDeclaration[] {
+  const kept = PROGRAM_CLASSES.get(checker);
+  if (kept !== undefined) return kept;
+  const found: ts.ClassLikeDeclaration[] = [];
+  const pending: ts.Node[] = [...PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isClassLike(node)) found.push(node);
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+  }
+  PROGRAM_CLASSES.set(checker, found);
+  return found;
+}
+
+/** The keys in each file whose value is not written as a literal, as `dynamicKeys` finds them. */
+const DYNAMIC_KEYS = new WeakMap<ts.SourceFile, readonly ts.Expression[]>();
+
+/**
+ * Each key in one file whose value is not written as a literal, which may
+ * be any key its type allows: the key of an element access, or of a
+ * computed property name, that is neither a string nor a number literal.
+ * Each is read once for each file.
+ */
+function dynamicKeys(file: ts.SourceFile): readonly ts.Expression[] {
+  const kept = DYNAMIC_KEYS.get(file);
+  if (kept !== undefined) return kept;
+  const found: ts.Expression[] = [];
+  const pending: ts.Node[] = [file];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    const key = ts.isElementAccessExpression(node) ? node.argumentExpression : ts.isComputedPropertyName(node) ? node.expression : undefined;
+    if (key !== undefined && !ts.isStringLiteralLike(key) && !ts.isNumericLiteral(key)) found.push(key);
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+  }
+  DYNAMIC_KEYS.set(file, found);
   return found;
 }
 
@@ -4959,13 +5321,6 @@ function isAliasOrType(use: ts.Node): boolean {
     named = named.parent;
   }
   return ts.isTypeQueryNode(named.parent);
-}
-
-/** The call, or `new`, a use of a name is the function of, through a namespace and any wrapper `heldValue` looks through, or undefined when it is not one. */
-function calledAt(use: ts.Node): ts.CallExpression | ts.NewExpression | undefined {
-  const outer = outerValue(memberRead(use));
-  const parent = outer.parent;
-  return (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === outer ? parent : undefined;
 }
 
 /**
