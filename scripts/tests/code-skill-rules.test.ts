@@ -2227,6 +2227,8 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const base = { box: boxing };\n  const holder = { ...base };", "holder.box", reported],
         ["const base = { box: consuming };\n  const holder = { ...base, box: boxing };", "holder.box", reported],
         ["const base = { box: consuming };\n  const holder = { ...base, box: consuming };", "holder.box", []],
+        ["const base = { box: boxing };\n  const { box } = { ...base };", "box", reported],
+        ["const base = { box: consuming };\n  const { box } = { ...base };", "box", []],
       ];
       for (const [before, call, found] of called) {
         const text = `export function main(): number {\n  ${before}\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
