@@ -2605,6 +2605,32 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual(problems);
       }
     });
+
+    test("an entry a map is made from, held anywhere, is read under the key its first position may hold, beside its breach", () => {
+      // Each form makes a map from an entry under "a" that holds `consuming`, and an entry under KEY that holds `boxing`, then reads "a".
+      const forms: Array<[before: string, entries: string, after: string]> = [
+        ["const entry: [string, Boxer] = [KEY, boxing];", "[[\"a\", consuming], entry]", ""],
+        ["const list: Array<[string, Boxer]> = [[\"a\", consuming], [KEY, boxing]];", "list", ""],
+        ["const entry: [string, Boxer] = [\"other\", boxing];\n  entry[0] = KEY;", "[[\"a\", consuming], entry]", ""],
+        ["const list: Array<[string, Boxer]> = [[\"a\", consuming], [\"other\", boxing]];\n  list[1]![0] = KEY;", "list", ""],
+        ["const entry: [string, Boxer] = [\"other\", boxing];\n  rename(entry);", "[[\"a\", consuming], entry]", "function rename(pair: [string, Boxer]): void {\n  pair[0] = KEY;\n}\n"],
+        ["const entry: [string, Boxer] = [\"other\", boxing];\n  Object.assign(entry, { 0: KEY });", "[[\"a\", consuming], entry]", ""],
+      ];
+      for (const [before, entries, after] of forms) {
+        for (const [key, found] of [["\"other\"", []], ["\"a\"", reported]] as Array<[key: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${before.replace("KEY", key)}\n  const box = new Map<string, Boxer>(${entries}).get("a");\n  if (box === undefined) return 1;\n`
+            + `  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after.replace("KEY", key)}`;
+          expect(boundHelpers("probe.ts", text), before + key).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, before + key).toEqual([]);
+        }
+      }
+      // A move, or a key not known, may put any item first.
+      for (const change of ["entry.reverse();", "entry[0] = String(Math.random());", "entry.unshift(\"x\");"]) {
+        const text = `export function main(): number {\n  const entry: [string, Boxer] = ["other", boxing];\n  ${change}\n  const box = new Map<string, Boxer>([["a", consuming], entry]).get("a");\n`
+          + `  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), change).toEqual(reported);
+      }
+    });
   });
 });
 
@@ -4014,19 +4040,73 @@ function isMapContainer(container: Container, checker: ts.TypeChecker): boolean 
  * Whether a value a map is made from may be an entry under one of some
  * keys. An entry written as an array literal, in a list of entries written
  * as an array literal that the map is made from where it is written, is one
- * no code can reach to change, so its first item says its key: it is under
- * none of those keys when `keysOf` finds every key that item may be, and
- * none is one of them. Any other value may be under any key, since a key
- * code writes later, as `entry[0] = "wanted"` writes one, is read by no
- * rule. A value `set` gives a map is read under its key where it is written.
+ * no code can reach to change, so its first item says its key. Any other
+ * value is read through each value `declaredValues` finds it may be, each
+ * of which must be an entry written as an array literal, whose key is what
+ * its first item gives and what code writes to that position after, as
+ * `entryKeys` reads them. The value is under none of those keys when every
+ * key it may have is known, and none is one of them. A value `set` gives a
+ * map is read under its key where it is written.
  */
 function mayHaveKey(value: WrittenValue, keys: readonly string[], map: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): boolean {
-  if (!ts.isArrayLiteralExpression(value)) return true;
   const list = value.parent;
-  if (!ts.isArrayLiteralExpression(list) || !(map.arguments ?? []).some((argument) => heldValue(argument) === list)) return true;
-  const [first] = value.elements;
+  const inPlace = ts.isArrayLiteralExpression(value) && ts.isArrayLiteralExpression(list) && (map.arguments ?? []).some((argument) => heldValue(argument) === list);
+  const entries = inPlace ? [value] : ts.isMethodDeclaration(value) ? [] : declaredValues(value, checker, new Set());
+  if (entries.length === 0) return true;
+  return entries.some((entry) => {
+    const given = ts.isArrayLiteralExpression(entry) ? entryKeys(entry, !inPlace, checker) : undefined;
+    return given === undefined || given.some((key) => keys.includes(key));
+  });
+}
+
+/**
+ * The keys an entry written as an array literal may have: each key `keysOf`
+ * finds its first item may be, and, where code may reach it, each key a
+ * change gives its first position, as `writtenTo` finds them in the table
+ * `keyTable` makes.
+ *
+ * @param reached Whether code may reach the entry to change it, so that the changes made to it are read.
+ * @returns The keys, or undefined when a key it may have is not known, as for a hole, a spread, a key not written as a literal, items moved, or a change no rule reads.
+ */
+function entryKeys(entry: ts.ArrayLiteralExpression, reached: boolean, checker: ts.TypeChecker): readonly string[] | undefined {
+  const [first] = entry.elements;
   const given = first === undefined || ts.isOmittedExpression(first) ? undefined : keysOf(first, checker);
-  return given === undefined || given.some((key) => keys.includes(key));
+  if (given === undefined || !reached) return given;
+  const written = writtenTo(entry, "0", checker, undefined, keyTable(checker, entry));
+  if (written.unread !== null || written.moved) return undefined;
+  const keys = [...given];
+  for (const value of written.values) {
+    const each = ts.isExpression(value) ? keysOf(value, checker) : undefined;
+    if (each === undefined) return undefined;
+    keys.push(...each);
+  }
+  return keys;
+}
+
+/** The table of changes that may give an item of an array its first position, for each checker, made once it is first read. */
+const KEY_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
+
+/**
+ * Each change, in the files of a program, that may give an array's first
+ * item, whatever value it gives, placed as `placeChanges` places them: a
+ * value or a destructuring given position 0, or a key not known; a copy; a
+ * move; and a change no rule reads. The table of changes that may give a
+ * function, which `writeTable` makes, leaves out a change that gives no
+ * function, so it cannot say what key an entry is given later, as
+ * `entry[0] = "wanted"` gives one.
+ *
+ * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
+ */
+function keyTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
+  const kept = KEY_TABLES.get(checker);
+  if (kept !== undefined) return kept;
+  const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, madeChanges)).filter(({ write }) => {
+    if (write.kind !== "value" && write.kind !== "destructured") return true;
+    return write.keys === undefined || write.keys.includes("0");
+  });
+  const table = placeChanges(changes, checker);
+  KEY_TABLES.set(checker, table);
+  return table;
 }
 
 /** What code gives a container under any of some keys, as `writtenTo` finds it for each. */
@@ -4537,47 +4617,56 @@ function receiverType(receiver: ts.Expression, checker: ts.TypeChecker): ts.Type
   return isConstrainedType(type) ? checker.getBaseConstraintOfType(type) ?? type : type;
 }
 
-/** Each change `changesAt` finds at each node of a file. */
-function changesIn(file: ts.SourceFile, checker: ts.TypeChecker): Change[] {
+/**
+ * Each change one reading finds at each node of a file: `changesAt`, which
+ * keeps those that may give a function, unless another is given.
+ */
+function changesIn(file: ts.SourceFile, checker: ts.TypeChecker, read: (node: ts.Node, checker: ts.TypeChecker) => Change[] = changesAt): Change[] {
   const found: Change[] = [];
   const pending: ts.Node[] = [file];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     ts.forEachChild(node, (child) => {
       pending.push(child);
     });
-    found.push(...changesAt(node, checker));
+    found.push(...read(node, checker));
   }
   return found;
 }
 
 /**
- * The changes one node makes to what a value holds that may give it a
- * function, besides an assignment to a name, which `assignmentsOf` reads:
- * an assignment to a member, read by its key, as `holder[key] = boxing`
- * gives each key the key's type allows, or any key when its type is no
- * literal; a member a destructuring, a for-in or a for-of assigns, which no
- * rule reads; and each change a call makes, as `callChanges` finds them. A
- * change that gives no value that may be or hold a function, or that moves
- * or changes what a value that holds none holds, is left out, since no rule
- * reads it.
+ * The changes one node makes, as `madeChanges` finds them, that may give a
+ * value a function, as `carriesFunction` says. A change that gives no value
+ * that may be or hold a function, or that moves or changes what a value that
+ * holds none holds, is left out, since no rule reads it for a function.
  */
 function changesAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
-  let changes: Change[] = [];
-  if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && !isDestructuringTarget(node)) {
-    const target = heldValue(node.left);
-    if (target !== undefined && (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target))) {
-      changes = [{ receiver: target.expression, write: { kind: "value", keys: memberKeys(target, checker), value: node.right }, at: node }];
-    }
-  } else if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isDestructuringTarget(node)) {
-    changes = [{ receiver: node.expression, write: { kind: "destructured", keys: memberKeys(node, checker), target: node }, at: node }];
-  } else if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-    changes = isPromiseConstructor(node, checker) ? promiseChanges(node, checker) : callChanges(node, checker);
-  }
-  const carried = changes.filter((change) => carriesFunction(change, checker));
+  const carried = madeChanges(node, checker).filter((change) => carriesFunction(change, checker));
   for (const change of carried) {
     if (change.write.kind === "unread") UNREAD_CHANGES.add(change.at);
   }
   return carried;
+}
+
+/**
+ * The changes one node makes to what a value holds, besides an assignment
+ * to a name, which `assignmentsOf` reads: an assignment to a member, read by
+ * its key, as `holder[key] = boxing` gives each key the key's type allows,
+ * or any key when its type is no literal; a member a destructuring, a for-in
+ * or a for-of assigns, as `destructuredTargetValues` reads it; what a
+ * promise's executor gives it, as `promiseChanges` finds it; and each change
+ * a call makes, as `callChanges` finds them.
+ */
+function madeChanges(node: ts.Node, checker: ts.TypeChecker): Change[] {
+  if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && !isDestructuringTarget(node)) {
+    const target = heldValue(node.left);
+    if (target === undefined || (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target))) return [];
+    return [{ receiver: target.expression, write: { kind: "value", keys: memberKeys(target, checker), value: node.right }, at: node }];
+  }
+  if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isDestructuringTarget(node)) {
+    return [{ receiver: node.expression, write: { kind: "destructured", keys: memberKeys(node, checker), target: node }, at: node }];
+  }
+  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return [];
+  return isPromiseConstructor(node, checker) ? promiseChanges(node, checker) : callChanges(node, checker);
 }
 
 /**
@@ -4843,9 +4932,9 @@ const COPIES_BEING_READ = new Set<ts.Node>();
  * is not known.
  *
  * @param side The side of a class read, or undefined for every side.
+ * @param table The changes read: those that may give a function, unless another table is given.
  */
-function writtenTo(container: Container, key: string | undefined, checker: ts.TypeChecker, side?: ClassSide): Written {
-  const table = writeTable(checker, container);
+function writtenTo(container: Container, key: string | undefined, checker: ts.TypeChecker, side?: ClassSide, table: WriteTable = writeTable(checker, container)): Written {
   const placed = (table.placed.get(container) ?? []).filter((change) => side === undefined || change.side === undefined || change.side === side);
   const changes = [...placed, ...table.unplaced.filter(({ type }) => mayReach(type, container, checker, side)).map(({ change }) => change)];
   const found: Written = { values: [], unread: null, moved: false };
