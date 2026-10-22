@@ -2122,6 +2122,80 @@ describe("the code skill's rules for this repository's own code", () => {
     expect(shimProblem("probe-cli.ts", "import { main } from \"./probe.ts\";\nprocess.exit(main());", "probe.ts", module))
       .toBe("probe-cli.ts runs main, but probe.ts leads with helper");
   });
+
+  // Each valid form here was once failed by a reader that fell back to "unread" where it could follow the value. Each sits beside its breach.
+  describe("the valid forms reviews and rounds found falsely failed, each beside its breach", () => {
+    // `boxing` gives back what it is given. Each `consuming` calls it, and returns a new object holding a number.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function consuming(reader: () => number): object {\n  return { value: reader() };\n}\n";
+    const reported = ["probe.ts / main / helper"];
+
+    test("a library call is read through each value it is handed and each value its callbacks return", () => {
+      const iterated: Array<[before: string, collection: string, found: string[]]> = [
+        ["const boxes: Boxer[] = [];", "boxes.concat(boxing)", reported],
+        ["const boxes: Boxer[] = [];", "boxes.concat(consuming)", []],
+        ["", "[consuming].concat(boxing)", reported],
+        ["", "[consuming].concat(consuming)", []],
+        ["", "[boxing].concat([consuming])", reported],
+        ["", "[consuming].concat([consuming])", []],
+        ["const boxes: Boxer[] = [];", "boxes.toSpliced(0, 0, boxing)", reported],
+        ["const boxes: Boxer[] = [];", "boxes.toSpliced(0, 0, consuming)", []],
+        ["const boxes: Boxer[] = [consuming];", "boxes.with(0, boxing)", reported],
+        ["const boxes: Boxer[] = [consuming];", "boxes.with(0, consuming)", []],
+        ["", "Array.of<Boxer>(boxing)", reported],
+        ["", "Array.of<Boxer>(consuming)", []],
+        ["", "[1].flatMap((): Boxer[] => [boxing])", reported],
+        ["", "[1].flatMap((): Boxer[] => [consuming])", []],
+        ["", "[1].map((): Boxer => boxing)", reported],
+        ["", "[1].map((): Boxer => consuming)", []],
+        // A callback's parameter is given what the library is handed, so a callback that hands it back gives back that.
+        ["", "[boxing].map((each) => each)", reported],
+        ["", "[consuming].map((each) => each)", []],
+        ["", "Array.from([boxing], (each) => each)", reported],
+        ["", "Array.from([consuming], (each) => each)", []],
+        ["", "[boxing].reduce((all: Boxer[], each) => [...all, each], [])", reported],
+        ["", "[consuming].reduce((all: Boxer[], each) => [...all, each], [])", []],
+        ["const holder = { box: boxing };", "Object.entries(holder).map(([, each]) => each)", reported],
+        ["const holder = { box: consuming };", "Object.entries(holder).map(([, each]) => each)", []],
+      ];
+      for (const [before, collection, found] of iterated) {
+        const text = `export function main(): number {\n  ${before}\n  for (const box of ${collection}) {\n    const helper = box((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), before + collection).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, before + collection).toEqual([]);
+      }
+      // A callback that a library calls is given each value the library is handed.
+      for (const [list, found] of [["[boxing]", ["probe.ts / (an unnamed function) / helper"]], ["[consuming]", []]] as Array<[list: string, found: string[]]>) {
+        const text = `export function main(): number {\n  ${list}.forEach((box) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), list).toEqual(found);
+      }
+      // The throws check reads a function such a call gives back with the comment on the name it is bound to.
+      const thrower = "(): never => {\n      throw new RangeError(\"size\");\n    }";
+      for (const [wrapper, problems] of [
+        ["boxing", ["probe.ts:5: the comment on helper does not say what it throws"]],
+        ["consuming", []],
+      ] as Array<[wrapper: string, problems: string[]]>) {
+        const text = `export function main(): object {\n  const boxes: Boxer[] = [];\n  for (const box of boxes.concat(${wrapper})) {\n    /** Reads a size. */\n    const helper = box(${thrower});\n    return helper;\n  }\n  return {};\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, wrapper).toEqual(problems);
+      }
+    });
+
+    test("a callee is read through each value it may be, whatever key or expression gives it", () => {
+      const called: Array<[call: string, found: string[]]> = [
+        ["[consuming].concat(boxing)[1]!", reported],
+        ["[consuming].concat(consuming)[1]!", []],
+        ["[consuming, boxing][1]!", reported],
+        ["[consuming, consuming][1]!", []],
+        ["(ready ? consuming : boxing)", reported],
+        ["(ready ? consuming : consuming)", []],
+      ];
+      for (const [call, found] of called) {
+        const text = `export function main(ready: boolean): number {\n  const helper = ${call}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), call).toEqual(found);
+        expect(unplacedFunctions("probe.ts", text).problems, call).toEqual([]);
+      }
+    });
+  });
 });
 
 /** The entry the nested-helper check gives a name of main in probe.ts whose position follows a spread of unknown length. */
@@ -2443,8 +2517,9 @@ function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Type
     if (declaration === undefined || runs.some(({ run, values }) => returnsParameter(run, values, checker))) {
       found.given.push(...possibleValues(argument, checker, following));
     } else if (parameter !== undefined && sharesTypeParameter(declaration, parameter)) {
+      const makesNew = makesNewCollection(call, declaration, checker);
       for (const value of possibleValues(argument, checker, following)) {
-        (fitsResult(checker.getTypeAtLocation(value), result, checker) ? found.given : found.held).push(value);
+        (!makesNew && fitsResult(checker.getTypeAtLocation(value), result, checker) ? found.given : found.held).push(value);
       }
     } else if (runs.some(({ implementation, run }) => passesOn(implementation, run, checker))) {
       // A body whose every return is a value written there new never gives back what it is given, though that value may hold it.
@@ -2460,6 +2535,20 @@ function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Type
     else if (mayHoldFunction(result, checker, call)) found.held.push(value);
   }
   return found;
+}
+
+/**
+ * Whether a call runs a method of an array, a set or a map, declared in a
+ * library, whose value is an array, a set or a map too, as `concat` and
+ * `toSpliced` are. Such a method makes a new collection, which may hold what
+ * it is handed but is never that value itself. A method that gives back the
+ * collection it is called on is declared to return `this`, which no
+ * parameter's type uses.
+ */
+function makesNewCollection(call: ts.CallExpression | ts.NewExpression, declaration: ts.SignatureDeclaration, checker: ts.TypeChecker): boolean {
+  if (!declaration.getSourceFile().isDeclarationFile || !isCollection(checker.getTypeAtLocation(call), checker)) return false;
+  const receiver = ts.isCallExpression(call) ? memberReceiver(call.expression) : undefined;
+  return receiver !== undefined && isCollection(checker.getTypeAtLocation(receiver), checker);
 }
 
 /** The call a call, or `new`, makes, as `invocationOf` reads it. */
@@ -2675,15 +2764,17 @@ function nameRead(expression: ts.Expression): ts.Node | undefined {
  * Whether a callee names the function a signature declares, or the class
  * whose constructor it is, so that its value is that function: a name or a
  * member whose symbol, through any import alias, has that declaration. A
- * callee that is none of a name, a member or a call, such as `super`, is
- * read by the signature it resolves to.
+ * member read by a key no declaration names, as `list[1]` reads an item,
+ * names none, and neither does any other callee but `super`, as
+ * `(ready ? consuming : boxing)` may be either, so that each is read
+ * through what it holds. `super` is read by the signature it resolves to.
  */
 function namesFunction(callee: ts.Expression, declaration: ts.SignatureDeclaration, checker: ts.TypeChecker): boolean {
   const inner = heldValue(callee) ?? callee;
   const named = nameRead(inner);
-  if (named === undefined) return !ts.isCallExpression(inner);
+  if (named === undefined) return inner.kind === ts.SyntaxKind.SuperKeyword;
   const declarations = usedSymbol(named, checker)?.declarations;
-  if (declarations === undefined) return true;
+  if (declarations === undefined) return false;
   const run = implementationOf(declaration);
   return declarations.some((one) => one === declaration || (run !== undefined && ts.isFunctionLike(one) && implementationOf(one) === run)
     || (ts.isClassLike(one) && ts.isConstructorDeclaration(declaration) && declaration.parent === one));
@@ -3230,7 +3321,8 @@ function readContents(contents: Contents, value: ts.Expression, checker: ts.Type
  * method of an object literal, each initializer of a property a class
  * declares, and, for a collection a library call makes, what each value the
  * call is handed holds, as `reachedContents` finds it, so that
- * `new Set(list)` holds what `list` holds; and each value code gives the
+ * `new Set(list)` holds what `list` holds, and what each callback it is
+ * handed returns, as `callbackResults` reads it; and each value code gives the
  * container after it is made, as `writtenTo` finds it. A spread, or an
  * accessor, gives what no rule here reads.
  */
@@ -3266,6 +3358,9 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
       found.values.push(...reached.values);
       found.unread ??= reached.unread;
     }
+    const returned = callbackResults(container, checker, seen);
+    found.values.push(...returned.values);
+    found.unread ??= returned.unread;
   }
   const written = writtenTo(container, undefined, checker);
   found.values.push(...written.values);
@@ -3275,17 +3370,27 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
 
 /**
  * What the containers an expression may be hold, as `placeContents` finds
- * them, for each value `declaredValues` finds it may be. A value that may
- * be or hold a function and is no container, as a parameter whose callers
- * cannot all be found is not, holds what no rule reads.
+ * them, for each value `declaredValues` finds it may be. A function, a
+ * method or a class that is no container is held itself, since what is
+ * handed one may keep it. Any other value that may be or hold a function and
+ * is no container, as a parameter whose callers cannot all be found is not,
+ * holds what no rule reads.
  */
 function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
   const found: ReachedContents = { values: [], unread: null, reached: false };
-  for (const value of declaredValues(expression, checker, seen)) {
+  // A function found here is read again where its holder is read, so the declarations read to find it are not marked as read for that.
+  for (const value of declaredValues(expression, checker, new Set(seen))) {
     found.reached = true;
     const containers = containersOfValue(value, checker);
     if (containers === undefined) {
-      if (mayCarryFunction(value, checker)) found.unread ??= expression;
+      // A function or method written here is held as itself; a function declared here, or a class, is held as the expression that names it, as `list.concat(boxing)` holds `boxing`.
+      if (ts.isMethodDeclaration(value) || (ts.isExpression(value) && isFunctionValue(value))) {
+        found.values.push(value);
+      } else if (!ts.isExpression(value)) {
+        if (!found.values.includes(expression)) found.values.push(expression);
+      } else if (mayCarryFunction(value, checker)) {
+        found.unread ??= expression;
+      }
       continue;
     }
     for (const container of containers) {
@@ -3299,8 +3404,9 @@ function reachedContents(expression: ts.Expression, checker: ts.TypeChecker, see
 
 /**
  * Each value a call of a library function may give back from the values it
- * is handed, as `librarySources` lists them, and from what code gives the
- * collection the call makes, as `writtenTo` finds it: each value they hold,
+ * is handed, as `librarySources` lists them, from what the callbacks it is
+ * handed return, as `callbackResults` reads them, and from what code gives
+ * the collection the call makes, as `writtenTo` finds it: each value they hold,
  * as `placeContents` finds it, whose type fits the type wanted, or, for an
  * array literal that does not, each of its items that does, as `map.get(key)`
  * gives the value of each entry. A value held that fits nothing and may be
@@ -3319,6 +3425,7 @@ function libraryContents(call: ts.CallExpression | ts.NewExpression, wanted: ts.
     held.push(reached);
   }
   if (isCollection(checker.getTypeAtLocation(call), checker)) held.push(writtenTo(call, undefined, checker));
+  held.push(callbackResults(call, checker, seen));
   for (const contents of held) {
     found.unread ??= contents.unread;
     for (const value of contents.values) {
@@ -3339,13 +3446,97 @@ function fittingValues(value: WrittenValue, wanted: ts.Type, checker: ts.TypeChe
 }
 
 /**
- * The values a call of a library function is handed that may hold a
- * function: the value a method is read from, as `list` is in `list.at(0)`,
- * and each argument. A function handed to it, as a callback is, holds none.
+ * The values a call of a library function is handed that it may keep: the
+ * value a method is read from, as `list` is in `list.at(0)`, or the `this`
+ * that `call` or `apply` hands it, when that may hold a function; and each
+ * argument that may be or hold one, as `boxing` is in `list.concat(boxing)`.
+ * A callback, an argument at a parameter `isCallbackParameter` finds the
+ * library calls, is not kept by being handed: what it returns is read as
+ * `callbackResults` reads it.
  */
 function librarySources(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): ts.Expression[] {
-  const receiver = ts.isCallExpression(call) ? memberReceiver(call.expression) : undefined;
-  return [...receiver === undefined ? [] : [receiver], ...call.arguments ?? []].filter((source) => mayHoldFunction(checker.getTypeAtLocation(source), checker, source));
+  const invocation = invocationOf(call, checker);
+  const receiver = ts.isCallExpression(call) && invocation.callee === call.expression ? memberReceiver(call.expression) : undefined;
+  const receivers = [...receiver === undefined ? [] : [receiver], ...invocation.unread].filter((source) => mayHoldFunction(checker.getTypeAtLocation(source), checker, source));
+  const declaration = invocation.declaration;
+  const kept = invocation.args.filter((argument, at) => {
+    const parameter = declaration === undefined ? undefined : parameterOf(declaration, invocation.args, at);
+    return (parameter === undefined || !isCallbackParameter(parameter, checker)) && mayBeOrHoldFunction(checker.getTypeAtLocation(argument), checker, argument);
+  });
+  return [...receivers, ...kept];
+}
+
+/**
+ * Whether a library calls what a parameter is handed, by the parameter's
+ * declared type: each part of the type, besides null and undefined, and of
+ * the type of each item a rest parameter takes, can be called, and none is a
+ * type parameter or a type the checker cannot narrow, either of which a
+ * value of any kind may be given as. `map` declares its callback so; `concat`
+ * declares its items with a type parameter, and keeps them.
+ */
+function isCallbackParameter(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): boolean {
+  const declared = checker.getTypeAtLocation(parameter);
+  const taken = parameter.dotDotDotToken === undefined ? declared : declared.getNumberIndexType();
+  if (taken === undefined) return false;
+  const type = checker.getNonNullableType(taken);
+  const parts = type.isUnion() ? type.types : [type];
+  return parts.every((part) => part.getCallSignatures().length > 0 && !isOpenType(part) && !isConstrainedType(part));
+}
+
+/**
+ * What the callbacks a call of a library function is handed return, where
+ * the call's declared result may hold it: each value each function the
+ * callback may be, as `heldFunctions` finds them, returns, for a callback
+ * whose declared type returns a type parameter the declared result uses
+ * too, as `flatMap` and `map` declare theirs. A callback whose functions
+ * cannot all be followed returns what no rule reads.
+ *
+ * @param seen The declarations read already, which this reads from but does not add to.
+ */
+function callbackResults(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, seen: ReadonlySet<ts.Node>): Contents {
+  const found: Contents = { values: [], unread: null };
+  const invocation = invocationOf(call, checker);
+  const declaration = invocation.declaration;
+  if (declaration === undefined) return found;
+  const result = checker.getSignatureFromDeclaration(declaration)?.getReturnType();
+  const resultParts = result === undefined ? new Set<ts.Type>() : typeParametersIn(result, checker);
+  for (const [at, argument] of invocation.args.entries()) {
+    const parameter = parameterOf(declaration, invocation.args, at);
+    if (parameter === undefined || !isCallbackParameter(parameter, checker) || !returnsResultPart(parameter, resultParts, checker)) continue;
+    const held = heldFunctions(argument, checker, new Set(seen));
+    if (held.unread) found.unread ??= argument;
+    found.values.push(...held.functions.flatMap(returnedExpressions));
+  }
+  return found;
+}
+
+/** Whether a callback parameter's declared type returns, in any of its call signatures, a type parameter that is one of those given. */
+function returnsResultPart(parameter: ts.ParameterDeclaration, resultParts: ReadonlySet<ts.Type>, checker: ts.TypeChecker): boolean {
+  const declared = checker.getTypeAtLocation(parameter);
+  const taken = parameter.dotDotDotToken === undefined ? declared : declared.getNumberIndexType() ?? declared;
+  const type = checker.getNonNullableType(taken);
+  return (type.isUnion() ? type.types : [type]).some((part) => part.getCallSignatures()
+    .some((signature) => [...typeParametersIn(signature.getReturnType(), checker)].some((each) => resultParts.has(each))));
+}
+
+/**
+ * Each type parameter a type uses outside any function type: itself, each
+ * part of a union or intersection, and each type argument of a generic type
+ * it names, as `U[]` names `Array<U>`.
+ *
+ * @param found The type parameters found so far, which this adds to and returns.
+ * @param read The types read already, so that a type that names itself is read once.
+ */
+function typeParametersIn(type: ts.Type, checker: ts.TypeChecker, found = new Set<ts.Type>(), read = new Set<ts.Type>()): Set<ts.Type> {
+  if (read.has(type)) return found;
+  read.add(type);
+  if (type.flags & ts.TypeFlags.TypeParameter) found.add(type);
+  const parts = type.isUnionOrIntersection() ? type.types
+    : type.flags & ts.TypeFlags.Object && (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference ? checker.getTypeArguments(type as ts.TypeReference) : [];
+  for (const part of parts) {
+    typeParametersIn(part, checker, found, read);
+  }
+  return found;
 }
 
 /** Whether a call, or `new`, runs a function declared in a library, as `invocationOf` finds it, so that no body written here says what it gives. */
@@ -3949,7 +4140,11 @@ function isAmbient(declaration: ts.Node): boolean {
  * reads, as a get accessor does, or when what a parameter is destructured
  * from is unread, as `passedValues` reads it. A value not written here, as
  * a library's call is not, is read by its declared type alone, as
- * `namedValues` reads it.
+ * `namedValues` reads it. A callback's parameter that a library gives a
+ * value, as `handingCall` finds, is given what the library builds from what
+ * it is handed, as `Object.entries` builds pairs: each object or array
+ * literal it is handed is read as any other, and each value handed that is
+ * no such literal may be the name's value wherever its type fits the name's.
  */
 function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, declaration: ts.BindingElement, checker: ts.TypeChecker,
   seen: Set<ts.Node>): DeclaredValue[] {
@@ -3959,16 +4154,23 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   const passed = ts.isParameter(root) ? passedValues(root, checker, seen)
     : { values: root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen), unread: false };
   const given = passed.values;
-  const literals = given.filter((one): one is ts.Expression => ts.isExpression(one));
+  const handed = ts.isParameter(root) && handingCall(root.parent, checker) !== undefined;
+  const literals = given.filter((one): one is ts.Expression => ts.isExpression(one) && (!handed || isLiteralContainer(one)));
   // Each default is read once, whatever the value destructured is.
   const readings = literals.length === 0 ? [readBinding(root.name, undefined, checker)] : literals.map((literal) => readBinding(root.name, literal, checker));
   const taken = readings.flatMap((reading) => reading.bound).filter((each) => each.name === name)
     .flatMap(({ value: one }) => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
+  const built = handed ? given.filter((one) => !isLiteralContainer(one) && fitsResult(checker.getTypeAtLocation(one), checker.getTypeAtLocation(name), checker)) : [];
   const unknown = readings.some((reading) => [...reading.opaque, ...reading.unknown.map((position) => position.name)].includes(name));
-  const untaken = taken.length === 0 && literals.some((literal) => ts.isObjectLiteralExpression(literal) || ts.isArrayLiteralExpression(literal));
+  const untaken = taken.length === 0 && built.length === 0 && literals.some(isLiteralContainer);
   const later = root.initializer === undefined && isGivenLater(declaration);
-  const unread = passed.unread || later || unknown || untaken || given.some((one) => !ts.isExpression(one));
-  return unread ? [...taken, value] : taken;
+  const unread = passed.unread || later || unknown || untaken || (!handed && given.some((one) => !ts.isExpression(one)));
+  return unread ? [...taken, ...built, value] : [...taken, ...built];
+}
+
+/** Whether a value is an object literal or an array literal. */
+function isLiteralContainer(value: DeclaredValue): boolean {
+  return ts.isObjectLiteralExpression(value) || ts.isArrayLiteralExpression(value);
 }
 
 /** What a parameter is given, as `passedValues` reads it. */
@@ -3984,15 +4186,21 @@ interface Passed {
  * of the argument at its position in every call of its function that
  * `callsOf` finds, as `declaredValues` reads them. What a caller gives is
  * read where the caller writes it, so a wrapper handed to a function is
- * read as the wrapper it is. Where no rule can find every call, as for a
- * function that no code here calls, one handed on as a value, a method,
- * or a callback given to a library, or where a spread at or before its
+ * read as the wrapper it is. A callback a library calls, as `handingCall`
+ * finds it, is given what `handedValues` finds the library is handed. Where
+ * no rule can find every call, as for a function that no code here calls,
+ * one handed on as a value, or a method, or where a spread at or before its
  * position hides which argument it takes, or where it is a rest parameter
  * or `this`, a caller may give it anything its type allows, so it is unread.
  */
 function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
   const values = parameter.initializer === undefined ? [] : declaredValues(parameter.initializer, checker, seen);
   const owner = parameter.parent;
+  const handing = handingCall(owner, checker);
+  if (handing !== undefined) {
+    const handed = handedValues(handing, checker, seen);
+    return { values: [...values, ...handed.values], unread: handed.unread };
+  }
   const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
   const calls = at < 0 || parameter.dotDotDotToken !== undefined ? undefined : callsOf(owner, checker);
   if (calls === undefined) return { values, unread: true };
@@ -4007,6 +4215,47 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
     }
   }
   return { values, unread };
+}
+
+/**
+ * The call of a library function that a function is handed to as a
+ * callback: written in place as an argument, through any wrapper
+ * `heldValue` looks through, at a parameter `isCallbackParameter` finds the
+ * library calls.
+ *
+ * @returns The call, or undefined when the function is none such.
+ */
+function handingCall(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): ts.CallExpression | ts.NewExpression | undefined {
+  if (!ts.isArrowFunction(owner) && !ts.isFunctionExpression(owner)) return undefined;
+  const outer = outerValue(owner);
+  const call = outer.parent;
+  if ((!ts.isCallExpression(call) && !ts.isNewExpression(call)) || !isLibraryCall(call, checker)) return undefined;
+  const invocation = invocationOf(call, checker);
+  const at = invocation.args.findIndex((argument) => argument === outer);
+  const parameter = at < 0 || invocation.declaration === undefined ? undefined : parameterOf(invocation.declaration, invocation.args, at);
+  return parameter !== undefined && isCallbackParameter(parameter, checker) ? call : undefined;
+}
+
+/**
+ * What a library function may give a callback it calls. It has nothing to
+ * give but what it is handed and what it makes itself, which its declared
+ * types describe: each value each of the values `librarySources` lists
+ * holds, as `reachedContents` finds it, and each value its callbacks
+ * return, as `callbackResults` reads them, which a callback such as the one
+ * `reduce` takes is given back. What no rule reads in either leaves the
+ * parameter unread.
+ */
+function handedValues(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
+  const handed: Passed = { values: [], unread: false };
+  for (const source of librarySources(call, checker)) {
+    const reached = reachedContents(source, checker, seen);
+    handed.values.push(...readContents({ values: reached.values, unread: null }, source, checker, seen));
+    handed.unread ||= reached.unread !== null;
+  }
+  const returned = callbackResults(call, checker, seen);
+  handed.values.push(...readContents({ values: returned.values, unread: null }, call, checker, seen));
+  handed.unread ||= returned.unread !== null;
+  return handed;
 }
 
 /** The calls found of each function, for each checker, or undefined where they cannot all be found. */
