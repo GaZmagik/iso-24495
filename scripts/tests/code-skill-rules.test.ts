@@ -2631,6 +2631,36 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), change).toEqual(reported);
       }
     });
+
+    test("a position of an array a library call makes is read where its arguments say what sits there, beside its breach", () => {
+      // Each pair reads the position that holds `consuming`, then the one that holds `boxing`.
+      const pairs: Array<[valid: string, breach: string]> = [
+        ["const box = [consuming].concat(boxing)[0]!;", "const box = [consuming].concat(boxing)[1]!;"],
+        ["const box = [consuming].concat([boxing])[0]!;", "const box = [consuming].concat([boxing])[1]!;"],
+        ["const list: Boxer[] = [consuming];\n  const box = list.concat(boxing)[0]!;", "const list: Boxer[] = [consuming];\n  const box = list.concat(boxing)[1]!;"],
+        ["const box = Array.of<Boxer>(consuming, boxing)[0]!;", "const box = Array.of<Boxer>(consuming, boxing)[1]!;"],
+        ["const box = Array.from([consuming, boxing])[0]!;", "const box = Array.from([consuming, boxing])[1]!;"],
+        ["const box = [boxing, consuming].slice(1)[0]!;", "const box = [consuming, boxing].slice(1)[0]!;"],
+        ["const box = [boxing].with(0, consuming)[0]!;", "const box = [consuming].with(0, boxing)[0]!;"],
+        ["const [box] = [consuming].concat(boxing);\n  if (box === undefined) return 1;", "const [, box] = [consuming].concat(boxing);\n  if (box === undefined) return 1;"],
+        ["let box: Boxer = consuming;\n  [box = consuming] = [consuming].concat(boxing);", "let box: Boxer = consuming;\n  [, box = consuming] = [consuming].concat(boxing);"],
+      ];
+      for (const [valid, breach] of pairs) {
+        for (const [statement, found] of [[valid, []], [breach, reported]] as Array<[statement: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${statement}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), statement).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual([]);
+        }
+      }
+      // An item code adds before the call moves what follows, and one written to the result after is read there.
+      for (const statement of [
+        "const list: Array<Boxer | number> = [consuming];\n  list.push(1);\n  const box = list.concat(boxing)[2] as Boxer;",
+        "const made = [consuming].concat(consuming);\n  made[0] = boxing;\n  const box = made[0]!;",
+      ]) {
+        const text = `export function main(): number {\n  ${statement}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), statement).toEqual(reported);
+      }
+    });
   });
 });
 
@@ -3375,9 +3405,10 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
 /**
  * What an item read by index is given where it is written: the item at that
  * position of each array literal, as `itemSource` reads it, what the key
- * gives in each object literal, as `keyedValues` reads it, or each value
- * `libraryContents` finds that a call of a library function holds, whose
- * type fits the item's, that the value read from may be.
+ * gives in each object literal, as `keyedValues` reads it, the item at that
+ * position of an array a library call makes, where `libraryItemSource` can
+ * tell, or else each value `libraryContents` finds that a call of a library
+ * function holds, whose type fits the item's, that the value read from may be.
  *
  * @returns The values; none when the value read from is not written here;
  *     and the access itself as well when the key cannot be known, or a value
@@ -3392,6 +3423,11 @@ function indexedValues(access: ts.ElementAccessExpression, checker: ts.TypeCheck
   const found = declaredValues(access.expression, checker, seen).flatMap((literal): DeclaredValue[] => {
     if (ts.isObjectLiteralExpression(literal)) return keyedValues(literal, key, access, checker, seen);
     if (isLibraryCall(literal, checker)) {
+      const positional = isIndexKey(key) ? libraryItemSource(literal, Number(key), checker) : undefined;
+      if (positional !== undefined) {
+        if (positional.unknownAfter !== null) unread = true;
+        return positional.holders.map(heldBy).flatMap((item) => ts.isMethodDeclaration(item) ? [item] : declaredValues(item, checker, seen));
+      }
       const held = libraryContents(literal, checker.getTypeAtLocation(access), checker, seen);
       if (held.unread !== null) unread = true;
       return readContents({ values: held.values, unread: null }, access, checker, seen);
@@ -3614,7 +3650,7 @@ function destructuredTargetValues(target: ts.Node, checker: ts.TypeChecker, seen
       }
       for (const literal of declaredValues(value, checker, seen)) {
         const source = !ts.isExpression(literal) ? undefined
-          : "at" in step ? ts.isArrayLiteralExpression(literal) ? itemSource(literal, step.at, checker) : undefined
+          : "at" in step ? ts.isArrayLiteralExpression(literal) ? itemSource(literal, step.at, checker) : isLibraryCall(literal, checker) ? libraryItemSource(literal, step.at, checker) : undefined
             : ts.isObjectLiteralExpression(literal) ? keyedProperties(literal, step.key, checker)
               : ts.isArrayLiteralExpression(literal) && isIndexKey(step.key) ? itemSource(literal, Number(step.key), checker) : undefined;
         if (source === undefined) {
@@ -4063,7 +4099,7 @@ function mayHaveKey(value: WrittenValue, keys: readonly string[], map: ts.CallEx
  * The keys an entry written as an array literal may have: each key `keysOf`
  * finds its first item may be, and, where code may reach it, each key a
  * change gives its first position, as `writtenTo` finds them in the table
- * `keyTable` makes.
+ * `itemTable` makes.
  *
  * @param reached Whether code may reach the entry to change it, so that the changes made to it are read.
  * @returns The keys, or undefined when a key it may have is not known, as for a hole, a spread, a key not written as a literal, items moved, or a change no rule reads.
@@ -4072,7 +4108,7 @@ function entryKeys(entry: ts.ArrayLiteralExpression, reached: boolean, checker: 
   const [first] = entry.elements;
   const given = first === undefined || ts.isOmittedExpression(first) ? undefined : keysOf(first, checker);
   if (given === undefined || !reached) return given;
-  const written = writtenTo(entry, "0", checker, undefined, keyTable(checker, entry));
+  const written = writtenTo(entry, "0", checker, undefined, itemTable(checker, entry));
   if (written.unread !== null || written.moved) return undefined;
   const keys = [...given];
   for (const value of written.values) {
@@ -4083,30 +4119,138 @@ function entryKeys(entry: ts.ArrayLiteralExpression, reached: boolean, checker: 
   return keys;
 }
 
-/** The table of changes that may give an item of an array its first position, for each checker, made once it is first read. */
-const KEY_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
+/** The table of changes that may give an array's items or length, for each checker, made once it is first read. */
+const ITEM_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
 
 /**
- * Each change, in the files of a program, that may give an array's first
- * item, whatever value it gives, placed as `placeChanges` places them: a
- * value or a destructuring given position 0, or a key not known; a copy; a
- * move; and a change no rule reads. The table of changes that may give a
- * function, which `writeTable` makes, leaves out a change that gives no
- * function, so it cannot say what key an entry is given later, as
- * `entry[0] = "wanted"` gives one.
+ * Each change, in the files of a program, that may give an array an item or
+ * change its length, whatever value it gives, placed as `placeChanges`
+ * places them: a value or a destructuring given an index, `length`, or a key
+ * not known; a copy; a move; and a change no rule reads. The table of
+ * changes that may give a function, which `writeTable` makes, leaves out a
+ * change that gives no function, so it cannot say what key an entry is
+ * given later, as `entry[0] = "wanted"` gives one, nor that `list.push(1)`
+ * moves what follows the list in a `concat`.
  *
  * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
  */
-function keyTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
-  const kept = KEY_TABLES.get(checker);
+function itemTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
+  const kept = ITEM_TABLES.get(checker);
   if (kept !== undefined) return kept;
   const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, madeChanges)).filter(({ write }) => {
     if (write.kind !== "value" && write.kind !== "destructured") return true;
-    return write.keys === undefined || write.keys.includes("0");
+    return write.keys === undefined || write.keys.some((key) => key === "length" || isIndexKey(key));
   });
   const table = placeChanges(changes, checker);
-  KEY_TABLES.set(checker, table);
+  ITEM_TABLES.set(checker, table);
   return table;
+}
+
+/**
+ * How many items an array literal holds, when no code can change that: its
+ * items, as `spreadItems` counts them, when no spread of unknown length is
+ * among them, and no change in the table `itemTable` makes, placed on it or
+ * kept unplaced with a type it fits, as `mayReach` says, may add, move or
+ * remove an item, as only a value given an index it already holds does not.
+ *
+ * @returns The count, or undefined when it may change or is not known.
+ */
+function fixedLength(literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker): number | undefined {
+  const { items, unknownAfter } = spreadItems(literal, checker);
+  if (unknownAfter !== null) return undefined;
+  const table = itemTable(checker, literal);
+  const changes = [...table.placed.get(literal) ?? [], ...table.unplaced.filter(({ type }) => mayReach(type, literal, checker)).map(({ change }) => change)];
+  const grows = changes.some(({ write }) => write.kind !== "value" || write.keys === undefined || write.keys.some((key) => !isIndexKey(key) || Number(key) >= items.length));
+  return grows ? undefined : items.length;
+}
+
+/** The one array literal an expression may be, as `declaredValues` reads it, or undefined when it may be anything else, or more than one. */
+function singleList(expression: ts.Expression, checker: ts.TypeChecker): ts.ArrayLiteralExpression | undefined {
+  const values = declaredValues(expression, checker, new Set());
+  const [only] = values;
+  return values.length === 1 && only !== undefined && ts.isExpression(only) && ts.isArrayLiteralExpression(only) ? only : undefined;
+}
+
+/** The methods of an array, and the functions of Array, whose result holds each item at a position its arguments say, as `libraryItemSource` reads them. */
+const POSITIONAL_METHODS: ReadonlySet<string> = new Set(["concat", "slice", "with", "Array.of", "Array.from"]);
+
+/**
+ * The item at one position of the array a library call makes, where its
+ * arguments say what sits there: for `concat`, the items of the array it is
+ * called on and then each argument, or each item of one that is an array;
+ * for `Array.of`, its arguments; for `Array.from` handed one array, that
+ * array's items; for `slice`, the item that many places after its start;
+ * and for `with`, the value it is handed at its index, and the item there
+ * elsewhere. Each array read must be one array literal whose length no code
+ * changes, as `singleList` and `fixedLength` read it, read at that position
+ * as `itemSource` reads it, and each start or index a whole number written
+ * so its value is known. What code writes to the position in the array the
+ * call makes counts too, as `writtenTo` finds it.
+ *
+ * @returns Where the item comes from, or undefined when the call is none of
+ *     these, or what sits at the position cannot be told, as after a spread,
+ *     an argument that may or may not be an array, or a move.
+ */
+function libraryItemSource(call: ts.CallExpression | ts.NewExpression, at: number, checker: ts.TypeChecker): ElementSource | undefined {
+  const invocation = invocationOf(call, checker);
+  const declaration = invocation.declaration;
+  const owner = declaration?.parent;
+  const name = declaration?.name !== undefined && ts.isIdentifier(declaration.name) ? declaration.name.text : undefined;
+  const method = owner !== undefined && ts.isInterfaceDeclaration(owner) && (owner.name.text === "Array" || owner.name.text === "ReadonlyArray") ? name
+    : owner !== undefined && ts.isInterfaceDeclaration(owner) && owner.name.text === "ArrayConstructor" ? `Array.${name ?? ""}` : undefined;
+  if (method === undefined || !POSITIONAL_METHODS.has(method) || invocation.callee !== call.expression || invocation.args.some(ts.isSpreadElement)) return undefined;
+  const written = writtenTo(call, String(at), checker);
+  if (written.moved) return undefined;
+  const found = positionalSource(call, method, invocation.args, at, checker);
+  return found === undefined ? undefined : { holders: [...found.holders, ...written.values], unknownAfter: found.unknownAfter ?? written.unread };
+}
+
+/** Where the item at one position of what a positional library call makes comes from, as `libraryItemSource` reads it, before what code writes there after. */
+function positionalSource(call: ts.CallExpression | ts.NewExpression, method: string, args: readonly ts.Expression[], at: number, checker: ts.TypeChecker): ElementSource | undefined {
+  if (method === "Array.of") return { holders: args.slice(at, at + 1), unknownAfter: null };
+  const receiver = ts.isCallExpression(call) ? memberReceiver(call.expression) : undefined;
+  const [first, second] = args;
+  if (method === "Array.from") {
+    const list = args.length === 1 && first !== undefined ? singleList(first, checker) : undefined;
+    return list === undefined ? undefined : itemSource(list, at, checker);
+  }
+  const list = receiver === undefined ? undefined : singleList(receiver, checker);
+  if (list === undefined) return undefined;
+  if (method === "with") {
+    const index = first === undefined ? undefined : wholeNumber(first, checker);
+    if (index === undefined || second === undefined) return undefined;
+    return index === at ? { holders: [second], unknownAfter: null } : itemSource(list, at, checker);
+  }
+  if (method === "slice") {
+    const start = first === undefined ? 0 : wholeNumber(first, checker);
+    const end = second === undefined ? undefined : wholeNumber(second, checker);
+    if (start === undefined || (second !== undefined && end === undefined)) return undefined;
+    return end !== undefined && start + at >= end ? { holders: [], unknownAfter: null } : itemSource(list, start + at, checker);
+  }
+  let left = at;
+  for (const part of [receiver, ...args]) {
+    if (part === undefined) return undefined;
+    const type = checker.getNonNullableType(checker.getTypeAtLocation(part));
+    const arrays = (type.isUnion() ? type.types : [type]).map((each) => checker.isArrayType(each) || checker.isTupleType(each));
+    if (arrays.includes(true) && arrays.includes(false)) return undefined;
+    if (!arrays.includes(true)) {
+      if (left === 0) return { holders: [part], unknownAfter: null };
+      left -= 1;
+      continue;
+    }
+    const items = singleList(part, checker);
+    const length = items === undefined ? undefined : fixedLength(items, checker);
+    if (items === undefined || length === undefined) return undefined;
+    if (left < length) return itemSource(items, left, checker);
+    left -= length;
+  }
+  return { holders: [], unknownAfter: null };
+}
+
+/** The whole number of zero or more an expression's type says it is, as a number literal type does, or undefined for any other. */
+function wholeNumber(expression: ts.Expression, checker: ts.TypeChecker): number | undefined {
+  const type = checker.getTypeAtLocation(expression);
+  return type.isNumberLiteral() && Number.isInteger(type.value) && type.value >= 0 ? type.value : undefined;
 }
 
 /** What code gives a container under any of some keys, as `writtenTo` finds it for each. */
@@ -6408,8 +6552,9 @@ function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at:
     if (!ts.isIdentifier(element.name) && ts.isArrayLiteralExpression(literal)) readBinding(element.name, literal, checker, reading, offset + at);
     return;
   }
-  if (!ts.isArrayLiteralExpression(literal) && !ts.isObjectLiteralExpression(literal)) reading.opaque.push(...boundNames(element.name));
-  const source = elementSource(pattern, element, at, literal, checker, offset);
+  const positional = ts.isArrayBindingPattern(pattern) && !ts.isMethodDeclaration(literal) && isLibraryCall(literal, checker) ? libraryItemSource(literal, offset + at, checker) : undefined;
+  if (!ts.isArrayLiteralExpression(literal) && !ts.isObjectLiteralExpression(literal) && positional === undefined) reading.opaque.push(...boundNames(element.name));
+  const source = positional ?? elementSource(pattern, element, at, literal, checker, offset);
   const cause = source.unknownAfter;
   if (cause !== null) reading.unknown.push(...boundNames(element.name).map((name) => ({ name, cause })));
   for (const holder of source.holders) {
