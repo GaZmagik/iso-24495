@@ -2716,6 +2716,30 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(entryPointProblem("probe.ts", text), value).toEqual({ checked: true, problem });
       }
     });
+
+    test("a call of a generator holds what it yields, delegates and returns, read by next, a loop, a spread or a library, beside its breach", () => {
+      // Each form has the generator yield or return the value written as VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        "/** Entry. */\nexport function main(): object {\nconst next = boxes().next();\nif (next.done) return {};\nconst helper = next.value((): number => 1);\nreturn helper;\n}\nfunction* boxes(): Generator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport function main(): object {\nfor (const box of boxes()) {\nconst helper = box((): number => 1);\nreturn helper;\n}\nreturn {};\n}\nfunction* boxes(): Generator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport function main(): object {\nconst box = [...boxes()][0]!;\nconst helper = box((): number => 1);\nreturn helper;\n}\nfunction* boxes(): Generator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport function main(): object {\nfor (const box of Array.from(boxes())) {\nconst helper = box((): number => 1);\nreturn helper;\n}\nreturn {};\n}\nfunction* boxes(): Generator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport function main(): object {\nfor (const box of outer()) {\nconst helper = box((): number => 1);\nreturn helper;\n}\nreturn {};\n}\nfunction* outer(): Generator<Boxer, void> {\n yield* boxes();\n}\nfunction* boxes(): Generator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport function main(): object {\nfor (const box of boxes()) {\nconst helper = box((): number => 1);\nreturn helper;\n}\nreturn {};\n}\nfunction* boxes(): Generator<Boxer, void> {\n yield* [VALUE];\n}\n",
+        "const bag = { *boxes(): Generator<Boxer, void> {\n yield VALUE;\n} };\n/** Entry. */\nexport function main(): object {\nfor (const box of bag.boxes()) {\nconst helper = box((): number => 1);\nreturn helper;\n}\nreturn {};\n}\n",
+        "/** Entry. */\nexport function main(): object {\nconst it = boxes();\nit.next();\nconst last = it.next();\nconst helper = (last.value as Boxer)((): number => 1);\nreturn helper;\n}\nfunction* boxes(): Generator<number, Boxer> {\n yield 1;\n return VALUE;\n}\n",
+        "/** Entry. */\nexport async function main(): Promise<object> {\nfor await (const box of boxes()) {\nconst helper = box((): number => 1);\nreturn helper;\n}\nreturn {};\n}\nasync function* boxes(): AsyncGenerator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport async function main(): Promise<object> {\nconst next = await boxes().next();\nif (next.done === true) return {};\nconst helper = next.value((): number => 1);\nreturn helper;\n}\nasync function* boxes(): AsyncGenerator<Boxer, void> {\n yield VALUE;\n}\n",
+        "/** Entry. */\nexport async function main(): Promise<object> {\nconst box = (await Promise.resolve([VALUE]))[0]!;\nconst helper = box((): number => 1);\nreturn helper;\n}\n",
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `${form.replaceAll("VALUE", value)}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+    });
   });
 });
 
@@ -3380,7 +3404,9 @@ function declaredValues(expression: ts.Expression, checker: ts.TypeChecker, seen
  * call as what the function returns; and, for a promise a library call
  * makes, as `isPromiseCall` finds it, what `awaitedValues` finds each value
  * the promise holds gives, as `placeContents` finds them, since a promise
- * that resolves to another promise gives what that one gives. A promise of
+ * that resolves to another promise gives what that one gives; or, where
+ * what it resolves to may hold a function but cannot be one, the promise
+ * itself, which a member, an index or a loop reads through. A promise of
  * any other kind, one that holds what no rule reads, and a value awaited
  * that has no value written here, give the `await` itself, as unread.
  *
@@ -3393,6 +3419,9 @@ function awaitedValues(awaited: ts.Expression, at: ts.AwaitExpression, checker: 
   return values.flatMap((value): DeclaredValue[] => {
     if (!ts.isExpression(value)) return [value];
     if (isPromiseCall(value, checker)) {
+      const resolved = checker.getAwaitedType(checker.getTypeAtLocation(value));
+      // What reads a value that holds a function and is none, as an iterator's result or an array is, reads it through the promise, which holds what it resolves to.
+      if (resolved !== undefined && !mayBeFunction(resolved, checker, value) && mayHoldFunction(resolved, checker, value)) return [value];
       const held = placeContents(value, checker, seen);
       const given = held.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : awaitedValues(one, at, checker, seen));
       return held.unread === null ? given : [...given, at];
@@ -3437,6 +3466,8 @@ function resolvedPromise(call: ts.CallExpression | ts.NewExpression, checker: ts
  * `possibleValues` found the call gives back none of its arguments: each
  * value, as `declaredValues` reads it, that a function that runs returns,
  * as `make()` is the function `make` returns. `f.bind(self)` is what `f` is.
+ * A call of a generator is the call itself, which holds what
+ * `generatorContents` finds the generator yields and returns.
  *
  * @returns The values; for a library function, what `libraryValues` finds
  *     it gives back of what it is handed; none when the function that runs
@@ -3452,6 +3483,7 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
   const implementations = implementationsOf(call, invocation.callee, invocation.declaration, checker);
   if (implementations.functions.length === 0 && !implementations.unread && invocation.declaration.getSourceFile().isDeclarationFile) return libraryValues(call, checker, seen);
   const values = implementations.functions.flatMap((run) => {
+    if (isGenerator(run)) return [call];
     const body = bodyOf(run);
     if (body === undefined || seen.has(body)) return [];
     seen.add(body);
@@ -4004,7 +4036,8 @@ function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, iter
  * to it, as `placeContents` finds them. A call or `new` of a library
  * function gives each value `libraryContents` finds that the values it is
  * handed hold, whose type fits the type wanted, as `new Set(list)`,
- * `list.slice()` and `map.values()` give those of `list` and `map`. Any
+ * `list.slice()` and `map.values()` give those of `list` and `map`. A call
+ * of a generator gives what `generatorContents` finds it yields. Any
  * other call or `new` is read through each array literal `callValues` finds
  * it holds. A value not written here is read by its declared type alone. A
  * container changed in a way no rule reads, a call that holds anything but
@@ -4020,7 +4053,7 @@ function iteratedContents(iterated: ts.Expression, wanted: ts.Type, checker: ts.
     const lists: ts.ArrayLiteralExpression[] = [];
     if (ts.isArrayLiteralExpression(one)) {
       lists.push(one);
-    } else if (isRestTarget(one)) {
+    } else if (isRestTarget(one) || (ts.isCallExpression(one) && generatorsOf(one, checker) !== undefined)) {
       const held = placeContents(one, checker, seen);
       found.values.push(...held.values);
       found.unread ??= held.unread;
@@ -4092,7 +4125,8 @@ function readContents(contents: Contents, value: ts.Expression, checker: ts.Type
  * declares, and, for a collection a library call makes, what each value the
  * call is handed holds, as `reachedContents` finds it, so that
  * `new Set(list)` holds what `list` holds, and what each callback it is
- * handed returns, as `callbackResults` reads it; and each value code gives the
+ * handed returns, as `callbackResults` reads it; for a call of a generator
+ * written here, what `generatorContents` finds; and each value code gives the
  * container after it is made, as `writtenTo` finds it. A spread in an array
  * literal gives what `iteratedContents` finds iterating it gives, and one in
  * an object literal what `reachedContents` finds the value spread holds. A
@@ -4136,6 +4170,10 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
     const rested = restValues(container, undefined, checker, seen);
     found.values.push(...rested.values);
     found.unread ??= rested.unread;
+  } else if (ts.isCallExpression(container) && generatorsOf(container, checker) !== undefined) {
+    const generated = generatorContents(container, checker, seen);
+    found.values.push(...generated.values);
+    found.unread ??= generated.unread;
   } else {
     for (const source of librarySources(container, checker)) {
       const reached = reachedContents(source, checker, seen, keys);
@@ -4149,6 +4187,84 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
   const written = keys === undefined ? writtenTo(container, undefined, checker) : writtenToKeys(container, keys, checker);
   found.values.push(...written.values);
   found.unread ??= written.unread;
+  return found;
+}
+
+/** Whether a function is a generator, written with `*`, whose call makes an iterator of what it yields. */
+function isGenerator(declaration: ts.SignatureDeclaration): boolean {
+  return (ts.isFunctionDeclaration(declaration) || ts.isFunctionExpression(declaration) || ts.isMethodDeclaration(declaration)) && declaration.asteriskToken !== undefined;
+}
+
+/** The generators a call runs, as `generatorsOf` finds them. */
+interface Generators {
+  /** Each generator written here that may run. */
+  functions: ts.SignatureDeclaration[];
+  /** Whether a function written here that no rule can follow may run instead. */
+  unread: boolean;
+}
+
+/**
+ * The generators written here a call may run, as `implementationsOf` finds
+ * the functions that run, where the call's value is a generator's.
+ *
+ * @returns The generators, or undefined when the call runs none.
+ */
+function generatorsOf(call: ts.CallExpression, checker: ts.TypeChecker): Generators | undefined {
+  const made = checker.getTypeAtLocation(call).getSymbol()?.name;
+  if (made !== "Generator" && made !== "AsyncGenerator") return undefined;
+  const invocation = invocationOf(call, checker);
+  if (invocation.binds || invocation.declaration === undefined || invocation.declaration.getSourceFile().isDeclarationFile) return undefined;
+  const runs = implementationsOf(call, invocation.callee, invocation.declaration, checker);
+  const functions = runs.functions.filter(isGenerator);
+  return functions.length === 0 ? undefined : { functions, unread: runs.unread };
+}
+
+/**
+ * What a call of a generator written here holds, which a for-of, a spread,
+ * a library call it is handed and `next` give: each value each generator
+ * that may run yields, each item iterating what its `yield*` hands on gives,
+ * as `iteratedContents` finds them, and each value it returns, which `next`
+ * gives last. A promise an asynchronous generator yields gives what it
+ * resolves to, which no rule reads here, and so does a callee whose
+ * functions cannot all be followed.
+ */
+function generatorContents(call: ts.CallExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const generators = generatorsOf(call, checker);
+  const found: Contents = { values: [], unread: generators?.unread === true ? call : null };
+  for (const generator of generators?.functions ?? []) {
+    found.values.push(...returnedExpressions(generator));
+    const asynchronous = (ts.getCombinedModifierFlags(generator) & ts.ModifierFlags.Async) !== 0;
+    for (const yielded of yieldsOf(generator)) {
+      if (yielded.expression === undefined) continue;
+      if (yielded.asteriskToken !== undefined) {
+        const delegated = iteratedContents(yielded.expression, checker.getTypeAtLocation(yielded), checker, seen);
+        found.values.push(...delegated.values);
+        found.unread ??= delegated.unread;
+        if (!delegated.reached && mayCarryFunction(yielded.expression, checker)) found.unread ??= yielded;
+        continue;
+      }
+      const type = checker.getTypeAtLocation(yielded.expression);
+      if (asynchronous && checker.getAwaitedType(type) !== type) {
+        found.unread ??= yielded;
+      } else {
+        found.values.push(yielded.expression);
+      }
+    }
+  }
+  return found;
+}
+
+/** Each `yield` written in a function's body, not in a function nested in it. */
+function yieldsOf(declaration: ts.SignatureDeclaration): ts.YieldExpression[] {
+  const body = bodyOf(declaration);
+  const found: ts.YieldExpression[] = [];
+  const pending: ts.Node[] = body === undefined ? [] : [body];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isYieldExpression(node)) found.push(node);
+    ts.forEachChild(node, (child) => {
+      if (!ts.isFunctionLike(child)) pending.push(child);
+    });
+  }
   return found;
 }
 
@@ -4682,8 +4798,9 @@ function reachesOnlyContainers(expression: ts.Expression, checker: ts.TypeChecke
 /**
  * The containers one value is: itself for an object or array literal, for
  * a class, or for the name a rest element binds; each class a `new` makes an instance of; the class, or the object
- * literal, whose method `this` is read in; and itself for a call or `new` of
- * a library function whose value is an array, a set, a map or a promise.
+ * literal, whose method `this` is read in; itself for a call or `new` of
+ * a library function whose value is an array, a set, a map or a promise;
+ * and itself for a call of a generator written here.
  *
  * @returns The containers, or undefined when the value is none of these.
  */
@@ -4697,6 +4814,7 @@ function containersOfValue(value: DeclaredValue, checker: ts.TypeChecker): Conta
     const made = declaredValues(value.expression, checker, new Set());
     if (made.length > 0 && made.every(ts.isClassLike)) return made.filter(ts.isClassLike);
   }
+  if (ts.isCallExpression(value) && generatorsOf(value, checker) !== undefined) return [value];
   return isPromiseCall(value, checker) || (isLibraryCall(value, checker) && isCollection(checker.getTypeAtLocation(value), checker)) ? [value] : undefined;
 }
 
