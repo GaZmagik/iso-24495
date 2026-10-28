@@ -2691,6 +2691,31 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), statement).toEqual(found);
       }
     });
+
+    test("a property a library declares is read through what the value it is read from was handed, key by key, beside its breach", () => {
+      // Each form gives the property read the value written as VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        "const box = new Error(\"x\", { cause: VALUE }).cause as Boxer;",
+        "const box = Error(\"x\", { cause: VALUE }).cause as Boxer;",
+        "const box = new AggregateError([VALUE], \"x\").errors[0] as Boxer;",
+        "const made = new AggregateError([consuming], \"x\", { cause: VALUE });\n  const box = made.cause as Boxer;",
+        "const made = new AggregateError([VALUE], \"x\", { cause: consuming });\n  const box = made.errors[0] as Boxer;",
+        "const made = new AggregateError([consuming, VALUE], \"x\");\n  const box = made.errors[1] as Boxer;",
+        "const error: Error = { name: \"x\", message: \"x\", cause: VALUE };\n  const box = error.cause as Boxer;",
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A top-level name a call of such a property gives is the first function when the property holds a wrapper.
+      for (const [value, problem] of [["consuming", null], ["boxing", "probe.ts:1: the first function, first, is not exported"]] as Array<[value: string, problem: string | null]>) {
+        const text = `const first = (new Error("x", { cause: ${value} }).cause as Boxer)((): number => 1);\n/** Entry. */\nexport function main(): object {\n  return first;\n}\n${wrappers}`;
+        expect(entryPointProblem("probe.ts", text), value).toEqual({ checked: true, problem });
+      }
+    });
   });
 });
 
@@ -3510,7 +3535,8 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * property a type declares, as an interface does, gives what its key holds
  * in each object literal the value it is read from may be, as `keyedValues`
  * reads it, and the property read as well, as unread, for each value it is
- * read from that is not one. Each of these that can be assigned gives as
+ * read from that is not one; a property a library declares gives what
+ * `libraryMemberValues` finds. Each of these that can be assigned gives as
  * well what every assignment to it gives, as `assignedValues` reads them,
  * and a member of an object literal or a class, a method included, what
  * code writes to its key, as `memberWrites` reads it. A member no
@@ -3521,17 +3547,19 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * `isGivenLater` finds code here may give it one, as Object.assign does;
  * and for any other declaration written here that none of these reads.
  *
- * @returns Each value; none for a name declared with `declare`, or every
- *     declaration of which is in a declaration file, as the library's are,
- *     whose declared type alone describes it, nor for a function declared
- *     with no body.
+ * @returns Each value; none for a name declared with `declare`, or a name
+ *     every declaration of which is in a declaration file, as the library's
+ *     are, whose declared type alone describes it, unless it is a property
+ *     read from a value; nor for a function declared with no body.
  */
 function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   const found = ts.isIdentifier(value) ? referencedSymbol(value, checker) : checker.getSymbolAtLocation(value.name);
   const symbol = found !== undefined && (found.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(found) : found;
   const declarations = symbol?.declarations ?? [];
   if (declarations.length === 0 && ts.isPropertyAccessExpression(value)) return unnamedMemberValues(value, checker, seen);
-  if (declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)) return [];
+  if (declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)) {
+    return ts.isPropertyAccessExpression(value) ? libraryMemberValues(value, declarations, checker, seen) : [];
+  }
   return declarations.flatMap((declaration): DeclaredValue[] => {
     if (seen.has(declaration)) return [];
     seen.add(declaration);
@@ -5241,6 +5269,79 @@ function memberWrites(value: ts.Identifier | ts.PropertyAccessExpression, declar
 function unnamedMemberValues(value: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   return declaredValues(value.expression, checker, seen)
     .flatMap((literal) => keyOfValue(literal, value.name.text, value, checker, seen));
+}
+
+/**
+ * What a property a library declares is given, read from a value. A
+ * function, a method or a variable the library declares is its own, and a
+ * property whose value can neither be a function nor hold one in a place
+ * `holdsPossibleFunction` names gives nothing either, as `node.parent` does
+ * not, whose type holds only the library's own methods. Otherwise each value
+ * the value read from may be, as `declaredValues` reads it, gives what it
+ * holds: a call of a library function gives each value it holds, as
+ * `libraryContents` finds them, whose type fits the property's, as `cause`
+ * gives what `new Error(message, { cause })` is handed, and is itself the
+ * value where the property may hold a function but not be one, as `errors`
+ * holds what AggregateError is handed, so that what reads it reads the
+ * call, unless `errorMemberValues` says which value the key holds; any
+ * other value gives what its key holds, as `keyOfValue` reads it. A
+ * function or a class, whose library members are the library's own, gives
+ * none.
+ */
+function libraryMemberValues(value: ts.PropertyAccessExpression, declarations: readonly ts.Declaration[], checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  if (!declarations.every((declaration) => ts.isPropertySignature(declaration) || ts.isPropertyDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration))) return [];
+  const wanted = checker.getTypeAtLocation(value);
+  const callable = mayBeFunction(wanted, checker, value);
+  if (!callable && !holdsPossibleFunction(wanted, checker, value)) return [];
+  return declaredValues(value.expression, checker, seen).flatMap((receiver): DeclaredValue[] => {
+    if (!ts.isExpression(receiver) || isFunctionValue(receiver)) return [];
+    if (!isLibraryCall(receiver, checker)) return keyOfValue(receiver, value.name.text, value, checker, seen);
+    const kept = errorMemberValues(receiver, value, checker, seen);
+    if (kept !== undefined) return kept;
+    if (!callable) return [receiver];
+    const held = libraryContents(receiver, wanted, checker, seen);
+    return held.reached ? readContents(held, value, checker, seen) : [];
+  });
+}
+
+/**
+ * What one member of an error that a library's error constructor makes
+ * holds, key by key, as the constructors of Error and its kinds declare
+ * them: `cause` is what the `cause` key of the options object the
+ * constructor is handed holds, as `keyOfValue` reads it, and AggregateError's
+ * `errors` is an array of the items of the list it is handed, read as that
+ * list, as `declaredValues` reads it. A constructor not handed the argument
+ * gives the member nothing.
+ *
+ * @returns The values, or undefined for a call of any other function, a
+ *     member of any other name, or an argument a spread hides.
+ */
+function errorMemberValues(call: ts.CallExpression | ts.NewExpression, read: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] | undefined {
+  const invocation = invocationOf(call, checker);
+  const owner = invocation.declaration?.parent;
+  if (invocation.declaration === undefined || owner === undefined || !ts.isInterfaceDeclaration(owner) || !owner.name.text.endsWith("ErrorConstructor")) return undefined;
+  const key = read.name.text;
+  const from = key === "cause" ? "options" : key === "errors" ? "errors" : undefined;
+  const at = invocation.declaration.parameters.findIndex((parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === from);
+  if (from === undefined || at < 0) return undefined;
+  if (invocation.args.slice(0, at + 1).some(ts.isSpreadElement)) return undefined;
+  const argument = invocation.args[at];
+  if (argument === undefined) return [];
+  const values = declaredValues(argument, checker, seen);
+  return key === "errors" ? values : values.flatMap((options) => keyOfValue(options, key, read, checker, seen));
+}
+
+/**
+ * Whether a value of a type holds a place that may be a function, as
+ * `mayBeFunction` reads it, besides a method the type declares: an item of
+ * an array, a type argument, as what a promise gives is, or an index
+ * signature's value, in the type or any part of its union or intersection.
+ */
+function holdsPossibleFunction(type: ts.Type, checker: ts.TypeChecker, location: ts.Node): boolean {
+  if (type.isUnionOrIntersection()) return type.types.some((part) => holdsPossibleFunction(part, checker, location));
+  if (!(type.flags & ts.TypeFlags.Object)) return false;
+  const args = (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference ? checker.getTypeArguments(type as ts.TypeReference) : [];
+  return [...args, ...checker.getIndexInfosOfType(type).map((index) => index.type)].some((part) => mayBeFunction(part, checker, location));
 }
 
 /**
