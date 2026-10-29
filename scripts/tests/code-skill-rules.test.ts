@@ -2756,6 +2756,29 @@ describe("the code skill's rules for this repository's own code", () => {
         }
       }
     });
+
+    test("a symbol, or an object a constant is made with, is read as a key of its own, and a WeakMap as a map, beside its breach", () => {
+      // Each form reads the key that holds VALUE, while another key holds OTHER: `consuming` and `boxing` in the valid form, swapped in its breach.
+      const forms = [
+        "const key = Symbol(\"box\");\n  const holder = { [key]: VALUE, other: OTHER };\n  const box = holder[key];",
+        "const wanted = {};\n  const other = {};\n  const box = new Map<object, Boxer>([[other, OTHER], [wanted, VALUE]]).get(wanted);",
+        "const wanted = {};\n  const alias = wanted;\n  const box = new Map<object, Boxer>([[{}, OTHER], [wanted, VALUE]]).get(alias);",
+        "const box = new Map<symbol, Boxer>([[Symbol.for(\"other\"), OTHER], [Symbol.for(\"wanted\"), VALUE]]).get(Symbol.for(\"wanted\"));",
+        "const key = Symbol(\"box\");\n  const box = new Map<symbol, Boxer>([[Symbol(\"box\"), OTHER], [key, VALUE]]).get(key);",
+        "const key = {};\n  const box = new WeakMap<object, Boxer>([[key, VALUE]]).get(key);",
+        "const key = {};\n  const other = {};\n  const map = new WeakMap<object, Boxer>([[other, OTHER]]);\n  map.set(key, VALUE);\n  const box = map.get(key);",
+      ];
+      for (const form of forms) {
+        for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value).replace("OTHER", other)}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A key whose value is not known may be any key, so it reads every entry.
+      const text = `export function main(key: object): number {\n  const box = new WeakMap<object, Boxer>([[{}, consuming], [key, boxing]]).get(key);\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(reported);
+    });
   });
 });
 
@@ -3531,7 +3554,7 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
  */
 function indexedValues(access: ts.ElementAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   const type = checker.getTypeAtLocation(access.argumentExpression);
-  const key = type.isStringLiteral() || type.isNumberLiteral() ? String(type.value) : undefined;
+  const key = type.isStringLiteral() || type.isNumberLiteral() ? String(type.value) : symbolKey(access.argumentExpression, checker);
   if (key === undefined) return [access];
   let unread = false;
   const found = declaredValues(access.expression, checker, seen).flatMap((literal): DeclaredValue[] => {
@@ -3897,8 +3920,8 @@ function isReadingMember(member: ts.PropertyAccessExpression | ts.ElementAccessE
 function readOnlyForm(type: ts.Type, checker: ts.TypeChecker): string | undefined {
   if (checker.isArrayType(type) || checker.isTupleType(type)) return "ReadonlyArray";
   const name = type.getSymbol()?.name;
-  if (name === "Set" || name === "ReadonlySet") return "ReadonlySet";
-  return name === "Map" || name === "ReadonlyMap" ? "ReadonlyMap" : undefined;
+  if (name === "Set" || name === "ReadonlySet" || name === "WeakSet") return "ReadonlySet";
+  return name === "Map" || name === "ReadonlyMap" || name === "WeakMap" ? "ReadonlyMap" : undefined;
 }
 
 /** The members of each of the library's read-only collection interfaces, by name, read once for each checker. */
@@ -4494,7 +4517,7 @@ function writtenToKeys(container: Container, keys: readonly string[], checker: t
 
 /**
  * The keys a call reads from a map: the keys `keysOf` finds the key handed
- * to `get` of the library's Map or ReadonlyMap may be.
+ * to `get` of the library's Map, ReadonlyMap or WeakMap may be.
  *
  * @returns The keys, or undefined for any other call, or a key not written so that its keys are known.
  */
@@ -4503,7 +4526,7 @@ function mapReadKeys(call: ts.CallExpression | ts.NewExpression, checker: ts.Typ
   const declaration = invocation.declaration;
   if (declaration === undefined || !declaration.getSourceFile().isDeclarationFile || declaration.name === undefined || !ts.isIdentifier(declaration.name)) return undefined;
   const owner = declaration.parent;
-  if (declaration.name.text !== "get" || !ts.isInterfaceDeclaration(owner) || (owner.name.text !== "Map" && owner.name.text !== "ReadonlyMap")) return undefined;
+  if (declaration.name.text !== "get" || !ts.isInterfaceDeclaration(owner) || !["Map", "ReadonlyMap", "WeakMap"].includes(owner.name.text)) return undefined;
   return keysOf(invocation.args[0], checker);
 }
 
@@ -5103,7 +5126,8 @@ function memberKeys(member: ts.PropertyAccessExpression | ts.ElementAccessExpres
 
 /**
  * The keys an expression may give: its text, written as a string or number
- * literal, or each string or number literal its type allows.
+ * literal, the key `identityKey` finds for a symbol or an object, or each
+ * string or number literal its type allows.
  *
  * @returns The keys, or undefined when its type allows a key that is no literal.
  */
@@ -5111,6 +5135,8 @@ function keysOf(key: ts.Expression | undefined, checker: ts.TypeChecker): readon
   if (key === undefined || ts.isSpreadElement(key)) return undefined;
   if (ts.isStringLiteralLike(key)) return [key.text];
   if (ts.isNumericLiteral(key)) return [String(Number(key.text))];
+  const identity = identityKey(key, checker);
+  if (identity !== undefined) return [identity];
   const type = checker.getTypeAtLocation(key);
   const keys: string[] = [];
   for (const part of type.isUnion() ? type.types : [type]) {
@@ -5118,6 +5144,63 @@ function keysOf(key: ts.Expression | undefined, checker: ts.TypeChecker): readon
     keys.push(String(part.value));
   }
   return keys;
+}
+
+/** How a key that is a symbol or an object begins, so that it never equals a key written as a string. */
+const IDENTITY_KEY = "\n@";
+
+/**
+ * The key a symbol or an object gives where no other value can give it:
+ * the symbol a unique symbol type names, its declaration's own, as
+ * `Symbol("box")` held by a constant has; the symbol a call of `Symbol`
+ * makes where it is written, which no other value is; the symbol `Symbol.for` gives for
+ * a key written as a string literal, which every such call with that string
+ * gives; and the object a constant is declared with, written in place as an
+ * object or array literal, a `new`, a function or a class, which no other
+ * value is, through each constant declared with another's name. A symbol
+ * the library declares, as `Symbol.iterator`, is marked so that
+ * `isLibrarySymbolKey` finds it.
+ *
+ * @returns The key, beginning with IDENTITY_KEY, or undefined for any other value.
+ */
+function identityKey(key: ts.Expression, checker: ts.TypeChecker, read = new Set<ts.Node>()): string | undefined {
+  const inner = heldValue(key) ?? key;
+  const type = checker.getTypeAtLocation(inner);
+  if (type.flags & ts.TypeFlags.UniqueESSymbol) {
+    const declared = type.getSymbol()?.declarations?.[0];
+    const where = declared === undefined ? "" : `${declared.getSourceFile().fileName}:${declared.pos}`;
+    return `${IDENTITY_KEY}${declared?.getSourceFile().isDeclarationFile === true ? "library " : ""}symbol ${where}`;
+  }
+  const called = ts.isCallExpression(inner) ? calledDeclaration(inner, checker) : undefined;
+  if (ts.isCallExpression(inner) && called !== undefined && ts.isInterfaceDeclaration(called.parent) && called.parent.name.text === "SymbolConstructor") {
+    if (ts.isCallSignatureDeclaration(called)) return `${IDENTITY_KEY}symbol made ${inner.getSourceFile().fileName}:${inner.pos}`;
+    const [text] = inner.arguments;
+    if (inner.arguments.length === 1 && text !== undefined && ts.isStringLiteralLike(text) && memberName(inner.expression) === "for") return `${IDENTITY_KEY}symbol for ${text.text}`;
+  }
+  if (ts.isObjectLiteralExpression(inner) || ts.isArrayLiteralExpression(inner) || ts.isNewExpression(inner) || isFunctionValue(inner) || ts.isClassExpression(inner)) {
+    return `${IDENTITY_KEY}object ${inner.getSourceFile().fileName}:${inner.pos}`;
+  }
+  if (!ts.isIdentifier(inner) || read.has(inner)) return undefined;
+  read.add(inner);
+  const declaration = referencedSymbol(inner, checker)?.declarations?.[0];
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || declaration.initializer === undefined || !ts.isIdentifier(declaration.name)
+    || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return undefined;
+  return identityKey(declaration.initializer, checker, read);
+}
+
+/**
+ * The key a symbol gives, as `identityKey` finds it. An object used as a
+ * property's key is converted to a string, which is the same for every
+ * object, so an object gives none here.
+ */
+function symbolKey(key: ts.Expression, checker: ts.TypeChecker): string | undefined {
+  const identity = identityKey(key, checker);
+  return identity === undefined || identity.startsWith(`${IDENTITY_KEY}object `) ? undefined : identity;
+}
+
+/** Whether a key is a symbol the library declares, as `Symbol.iterator` is, by which the language itself calls a method. */
+function isLibrarySymbolKey(key: string): boolean {
+  return key.startsWith(`${IDENTITY_KEY}library symbol `);
 }
 
 /** The methods of an array, a set or a map that add each value they are given, by name, with the position of the first value each adds. */
@@ -5930,7 +6013,7 @@ function namedSites(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): Ca
     // A function an object literal's property holds runs as a method of the literal does.
     if (ts.isPropertyAssignment(property) && property.initializer === outer && ts.isObjectLiteralExpression(property.parent)) {
       const key = propertyKey(property.name, checker);
-      return key === undefined || PROTOCOL_METHODS.has(key) ? undefined : literalMethodSites(property.parent, key, checker);
+      return key === undefined || PROTOCOL_METHODS.has(key) || isLibrarySymbolKey(key) ? undefined : literalMethodSites(property.parent, key, checker);
     }
   }
   const named = calledByName(owner);
@@ -5976,12 +6059,13 @@ function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker): bool
  * @returns The places; undefined when a read hands the method on in any
  *     other way, or its class has no name, so that its type cannot be
  *     compared, or its key is not known, or is one a library calls by
- *     protocol, as PROTOCOL_METHODS names them.
+ *     protocol, as PROTOCOL_METHODS names them, or a symbol the library
+ *     declares, by which the language calls it.
  */
 function methodSites(method: ts.MethodDeclaration, checker: ts.TypeChecker): CallSites | undefined {
   const holder = method.parent;
   const key = ts.isPrivateIdentifier(method.name) ? method.name.text : propertyKey(method.name, checker);
-  if (key === undefined || PROTOCOL_METHODS.has(key)) return undefined;
+  if (key === undefined || PROTOCOL_METHODS.has(key) || isLibrarySymbolKey(key)) return undefined;
   if (ts.isObjectLiteralExpression(holder)) return literalMethodSites(holder, key, checker);
   if (!ts.isClassLike(holder) || holder.name === undefined) return undefined;
   const side: ClassSide = isStatic(method) ? "static" : "instance";
@@ -7183,7 +7267,7 @@ function boundKey(element: ts.BindingElement, checker: ts.TypeChecker): string |
  * The key a property name gives, as a string: a name, a string or number
  * literal, or a key computed from an expression whose type is one string or
  * number literal, such as a template literal without substitutions or a
- * constant.
+ * constant, or a symbol `symbolKey` finds the key of.
  *
  * @returns The key, or undefined when it cannot be known without running the code.
  */
@@ -7193,7 +7277,7 @@ function propertyKey(name: ts.PropertyName, checker: ts.TypeChecker): string | u
   if (!ts.isComputedPropertyName(name)) return undefined;
   const type = checker.getTypeAtLocation(name.expression);
   if (type.isStringLiteral()) return type.value;
-  return type.isNumberLiteral() ? String(type.value) : undefined;
+  return type.isNumberLiteral() ? String(type.value) : symbolKey(name.expression, checker);
 }
 
 /** The items of an array literal, position by position, as far as they are known. */
