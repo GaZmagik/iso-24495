@@ -3076,6 +3076,25 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(boundHelpers("probe.ts", text)).toEqual(reported);
     });
 
+    test("an item of what Array.from makes of a value that is no array literal may be any item iterating it gives, beside its breach", () => {
+      // Each form holds VALUE among what is iterated: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        "const box = Array.from(new Map([[\"k\", VALUE]]).values())[0];",
+        "const box = Array.from(new Set([consuming, VALUE]))[0];",
+        "const map = new Map<string, Boxer>([[\"k\", consuming]]);\n  map.set(\"other\", VALUE);\n  const [box] = Array.from(map.values());",
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value)}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A map whose callers cannot be found may hold any wrapper its type allows.
+      const text = `export function main(map: Map<string, Boxer>): number {\n  const box = Array.from(map.values())[0];\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(reported);
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -4914,7 +4933,9 @@ const POSITIONAL_METHODS: ReadonlySet<string> = new Set(["concat", "slice", "wit
  * arguments say what sits there: for `concat`, the items of the array it is
  * called on and then each argument, or each item of one that is an array;
  * for `Array.of`, its arguments; for `Array.from` handed one array, that
- * array's items; for `Promise.all` handed one array, what each of its items
+ * array's items, and handed one value of any other kind, every item
+ * iterating it gives, as `iteratedContents` finds them, since any of them
+ * may sit at the position; for `Promise.all` handed one array, what each of its items
  * settles to, as `settledItems` reads it, which a destructuring or an index
  * reads through the `await` that gives the call; for `slice`, the item that
  * many places after its start;
@@ -4951,7 +4972,7 @@ function positionalSource(call: ts.CallExpression | ts.NewExpression, method: st
   const [first, second] = args;
   if (method === "Array.from" || method === "Promise.all") {
     const list = args.length === 1 && first !== undefined ? singleList(first, checker) : undefined;
-    if (list === undefined) return undefined;
+    if (list === undefined) return method === "Array.from" && args.length === 1 && first !== undefined ? iteratedItems(call, first, checker) : undefined;
     return method === "Array.from" ? itemSource(list, at, checker) : settledItems(itemSource(list, at, checker), checker);
   }
   const list = receiver === undefined ? undefined : singleList(receiver, checker);
@@ -4988,6 +5009,20 @@ function positionalSource(call: ts.CallExpression | ts.NewExpression, method: st
     left -= length;
   }
   return { holders: [], unknownAfter: null };
+}
+
+/**
+ * What may sit at any position of the array `Array.from` makes from one
+ * value that is no array literal: each item iterating the value gives whose
+ * type fits an item of the array, as `iteratedContents` finds them, as
+ * `Array.from(map.values())` holds each value of `map`.
+ *
+ * @returns The items, or undefined when the value has no value written here to iterate.
+ */
+function iteratedItems(call: ts.CallExpression | ts.NewExpression, iterated: ts.Expression, checker: ts.TypeChecker): ElementSource | undefined {
+  const made = checker.getTypeAtLocation(call);
+  const items = iteratedContents(iterated, made.getNumberIndexType() ?? made, checker, new Set());
+  return items.reached ? { holders: items.values, unknownAfter: items.unread } : undefined;
 }
 
 /**
