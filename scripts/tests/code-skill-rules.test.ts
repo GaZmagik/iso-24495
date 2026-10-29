@@ -4603,7 +4603,9 @@ function entryKeys(entry: ts.ArrayLiteralExpression, reached: boolean, checker: 
   const [first] = entry.elements;
   const given = first === undefined || ts.isOmittedExpression(first) ? undefined : keysOf(first, checker);
   if (given === undefined || !reached) return given;
-  const written = writtenTo(entry, "0", checker, undefined, itemTable(checker, entry));
+  const table = itemTable(checker, entry);
+  if (table === undefined) return undefined;
+  const written = writtenTo(entry, "0", checker, undefined, table);
   if (written.unread !== null || written.moved) return undefined;
   const keys = [...given];
   for (const value of written.values) {
@@ -4617,6 +4619,8 @@ function entryKeys(entry: ts.ArrayLiteralExpression, reached: boolean, checker: 
 /** The table of changes that may give an array's items or length, for each checker, made once it is first read. */
 const ITEM_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
 
+/** The checkers whose table of changes to items is being made, so that a reading made meanwhile, which may need that table again, finds no table rather than starting it once more. */
+const ITEM_TABLES_BEING_MADE = new WeakSet<ts.TypeChecker>();
 /**
  * Each change, in the files of a program, that may give an array an item or
  * change its length, whatever value it gives, placed as `placeChanges`
@@ -4628,17 +4632,24 @@ const ITEM_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
  * moves what follows the list in a `concat`.
  *
  * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
+ * @returns The table, or undefined while it is being made, so that a reading made meanwhile reads no length or key as known.
  */
-function itemTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
+function itemTable(checker: ts.TypeChecker, location: ts.Node): WriteTable | undefined {
   const kept = ITEM_TABLES.get(checker);
   if (kept !== undefined) return kept;
-  const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, madeChanges)).filter(({ write }) => {
-    if (write.kind !== "value" && write.kind !== "destructured") return true;
-    return write.keys === undefined || write.keys.some((key) => key === "length" || isIndexKey(key));
-  });
-  const table = placeChanges(changes, checker);
-  ITEM_TABLES.set(checker, table);
-  return table;
+  if (ITEM_TABLES_BEING_MADE.has(checker)) return undefined;
+  ITEM_TABLES_BEING_MADE.add(checker);
+  try {
+    const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, madeChanges)).filter(({ write }) => {
+      if (write.kind !== "value" && write.kind !== "destructured") return true;
+      return write.keys === undefined || write.keys.some((key) => key === "length" || isIndexKey(key));
+    });
+    const table = placeChanges(changes, checker);
+    ITEM_TABLES.set(checker, table);
+    return table;
+  } finally {
+    ITEM_TABLES_BEING_MADE.delete(checker);
+  }
 }
 
 /**
@@ -4654,6 +4665,7 @@ function fixedLength(literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker
   const { items, unknownAfter } = spreadItems(literal, checker);
   if (unknownAfter !== null) return undefined;
   const table = itemTable(checker, literal);
+  if (table === undefined) return undefined;
   const changes = [...table.placed.get(literal) ?? [], ...table.unplaced.filter(({ type }) => mayReach(type, literal, checker)).map(({ change }) => change)];
   const grows = changes.some(({ write }) => write.kind !== "value" || write.keys === undefined || write.keys.some((key) => !isIndexKey(key) || Number(key) >= items.length));
   return grows ? undefined : items.length;
