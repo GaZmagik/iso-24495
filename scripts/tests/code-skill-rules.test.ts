@@ -3129,6 +3129,46 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a spread replaces what gave a key before only where no code may delete the key or hide it from a spread, beside its breach", () => {
+      // Each form spreads `overrides`, which gives `box` VALUE, after `dependencies`, which gives it OTHER: `consuming` and `boxing` in the valid form, swapped in its breach.
+      // Where the form may remove the key from `overrides`, or make it one a spread leaves out, OTHER may survive, so both are reported.
+      const forms: Array<[statement: string, after: string, removes: boolean]> = [
+        ["", "", false],
+        ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.other;", "", false],
+        ["Object.freeze(overrides);", "", false],
+        ["Object.defineProperty(overrides, \"box\", { enumerable: true });", "", false],
+        ["Object.defineProperty(overrides, \"other\", { enumerable: !hide });", "", false],
+        ["const elsewhere: Partial<typeof overrides> = { other: 2 };\n  delete elsewhere.box;", "", false],
+        ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.box;", "", true],
+        ["if (hide) delete (overrides as Partial<typeof overrides>)[\"box\"];", "", true],
+        ["if (hide) Reflect.deleteProperty(overrides, \"box\");", "", true],
+        ["Object.defineProperty(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["Object.defineProperty(overrides, \"box\", { value: VALUE });", "", true],
+        ["Object.defineProperties(overrides, { box: { enumerable: !hide } });", "", true],
+        ["const key: string = hide ? \"box\" : \"other\";\n  delete (overrides as Record<string, unknown>)[key];", "", true],
+        ["strip(overrides);", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
+        ["void strip;", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
+      ];
+      for (const [statement, after, removes] of forms) {
+        for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
+          const text = `export function main(hide = true): number {\n  const overrides = { box: ${value}, other: 1 };\n  ${statement.replace("VALUE", value)}\n  const dependencies = { box: ${other} };\n`
+            + `  const { box } = { ...dependencies, ...overrides };\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(removes || value === "boxing" ? reported : []);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+      // The throws check reads the key the same way.
+      const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+      for (const [statement, problems] of [
+        ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.other;", []],
+        ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.box;", ["probe.ts:8: the comment on helper does not say what it throws"]],
+      ] as Array<[statement: string, problems: string[]]>) {
+        const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
+          + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, statement).toEqual(problems);
+      }
+    });
+
     test("a later entry of Object.fromEntries replaces each entry before it under the same key, beside its breach", () => {
       // Each form gives the key read VALUE in its last entry, and OTHER before it: `consuming` and `boxing` in the valid form, swapped in its breach.
       const forms = [
@@ -8624,18 +8664,99 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
  * Whether a value spread into an object literal always gives one key, so
  * that it replaces what gave the key before: each object literal it may be,
  * as `spreadLiterals` finds them, writes the key, as a property, a method,
- * an accessor or a spread that always gives it; and the value's type
- * declares the key and not as optional, since only an optional key may be
- * deleted, which no rule reads.
+ * an accessor or a spread that always gives it, and no change in the table
+ * `removalTable` makes, placed on the literal or kept unplaced with a type
+ * it fits, as `mayReach` says, may remove the key or make it one a spread
+ * leaves out; and the value's type declares the key and not as optional.
  */
 function givesKey(spread: ts.Expression, literals: readonly ts.ObjectLiteralExpression[], key: string, checker: ts.TypeChecker): boolean {
   const declared = checker.getPropertyOfType(checker.getTypeAtLocation(spread), key);
   if (declared === undefined || (declared.flags & ts.SymbolFlags.Optional) !== 0) return false;
-  return literals.every((literal) => literal.properties.some((property) => {
+  return literals.every((literal) => !mayRemoveKey(literal, key, checker) && literal.properties.some((property) => {
     if (!ts.isSpreadAssignment(property)) return property.name !== undefined && propertyKey(property.name, checker) === key;
     const inner = spreadLiterals(property.expression, checker);
     return inner !== undefined && givesKey(property.expression, inner, key, checker);
   }));
+}
+
+/** Whether a change in the table `removalTable` makes, placed on an object literal or kept unplaced with a type it fits, may remove one key from it or make it one a spread leaves out. */
+function mayRemoveKey(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): boolean {
+  const removed = writtenTo(literal, key, checker, undefined, removalTable(checker, literal));
+  return removed.values.length > 0 || removed.unread !== null;
+}
+
+/** The table of changes that may remove a key or make it one a spread leaves out, for each checker, made once it is first read. */
+const REMOVAL_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
+
+/**
+ * Each change, in the files of a program, that may remove a key from an
+ * object or make it one a spread leaves out, as `removalsAt` finds them,
+ * placed as `placeChanges` places them.
+ *
+ * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
+ */
+function removalTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
+  const kept = REMOVAL_TABLES.get(checker);
+  if (kept !== undefined) return kept;
+  const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, removalsAt));
+  const table = placeChanges(changes, checker);
+  REMOVAL_TABLES.set(checker, table);
+  return table;
+}
+
+/** The library functions that may remove a key from the object they are handed first, or change whether a spread gives it. */
+const REMOVING_FUNCTIONS: ReadonlySet<string> = new Set(["Reflect.deleteProperty", "Object.defineProperty", "Reflect.defineProperty", "Object.defineProperties"]);
+
+/** The names each function REMOVING_FUNCTIONS lists is called by, so that a call by any other name is not resolved. */
+const REMOVING_NAMES: ReadonlySet<string> = new Set([...REMOVING_FUNCTIONS].map((name) => name.slice(name.indexOf(".") + 1)));
+
+/**
+ * The changes one node makes that may remove a key, each written as a
+ * "value" change under the keys it may remove, holding the node itself: a
+ * `delete` of a member, under the keys `memberKeys` finds it reads;
+ * `Reflect.deleteProperty`, under the keys its key may be, as `keysOf` finds
+ * them; and `Object.defineProperty`, `Reflect.defineProperty` and each key
+ * of `Object.defineProperties`, unless the descriptor is an object literal
+ * written in place that sets `enumerable` to `true`, since any other
+ * descriptor may make the key one a spread leaves out. A key not known
+ * may be any key, and a list of descriptors not written in place may hold
+ * any. A call is read only where it names the function by the name the
+ * library gives it, as REMOVING_NAMES lists them.
+ */
+function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
+  if (ts.isDeleteExpression(node)) {
+    const target = heldValue(node.expression);
+    if (target === undefined || (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target))) return [];
+    return [removalOf(target.expression, memberKeys(target, checker), node)];
+  }
+  if (!ts.isCallExpression(node)) return [];
+  const callee = heldValue(node.expression);
+  const called = callee === undefined ? undefined : ts.isIdentifier(callee) ? callee.text : memberName(callee);
+  if (called === undefined || !REMOVING_NAMES.has(called)) return [];
+  const invocation = invocationOf(node, checker);
+  const name = invocation.declaration === undefined ? undefined : libraryMemberName(invocation.declaration);
+  const [target, key, described] = invocation.args;
+  if (name === undefined || !REMOVING_FUNCTIONS.has(name) || target === undefined || ts.isSpreadElement(target)) return [];
+  if (name !== "Object.defineProperties") return name === "Reflect.deleteProperty" || !keepsEnumerable(described) ? [removalOf(target, keysOf(key, checker), node)] : [];
+  const descriptors = heldValue(key);
+  if (descriptors === undefined || !ts.isObjectLiteralExpression(descriptors)) return [removalOf(target, undefined, node)];
+  return descriptors.properties.flatMap((property): Change[] => {
+    if (!ts.isPropertyAssignment(property)) return [removalOf(target, undefined, node)];
+    const given = propertyKey(property.name, checker);
+    return keepsEnumerable(property.initializer) ? [] : [removalOf(target, given === undefined ? undefined : [given], node)];
+  });
+}
+
+/** A change that may remove each key named, or any key when none is, from what its receiver may be, written as `removalsAt` writes it. */
+function removalOf(receiver: ts.Expression, keys: readonly string[] | undefined, at: ts.Expression): Change {
+  return { receiver, write: { kind: "value", keys, value: at }, at };
+}
+
+/** Whether a property descriptor is an object literal written in place whose `enumerable` property is the literal `true`, so that a spread gives the key it describes. */
+function keepsEnumerable(descriptor: ts.Expression | undefined): boolean {
+  const literal = heldValue(descriptor);
+  return literal !== undefined && ts.isObjectLiteralExpression(literal) && literal.properties.some((property) => ts.isPropertyAssignment(property)
+    && (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)) && property.name.text === "enumerable" && property.initializer.kind === ts.SyntaxKind.TrueKeyword);
 }
 
 /**
