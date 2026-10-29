@@ -2560,11 +2560,40 @@ describe("the code skill's rules for this repository's own code", () => {
       }
       for (const [holder, name] of [
         ["class Runner {\n  then(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\nvoid new Runner().then(consuming);\n", "then"],
-        ["const bag = {\n  then(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\nvoid bag.then(consuming);\n", "then"],
         ["const bag = {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\nvoid Object.values(bag)[0]!(consuming);\n", "run"],
       ] as Array<[holder: string, name: string]>) {
         const text = `export function main(): number {\n  return 0;\n}\n${holder}${wrappers}`;
         expect(boundHelpers("probe.ts", text), holder).toEqual([`probe.ts / ${name} / helper`]);
+      }
+    });
+
+    test("an object literal's method named as a library's protocol is read where every use of the literal reads a member, beside its breach", () => {
+      // Each holder calls the method KEY with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const method = "const bag = {\n  KEY(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\n";
+      const holders: Array<[holder: string, name: string]> = [
+        [method, "KEY"],
+        ["const bag = {\n  KEY: (box: Boxer): number => {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\n", "(an unnamed function)"],
+      ];
+      for (const key of ["then", "get", "set", "has", "toString", "next"]) {
+        for (const [holder, name] of holders) {
+          for (const [value, found] of [["consuming", []], ["boxing", [`probe.ts / ${name.replace("KEY", key)} / helper`]]] as Array<[value: string, found: string[]]>) {
+            const text = `export function main(): number {\n  return bag.${key}(${value});\n}\n${holder.replace("KEY", key)}${wrappers}`;
+            expect(boundHelpers("probe.ts", text), key + holder + value).toEqual(found);
+            expect(unplacedFunctions("probe.ts", text).problems, key + holder + value).toEqual([]);
+          }
+        }
+      }
+      // A literal handed on, itself or a copy, may reach a library that calls the method by its protocol with anything its type allows.
+      for (const [key, handing] of [
+        ["then", "void Promise.resolve(bag as never);"],
+        ["then", "const copy = { ...bag };\n  void copy.then(consuming);\n  void Promise.resolve(copy as never);"],
+        ["get", "void new Proxy({}, bag as never);"],
+        ["has", "const handler: object = bag;\n  void handler;"],
+        ["toString", "void String(bag);"],
+        ["next", "void [bag];"],
+      ] as Array<[key: string, handing: string]>) {
+        const text = `export function main(): number {\n  ${handing}\n  return bag.${key}(consuming);\n}\n${method.replace("KEY", key)}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), key + handing).toEqual([`probe.ts / ${key} / helper`]);
       }
     });
 
@@ -7279,7 +7308,10 @@ interface CallSites {
  * The names of the methods a library calls on a value it is handed by a
  * protocol, not by a call written here: a thenable's `then`, the
  * conversions, JSON's `toJSON`, an iterator's own methods, an event listener
- * object's `handleEvent`, and the traps of a proxy's handler.
+ * object's `handleEvent`, and the traps of a proxy's handler. A method of an
+ * object literal is called by protocol only where the literal is handed on,
+ * which `literalMethodSites` finds no route for, so these names stop only a
+ * class's method.
  */
 const PROTOCOL_METHODS: ReadonlySet<string> = new Set([
   "then", "toString", "valueOf", "toLocaleString", "toJSON", "next", "return", "throw", "handleEvent",
@@ -7328,7 +7360,7 @@ function namedSites(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): Ca
     // A function an object literal's property holds runs as a method of the literal does.
     if (ts.isPropertyAssignment(property) && property.initializer === outer && ts.isObjectLiteralExpression(property.parent)) {
       const key = propertyKey(property.name, checker);
-      return key === undefined || PROTOCOL_METHODS.has(key) || isLibrarySymbolKey(key) ? undefined : literalMethodSites(property.parent, key, checker);
+      return key === undefined || isLibrarySymbolKey(key) ? undefined : literalMethodSites(property.parent, key, checker);
     }
   }
   const named = calledByName(owner);
@@ -7372,16 +7404,16 @@ function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker): bool
  * key, which hands the method on.
  *
  * @returns The places; undefined when a read hands the method on in any
- *     other way, or its key is not known, or is one a library calls by
- *     protocol, as PROTOCOL_METHODS names them, or a symbol the library
- *     declares, by which the language calls it.
+ *     other way, or its key is not known, or is a symbol the library
+ *     declares, by which the language calls it, or, for a method of a
+ *     class, one a library calls by protocol, as PROTOCOL_METHODS names them.
  */
 function methodSites(method: ts.MethodDeclaration, checker: ts.TypeChecker): CallSites | undefined {
   const holder = method.parent;
   const key = ts.isPrivateIdentifier(method.name) ? method.name.text : propertyKey(method.name, checker);
-  if (key === undefined || PROTOCOL_METHODS.has(key) || isLibrarySymbolKey(key)) return undefined;
+  if (key === undefined || isLibrarySymbolKey(key)) return undefined;
   if (ts.isObjectLiteralExpression(holder)) return literalMethodSites(holder, key, checker);
-  if (!ts.isClassLike(holder)) return undefined;
+  if (!ts.isClassLike(holder) || PROTOCOL_METHODS.has(key)) return undefined;
   const side: ClassSide = isStatic(method) ? "static" : "instance";
   const sites: CallSites = { calls: [], handing: [] };
   for (const file of PROGRAM_SOURCES.get(checker) ?? [method.getSourceFile()]) {
