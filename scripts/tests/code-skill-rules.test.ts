@@ -2821,6 +2821,22 @@ describe("the code skill's rules for this repository's own code", () => {
         }
       }
     });
+
+    test("a method of a class expression with no name is given what each call of it gives, beside its breach", () => {
+      const runner = "const Runner = class {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n"
+        + "  static go(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n};\n";
+      // Each form calls the method with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      for (const [statement, method] of [
+        ["new Runner().run(VALUE);\n  Runner.go(consuming);", "run"],
+        ["Runner.go(VALUE);\n  new Runner().run(consuming);", "go"],
+        ["const made: { go(box: Boxer): number } = Runner;\n  made.go(VALUE);\n  new Runner().run(consuming);", "go"],
+      ] as Array<[statement: string, method: string]>) {
+        for (const [value, found] of [["consuming", []], ["boxing", [`probe.ts / ${method} / helper`]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${statement.replace("VALUE", value)}\n  return 0;\n}\n${runner}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+        }
+      }
+    });
   });
 });
 
@@ -5550,7 +5566,8 @@ function copiedValues(source: ts.Expression, key: string | undefined, checker: t
  */
 function mayReach(type: ts.Type, container: Container, checker: ts.TypeChecker, side?: ClassSide): boolean {
   if (!ts.isClassLike(container)) return checker.isTypeAssignableTo(checker.getWidenedType(checker.getTypeAtLocation(container)), type);
-  const symbol = container.name === undefined ? undefined : checker.getSymbolAtLocation(container.name);
+  // A class expression with no name has the class's symbol on its own type.
+  const symbol = container.name === undefined ? checker.getTypeAtLocation(container).getSymbol() : checker.getSymbolAtLocation(container.name);
   if (symbol === undefined) return false;
   const instance = side !== "static" && checker.isTypeAssignableTo(checker.getDeclaredTypeOfSymbol(symbol), type);
   return instance || (side !== "instance" && checker.isTypeAssignableTo(checker.getTypeOfSymbol(symbol), type));
@@ -6194,8 +6211,7 @@ function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker): bool
  * key, which hands the method on.
  *
  * @returns The places; undefined when a read hands the method on in any
- *     other way, or its class has no name, so that its type cannot be
- *     compared, or its key is not known, or is one a library calls by
+ *     other way, or its key is not known, or is one a library calls by
  *     protocol, as PROTOCOL_METHODS names them, or a symbol the library
  *     declares, by which the language calls it.
  */
@@ -6204,7 +6220,7 @@ function methodSites(method: ts.MethodDeclaration, checker: ts.TypeChecker): Cal
   const key = ts.isPrivateIdentifier(method.name) ? method.name.text : propertyKey(method.name, checker);
   if (key === undefined || PROTOCOL_METHODS.has(key) || isLibrarySymbolKey(key)) return undefined;
   if (ts.isObjectLiteralExpression(holder)) return literalMethodSites(holder, key, checker);
-  if (!ts.isClassLike(holder) || holder.name === undefined) return undefined;
+  if (!ts.isClassLike(holder)) return undefined;
   const side: ClassSide = isStatic(method) ? "static" : "instance";
   const sites: CallSites = { calls: [], handing: [] };
   for (const file of PROGRAM_SOURCES.get(checker) ?? [method.getSourceFile()]) {
