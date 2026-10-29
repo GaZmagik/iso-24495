@@ -3306,6 +3306,57 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a removal written after a spread, in the block whose const makes the literal spread, leaves what the spread gave, beside its breaches", () => {
+      // Each form spreads `overrides`, which gives `box` VALUE, after `dependencies`, which gives it OTHER: `consuming` and `boxing` in the valid form, swapped in its breach.
+      // Where a removal may run before a spread reads `overrides`, OTHER may survive, so both are reported.
+      const declared = "const overrides = { box: VALUE, other: 1 };\n  const dependencies = { box: OTHER };";
+      const spread = "const { box } = { ...dependencies, ...overrides };";
+      const forms: Array<[body: string, removes: boolean]> = [
+        [`${declared}\n  ${spread}\n  if (hide) Reflect.deleteProperty(overrides, "box");`, false],
+        [`${declared}\n  ${spread}\n  if (hide) delete (overrides as Partial<typeof overrides>).box;`, false],
+        [`${declared}\n  ${spread}\n  Object.defineProperty(overrides, "box", { enumerable: !hide });`, false],
+        [`${declared}\n  ${spread}\n  for (const key of ["box"]) Reflect.deleteProperty(overrides, key);`, false],
+        [`${declared}\n  ${spread}\n  const remove = Reflect.deleteProperty;\n  if (hide) remove(overrides, "box");`, false],
+        ["let box: Boxer = consuming;\n  for (const each of [false, hide]) {\n    const overrides = { box: VALUE, other: 1 };\n    const dependencies = { box: OTHER };\n"
+          + "    ({ box } = { ...dependencies, ...overrides });\n    if (each) Reflect.deleteProperty(overrides, \"box\");\n  }", false],
+        // A removal written before the spread.
+        [`${declared}\n  if (hide) Reflect.deleteProperty(overrides, "box");\n  ${spread}`, true],
+        // A removal inside a loop that also holds the spread, with the literal made outside it.
+        [`${declared}\n  let box: Boxer = consuming;\n  for (const each of [false, hide]) {\n    ({ box } = { ...dependencies, ...overrides });\n    if (each) Reflect.deleteProperty(overrides, "box");\n  }`, true],
+        // A spread inside a function called after the removal.
+        [`${declared}\n  if (hide) Reflect.deleteProperty(overrides, "box");\n  const { box } = make();\n  function make(): typeof dependencies {\n    return { ...dependencies, ...overrides };\n  }`, true],
+        // A removal in a nested function called before the spread, though written after it.
+        [`${declared}\n  strip();\n  ${spread}\n  function strip(): void {\n    if (hide) Reflect.deleteProperty(overrides, "box");\n  }`, true],
+        // A spread a getter makes only when its result is read, after the removal.
+        [`${declared}\n  const view = {\n    get box(): Boxer {\n      return { ...dependencies, ...overrides }.box;\n    },\n  };\n  if (hide) Reflect.deleteProperty(overrides, "box");\n  const { box } = view;`, true],
+        // A literal made in an outer block, spread again after the removal in an inner one.
+        [`${declared}\n  let box: Boxer = consuming;\n  if (hide) {\n    ({ box } = { ...dependencies, ...overrides });\n    Reflect.deleteProperty(overrides, "box");\n  }\n  ({ box } = { ...dependencies, ...overrides });`, true],
+      ];
+      for (const [body, removes] of forms) {
+        for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
+          const text = `export function main(hide = true): number {\n  ${body.replaceAll("VALUE", value).replaceAll("OTHER", other)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), body + value).toEqual(removes || value === "boxing" ? reported : []);
+          expect(unplacedFunctions("probe.ts", text).problems, body + value).toEqual([]);
+        }
+      }
+      // A removal written after the spread at the top of a file runs once, after it.
+      for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+        const text = `const overrides = { box: ${value}, other: 1 };\nconst dependencies = { box: ${other} };\nconst { box } = { ...dependencies, ...overrides };\nReflect.deleteProperty(overrides, "box");\n`
+          + `export function main(): number {\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), value).toEqual(found);
+      }
+      // The throws check reads the order the same way.
+      const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+      for (const [removal, problems] of [
+        [`${spread}\n  if (hide) Reflect.deleteProperty(overrides, "box");`, []],
+        [`if (hide) Reflect.deleteProperty(overrides, "box");\n  ${spread}`, ["probe.ts:7: the comment on helper does not say what it throws"]],
+      ] as Array<[removal: string, problems: string[]]>) {
+        const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  const dependencies = { box: boxing };\n  ${removal}\n`
+          + `  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, removal).toEqual(problems);
+      }
+    });
+
     test("a later entry of Object.fromEntries replaces each entry before it under the same key, beside its breach", () => {
       // Each form gives the key read VALUE in its last entry, and OTHER before it: `consuming` and `boxing` in the valid form, swapped in its breach.
       const forms = [
@@ -8978,12 +9029,13 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
  * an accessor or a spread that always gives it, and no change in the table
  * `removalTable` makes, placed on the literal or kept unplaced with a type
  * it fits, as `mayReach` says, may remove the key or make it one a spread
- * leaves out; and the value's type declares the key and not as optional.
+ * leaves out before the spread reads it, as `mayRemoveKey` says; and the
+ * value's type declares the key and not as optional.
  */
 function givesKey(spread: ts.Expression, literals: readonly ts.ObjectLiteralExpression[], key: string, checker: ts.TypeChecker): boolean {
   const declared = checker.getPropertyOfType(checker.getTypeAtLocation(spread), key);
   if (declared === undefined || (declared.flags & ts.SymbolFlags.Optional) !== 0) return false;
-  return literals.every((literal) => !mayRemoveKey(literal, key, checker) && literal.properties.some((property) => {
+  return literals.every((literal) => !mayRemoveKey(literal, key, spread, checker) && literal.properties.some((property) => {
     if (!ts.isSpreadAssignment(property)) return property.name !== undefined && propertyKey(property.name, checker) === key;
     const inner = spreadLiterals(property.expression, checker);
     return inner !== undefined && givesKey(property.expression, inner, key, checker);
@@ -8993,14 +9045,56 @@ function givesKey(spread: ts.Expression, literals: readonly ts.ObjectLiteralExpr
 /**
  * Whether a change in the table `removalTable` makes, placed on an object
  * literal or kept unplaced with a type it fits, may remove one key from it
- * or make it one a spread leaves out. While the table is being made, any
- * key may be.
+ * or make it one a spread leaves out before a spread reads it. A change
+ * that runs only once the spread has read it, as `removesAfter` says,
+ * leaves what the spread gave. While the table is being made, any key may
+ * be.
+ *
+ * @param spread The value spread, or the source `Object.assign` copies, that reads the literal.
  */
-function mayRemoveKey(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): boolean {
+function mayRemoveKey(literal: ts.ObjectLiteralExpression, key: string, spread: ts.Expression, checker: ts.TypeChecker): boolean {
   const table = removalTable(checker, literal);
   if (table === undefined) return true;
   const removed = writtenTo(literal, key, checker, undefined, table);
-  return removed.values.length > 0 || removed.unread !== null;
+  return removed.values.some((removal) => !removesAfter(removal, spread, checker)) || removed.unread !== null;
+}
+
+/**
+ * Whether a removal runs only once a spread has read the value it removes a
+ * key from, so that what the spread gave is kept. The spread reads a name a
+ * `const` declares with an object literal, in a statement of a block or a
+ * file; the removal's receiver is that name too; and the spread and the
+ * removal are each written in a statement of that same block, outside any
+ * function or class nested there, the removal's later than the spread's.
+ * Each run of the block makes the literal afresh, so a removal in one run
+ * cannot reach what the spread reads in another, and a loop around the
+ * block runs the two in order each time. A removal anywhere else, or
+ * through any other name, may run first.
+ */
+function removesAfter(removal: ts.Node, spread: ts.Expression, checker: ts.TypeChecker): boolean {
+  const named = heldValue(spread);
+  const declaration = named !== undefined && ts.isIdentifier(named) ? usedSymbol(named, checker)?.valueDeclaration : undefined;
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return false;
+  const literal = heldValue(declaration.initializer);
+  const statement = declaration.parent.parent;
+  const block = statement.parent;
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal) || !ts.isVariableStatement(statement)
+    || (!ts.isBlock(block) && !ts.isCaseOrDefaultClause(block) && !ts.isSourceFile(block))) return false;
+  const reading = statementIndex(spread, block);
+  const removing = statementIndex(removal, block);
+  if (reading < block.statements.indexOf(statement) || removing <= reading) return false;
+  return removalsAt(removal, checker).every((change) => {
+    const receiver = heldValue(change.receiver);
+    return receiver !== undefined && ts.isIdentifier(receiver) && refersTo(receiver, declaration, checker);
+  });
+}
+
+/** The position, among a block's statements, of the statement a node is written in, outside any function or class nested there; -1 when it is written elsewhere. */
+function statementIndex(node: ts.Node, block: ts.Block | ts.CaseOrDefaultClause | ts.SourceFile): number {
+  for (let at = node; ; at = at.parent) {
+    if (ts.isFunctionLike(at) || ts.isClassLike(at) || ts.isClassStaticBlockDeclaration(at) || ts.isSourceFile(at)) return -1;
+    if (at.parent === block) return block.statements.findIndex((each) => each === at);
+  }
 }
 
 /** The table of changes that may remove a key or make it one a spread leaves out, for each checker, made once it is first read. */
