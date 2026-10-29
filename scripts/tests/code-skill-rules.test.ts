@@ -28,6 +28,9 @@ const REPOSITORY_PROGRAMS: ts.Program[] = [];
  */
 const PROGRAM_SOURCES = new WeakMap<ts.TypeChecker, readonly ts.SourceFile[]>();
 
+/** How many times the table of changes to items has been started for each checker, which a test holds to one. */
+const ITEM_TABLES_STARTED = new WeakMap<ts.TypeChecker, number>();
+
 const BACKSLASH = String.fromCharCode(92);
 
 /** How the name of a command shim ends. A shim runs one function of the module named without it. */
@@ -3124,6 +3127,16 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(boundHelpers("probe.ts", text)).toEqual(reported);
     });
 
+    test("a change whose place needs a list's length while the table of changes to items is made reads no length, and the table is made once", () => {
+      // Placing `row.push` needs the length of `rows`, which the table being made would say; `at(-1)` then asks for the table.
+      for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+        const text = `export function main(): number {\n  const rows: string[][] = [[""]];\n  const row = rows.at(-1) as string[];\n  row.push("x");\n  const box = [${value === "consuming" ? "boxing" : "consuming"}, ${value}].at(-1);\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        const { source, checker } = typedSource("probe.ts", text);
+        expect(boundHelpersIn("probe.ts", source, checker), value).toEqual(found);
+        expect(ITEM_TABLES_STARTED.get(checker), value).toBe(1);
+      }
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -4972,6 +4985,7 @@ function itemTable(checker: ts.TypeChecker, location: ts.Node): WriteTable | und
   if (kept !== undefined) return kept;
   if (ITEM_TABLES_BEING_MADE.has(checker)) return undefined;
   ITEM_TABLES_BEING_MADE.add(checker);
+  ITEM_TABLES_STARTED.set(checker, (ITEM_TABLES_STARTED.get(checker) ?? 0) + 1);
   try {
     const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, madeChanges)).filter(({ write }) => {
       if (write.kind !== "value" && write.kind !== "destructured") return true;
