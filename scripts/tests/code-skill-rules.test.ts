@@ -2604,7 +2604,6 @@ describe("the code skill's rules for this repository's own code", () => {
         ["process.on(\"message\", (box: Boxer) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  process.emit(\"message\", consuming as never);", "(an unnamed function)"],
         ["const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);\n  await promise.then((box) => {\n    const helper = box((): number => 1);\n    void helper;\n  });", "(an unnamed function)"],
         ["const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);\n  const box = await promise;\n  const helper = box((): number => 1);\n  void helper;", "main"],
-        ["const box = await new Promise<Boxer>((resolve) => {\n    setTimeout(resolve, 1, consuming);\n  });\n  const helper = box((): number => 1);\n  void helper;", "main"],
       ] as Array<[statement: string, name: string]>) {
         const text = `export async function main(): Promise<number> {\n  ${statement}\n  return 0;\n}\n${wrappers}`;
         expect(boundHelpers("probe.ts", text), statement).toEqual([`probe.ts / ${name} / helper`]);
@@ -2617,6 +2616,30 @@ describe("the code skill's rules for this repository's own code", () => {
         const text = `export async function main(): Promise<number> {\n  ${statement}\n  return 0;\n}\n`;
         expect(boundHelpers("probe.ts", text), statement).toEqual([]);
         expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual(problems);
+      }
+    });
+
+    test("a promise's resolve handed to a timer is called with each argument handed after the delay, beside its breach", () => {
+      // Each form hands the timer VALUE for `resolve`: `consuming` in the valid form, `boxing` in its breach.
+      for (const timer of ["setTimeout(resolve, 1, VALUE);", "setInterval(resolve, 1, VALUE);", "setImmediate(resolve, VALUE);", "setTimeout(resolve, 1, VALUE, boxing);"]) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / main / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export async function main(): Promise<number> {\n  const box = await new Promise<Boxer>((resolve) => {\n    ${timer.replace("VALUE", value)}\n  });\n`
+            + `  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), timer + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, timer + value).toEqual([]);
+        }
+      }
+      // A spread among what the timer is handed, `resolve` handed anywhere else, or handed on through another name, may give it anything its type allows.
+      for (const handing of [
+        "setTimeout(resolve, ...[1, consuming]);",
+        "setTimeout(resolve, 1, ...[consuming]);",
+        "[consuming].forEach(resolve);",
+        "const go = resolve;\n    setTimeout(go, 1, consuming);",
+        "setTimeout(() => resolve(consuming), 1);\n    queueMicrotask(resolve as () => void);",
+      ]) {
+        const text = `export async function main(): Promise<number> {\n  const box = await new Promise<Boxer>((resolve) => {\n    ${handing}\n  });\n`
+          + `  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), handing).toEqual(["probe.ts / main / helper"]);
       }
     });
 
@@ -5826,9 +5849,10 @@ function madeChanges(node: ts.Node, checker: ts.TypeChecker): Change[] {
  * The changes a promise the library's Promise constructor makes is given:
  * each value a call of `resolve` or `reject`, the executor's first two
  * parameters, hands on, wherever the call is written, since the promise
- * resolves to it, or is rejected with it. A use of either that is no call,
- * as handing `resolve` to a timer is not, a spread among what one is handed,
- * or an executor not written in place as a function, gives what no rule reads.
+ * resolves to it, or is rejected with it; and the first value a library
+ * timer hands one it is handed to call, as `timerArguments` reads it. Any
+ * other use of either, a spread among what one is handed, or an executor
+ * not written in place as a function, gives what no rule reads.
  */
 function promiseChanges(promise: ts.NewExpression, checker: ts.TypeChecker): Change[] {
   const executor = heldValue(promise.arguments?.[0]);
@@ -5843,10 +5867,12 @@ function promiseChanges(promise: ts.NewExpression, checker: ts.TypeChecker): Cha
       if (use === parameter.name) continue;
       const outer = outerValue(use);
       const call = outer.parent;
-      const value = ts.isCallExpression(call) && call.expression === outer ? call.arguments[0] : undefined;
+      const called = ts.isCallExpression(call) && call.expression === outer;
+      const timed = called ? undefined : timerArguments(outer, checker);
+      const value = called ? call.arguments[0] : timed?.[0];
       if (value !== undefined && ts.isSpreadElement(value)) {
         changes.push({ receiver: promise, write: { kind: "unread" }, at: call });
-      } else if (ts.isCallExpression(call) && call.expression === outer) {
+      } else if (called || timed !== undefined) {
         if (value !== undefined) changes.push({ receiver: promise, write: { kind: "value", keys: undefined, value }, at: call });
       } else {
         changes.push({ receiver: promise, write: { kind: "unread" }, at: use });
@@ -5854,6 +5880,32 @@ function promiseChanges(promise: ts.NewExpression, checker: ts.TypeChecker): Cha
     }
   }
   return changes;
+}
+
+/** The library's timers, each of which calls the handler it is handed first with each argument handed at or after its rest parameter's position. */
+const TIMER_FUNCTIONS: ReadonlySet<string> = new Set(["setTimeout", "setInterval", "setImmediate"]);
+
+/**
+ * What a library timer hands the function it is handed to call: each
+ * argument at or after the position of the timer's rest parameter, where the
+ * function is the handler, its first argument, and the call names the timer
+ * itself, so that `setTimeout(resolve, 1, value)` calls `resolve(value)`.
+ *
+ * @param outer The function handed, outside every wrapper `heldValue` looks through.
+ * @returns The arguments, or undefined when the function is no timer's
+ *     handler, or a spread before that position hides which argument it is handed first.
+ */
+function timerArguments(outer: ts.Node, checker: ts.TypeChecker): readonly ts.Expression[] | undefined {
+  const call = outer.parent;
+  if (!ts.isCallExpression(call) || call.arguments[0] !== outer || !isLibraryCall(call, checker)) return undefined;
+  const invocation = invocationOf(call, checker);
+  const declaration = invocation.declaration;
+  if (declaration === undefined || invocation.callee !== call.expression || !ts.isFunctionDeclaration(declaration) || declaration.name === undefined
+    || !TIMER_FUNCTIONS.has(declaration.name.text)) return undefined;
+  const handler = declaration.parameters[0];
+  const rest = declaration.parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined);
+  if (handler === undefined || rest < 1 || !isCallbackParameter(handler, checker) || call.arguments.slice(0, rest).some(ts.isSpreadElement)) return undefined;
+  return call.arguments.slice(rest);
 }
 
 /**
