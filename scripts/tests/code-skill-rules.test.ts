@@ -3333,6 +3333,13 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const callbacks: Callbacks = { writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
         ["const callbacks: Callbacks = { writeLog: Reflect.deleteProperty };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
         ["check((): number => 1, \"box\");", "function check(run: () => number, message: string): void {\n  void run;\n  void message;\n}\n", false],
+        // A value that may be a function the library declares, or one declared with `declare`, may be a removing function, beside one written here.
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: hide ? unchanged : Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", unchanged, true],
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: hide ? unchanged : declared };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });",
+          `${unchanged}declare const declared: (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object;\n`, true],
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: hide ? unchanged : declared };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });",
+          `${unchanged}declare function declared(target: object, key: PropertyKey, descriptor: PropertyDescriptor): object;\n`, true],
+        ["let define = unchanged;\n  if (hide) define = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", unchanged, true],
         // A call whose first argument cannot be an object removes no key, whatever its callee may hold.
         ["const define: any = Object.defineProperty;\n  define(\"box\", overrides, { enumerable: !hide });", "", false],
         ["const define: Function = Reflect.deleteProperty;\n  define(\"box\", \"other\");", "", false],
@@ -4578,6 +4585,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       if (ts.isVariableDeclaration(declaration) && ts.isCatchClause(declaration.parent)) return [...caughtValues(value, declaration.parent, checker, seen), ...assigned.values];
       if (assigned.found) return [...assigned.values, ...written];
       // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
+      if (isAmbient(declaration)) noteUnseenFunction(value, checker);
       return isGivenLater(declaration) ? [value, ...written] : written;
     }
     if (ts.isShorthandPropertyAssignment(declaration)) {
