@@ -2999,6 +2999,40 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a rest parameter destructured gives each name the argument at its position in every call, beside its breach", () => {
+      // Each form hands VALUE where the pattern takes `box` from: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[callers: string, read: string]> = [
+        ["run(VALUE);", "const [box] = boxes;"],
+        ["run(consuming, VALUE);", "const [, box] = boxes;"],
+        ["run(VALUE);", "const { 0: box } = boxes;"],
+        ["run(VALUE);\n  run();", "const [box = consuming] = boxes;"],
+        ["run(consuming, VALUE);", "let box: Boxer | undefined;\n  [, box] = boxes;"],
+      ];
+      for (const [callers, read] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / run / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${callers.replace("VALUE", value)}\n  return 0;\n}\nfunction run(...boxes: Boxer[]): number {\n  ${read}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), callers + read + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, callers + read + value).toEqual([]);
+        }
+      }
+      // A spread in a call, a call that cannot be found, a wrapper written to the array after, and a key not known, may each give any wrapper the type allows.
+      for (const [callers, read] of [
+        ["run(...[consuming]);", "const [box] = boxes;"],
+        ["run(consuming);\n  void [run];", "const [box] = boxes;"],
+        ["run(consuming);", "boxes[0] = boxing;\n  const [box] = boxes;"],
+        ["run(consuming);", "const key = String(Math.random());\n  const { [key]: box } = boxes as unknown as Record<string, Boxer>;"],
+      ] as Array<[callers: string, read: string]>) {
+        const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nfunction run(...boxes: Boxer[]): number {\n  ${read}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), callers + read).toEqual(["probe.ts / run / helper"]);
+      }
+      // The throws check reads a rest parameter destructured the same way.
+      const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+      for (const [value, problems] of [["consuming", []], ["boxing", ["probe.ts:8: the comment on helper does not say what it throws"]]] as Array<[value: string, problems: string[]]>) {
+        const text = `export function main(): object {\n  return run(${value});\n}\nfunction run(...boxes: Boxer[]): object {\n  const [box] = boxes;\n  if (box === undefined) return {};\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, value).toEqual(problems);
+      }
+    });
+
     test("a key written later in an object literal replaces what gave it before, and a spread does when it always gives the key, beside its breach", () => {
       // Each form gives the key read VALUE last, and OTHER before it: `consuming` and `boxing` in the valid form, swapped in its breach.
       const forms = [
@@ -4296,7 +4330,8 @@ function destructuringPath(target: ts.Node, checker: ts.TypeChecker): Destructur
  * `destructuringPath` finds where it takes it from: the source, or each item
  * iterating it gives, as `iteratedContents` finds them, read down each step
  * through each object literal, by its key as `keyedProperties` reads it, and
- * each array literal, by its position as `itemSource` reads it, that each
+ * each array literal, by its position as `itemSource` reads it, and the
+ * array a rest parameter makes, as `restParameterItems` reads it, that each
  * value at that step may be, as `declaredValues` finds them; and each
  * default. A value at a step that is no literal of the kind the step reads,
  * and may be or hold a function, gives what no rule reads.
@@ -4324,6 +4359,7 @@ function destructuredTargetValues(target: ts.Node, checker: ts.TypeChecker, seen
       }
       for (const literal of declaredValues(value, checker, seen)) {
         const source = !ts.isExpression(literal) ? undefined
+          : isRestParameter(literal) ? restParameterItems(literal, "at" in step ? String(step.at) : step.key, checker)
           : "at" in step ? ts.isArrayLiteralExpression(literal) ? itemSource(literal, step.at, checker) : isLibraryCall(literal, checker) ? libraryItemSource(literal, step.at, checker) : undefined
             : ts.isObjectLiteralExpression(literal) ? keyedProperties(literal, step.key, checker)
               : ts.isArrayLiteralExpression(literal) && isIndexKey(step.key) ? itemSource(literal, Number(step.key), checker) : undefined;
@@ -8286,7 +8322,8 @@ function readElement(pattern: ts.BindingPattern, element: ts.BindingElement, at:
     if (!ts.isIdentifier(element.name) && ts.isArrayLiteralExpression(literal)) readBinding(element.name, literal, checker, reading, offset + at);
     return;
   }
-  const positional = ts.isArrayBindingPattern(pattern) && !ts.isMethodDeclaration(literal) && isLibraryCall(literal, checker) ? libraryItemSource(literal, offset + at, checker) : undefined;
+  const positional = ts.isArrayBindingPattern(pattern) && !ts.isMethodDeclaration(literal) && isLibraryCall(literal, checker) ? libraryItemSource(literal, offset + at, checker)
+    : restParameterSource(pattern, element, at, literal, checker, offset);
   if (!ts.isArrayLiteralExpression(literal) && !ts.isObjectLiteralExpression(literal) && positional === undefined) reading.opaque.push(...boundNames(element.name));
   const source = positional ?? elementSource(pattern, element, at, literal, checker, offset);
   const cause = source.unknownAfter;
@@ -8338,6 +8375,32 @@ function elementSource(pattern: ts.BindingPattern, element: ts.BindingElement, a
   if (key === undefined) return { holders: [], unknownAfter: element.propertyName ?? element };
   if (ts.isObjectLiteralExpression(literal)) return keyedProperties(literal, key, checker);
   return isIndexKey(key) ? itemSource(literal, offset + Number(key), checker) : { holders: [], unknownAfter: null };
+}
+
+/**
+ * Where a binding element takes its value from in the array a rest
+ * parameter makes, by its position or its key, as `restValues` reads it:
+ * each argument that may sit there, and what code writes there after.
+ *
+ * @returns The source, the element itself as unknown where its key is not
+ *     known, or undefined when the value is not the name a rest parameter binds.
+ */
+function restParameterSource(pattern: ts.BindingPattern, element: ts.BindingElement, at: number, literal: ts.Expression | ts.MethodDeclaration,
+  checker: ts.TypeChecker, offset: number): ElementSource | undefined {
+  if (!isRestParameter(literal)) return undefined;
+  const key = ts.isArrayBindingPattern(pattern) ? String(offset + at) : boundKey(element, checker);
+  return key === undefined ? { holders: [], unknownAfter: element.propertyName ?? element } : restParameterItems(literal, key, checker);
+}
+
+/** Whether a value is the name a rest parameter binds, where it is written. */
+function isRestParameter(value: ts.Node): value is ts.Identifier {
+  return isRestTarget(value) && ts.isParameter(value.parent);
+}
+
+/** What the array a rest parameter makes holds under one key, as `restValues` reads it, as the holders of an element read from it. */
+function restParameterItems(name: ts.Identifier, key: string, checker: ts.TypeChecker): ElementSource {
+  const rested = restValues(name, key, checker, new Set());
+  return { holders: rested.values, unknownAfter: rested.unread };
 }
 
 /** Whether a key names an item of an array: a whole number of zero or more, written as a number writes itself. */
