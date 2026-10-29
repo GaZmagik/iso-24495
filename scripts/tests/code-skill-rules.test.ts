@@ -2596,7 +2596,6 @@ describe("the code skill's rules for this repository's own code", () => {
       }
       for (const [holder, name] of [
         ["class Runner {\n  then(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\nvoid new Runner().then(consuming);\n", "then"],
-        ["const bag = {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\nvoid Object.values(bag)[0]!(consuming);\n", "run"],
       ] as Array<[holder: string, name: string]>) {
         const text = `export function main(): number {\n  return 0;\n}\n${holder}${wrappers}`;
         expect(boundHelpers("probe.ts", text), holder).toEqual([`probe.ts / ${name} / helper`]);
@@ -2630,6 +2629,33 @@ describe("the code skill's rules for this repository's own code", () => {
       ] as Array<[key: string, handing: string]>) {
         const text = `export function main(): number {\n  ${handing}\n  return bag.${key}(consuming);\n}\n${method.replace("KEY", key)}${wrappers}`;
         expect(boundHelpers("probe.ts", text), key + handing).toEqual([`probe.ts / ${key} / helper`]);
+      }
+    });
+
+    test("an object literal's method read as an item of what Object.values makes of the literal runs where that item is called, beside its breach", () => {
+      const bag = "const bag = {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  },\n};\n";
+      // Each form calls the method with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      for (const call of [
+        "void Object.values(bag)[0]!(VALUE);",
+        "void Object.values(bag)[0]?.(VALUE);",
+        "void Object.values(bag).length;\n  void bag.run(VALUE);",
+      ]) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / run / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${call.replace("VALUE", value)}\n  return 0;\n}\n${bag}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), call + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, call + value).toEqual([]);
+        }
+      }
+      // An array of the values held, handed on, or read through any other member, and the entries of the literal, may give the method anything its type allows.
+      for (const call of [
+        "const list = Object.values(bag);\n  void list[0]!(consuming);",
+        "Object.values(bag).forEach((each) => {\n    void each(consuming);\n  });",
+        "void Object.values(bag).at(0)!(consuming);",
+        "void Object.entries(bag)[0]![1](consuming);",
+        "void Object.values(bag, ...[])[0]!(consuming);",
+      ]) {
+        const text = `export function main(): number {\n  ${call}\n  return 0;\n}\n${bag}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), call).toEqual(["probe.ts / run / helper"]);
       }
     });
 
@@ -7587,8 +7613,9 @@ function methodSites(method: ts.MethodDeclaration, checker: ts.TypeChecker): Cal
  * `heldValue` looks through, so it is reached only through that name, and
  * through `this` in its own methods and accessors; and each use of the name,
  * as `usesOf` finds them, and each such `this`, is the value a member is
- * read from, as `memberSite` reads it, or is spread into another object
- * literal, which holds the method too and is read in the same way.
+ * read from, as `memberSite` reads it, is handed to `Object.values`, as
+ * `valuesSite` reads it, or is spread into another object literal, which
+ * holds the method too and is read in the same way.
  *
  * @param seen The literals read already, so that literals spread into each other are read once.
  * @returns The places; undefined when the literal is held anywhere else, or
@@ -7609,7 +7636,7 @@ function literalMethodSites(literal: ts.ObjectLiteralExpression, key: string, ch
   for (const receiver of [...uses, ...selves]) {
     const spread = outerValue(receiver).parent;
     if (!ts.isSpreadAssignment(spread)) {
-      if (!memberSite(sites, receiver, key, checker)) return undefined;
+      if (!memberSite(sites, receiver, key, checker) && !valuesSite(sites, receiver, checker)) return undefined;
       continue;
     }
     const copied = literalMethodSites(spread.parent, key, checker, seen);
@@ -7648,6 +7675,27 @@ function memberSite(sites: CallSites, receiver: ts.Node, key: string, checker: t
   if (ts.isPropertyAccessExpression(access) && access.expression === outer) return access.name.text !== key || addSite(sites, access, checker);
   if (!ts.isElementAccessExpression(access) || access.expression !== outer) return false;
   return !mayBeKey(access.argumentExpression, key, checker) || addSite(sites, access, checker);
+}
+
+/**
+ * Notes where a value that holds a method, handed alone to the library's
+ * `Object.values`, runs the method: an item of the array the call makes,
+ * read by any index, may be the method, and runs it where `addSite` notes
+ * it does; the array's `length` reads no method.
+ *
+ * @param receiver The value, written where it may be handed to the call.
+ * @returns Whether the value is handed to such a call, and the array is read in one of these ways and nowhere else.
+ */
+function valuesSite(sites: CallSites, receiver: ts.Node, checker: ts.TypeChecker): boolean {
+  const outer = outerValue(receiver);
+  const call = outer.parent;
+  if (!ts.isCallExpression(call) || call.arguments.length !== 1 || call.arguments[0] !== outer || !isLibraryCall(call, checker)) return false;
+  const invocation = invocationOf(call, checker);
+  if (invocation.declaration === undefined || invocation.callee !== call.expression || libraryMemberName(invocation.declaration) !== "Object.values") return false;
+  const made = outerValue(call);
+  const access = made.parent;
+  if (ts.isPropertyAccessExpression(access) && access.expression === made) return access.name.text === "length";
+  return ts.isElementAccessExpression(access) && access.expression === made && addSite(sites, access, checker);
 }
 
 /**
