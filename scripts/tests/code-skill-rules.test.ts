@@ -3278,6 +3278,23 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]!(overrides, \"box\", { enumerable: !hide });", "", true],
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.call(Object, overrides, \"box\", { enumerable: true });", "", false],
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.call(Object, overrides, \"box\", { enumerable: !hide });", "", true],
+        // A callee whose type is a function type written here, `Function` or any cannot say which function it holds, so it runs each removing function its type may hold.
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: true });", "", false],
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const define: (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object = Object.defineProperty;\n  define.call(Object, overrides, \"box\", { enumerable: true });", "", false],
+        ["const define: (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object = Object.defineProperty;\n  define.call(Object, overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const removers: Removers = { define: Object.defineProperty };\n  removers.define(overrides, \"box\", { enumerable: true });", "interface Removers {\n  define(target: object, key: PropertyKey, descriptor: PropertyDescriptor): object;\n}\n", false],
+        ["const removers: Removers = { define: Object.defineProperty };\n  removers.define(overrides, \"box\", { enumerable: !hide });", "interface Removers {\n  define(target: object, key: PropertyKey, descriptor: PropertyDescriptor): object;\n}\n", true],
+        ["new Remover().define(overrides, \"box\", { enumerable: true });", "class Remover {\n  define: (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object = Object.defineProperty;\n}\n", false],
+        ["new Remover().define(overrides, \"box\", { enumerable: !hide });", "class Remover {\n  define: (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object = Object.defineProperty;\n}\n", true],
+        ["const remove: (target: object, key: PropertyKey) => boolean = Reflect.deleteProperty;\n  if (hide) remove({}, \"box\");", "", false],
+        ["const remove: (target: object, key: PropertyKey) => boolean = Reflect.deleteProperty;\n  if (hide) remove(overrides, \"box\");", "", true],
+        ["const define: Function = Object.defineProperty;\n  define({}, \"box\", { enumerable: !hide });", "", false],
+        ["const define: Function = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const define: any = Object.defineProperty;\n  define({}, \"box\", { enumerable: !hide });", "", false],
+        ["const define: any = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", "", true],
+        // A function type that no removing function can be given to, as one that takes fewer arguments than it needs, holds none.
+        ["const removers: Record<string, (target: object) => object> = { define: (target) => target };\n  removers[\"define\"]?.(overrides);", "", false],
         // A descriptor's `enumerable` is read by the type of its value: a name declared `true` keeps the key; one declared boolean, a cast, a call or an accessor may not.
         ["const enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", false],
         ["const shown: true = true;\n  Object.defineProperty(overrides, \"box\", { configurable: true, enumerable: shown });", "", false],
@@ -3324,6 +3341,7 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.box;", ["probe.ts:8: the comment on helper does not say what it throws"]],
         ["const define = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", ["probe.ts:8: the comment on helper does not say what it throws"]],
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", ["probe.ts:8: the comment on helper does not say what it throws"]],
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", ["probe.ts:8: the comment on helper does not say what it throws"]],
       ] as Array<[statement: string, problems: string[]]>) {
         const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
           + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
@@ -9175,7 +9193,9 @@ const REMOVING_FUNCTIONS: ReadonlySet<string> = new Set(["Reflect.deleteProperty
  * any. A call is read by the function it runs, as `invocationOf` finds
  * it, so a function held by another name, taken by a destructuring, or run
  * by `call`, `apply` or `Reflect.apply` is read as well, wherever
- * `mayRunRemoval` says it may run one.
+ * `mayRunRemoval` says it may run one. A function whose type cannot say
+ * which function it is runs each of these that `hiddenRemovals` finds its
+ * type may hold, read the same way.
  */
 function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (ts.isDeleteExpression(node)) {
@@ -9186,16 +9206,77 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (!ts.isCallExpression(node) || !mayRunRemoval(node, checker)) return [];
   const invocation = invocationOf(node, checker);
   const name = invocation.declaration === undefined ? undefined : libraryMemberName(invocation.declaration);
+  const names = name !== undefined && REMOVING_FUNCTIONS.has(name) ? [name] : hiddenRemovals(invocation.callee, checker);
   const [target, key, described] = invocation.args;
-  if (name === undefined || !REMOVING_FUNCTIONS.has(name) || target === undefined || ts.isSpreadElement(target)) return [];
-  if (name !== "Object.defineProperties") return name === "Reflect.deleteProperty" || !keepsEnumerable(described, checker) ? [removalOf(target, keysOf(key, checker), node)] : [];
+  if (target === undefined || ts.isSpreadElement(target)) return [];
+  return names.flatMap((each) => removalsBy(each, target, key, described, node, checker));
+}
+
+/**
+ * The changes a call of one function REMOVING_FUNCTIONS lists makes, given
+ * the object, the key and the descriptor it is handed, as `removalsAt`
+ * describes them.
+ *
+ * @param at The call, which each change holds.
+ */
+function removalsBy(name: string, target: ts.Expression, key: ts.Expression | undefined, described: ts.Expression | undefined,
+  at: ts.Expression, checker: ts.TypeChecker): Change[] {
+  if (name !== "Object.defineProperties") return name === "Reflect.deleteProperty" || !keepsEnumerable(described, checker) ? [removalOf(target, keysOf(key, checker), at)] : [];
   const descriptors = heldValue(key);
-  if (descriptors === undefined || !ts.isObjectLiteralExpression(descriptors)) return [removalOf(target, undefined, node)];
+  if (descriptors === undefined || !ts.isObjectLiteralExpression(descriptors)) return [removalOf(target, undefined, at)];
   return descriptors.properties.flatMap((property): Change[] => {
-    if (!ts.isPropertyAssignment(property)) return [removalOf(target, undefined, node)];
+    if (!ts.isPropertyAssignment(property)) return [removalOf(target, undefined, at)];
     const given = propertyKey(property.name, checker);
-    return keepsEnumerable(property.initializer, checker) ? [] : [removalOf(target, given === undefined ? undefined : [given], node)];
+    return keepsEnumerable(property.initializer, checker) ? [] : [removalOf(target, given === undefined ? undefined : [given], at)];
   });
+}
+
+/** The type of each function REMOVING_FUNCTIONS lists, by its name, for each checker, found once it is first read. */
+const REMOVING_TYPES = new WeakMap<ts.TypeChecker, ReadonlyMap<string, ts.Type>>();
+
+/** The type of each function REMOVING_FUNCTIONS lists, by its name, as the library the checker reads declares it. */
+function removingTypes(checker: ts.TypeChecker): ReadonlyMap<string, ts.Type> {
+  const kept = REMOVING_TYPES.get(checker);
+  if (kept !== undefined) return kept;
+  const types = new Map<string, ts.Type>();
+  for (const name of REMOVING_FUNCTIONS) {
+    const [owner = "", member = ""] = name.split(".");
+    const symbol = checker.resolveName(owner, undefined, ts.SymbolFlags.Value, false);
+    const property = symbol === undefined ? undefined : checker.getTypeOfSymbol(symbol).getProperty(member);
+    if (property !== undefined) types.set(name, checker.getTypeOfSymbol(property));
+  }
+  REMOVING_TYPES.set(checker, types);
+  return types;
+}
+
+/**
+ * The functions REMOVING_FUNCTIONS lists that an expression may hold
+ * although its type cannot say which function it holds: each whose type
+ * the checker finds can be given to the expression's type, read without
+ * `undefined` and `null`. A type cannot say which function it holds when
+ * it is any, the library's `Function`, or a type with a call signature
+ * written here with no body that runs, as a function type, a method of an
+ * interface or a function declared with `declare` are. A function the
+ * library declares, or one written here with a body, is the function its
+ * signature says, which `removalsAt` reads by that signature.
+ *
+ * @returns The names; none for an expression whose type says which function it holds.
+ */
+function hiddenRemovals(expression: ts.Expression, checker: ts.TypeChecker): string[] {
+  const type = checker.getNonNullableType(checker.getTypeAtLocation(expression));
+  const hidden = (type.flags & ts.TypeFlags.Any) !== 0 || isFunctionInterface(type) || type.getCallSignatures().some((signature) => {
+    // The type says a signature always has a declaration, but one the checker makes for itself has none.
+    const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = signature.getDeclaration();
+    return declaration !== undefined && !ts.isJSDocSignature(declaration) && !declaration.getSourceFile().isDeclarationFile && implementationOf(declaration) === undefined;
+  });
+  if (!hidden) return [];
+  return [...removingTypes(checker)].filter(([, removing]) => checker.isTypeAssignableTo(removing, type)).map(([name]) => name);
+}
+
+/** Whether a type is the library's `Function`, which any function may be, and which has no call signature to say which. */
+function isFunctionInterface(type: ts.Type): boolean {
+  const symbol = type.getSymbol();
+  return symbol !== undefined && symbol.name === "Function" && (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
 }
 
 /**
@@ -9206,19 +9287,21 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
  * type. `call`, `apply` and `bind` forward to the value their member is
  * read from, `Reflect.apply` and `Reflect.construct` to their first
  * argument, and a call of what `bind` made to the value `bind` was read
- * from. Reading these types, rather than resolving the call as
- * `invocationOf` does, leaves the call's arguments unread, which keeps a
- * table made over every call of a program cheap.
+ * from. Each of these whose type cannot say which function it holds may
+ * run one when `hiddenRemovals` finds its type may hold one. Reading these
+ * types, rather than resolving the call as `invocationOf` does, leaves the
+ * call's arguments unread, which keeps a table made over every call of a
+ * program cheap.
  */
 function mayRunRemoval(call: ts.CallExpression, checker: ts.TypeChecker): boolean {
   const callee = heldValue(call.expression) ?? call.expression;
   const forwarding = calleeForwarding(callee, checker);
   const forwarded = forwarding === "Reflect.apply" || forwarding === "Reflect.construct" ? call.arguments[0] : forwarding === undefined ? undefined : memberReceiver(callee);
   const bound = ts.isCallExpression(callee) && calleeForwarding(callee.expression, checker) === "bind" ? memberReceiver(callee.expression) : undefined;
-  return [callee, forwarded, bound].some((each) => each !== undefined && signatureDeclarations(each, checker).some((declaration) => {
+  return [callee, forwarded, bound].some((each) => each !== undefined && (signatureDeclarations(each, checker).some((declaration) => {
     const name = libraryMemberName(declaration);
     return name !== undefined && REMOVING_FUNCTIONS.has(name);
-  }));
+  }) || hiddenRemovals(each, checker).length > 0));
 }
 
 /** The member that forwards, as `forwardingDeclared` names it, whose signature the type of a callee has, or undefined when it has none. */
