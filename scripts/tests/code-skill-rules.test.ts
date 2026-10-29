@@ -3030,6 +3030,31 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a later entry of Object.fromEntries replaces each entry before it under the same key, beside its breach", () => {
+      // Each form gives the key read VALUE in its last entry, and OTHER before it: `consuming` and `boxing` in the valid form, swapped in its breach.
+      const forms = [
+        "const defaults: Array<[string, Boxer]> = [[\"box\", OTHER]];\n  const overrides: Array<[string, Boxer]> = [[\"box\", VALUE]];\n  const box = Object.fromEntries([...defaults, ...overrides]).box as Boxer | undefined;",
+        "const box = Object.fromEntries([[\"box\", OTHER], [\"box\", VALUE]] as Array<[string, Boxer]>).box as Boxer | undefined;",
+        "const entry: [string, Boxer] = [\"box\", VALUE];\n  const box = Object.fromEntries([[\"box\", OTHER], entry] as Array<[string, Boxer]>).box as Boxer | undefined;",
+      ];
+      for (const form of forms) {
+        for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value).replace("OTHER", other)}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A list code changes, an entry whose key code rewrites, and a key not known, leave the entries before it.
+      for (const form of [
+        "const defaults: Array<[string, Boxer]> = [[\"box\", boxing]];\n  const overrides: Array<[string, Boxer]> = [[\"box\", consuming]];\n  overrides.pop();\n  const box = Object.fromEntries([...defaults, ...overrides]).box as Boxer | undefined;",
+        "const entry: [string, Boxer] = [\"box\", consuming];\n  entry[0] = \"other\";\n  const box = Object.fromEntries([[\"box\", boxing], entry] as Array<[string, Boxer]>).box as Boxer | undefined;",
+        "const box = Object.fromEntries([[\"box\", boxing], [name, consuming]] as Array<[string, Boxer]>).box as Boxer | undefined;",
+      ]) {
+        const text = `export function main(name: string): number {\n  ${form}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), form).toEqual(reported);
+      }
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -6278,8 +6303,10 @@ function keyOfValue(literal: DeclaredValue, key: string, read: ts.PropertyAccess
  * them, that `mayHaveKey` finds may be under the key, read as `itemSource`
  * reads the entry, as `declaredValues` reads each entry not written in
  * place, and what code writes to the key after, as `writtenTo` finds it.
- * An entry that is no array literal, a list hidden by a spread or not
- * handed, and a change no rule reads, give what no rule reads.
+ * An entry that `replacedEntries` finds a later entry replaces holds
+ * nothing under the key. An entry that is no array literal, a list hidden
+ * by a spread or not handed, and a change no rule reads, give what no rule
+ * reads.
  *
  * @param read The expression that reads the key, given back as well, as unread, where the key may hold what no rule reads.
  * @returns The values, or undefined for any other value.
@@ -6294,7 +6321,9 @@ function entriesValues(made: ts.Expression, key: string, read: ts.Expression, ch
   const written = writtenTo(made, key, checker);
   let unread = listed.unread !== null || written.unread !== null;
   const values: DeclaredValue[] = written.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
+  const replaced = replacedEntries(list, key, checker);
   for (const entry of listed.values) {
+    if (replaced.has(entry)) continue;
     if (!ts.isExpression(entry) || !mayHaveKey(entry, [key], made, checker)) {
       unread ||= !ts.isExpression(entry);
       continue;
@@ -6310,6 +6339,56 @@ function entriesValues(made: ts.Expression, key: string, read: ts.Expression, ch
     }
   }
   return unread ? [...values, read] : values;
+}
+
+/**
+ * The entries of a list handed to `Object.fromEntries` that a later entry
+ * replaces under one key: each item `orderedItems` finds the list holds
+ * before the last item that is an entry whose key is always that key, as
+ * `entryKeys` reads it, written in place or as a name whose one value is
+ * an array literal, as `singleList` finds it.
+ *
+ * @returns The entries replaced, none when no entry always gives the key, or the order of the items is not known.
+ */
+function replacedEntries(list: ts.Expression, key: string, checker: ts.TypeChecker): ReadonlySet<ts.Node> {
+  const listed = singleList(list, checker);
+  const items = listed === undefined ? undefined : orderedItems(listed, checker);
+  if (items === undefined) return new Set();
+  const last = items.findLastIndex((item) => {
+    const entry = ts.isArrayLiteralExpression(item) ? item : singleList(item, checker);
+    const keys = entry === undefined ? undefined : entryKeys(entry, true, checker);
+    return keys !== undefined && keys.length === 1 && keys[0] === key;
+  });
+  return new Set(items.slice(0, Math.max(last, 0)));
+}
+
+/**
+ * Each item an array literal holds, in order, when no code can change which
+ * item sits where: each item written in it, and, for each spread, the items
+ * of the one array literal the value spread may be, as `singleList` finds
+ * it, read in the same way, in turn. No change in the table `itemTable`
+ * makes, placed on any of these literals or kept unplaced with a type it
+ * fits, as `mayReach` says, may give, move or remove an item.
+ *
+ * @returns The items, or undefined when a hole, a spread of anything else, or such a change, leaves their order unknown.
+ */
+function orderedItems(literal: ts.ArrayLiteralExpression, checker: ts.TypeChecker): ts.Expression[] | undefined {
+  const table = itemTable(checker, literal);
+  if (table === undefined) return undefined;
+  if ((table.placed.get(literal) ?? []).length > 0 || table.unplaced.some(({ type }) => mayReach(type, literal, checker))) return undefined;
+  const items: ts.Expression[] = [];
+  for (const element of literal.elements) {
+    if (ts.isOmittedExpression(element)) return undefined;
+    if (!ts.isSpreadElement(element)) {
+      items.push(element);
+      continue;
+    }
+    const inner = singleList(element.expression, checker);
+    const held = inner === undefined ? undefined : orderedItems(inner, checker);
+    if (held === undefined) return undefined;
+    items.push(...held);
+  }
+  return items;
 }
 
 /**
