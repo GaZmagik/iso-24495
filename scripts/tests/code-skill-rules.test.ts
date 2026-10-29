@@ -3271,6 +3271,29 @@ describe("the code skill's rules for this repository's own code", () => {
         ["Object.defineProperty[\"call\"](Object, overrides, \"box\", { enumerable: !hide });", "", true],
         ["const run = Reflect.apply;\n  run(Object.defineProperty, Object, [overrides, \"box\", { enumerable: true }]);", "", false],
         ["const run = Reflect.apply;\n  run(Object.defineProperty, Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
+        // A descriptor's `enumerable` is read by the type of its value: a name declared `true` keeps the key; one declared boolean, a cast, a call or an accessor may not.
+        ["const enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", false],
+        ["const shown: true = true;\n  Object.defineProperty(overrides, \"box\", { configurable: true, enumerable: shown });", "", false],
+        ["let enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", true],
+        ["const enumerable: boolean = !hide;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", true],
+        ["Object.defineProperty(overrides, \"box\", { enumerable: !hide as true });", "", true],
+        ["Object.defineProperty(overrides, \"box\", { enumerable: shown(hide) });", "function shown(hide: boolean): boolean {\n  return !hide;\n}\n", true],
+        ["Object.defineProperty(overrides, \"box\", {\n    get enumerable(): boolean {\n      return !hide;\n    },\n  });", "", true],
+        ["defineProperty(overrides, \"box\");", "function defineProperty(each: object, key: string): void {\n  void each;\n  void key;\n}\n", false],
+        ["const key: string = hide ? \"box\" : \"other\";\n  delete (overrides as Record<string, unknown>)[key];", "", true],
+        ["strip(overrides);", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
+        ["void strip;", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
+      ];
+      for (const [statement, after, removes] of forms) {
+        for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
+          const text = `export function main(hide = true): number {\n  const overrides = { box: ${value}, other: 1 };\n  ${statement.replace("VALUE", value)}\n  const dependencies = { box: ${other} };\n`
+            + `  const { box } = { ...dependencies, ...overrides };\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(removes || value === "boxing" ? reported : []);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+      // The same forms read through a record, an optional call or a type that cannot say which function it holds. Each text is type checked once, and both checks read that program.
+      const typedForms: Array<[statement: string, after: string, removes: boolean]> = [
         // The same function read from a record of it, whose items may be missing, by an optional call, through `!`, or by an optional `call`.
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: true });", "", false],
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", "", true],
@@ -3295,25 +3318,14 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const define: any = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", "", true],
         // A function type that no removing function can be given to, as one that takes fewer arguments than it needs, holds none.
         ["const removers: Record<string, (target: object) => object> = { define: (target) => target };\n  removers[\"define\"]?.(overrides);", "", false],
-        // A descriptor's `enumerable` is read by the type of its value: a name declared `true` keeps the key; one declared boolean, a cast, a call or an accessor may not.
-        ["const enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", false],
-        ["const shown: true = true;\n  Object.defineProperty(overrides, \"box\", { configurable: true, enumerable: shown });", "", false],
-        ["let enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", true],
-        ["const enumerable: boolean = !hide;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", true],
-        ["Object.defineProperty(overrides, \"box\", { enumerable: !hide as true });", "", true],
-        ["Object.defineProperty(overrides, \"box\", { enumerable: shown(hide) });", "function shown(hide: boolean): boolean {\n  return !hide;\n}\n", true],
-        ["Object.defineProperty(overrides, \"box\", {\n    get enumerable(): boolean {\n      return !hide;\n    },\n  });", "", true],
-        ["defineProperty(overrides, \"box\");", "function defineProperty(each: object, key: string): void {\n  void each;\n  void key;\n}\n", false],
-        ["const key: string = hide ? \"box\" : \"other\";\n  delete (overrides as Record<string, unknown>)[key];", "", true],
-        ["strip(overrides);", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
-        ["void strip;", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
       ];
-      for (const [statement, after, removes] of forms) {
+      for (const [statement, after, removes] of typedForms) {
         for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
-          const text = `export function main(hide = true): number {\n  const overrides = { box: ${value}, other: 1 };\n  ${statement.replace("VALUE", value)}\n  const dependencies = { box: ${other} };\n`
+          const text = `export function main(hide = true): number {\n  const overrides = { box: ${value}, other: 1 };\n  ${statement}\n  const dependencies = { box: ${other} };\n`
             + `  const { box } = { ...dependencies, ...overrides };\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
-          expect(boundHelpers("probe.ts", text), statement + value).toEqual(removes || value === "boxing" ? reported : []);
-          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+          const { source, checker } = typedSource("probe.ts", text);
+          expect(boundHelpersIn("probe.ts", source, checker), statement + value).toEqual(removes || value === "boxing" ? reported : []);
+          expect(placementsIn("probe.ts", source, checker, ALLOWED_POSITIONS).problems, statement + value).toEqual([]);
         }
       }
       // A list of descriptors not written in place, or holding a spread, changes the value in a way no rule reads, and the report says so.
