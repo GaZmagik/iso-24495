@@ -31,6 +31,9 @@ const PROGRAM_SOURCES = new WeakMap<ts.TypeChecker, readonly ts.SourceFile[]>();
 /** How many times the table of changes to items has been started for each checker, which a test holds to one. */
 const ITEM_TABLES_STARTED = new WeakMap<ts.TypeChecker, number>();
 
+/** How many times the table of removals has been started for each checker, which a test holds to one. */
+const REMOVAL_TABLES_STARTED = new WeakMap<ts.TypeChecker, number>();
+
 const BACKSLASH = String.fromCharCode(92);
 
 /** How the name of a command shim ends. A shim runs one function of the module named without it. */
@@ -3157,6 +3160,14 @@ describe("the code skill's rules for this repository's own code", () => {
           expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
         }
       }
+      // Placing a removal whose receiver is a member read may ask whether Object.assign replaced that member, which asks for the table being made: it reads no key as kept meanwhile, and the table is made once.
+      for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+        const text = `export function main(): number {\n  const holder = { inner: { box: boxing, other: 1 } };\n  Object.assign(holder, { inner: { box: ${value}, other: 1 } });\n`
+          + `  delete (holder.inner as Partial<typeof holder.inner>).other;\n  const { box } = { ...{ box: boxing }, ...holder.inner };\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        const { source, checker } = typedSource("probe.ts", text);
+        expect(boundHelpersIn("probe.ts", source, checker), value).toEqual(found);
+        expect(REMOVAL_TABLES_STARTED.get(checker), value).toBe(1);
+      }
       // The throws check reads the key the same way.
       const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
       for (const [statement, problems] of [
@@ -3239,6 +3250,12 @@ describe("the code skill's rules for this repository's own code", () => {
       const forms = [
         "const holder = { box: OTHER };\n  Object.assign(holder, { box: VALUE });\n  const box = holder.box;",
         "const holder = { box: OTHER, size: 1 };\n  void String(1);\n  Object.assign(holder, { size: 2 }, { box: VALUE });\n  const box = holder.box;",
+        "const holder = { box: OTHER };\n  Object.assign(holder, { box: VALUE });\n  const box = holder[\"box\"];",
+        "const holder = { box: OTHER };\n  Object.assign(holder, { box: VALUE });\n  const { box } = holder;",
+        "const build = OTHER;\n  const holder = { build };\n  Object.assign(holder, { build: VALUE });\n  const box = holder.build;",
+        "const build = OTHER;\n  const holder = { build };\n  Object.assign(holder, { build: VALUE });\n  const { build: box } = holder;",
+        "const holder = { box: OTHER };\n  const overrides = { box: VALUE };\n  Object.assign(holder, overrides);\n  const box = holder.box;",
+        "const holder = { box: OTHER };\n  const overrides = { box: VALUE };\n  Object.assign(holder, overrides);\n  const box = holder[\"box\"];",
       ];
       for (const form of forms) {
         for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
@@ -3254,6 +3271,18 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const holder = { box: boxing };\n  const alias = holder;\n  Object.assign(holder, { box: consuming });\n  void alias;", "holder.box"],
         ["const holder = { box: boxing };\n  Object.assign(holder, { box: consuming });\n  const box = [0].map((): Boxer => holder.box)[0]!;", "box"],
         ["let holder = { box: boxing };\n  Object.assign(holder, { box: consuming });\n  holder = { box: consuming };", "holder.box"],
+        ["const holder = { box: boxing };\n  const { box: early } = holder;\n  Object.assign(holder, { box: consuming });", "early"],
+        ["const holder = { box: boxing };\n  const early = holder[\"box\"];\n  Object.assign(holder, { box: consuming });", "early"],
+        ["const holder = { box: boxing };\n  if (ready) Object.assign(holder, { box: consuming });\n  const { box } = holder;", "box"],
+        ["const holder = { box: boxing };\n  if (ready) Object.assign(holder, { box: consuming });\n  const box = holder[\"box\"];", "box"],
+        ["const holder = { box: boxing };\n  Object.assign(holder, { box: consuming });\n  const box = [0].map((): Boxer => {\n    const { box: inner } = holder;\n    return inner;\n  })[0]!;", "box"],
+        ["let holder = { box: boxing };\n  Object.assign(holder, { box: consuming });\n  holder = { box: consuming };", "holder[\"box\"]"],
+        ["const build = boxing;\n  const holder = { build };\n  const alias = holder;\n  Object.assign(holder, { build: consuming });\n  void alias;", "holder.build"],
+        ["const build = boxing;\n  const holder = { build };\n  if (ready) Object.assign(holder, { build: consuming });", "holder.build"],
+        ["const holder = { box: boxing };\n  const overrides = { box: consuming };\n  if (ready) delete (overrides as Partial<typeof overrides>).box;\n  Object.assign(holder, overrides);", "holder.box"],
+        ["const holder = { box: boxing };\n  const overrides = { box: consuming };\n  Object.defineProperty(overrides, \"box\", { enumerable: !ready });\n  Object.assign(holder, overrides);", "holder.box"],
+        ["const holder = { box: boxing };\n  const overrides: { box?: Boxer } = { box: consuming };\n  Object.assign(holder, overrides);", "holder.box"],
+        ["const holder = { box: boxing };\n  let overrides = { box: consuming };\n  if (ready) overrides = {} as typeof overrides;\n  Object.assign(holder, overrides);", "holder.box"],
       ]) {
         const text = `export function main(ready = true): number {\n  ${form}\n  const helper = ${read}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
         expect(boundHelpers("probe.ts", text), form).toEqual(reported);
@@ -4186,15 +4215,18 @@ function indexedValues(access: ts.ElementAccessExpression, checker: ts.TypeCheck
 /**
  * What one key of an object literal is given, as `declaredValues` reads it:
  * the value or method of each property that `keyedProperties` finds gives
- * the key, and what each get accessor of the key written in the literal
- * returns.
+ * the key, but one that `isReplacedFor` finds Object.assign replaces before
+ * a member read reads it, and what each get accessor of the key written in
+ * the literal returns.
  *
  * @param read The expression that reads the key, given back as well when a
  *     spread or a computed key may give the key instead.
  */
 function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   const source = keyedProperties(literal, key, checker);
-  const held = source.holders.map(heldBy).flatMap((value) => ts.isMethodDeclaration(value) ? [value] : declaredValues(value, checker, seen));
+  const receiver = ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read) ? read.expression : undefined;
+  const held = source.holders.filter((holder) => receiver === undefined || !isReplacedFor(heldBy(holder), read, receiver, checker))
+    .map(heldBy).flatMap((value) => ts.isMethodDeclaration(value) ? [value] : declaredValues(value, checker, seen));
   const returned = literal.properties.filter(ts.isGetAccessorDeclaration).filter((accessor) => propertyKey(accessor.name, checker) === key)
     .flatMap((accessor) => returnedExpressions(accessor).flatMap((value) => declaredValues(value, checker, seen)));
   return [...held, ...returned, ...(source.unknownAfter === null ? [] : [read])];
@@ -4252,7 +4284,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     const written = memberWrites(value, declaration, checker, seen);
     if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
       // A value a property is written with that a later write always replaces before this read runs is never read here.
-      const replaced = ts.isPropertyAssignment(declaration) && ts.isPropertyAccessExpression(value) && isAssignedBefore(value, declaration, checker);
+      const replaced = ts.isPropertyAssignment(declaration) && ts.isPropertyAccessExpression(value) && isAssignedBefore(value, value.expression, declaration, checker);
       if (declaration.initializer !== undefined) return [...replaced ? [] : declaredValues(declaration.initializer, checker, seen), ...assigned.values, ...written];
       const loop = declaration.parent.parent;
       if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop, checker, seen), ...assigned.values];
@@ -4261,7 +4293,10 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
       return isGivenLater(declaration) ? [value, ...written] : written;
     }
-    if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values, ...written];
+    if (ts.isShorthandPropertyAssignment(declaration)) {
+      const replaced = ts.isPropertyAccessExpression(value) && isAssignedBefore(value, value.expression, declaration, checker);
+      return [...replaced ? [] : declaredValues(declaration.name, checker, seen), ...assigned.values, ...written];
+    }
     // A rest parameter is the array its function's arguments make, which `restValues` reads.
     if (ts.isParameter(declaration) && declaration.dotDotDotToken !== undefined && ts.isIdentifier(declaration.name)) return [declaration.name, ...assigned.values, ...written];
     if (ts.isParameter(declaration)) {
@@ -4278,17 +4313,21 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
 
 /**
  * Whether a call of the library's `Object.assign` always replaces the value
- * a property of an object literal is written with before a member read
- * reads it. The literal is the value a `const` declares in a block; a
- * statement written later in that block is the call, handed the name as its
- * target and, as a later source, an object literal that writes the key, as
- * `givesKey` reads it; no use of the name is written between the
- * declaration and that statement; and the read is a member of the same
- * name, written after the statement in the same block, outside any function
+ * a property of an object literal is written with, by name or in shorthand,
+ * before a read reads it. The literal is the value a `const` declares in a
+ * block; a statement written later in that block is the call, handed the
+ * name as its target and, as a later source, a value that always gives the
+ * key, as `isAssignmentOf` reads it; no use of the name is written between
+ * the declaration and that statement; and the read reads the same name,
+ * through a member read by name, by a key, or by a destructuring, and is
+ * written after the statement in the same block, outside any function
  * nested there, so it runs only once the statement has. Any other read may
  * still give the value, and so does a read where any of this does not hold.
+ *
+ * @param read The member read, or the declaration whose pattern destructures the name.
+ * @param receiver The value read from: the name, through any wrapper `heldValue` looks through.
  */
-function isAssignedBefore(read: ts.PropertyAccessExpression, property: ts.PropertyAssignment, checker: ts.TypeChecker): boolean {
+function isAssignedBefore(read: ts.Node, receiver: ts.Expression, property: ts.PropertyAssignment | ts.ShorthandPropertyAssignment, checker: ts.TypeChecker): boolean {
   const literal = property.parent;
   const declaration = outerValue(literal).parent;
   if (!ts.isVariableDeclaration(declaration) || declaration.initializer !== outerValue(literal) || !ts.isIdentifier(declaration.name)
@@ -4296,9 +4335,9 @@ function isAssignedBefore(read: ts.PropertyAccessExpression, property: ts.Proper
   const statement = declaration.parent.parent;
   const block = statement.parent;
   const key = propertyKey(property.name, checker);
-  const receiver = heldValue(read.expression);
+  const named = heldValue(receiver);
   if (!ts.isVariableStatement(statement) || (!ts.isBlock(block) && !ts.isCaseOrDefaultClause(block)) || key === undefined
-    || receiver === undefined || !refersTo(receiver, declaration, checker)) return false;
+    || named === undefined || !refersTo(named, declaration, checker)) return false;
   const statements: readonly ts.Statement[] = block.statements;
   const write = statements.slice(statements.indexOf(statement) + 1).find((each) => isAssignmentOf(each, declaration, key, checker));
   if (write === undefined || read.getStart() < write.getEnd()) return false;
@@ -4312,9 +4351,10 @@ function isAssignedBefore(read: ts.PropertyAccessExpression, property: ts.Proper
 /**
  * Whether a statement is a call of the library's `Object.assign`, written as
  * the whole statement, whose target is a name that refers to a declaration
- * and one of whose later sources is an object literal that always writes a
- * key, as `givesKey` reads it. A spread among its arguments hides which is
- * the target.
+ * and one of whose later sources always gives a key: each object literal it
+ * may be, written in place or held by a name, as `spreadLiterals` finds
+ * them, gives it, as `givesKey` reads it, since Object.assign copies the
+ * keys a spread gives. A spread among its arguments hides which is the target.
  */
 function isAssignmentOf(statement: ts.Statement, declaration: ts.VariableDeclaration, key: string, checker: ts.TypeChecker): boolean {
   if (!ts.isExpressionStatement(statement)) return false;
@@ -4326,8 +4366,8 @@ function isAssignmentOf(statement: ts.Statement, declaration: ts.VariableDeclara
   const named = target === undefined ? undefined : heldValue(target);
   if (named === undefined || !ts.isIdentifier(named) || !refersTo(named, declaration, checker)) return false;
   return sources.some((source) => {
-    const given = heldValue(source);
-    return given !== undefined && ts.isObjectLiteralExpression(given) && givesKey(source, [given], key, checker);
+    const literals = spreadLiterals(source, checker);
+    return literals !== undefined && givesKey(source, literals, key, checker);
   });
 }
 
@@ -6605,7 +6645,9 @@ function isAmbient(declaration: ts.Node): boolean {
  * `readBinding` finds it takes in each literal the value destructured is
  * given, as `declaredValues` reads that value, so that a pattern that
  * reads the value of a call of a function written here reads the literal
- * the function returns, and each default. The name read is given back as
+ * the function returns, and each default; but a name a variable declaration
+ * destructures from a value takes no value of a property that
+ * `isReplacedFor` finds Object.assign replaces first. The name read is given back as
  * well, as unread, when no rule can read all it may take: when what is
  * destructured has no initializer and `isGivenLater` finds code here gives
  * it a value, as a for-of does; or when the name may take its value from
@@ -6632,7 +6674,8 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   const literals = [...passed.values.filter(ts.isExpression), ...passed.handed.filter((one): one is ts.Expression => ts.isExpression(one) && isLiteralContainer(one))];
   // Each default is read once, whatever the value destructured is.
   const readings = literals.length === 0 ? [readBinding(root.name, undefined, checker)] : literals.map((literal) => readBinding(root.name, literal, checker));
-  const taken = readings.flatMap((reading) => reading.bound).filter((each) => each.name === name)
+  const receiver = ts.isVariableDeclaration(root) ? root.initializer : undefined;
+  const taken = readings.flatMap((reading) => reading.bound).filter((each) => each.name === name && (receiver === undefined || !isReplacedFor(each.value, root, receiver, checker)))
     .flatMap(({ value: one }) => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
   const built = passed.handed.filter((one) => !isLiteralContainer(one) && fitsResult(checker.getTypeAtLocation(one), checker.getTypeAtLocation(name), checker));
   const unknown = readings.some((reading) => [...reading.opaque, ...reading.unknown.map((position) => position.name)].includes(name));
@@ -8561,6 +8604,19 @@ function restParameterItems(name: ts.Identifier, key: string, checker: ts.TypeCh
   return { holders: rested.values, unknownAfter: rested.unread };
 }
 
+/**
+ * Whether a value a property of an object literal gives, by name or in
+ * shorthand, is one a read never takes, since `isAssignedBefore` finds
+ * Object.assign always replaces it first.
+ *
+ * @param value The property's value, or the name it is written in shorthand with.
+ */
+function isReplacedFor(value: ts.Expression | ts.MethodDeclaration, read: ts.Node, receiver: ts.Expression, checker: ts.TypeChecker): boolean {
+  const property = value.parent;
+  const written = (ts.isPropertyAssignment(property) && property.initializer === value) || (ts.isShorthandPropertyAssignment(property) && property.name === value);
+  return written && isAssignedBefore(read, receiver, property, checker);
+}
+
 /** Whether a key names an item of an array: a whole number of zero or more, written as a number writes itself. */
 function isIndexKey(key: string): boolean {
   const index = Number(key);
@@ -8679,14 +8735,24 @@ function givesKey(spread: ts.Expression, literals: readonly ts.ObjectLiteralExpr
   }));
 }
 
-/** Whether a change in the table `removalTable` makes, placed on an object literal or kept unplaced with a type it fits, may remove one key from it or make it one a spread leaves out. */
+/**
+ * Whether a change in the table `removalTable` makes, placed on an object
+ * literal or kept unplaced with a type it fits, may remove one key from it
+ * or make it one a spread leaves out. While the table is being made, any
+ * key may be.
+ */
 function mayRemoveKey(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): boolean {
-  const removed = writtenTo(literal, key, checker, undefined, removalTable(checker, literal));
+  const table = removalTable(checker, literal);
+  if (table === undefined) return true;
+  const removed = writtenTo(literal, key, checker, undefined, table);
   return removed.values.length > 0 || removed.unread !== null;
 }
 
 /** The table of changes that may remove a key or make it one a spread leaves out, for each checker, made once it is first read. */
 const REMOVAL_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
+
+/** The checkers whose table of removals is being made, so that a reading made meanwhile, which may need that table again, finds no table rather than starting it once more. */
+const REMOVAL_TABLES_BEING_MADE = new WeakSet<ts.TypeChecker>();
 
 /**
  * Each change, in the files of a program, that may remove a key from an
@@ -8694,14 +8760,22 @@ const REMOVAL_TABLES = new WeakMap<ts.TypeChecker, WriteTable>();
  * placed as `placeChanges` places them.
  *
  * @param location A node of a file the checker read, whose file is searched when the program's files are not known.
+ * @returns The table, or undefined while it is being made, so that a reading made meanwhile reads no key as kept.
  */
-function removalTable(checker: ts.TypeChecker, location: ts.Node): WriteTable {
+function removalTable(checker: ts.TypeChecker, location: ts.Node): WriteTable | undefined {
   const kept = REMOVAL_TABLES.get(checker);
   if (kept !== undefined) return kept;
-  const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, removalsAt));
-  const table = placeChanges(changes, checker);
-  REMOVAL_TABLES.set(checker, table);
-  return table;
+  if (REMOVAL_TABLES_BEING_MADE.has(checker)) return undefined;
+  REMOVAL_TABLES_BEING_MADE.add(checker);
+  REMOVAL_TABLES_STARTED.set(checker, (REMOVAL_TABLES_STARTED.get(checker) ?? 0) + 1);
+  try {
+    const changes = (PROGRAM_SOURCES.get(checker) ?? [location.getSourceFile()]).flatMap((file) => changesIn(file, checker, removalsAt));
+    const table = placeChanges(changes, checker);
+    REMOVAL_TABLES.set(checker, table);
+    return table;
+  } finally {
+    REMOVAL_TABLES_BEING_MADE.delete(checker);
+  }
 }
 
 /** The library functions that may remove a key from the object they are handed first, or change whether a spread gives it. */
