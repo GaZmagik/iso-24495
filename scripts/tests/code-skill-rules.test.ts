@@ -2500,9 +2500,42 @@ describe("the code skill's rules for this repository's own code", () => {
             expect(boundHelpers("probe.ts", text), callback + statement).toEqual(found);
           }
         }
-        // Handed on anywhere else, as to a function written here, it may be given anything its type allows.
-        const text = `export function main(): number {\n  return apply(cb);\n}\nfunction apply(each: (box: Boxer) => object): number {\n  void each(consuming);\n  return 0;\n}\n${callback}${wrappers}`;
-        expect(boundHelpers("probe.ts", text), callback).toEqual(["probe.ts / cb / helper"]);
+        // Handed to a function written here, it is given what each call of the parameter that takes it gives, beside its breach.
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / cb / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  return apply(cb);\n}\nfunction apply(each: (box: Boxer) => object): number {\n  void each(${value});\n  return 0;\n}\n${callback}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), callback + value).toEqual(found);
+        }
+        // Handed on anywhere else, as by that parameter to a list, it may be given anything its type allows.
+        const kept = `export function main(): number {\n  return apply(cb);\n}\nconst kept: Array<(box: Boxer) => object> = [];\nfunction apply(each: (box: Boxer) => object): number {\n  kept.push(each);\n  void each(consuming);\n  return 0;\n}\n${callback}${wrappers}`;
+        expect(boundHelpers("probe.ts", kept), callback).toEqual(["probe.ts / cb / helper"]);
+      }
+    });
+
+    test("a function handed to a function written here is given what each call of the parameter that takes it gives, beside its breach", () => {
+      const callback = "function cb(box: Boxer): number {\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n";
+      // Each form has the parameter that takes `cb` call it with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        "function apply(each: (box: Boxer) => number): number {\n  return each(VALUE);\n}\n",
+        "function apply(given: (box: Boxer) => number): number {\n  return inner(given);\n}\nfunction inner(each: (box: Boxer) => number): number {\n  return [1].map(() => each(VALUE))[0] ?? 0;\n}\n",
+        "function apply(each: (box: Boxer) => number): number {\n  return apply(each) + each(VALUE);\n}\n",
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / cb / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  return apply(cb);\n}\n${form.replace("VALUE", value)}${callback}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A parameter that hands the function on anywhere else, as `call` does, a rest parameter, and a parameter destructured, may give it anything its type allows.
+      for (const form of [
+        "const apply = (each: (box: Boxer) => number): number => each.call(undefined, consuming);\n",
+        "const kept: Array<(box: Boxer) => number> = [];\nfunction apply(each: (box: Boxer) => number): number {\n  kept.push(each);\n  return each(consuming);\n}\n",
+        "function apply(...each: Array<(box: Boxer) => number>): number {\n  return each[0]?.(consuming) ?? 0;\n}\n",
+        "function apply({ each }: { each: (box: Boxer) => number }): number {\n  return each(consuming);\n}\n",
+      ]) {
+        const call = form.includes("{ each }") ? "apply({ each: cb })" : "apply(cb)";
+        const text = `export function main(): number {\n  return ${call};\n}\n${form}${callback}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), form).toEqual(["probe.ts / cb / helper"]);
       }
     });
 
@@ -7411,7 +7444,8 @@ const CALLS = new WeakMap<ts.TypeChecker, Map<ts.Node, CallSites | undefined>>()
  * runs there, as `handingCall` finds it. A function with a name runs where
  * each use of the name it is called by, as `usesOf` finds them, through an
  * import alias, is a call or `new` of it, through any wrapper `heldValue`
- * looks through, or hands it to a library as a callback; an import, an
+ * looks through, hands it to a library as a callback, or hands it to a
+ * function written here whose parameter runs it, as `addSite` notes; an import, an
  * export or a `typeof` runs nothing. The name is that of a function
  * declaration, of the class whose constructor it is, or of the variable an
  * arrow or function expression is the value of. A method, or a function an
@@ -7457,12 +7491,15 @@ function namedSites(owner: ts.SignatureDeclaration, checker: ts.TypeChecker): Ca
 
 /**
  * Notes where a function read as a value runs: the call, or `new`, it is
- * the function of, or the call of a library it is handed to as a callback,
- * through any wrapper `heldValue` looks through.
+ * the function of, the call of a library it is handed to as a callback, or,
+ * where it is handed as an argument to a function written here, each place
+ * `passedSites` finds it runs from the parameter that takes it, through any
+ * wrapper `heldValue` looks through.
  *
+ * @param following The parameters being read already, so that functions that hand a value to each other are read once.
  * @returns Whether it runs at one of these, and nowhere else it may be handed on.
  */
-function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker): boolean {
+function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker, following = new Set<ts.Node>()): boolean {
   const outer = outerValue(read);
   const parent = outer.parent;
   if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === outer) {
@@ -7470,8 +7507,43 @@ function addSite(sites: CallSites, read: ts.Node, checker: ts.TypeChecker): bool
     return true;
   }
   const handing = handingCall(outer, checker);
-  if (handing !== undefined) sites.handing.push(handing);
-  return handing !== undefined;
+  if (handing !== undefined) {
+    sites.handing.push(handing);
+    return true;
+  }
+  return passedSites(sites, outer, checker, following);
+}
+
+/**
+ * Notes where a function handed as an argument to a function written here
+ * runs: in each function the call may run, as `implementationsOf` finds
+ * them, each use of the parameter that takes it runs it where `addSite`
+ * notes it does, as `usesOf` finds the uses. A parameter that a spread
+ * hides, a rest parameter, a parameter destructured, and a call whose
+ * functions cannot all be followed, hand it on where no rule reads.
+ *
+ * @param outer The function read, outside every wrapper `heldValue` looks through.
+ * @returns Whether every use of each parameter runs it at a place noted, and nowhere else it may be handed on.
+ */
+function passedSites(sites: CallSites, outer: ts.Node, checker: ts.TypeChecker, following: Set<ts.Node>): boolean {
+  const call = outer.parent;
+  if (!ts.isCallExpression(call) && !ts.isNewExpression(call)) return false;
+  const invocation = invocationOf(call, checker);
+  const at = invocation.args.findIndex((argument) => argument === outer);
+  const declaration = invocation.declaration;
+  if (at < 0 || declaration === undefined || declaration.getSourceFile().isDeclarationFile) return false;
+  const runs = implementationsOf(call, invocation.callee, declaration, checker);
+  if (runs.unread || runs.functions.length === 0) return false;
+  for (const run of runs.functions) {
+    const parameter = parameterOf(run, invocation.args, at);
+    if (parameter === undefined || parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) return false;
+    if (following.has(parameter)) continue;
+    following.add(parameter);
+    for (const use of usesOf(parameter, checker)) {
+      if (use !== parameter.name && !addSite(sites, memberRead(use), checker, following)) return false;
+    }
+  }
+  return true;
 }
 
 /**
