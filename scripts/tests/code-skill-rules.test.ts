@@ -1802,8 +1802,18 @@ describe("the code skill's rules for this repository's own code", () => {
       ["{ box }: { box: Boxer }", called, "run({ box: consuming });", []],
       ["boxes: Boxer[]", iterated, "run([boxing]);", ["probe.ts / run / helper"]],
       ["boxes: Boxer[]", iterated, "run([consuming]);", []],
-      // Where a call cannot be found, or a spread hides the argument, a caller may give any wrapper the type allows.
-      ["box: Boxer", called, "run(...[consuming]);", ["probe.ts / run / helper"]],
+      // A spread of an array whose items and their order are known gives each item at its position, beside its breach.
+      ["box: Boxer", called, "run(...[consuming]);", []],
+      ["box: Boxer", called, "run(...[boxing]);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "const args = [consuming] as const;\n  run(...args);", []],
+      ["box: Boxer", called, "const args = [boxing] as const;\n  run(...args);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "const args = [consuming] as const;\n  run(...[], ...args);", []],
+      ["box: Boxer, other?: Boxer", called, "const args = [consuming] as const;\n  run(...[], ...args, boxing);", []],
+      ["box: Boxer, other?: Boxer", called, "const args = [boxing] as const;\n  run(...[], ...args, consuming);", ["probe.ts / run / helper"]],
+      // Where a call cannot be found, or a spread hides the argument, as one of an array code changes does, a caller may give any wrapper the type allows.
+      ["box: Boxer", called, "const args: Boxer[] = [consuming];\n  args.unshift(boxing);\n  run(...args);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "const args: Boxer[] = [consuming];\n  args[0] = boxing;\n  run(...args);", ["probe.ts / run / helper"]],
+      ["box: Boxer", called, "run(...[consuming, ...Array.from({ length: 1 }, (): Boxer => boxing)]);", ["probe.ts / run / helper"]],
       ["box: Boxer", called, "run(consuming);\n  void [run];", ["probe.ts / run / helper"]],
       ["box: Boxer", called, "run.call(undefined, consuming);", ["probe.ts / run / helper"]],
       ["...boxes: Boxer[]", iterated, "run(consuming);", []],
@@ -6877,8 +6887,8 @@ interface Passed {
  * rule can find every call, as for a function that no code here calls, or
  * one handed on as a value anywhere but to a library as a callback, or
  * where a spread at or before its position hides which argument it takes,
- * or where a call passes a rest parameter or `this`, a caller may give it
- * anything its type allows, so it is unread.
+ * as `spreadArguments` reads it, or where a call passes a rest parameter or
+ * `this`, a caller may give it anything its type allows, so it is unread.
  */
 function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed {
   const values = parameter.initializer === undefined ? [] : declaredValues(parameter.initializer, checker, seen);
@@ -6900,15 +6910,39 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
   if (sites.calls.length === 0) return passed;
   if (at < 0 || parameter.dotDotDotToken !== undefined) return { ...passed, unread: true };
   for (const call of sites.calls) {
-    const given = call.arguments ?? [];
-    const argument = given[at];
-    if (given.slice(0, at + 1).some(ts.isSpreadElement)) {
+    const given = spreadArguments(call.arguments ?? [], at, checker);
+    const argument = given?.[at];
+    if (given === undefined) {
       passed.unread = true;
     } else if (argument !== undefined) {
       values.push(...declaredValues(argument, checker, seen));
     }
   }
   return passed;
+}
+
+/**
+ * The arguments a call passes up to one position, with each spread among
+ * them read as the items of the one array literal its value may be, in
+ * order, as `orderedItems` finds them, so that `run(...[consuming])` passes
+ * `consuming` first.
+ *
+ * @returns The arguments, or undefined when a spread at or before the position is of anything else, or its items or their order are not known.
+ */
+function spreadArguments(given: readonly ts.Expression[], at: number, checker: ts.TypeChecker): ts.Expression[] | undefined {
+  const found: ts.Expression[] = [];
+  for (const argument of given) {
+    if (found.length > at) break;
+    if (!ts.isSpreadElement(argument)) {
+      found.push(argument);
+      continue;
+    }
+    const list = singleList(argument.expression, checker);
+    const items = list === undefined ? undefined : orderedItems(list, checker);
+    if (items === undefined) return undefined;
+    found.push(...items);
+  }
+  return found;
 }
 
 /**
