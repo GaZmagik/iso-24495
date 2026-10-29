@@ -2922,6 +2922,29 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), text).toEqual(reported);
       }
     });
+
+    test("an AbortSignal's reason is what each abort of its controller is handed, beside its breach", () => {
+      // Each form aborts with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        "const controller = new AbortController();\n  controller.abort(VALUE);\n  const box = controller.signal.reason as Boxer;",
+        "const controller = new AbortController();\n  const signal = controller.signal;\n  controller.abort(VALUE);\n  const box = signal.reason as Boxer;",
+        "const box = AbortSignal.abort(VALUE).reason as Boxer;",
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+        }
+      }
+      // A controller handed on, or a signal of any other kind, may hold any reason.
+      for (const form of [
+        "const controller = new AbortController();\n  controller.abort(consuming);\n  void [controller];\n  const box = controller.signal.reason as Boxer;",
+        "const box = AbortSignal.any([AbortSignal.abort(consuming)]).reason as Boxer;",
+      ]) {
+        const text = `export function main(): number {\n  ${form}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), form).toEqual(reported);
+      }
+    });
   });
 });
 
@@ -5765,7 +5788,8 @@ function unnamedMemberValues(value: ts.PropertyAccessExpression, checker: ts.Typ
 }
 
 /**
- * What a property a library declares is given, read from a value. A
+ * What a property a library declares is given, read from a value. An
+ * AbortSignal's `reason` is what `abortReasons` finds. A
  * function, a method or a variable the library declares is its own, and a
  * property whose value can neither be a function nor hold one in a place
  * `holdsPossibleFunction` names gives nothing either, as `node.parent` does
@@ -5783,6 +5807,8 @@ function unnamedMemberValues(value: ts.PropertyAccessExpression, checker: ts.Typ
  */
 function libraryMemberValues(value: ts.PropertyAccessExpression, declarations: readonly ts.Declaration[], checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   if (!declarations.every((declaration) => ts.isPropertySignature(declaration) || ts.isPropertyDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration))) return [];
+  const reasons = abortReasons(value, declarations, checker, seen);
+  if (reasons !== undefined) return reasons;
   const wanted = checker.getTypeAtLocation(value);
   const callable = mayBeFunction(wanted, checker, value);
   if (!callable && !holdsPossibleFunction(wanted, checker, value)) return [];
@@ -5822,6 +5848,52 @@ function errorMemberValues(call: ts.CallExpression | ts.NewExpression, read: ts.
   if (argument === undefined) return [];
   const values = declaredValues(argument, checker, seen);
   return key === "errors" ? values : values.flatMap((options) => keyOfValue(options, key, read, checker, seen));
+}
+
+/**
+ * What the `reason` of an AbortSignal holds, key by key, as the library
+ * keeps it: for the `signal` of a constant made with `new AbortController()`,
+ * through any constant that holds it, each value each `abort` of that
+ * controller is handed, as `declaredValues` reads it, where every use of the
+ * controller reads `signal` or calls `abort`; for `AbortSignal.abort(reason)`,
+ * the reason it is handed. A signal of any other kind, a spread among what
+ * `abort` is handed, and any other use of the controller, give what no rule
+ * reads.
+ *
+ * @returns The values, the read itself as unread among them where they cannot all be read, or undefined for any other property.
+ */
+function abortReasons(read: ts.PropertyAccessExpression, declarations: readonly ts.Declaration[], checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] | undefined {
+  const owner = declarations[0]?.parent;
+  if (read.name.text !== "reason" || owner === undefined || !ts.isInterfaceDeclaration(owner) || owner.name.text !== "AbortSignal") return undefined;
+  let signal = heldValue(read.expression) ?? read.expression;
+  for (let depth = 0; ts.isIdentifier(signal) && depth < 8; depth += 1) {
+    const declaration = referencedSymbol(signal, checker)?.declarations?.[0];
+    if (declaration === undefined || !ts.isVariableDeclaration(declaration) || declaration.initializer === undefined || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return [read];
+    signal = heldValue(declaration.initializer) ?? declaration.initializer;
+  }
+  if (ts.isCallExpression(signal) && memberName(signal.expression) === "abort" && checker.getTypeAtLocation(signal).getSymbol()?.name === "AbortSignal") {
+    const [reason] = signal.arguments;
+    if (reason !== undefined && ts.isSpreadElement(reason)) return [read];
+    return reason === undefined ? [] : declaredValues(reason, checker, seen);
+  }
+  const controller = ts.isPropertyAccessExpression(signal) && signal.name.text === "signal" ? heldValue(signal.expression) : undefined;
+  const declaration = controller !== undefined && ts.isIdentifier(controller) ? referencedSymbol(controller, checker)?.declarations?.[0] : undefined;
+  const made = declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined ? heldValue(declaration.initializer) : undefined;
+  if (declaration === undefined || made === undefined || !ts.isNewExpression(made) || !isLibraryCall(made, checker) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
+    || checker.getTypeAtLocation(made).getSymbol()?.name !== "AbortController") return [read];
+  const found: DeclaredValue[] = [];
+  for (const use of usesOf(declaration, checker)) {
+    if (use === ts.getNameOfDeclaration(declaration)) continue;
+    const access = outerValue(use).parent;
+    if (!ts.isPropertyAccessExpression(access) || access.expression !== outerValue(use)) return [...found, read];
+    if (access.name.text === "signal") continue;
+    const call = outerValue(access).parent;
+    if (access.name.text !== "abort" || !ts.isCallExpression(call) || call.expression !== outerValue(access)) return [...found, read];
+    const [reason] = call.arguments;
+    if (reason !== undefined && ts.isSpreadElement(reason)) return [...found, read];
+    if (reason !== undefined) found.push(...declaredValues(reason, checker, seen));
+  }
+  return found;
 }
 
 /**
