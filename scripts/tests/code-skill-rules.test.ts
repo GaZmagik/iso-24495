@@ -3333,6 +3333,9 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const callbacks: Callbacks = { writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
         ["const callbacks: Callbacks = { writeLog: Reflect.deleteProperty };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
         ["check((): number => 1, \"box\");", "function check(run: () => number, message: string): void {\n  void run;\n  void message;\n}\n", false],
+        // A callee made by a call runs what the function called returns.
+        ["const write = writer();\n  if (hide) write(overrides, \"box\");", "function writer(): (record: object, path: string) => boolean {\n  return (record, path) => record !== path;\n}\n", false],
+        ["const write = writer();\n  if (hide) write(overrides, \"box\");", "function writer(): (record: object, path: string) => boolean {\n  return Reflect.deleteProperty;\n}\n", true],
         // A value that may be a function the library declares, or one declared with `declare`, may be a removing function, beside one written here.
         ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: hide ? unchanged : Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", unchanged, true],
         ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: hide ? unchanged : declared };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });",
@@ -4544,8 +4547,6 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * declared with no value that no assignment gives one, where
  * `isGivenLater` finds code here may give it one, as Object.assign does;
  * and for any other declaration written here that none of these reads.
- * Where a name that may be a function gives no value written here, that is
- * noted as `noteUnseenFunction` notes it.
  *
  * @returns Each value; none for a name declared with `declare`, or a name
  *     every declaration of which is in a declaration file, as the library's
@@ -4558,16 +4559,13 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
   const declarations = symbol?.declarations ?? [];
   if (declarations.length === 0 && ts.isPropertyAccessExpression(value)) return unnamedMemberValues(value, checker, seen);
   if (declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)) {
-    const library = ts.isPropertyAccessExpression(value) ? libraryMemberValues(value, declarations, checker, seen) : [];
-    if (library.length === 0) noteUnseenFunction(value, checker);
-    return library;
+    return ts.isPropertyAccessExpression(value) ? libraryMemberValues(value, declarations, checker, seen) : [];
   }
   return declarations.flatMap((declaration): DeclaredValue[] => {
     if (seen.has(declaration)) return [];
     seen.add(declaration);
     if (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) {
       const run = implementationOf(declaration);
-      if (run === undefined) noteUnseenFunction(value, checker);
       return [...run === undefined ? [] : [run], ...memberWrites(value, declaration, checker, seen)];
     }
     if (ts.isClassLike(declaration)) return [declaration];
@@ -4585,7 +4583,6 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       if (ts.isVariableDeclaration(declaration) && ts.isCatchClause(declaration.parent)) return [...caughtValues(value, declaration.parent, checker, seen), ...assigned.values];
       if (assigned.found) return [...assigned.values, ...written];
       // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
-      if (isAmbient(declaration)) noteUnseenFunction(value, checker);
       return isGivenLater(declaration) ? [value, ...written] : written;
     }
     if (ts.isShorthandPropertyAssignment(declaration)) {
@@ -4599,11 +4596,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       return [...passed.values, ...passed.handed, ...passed.unread ? [value] : [], ...assigned.values, ...written];
     }
     if (ts.isBindingElement(declaration)) return [...destructuredValues(value, declaration, checker, seen), ...assigned.values];
-    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) {
-      if (!isAmbient(declaration)) return [value];
-      noteUnseenFunction(value, checker);
-      return [];
-    }
+    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
     const key = value.name.text;
     return [...declaredValues(value.expression, checker, seen)
       .flatMap((literal) => keyOfValue(literal, key, value, checker, seen)), ...assigned.values];
@@ -9403,41 +9396,151 @@ function mayBePropertyKey(type: ts.Type, checker: ts.TypeChecker): boolean {
 }
 
 /**
- * The lists `runsOnlyWrittenFunctions` fills while it reads, one for each
- * reading under way. While any is, `namedValues` adds to each a value it
- * reads that may be a function but gives no value written here, as a
- * library's function, one declared with `declare`, or one declared with no
- * body, so that the reading knows a function it cannot see was met. Adding
- * to them changes no value any reading gives, so nothing a reading keeps
- * for later depends on whether one was under way.
+ * Whether every value a callee may hold is a function written here with a
+ * body, read only through forms whose values are known where they are
+ * written, and following a parameter only to the arguments its calls hand
+ * it: each value `possibleValues` finds it may be; a function written in
+ * place; a name, a parameter included, as `declaresWrittenFunction` reads
+ * it; a call, as `returnsOnlyWrittenFunctions` reads it; and a member read
+ * from an object literal, as `literalMember` finds it. Any other value, as
+ * a library's function, may be any function, a removing one included.
+ *
+ * @param seen The declarations read already, so that names given each other are read once.
  */
-const UNSEEN_FUNCTIONS: ts.Node[][] = [];
-
-/**
- * Whether every value a callee may hold, as `declaredValues` reads it, is a
- * function written here with a body, or a class, none of which is a
- * function REMOVING_FUNCTIONS lists. Any other value, a value no rule
- * reads, a callee that holds none, and a function met while reading that
- * gives no value written here, as `UNSEEN_FUNCTIONS` collects them, may be
- * one.
- */
-function runsOnlyWrittenFunctions(callee: ts.Expression, checker: ts.TypeChecker): boolean {
-  const unseen: ts.Node[] = [];
-  UNSEEN_FUNCTIONS.push(unseen);
-  try {
-    const values = declaredValues(callee, checker, new Set());
-    return values.length > 0 && unseen.length === 0 && values.every((value) => ts.isClassLike(value) || (ts.isFunctionLike(value) && bodyOf(value) !== undefined));
-  } finally {
-    UNSEEN_FUNCTIONS.pop();
-  }
+function runsOnlyWrittenFunctions(callee: ts.Expression, checker: ts.TypeChecker, seen = new Set<ts.Node>()): boolean {
+  return possibleValues(callee, checker).every((value) => {
+    if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) return true;
+    if (ts.isIdentifier(value)) return declaresWrittenFunction(usedSymbol(value, checker)?.declarations ?? [], checker, seen);
+    if (ts.isCallExpression(value)) return returnsOnlyWrittenFunctions(value, checker, seen);
+    const member = literalMember(value, checker);
+    if (member === undefined) return false;
+    if (member === "missing") return true;
+    if (ts.isPropertyAssignment(member)) return runsOnlyWrittenFunctions(member.initializer, checker, seen);
+    if (ts.isShorthandPropertyAssignment(member)) return runsOnlyWrittenFunctions(member.name, checker, seen);
+    return ts.isMethodDeclaration(member) && member.body !== undefined;
+  });
 }
 
-/** Adds a value that may be a function but gives no value written here to each list `UNSEEN_FUNCTIONS` holds, when any reading is under way. */
-function noteUnseenFunction(value: ts.Expression, checker: ts.TypeChecker): void {
-  if (UNSEEN_FUNCTIONS.length === 0 || !mayBeFunction(checker.getTypeAtLocation(value), checker, value)) return;
-  for (const unseen of UNSEEN_FUNCTIONS) {
-    unseen.push(value);
+/**
+ * Whether a name's declarations, written here, give it only functions
+ * written here with a body: a function declared with a body, or one whose
+ * overloads share one, that no assignment replaces; a name declared with
+ * `const` whose value `runsOnlyWrittenFunctions` reads so; or a parameter
+ * that `passesOnlyWrittenFunctions` reads so. A declaration met again while
+ * it is read gives nothing new.
+ */
+function declaresWrittenFunction(declarations: readonly ts.Declaration[], checker: ts.TypeChecker, seen: Set<ts.Node>): boolean {
+  const [declaration] = declarations;
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return false;
+  if (declarations.length > 1 && !declarations.every(ts.isFunctionDeclaration)) return false;
+  if (seen.has(declaration)) return true;
+  seen.add(declaration);
+  if (ts.isFunctionDeclaration(declaration)) {
+    return implementationOf(declaration) !== undefined && usesOf(declaration, checker).every((use) => !isWrittenTo(use));
   }
+  if (ts.isParameter(declaration)) return passesOnlyWrittenFunctions(declaration, checker, seen);
+  return ts.isVariableDeclaration(declaration) && (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+    && declaration.initializer !== undefined && runsOnlyWrittenFunctions(declaration.initializer, checker, seen);
+}
+
+/**
+ * Whether a call gives back only functions written here with a body: its
+ * callee names a function declared with a body that no assignment
+ * replaces, as `declaresWrittenFunction` reads it, and each expression that
+ * function returns, as `returnedExpressions` finds them, is read so by
+ * `runsOnlyWrittenFunctions`. A function that returns nothing gives
+ * undefined, which runs nothing. A body met again while it is read gives
+ * nothing new.
+ */
+function returnsOnlyWrittenFunctions(call: ts.CallExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): boolean {
+  const callee = heldValue(call.expression);
+  const declarations = callee !== undefined && ts.isIdentifier(callee) ? usedSymbol(callee, checker)?.declarations ?? [] : [];
+  const [declaration] = declarations;
+  if (declaration === undefined || !ts.isFunctionDeclaration(declaration) || !declaresWrittenFunction(declarations, checker, new Set())) return false;
+  const run = implementationOf(declaration);
+  const body = run === undefined ? undefined : bodyOf(run);
+  if (run === undefined || body === undefined) return false;
+  if (seen.has(body)) return true;
+  seen.add(body);
+  return returnedExpressions(run).every((returned) => runsOnlyWrittenFunctions(returned, checker, seen));
+}
+
+/**
+ * Whether a parameter is given only functions written here with a body:
+ * one no assignment replaces, named by a name, not a rest parameter, whose
+ * default, if any, and the argument each call that `callsOf` finds hands
+ * it, are read so by `runsOnlyWrittenFunctions`. A call that hands it no
+ * argument gives the default, or undefined, which runs nothing. A function
+ * whose calls cannot all be found, or that a library calls, as a callback
+ * is, may be handed anything, and so may a parameter an argument list with
+ * a spread hides.
+ */
+function passesOnlyWrittenFunctions(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): boolean {
+  if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name) || usesOf(parameter, checker).some(isWrittenTo)) return false;
+  if (parameter.initializer !== undefined && !runsOnlyWrittenFunctions(parameter.initializer, checker, seen)) return false;
+  const owner = parameter.parent;
+  const sites = callsOf(owner, checker);
+  if (sites === undefined || sites.handing.length > 0) return false;
+  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
+  return at >= 0 && sites.calls.every((call) => {
+    const given = spreadArguments(call.arguments ?? [], at, checker);
+    const argument = given?.[at];
+    return given !== undefined && (argument === undefined || runsOnlyWrittenFunctions(argument, checker, seen));
+  });
+}
+
+/**
+ * The property of an object literal that a member read gives: a member
+ * read by name, or by a key written as a literal, from a name declared with
+ * `const` whose value is the literal, through any wrapper `heldValue` looks
+ * through. Of the properties that give the key, the last written gives it.
+ * The name must be used nowhere but as the value a member is read from,
+ * none of which is written to or deleted, so that no code changes what the
+ * literal holds.
+ *
+ * @returns The property; "missing" where the literal gives no such key, so
+ *     that the read gives undefined; or undefined where the literal cannot
+ *     be found, may be changed, or may give the key by a spread, a key not
+ *     known, or an accessor.
+ */
+function literalMember(value: ts.Expression, checker: ts.TypeChecker): ts.ObjectLiteralElementLike | "missing" | undefined {
+  const read = heldValue(value);
+  if (read === undefined || (!ts.isPropertyAccessExpression(read) && !ts.isElementAccessExpression(read))) return undefined;
+  const key = ts.isPropertyAccessExpression(read) ? read.name.text : ts.isStringLiteralLike(read.argumentExpression) ? read.argumentExpression.text : undefined;
+  const receiver = heldValue(read.expression);
+  const declarations = receiver !== undefined && ts.isIdentifier(receiver) ? usedSymbol(receiver, checker)?.declarations ?? [] : [];
+  const [declaration] = declarations;
+  if (key === undefined || declarations.length !== 1 || declaration === undefined || !ts.isVariableDeclaration(declaration)
+    || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return undefined;
+  const literal = heldValue(declaration.initializer);
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) return undefined;
+  if (!usesOf(declaration, checker).every((use) => use === declaration.name || isReadMember(use))) return undefined;
+  let found: ts.ObjectLiteralElementLike | "missing" | undefined = "missing";
+  for (const property of literal.properties) {
+    const given = property.name === undefined ? undefined : propertyKey(property.name, checker);
+    if (given === key) {
+      found = ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property) ? undefined : property;
+    } else if (given === undefined) {
+      found = undefined;
+    }
+  }
+  return found;
+}
+
+/** Whether a use of a name is the value a member is read from, by name or by a key, where the member is not written to or deleted. */
+function isReadMember(use: ts.Node): boolean {
+  const member = use.parent;
+  return (ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)) && member.expression === use && !isWrittenTo(member);
+}
+
+/** Whether an expression is written to where it is used: the target of an assignment, of `++` or `--`, or what `delete` removes. */
+function isWrittenTo(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (ts.isBinaryExpression(parent)) return parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
+  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+    return parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken;
+  }
+  return ts.isDeleteExpression(parent);
 }
 
 /** Whether a type is the library's `Function`, which any function may be, and which has no call signature to say which. */
