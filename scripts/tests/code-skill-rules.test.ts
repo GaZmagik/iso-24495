@@ -2740,6 +2740,22 @@ describe("the code skill's rules for this repository's own code", () => {
         }
       }
     });
+
+    test("a library call whose declared result is open holds what each callback it is handed returns, beside its breach", () => {
+      // Each form has the reviver return the value written as VALUE for one key: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[statement: string, after: string]> = [
+        ["const decoded = JSON.parse(\"{\\\"box\\\":0}\", revive) as { box: Boxer };\n  const box = decoded.box;", "function revive(key: string, value: unknown): unknown {\n  return key === \"box\" ? VALUE : value;\n}\n"],
+        ["const box = JSON.parse(\"0\", (): unknown => VALUE) as Boxer;", ""],
+        ["const box = (JSON.parse(\"[0]\", (_key: string, value: unknown): unknown => typeof value === \"number\" ? VALUE : value) as Boxer[])[0]!;", ""],
+      ];
+      for (const [statement, after] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${statement.replace("VALUE", value)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after.replace("VALUE", value)}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+    });
   });
 });
 
@@ -3335,20 +3351,28 @@ function namesFunction(callee: ts.Expression, declaration: ts.SignatureDeclarati
  * `declaredValues` finds it may be that is an arrow function, a function
  * expression, or a function or method declared with a body, and the
  * constructor that runs for each class, as `constructorsOf` reads it. A
- * value it finds that is none of these, and whose type may be a function,
- * is a function written here that no rule can follow, so it is unread.
+ * call of a library function whose value is any, unknown or object runs
+ * each function it holds, as `libraryContents` finds them. A value it finds
+ * that is none of these, and whose type may be a function, is a function
+ * written here that no rule can follow, so it is unread.
  *
  * @param seen The declarations read already, so that names given each other are read once.
+ * @param contents What the expression holds, read in place of its own values, for such a call.
  */
-function heldFunctions(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): Implementations {
+function heldFunctions(expression: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>, contents?: Contents): Implementations {
   const found: Implementations = { functions: [], unread: false };
-  for (const value of declaredValues(expression, checker, seen)) {
+  for (const value of contents === undefined ? declaredValues(expression, checker, seen) : readContents(contents, expression, checker, seen)) {
     if (ts.isClassLike(value)) {
       const made = constructorsOf(value, checker, seen);
       found.functions.push(...made.functions);
       found.unread ||= made.unread;
     } else if (ts.isFunctionLike(value)) {
       if (bodyOf(value) !== undefined) found.functions.push(value);
+    } else if (isLibraryCall(value, checker) && isOpenType(checker.getTypeAtLocation(value)) && !seen.has(value)) {
+      seen.add(value);
+      const held = heldFunctions(value, checker, seen, libraryContents(value, checker.getTypeAtLocation(value), checker, seen));
+      found.functions.push(...held.functions);
+      found.unread ||= held.unread;
     } else if (mayBeFunction(checker.getTypeAtLocation(value), checker, value)) {
       found.unread = true;
     }
@@ -4643,8 +4667,11 @@ function isCallbackParameter(parameter: ts.ParameterDeclaration, checker: ts.Typ
  * the call's declared result may hold it: each value each function the
  * callback may be, as `heldFunctions` finds them, returns, for a callback
  * whose declared type returns a type parameter the declared result uses
- * too, as `flatMap` and `map` declare theirs. A callback whose functions
- * cannot all be followed returns what no rule reads.
+ * too, as `flatMap` and `map` declare theirs, or for any callback where the
+ * declared result is any, unknown or object, as JSON.parse's is, which may
+ * be anything its reviver returns, each value the callback's returns may be,
+ * as `possibleValues` reads them. A callback whose functions cannot all be
+ * followed returns what no rule reads.
  *
  * @param seen The declarations read already, which this reads from but does not add to.
  */
@@ -4655,12 +4682,15 @@ function callbackResults(call: ts.CallExpression | ts.NewExpression, checker: ts
   if (declaration === undefined) return found;
   const result = checker.getSignatureFromDeclaration(declaration)?.getReturnType();
   const resultParts = result === undefined ? new Set<ts.Type>() : typeParametersIn(result, checker);
+  const open = result !== undefined && isOpenType(result);
   for (const [at, argument] of invocation.args.entries()) {
     const parameter = parameterOf(declaration, invocation.args, at);
-    if (parameter === undefined || !isCallbackParameter(parameter, checker) || !returnsResultPart(parameter, resultParts, checker)) continue;
+    if (parameter === undefined || !isCallbackParameter(parameter, checker) || (!open && !returnsResultPart(parameter, resultParts, checker))) continue;
     const held = heldFunctions(argument, checker, new Set(seen));
     if (held.unread) found.unread ??= argument;
-    found.values.push(...held.functions.flatMap(returnedExpressions));
+    const returned = held.functions.flatMap(returnedExpressions);
+    // Each value an open result may be is read as its own, so that a part's type, not the whole's, says what it fits.
+    found.values.push(...open ? returned.flatMap((each) => possibleValues(each, checker)) : returned);
   }
   return found;
 }
@@ -4705,8 +4735,9 @@ function isLibraryCall(node: ts.Node, checker: ts.TypeChecker): node is ts.CallE
  * What a call of a library function gives back, when no function written
  * here runs: each value `libraryContents` finds whose type fits the call's
  * own, when its type may be a function, as `map.get(key)` gives a function
- * the map holds; the call itself, when its type may hold a function, so
- * that what reads it, as a loop or an index does, reads what it holds; and
+ * the map holds; the call itself, when its type may hold a function but
+ * cannot be one, or is any, unknown or object, so that what reads it, as a
+ * loop, a key or an index does, reads what it holds; and
  * the call as well, as unread, where what it is handed holds what no rule
  * reads. A call handed no value written here is read by its declared type
  * alone, and gives none.
@@ -4717,7 +4748,7 @@ function libraryValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: S
   // The declarations read to find what the call is handed are read again by whatever reads the call itself, as a loop over it does.
   const contents = libraryContents(call, result, checker, new Set(seen));
   if (!contents.reached) return [];
-  if (!mayBeFunction(result, checker, call)) return [call];
+  if (!mayBeFunction(result, checker, call) || isOpenType(result)) return [call];
   return readContents(contents, call, checker, seen);
 }
 
@@ -5525,10 +5556,18 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
  * What one key of a value a member is read from gives: what it gives in an
  * object literal, as `keyedValues` reads it, or in the object a rest element
  * makes, as `restValues` reads it, with what code writes to it there, as
- * `writtenTo` finds it; and the member read, as unread, for any other value.
+ * `writtenTo` finds it; in a call of a library function whose value is
+ * any, unknown or object, as JSON.parse's is, each value the call holds
+ * whose type fits the member's, as `libraryContents` finds them, where it
+ * is handed a value written here; and the member read, as unread, for any
+ * other value.
  */
 function keyOfValue(literal: DeclaredValue, key: string, read: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   if (ts.isObjectLiteralExpression(literal)) return keyedValues(literal, key, read, checker, seen);
+  if (isLibraryCall(literal, checker) && isOpenType(checker.getTypeAtLocation(literal))) {
+    const held = libraryContents(literal, checker.getTypeAtLocation(read), checker, seen);
+    if (held.reached) return readContents(held, read, checker, seen);
+  }
   if (!isRestTarget(literal)) return [read];
   const rested = restValues(literal, key, checker, seen);
   return readContents(rested, read, checker, seen);
