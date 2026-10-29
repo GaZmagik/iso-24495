@@ -1803,7 +1803,8 @@ describe("the code skill's rules for this repository's own code", () => {
       ["box: Boxer", called, "run(...[consuming]);", ["probe.ts / run / helper"]],
       ["box: Boxer", called, "run(consuming);\n  void [run];", ["probe.ts / run / helper"]],
       ["box: Boxer", called, "run.call(undefined, consuming);", ["probe.ts / run / helper"]],
-      ["...boxes: Boxer[]", iterated, "run(consuming);", ["probe.ts / run / helper"]],
+      ["...boxes: Boxer[]", iterated, "run(consuming);", []],
+      ["...boxes: Boxer[]", iterated, "run(boxing);", ["probe.ts / run / helper"]],
     ];
     for (const [signature, body, callers, found] of cases) {
       const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nfunction run(${signature}): number {\n  ${body}\n  return 0;\n}\n${wrappers}`;
@@ -2962,6 +2963,39 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(boundHelpers("probe.ts", text)).toEqual(["probe.ts / run / helper"]);
     });
 
+    test("a rest parameter holds each argument at or after its position in every call, beside its breach", () => {
+      // Each form hands VALUE where the rest parameter's read takes it from: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[callers: string, signature: string, read: string]> = [
+        ["run(VALUE);", "...boxes: Boxer[]", "const box = boxes[0];"],
+        ["run(consuming, VALUE);", "...boxes: Boxer[]", "const box = boxes[1];"],
+        ["run(consuming, VALUE);", "...boxes: Boxer[]", "for (const each of boxes) {\n    const helper = each((): number => 1);\n    void helper;\n  }\n  const box = consuming;"],
+        ["run(boxing, VALUE);", "first: Boxer, ...boxes: Boxer[]", "void first;\n  const box = boxes[0];"],
+        ["run(VALUE);\n  run();", "...boxes: Boxer[]", "const box = boxes[0];"],
+      ];
+      for (const [callers, signature, read] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / run / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${callers.replace("VALUE", value)}\n  return 0;\n}\nfunction run(${signature}): number {\n  ${read}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), callers + signature + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, callers + signature + value).toEqual([]);
+        }
+      }
+      // A spread in a call, a call that cannot be found, and a wrapper written to the array after, may each give any wrapper the type allows.
+      for (const [callers, after] of [
+        ["run(...[consuming]);", ""],
+        ["run(consuming);\n  void [run];", ""],
+        ["run(consuming);", "\n  boxes[0] = boxing;"],
+      ] as Array<[callers: string, after: string]>) {
+        const text = `export function main(): number {\n  ${callers}\n  return 0;\n}\nfunction run(...boxes: Boxer[]): number {${after}\n  const box = boxes[0];\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), callers + after).toEqual(["probe.ts / run / helper"]);
+      }
+      // The throws check reads a rest parameter the same way.
+      const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+      for (const [value, problems] of [["consuming", []], ["boxing", ["probe.ts:8: the comment on helper does not say what it throws"]]] as Array<[value: string, problems: string[]]>) {
+        const text = `export function main(): object {\n  return run(${value});\n}\nfunction run(...boxes: Boxer[]): object {\n  const box = boxes[0];\n  if (box === undefined) return {};\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, value).toEqual(problems);
+      }
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -3949,6 +3983,8 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       return isGivenLater(declaration) ? [value, ...written] : written;
     }
     if (ts.isShorthandPropertyAssignment(declaration)) return [...declaredValues(declaration.name, checker, seen), ...assigned.values, ...written];
+    // A rest parameter is the array its function's arguments make, which `restValues` reads.
+    if (ts.isParameter(declaration) && declaration.dotDotDotToken !== undefined && ts.isIdentifier(declaration.name)) return [declaration.name, ...assigned.values, ...written];
     if (ts.isParameter(declaration)) {
       const passed = passedValues(declaration, checker, seen);
       return [...passed.values, ...passed.handed, ...passed.unread ? [value] : [], ...assigned.values, ...written];
@@ -6244,13 +6280,14 @@ function entriesValues(made: ts.Expression, key: string, read: ts.Expression, ch
 
 /**
  * Whether a node is the name a rest element binds, where it is written: the
- * name of a binding element written with `...`, or the name a spread in an
- * array or object literal written as a destructuring target assigns.
+ * name of a binding element or a parameter written with `...`, or the name a
+ * spread in an array or object literal written as a destructuring target
+ * assigns.
  */
 function isRestTarget(node: ts.Node): node is ts.Identifier {
   if (!ts.isIdentifier(node)) return false;
   const parent = node.parent;
-  if (ts.isBindingElement(parent)) return parent.dotDotDotToken !== undefined && parent.name === node;
+  if (ts.isBindingElement(parent) || ts.isParameter(parent)) return parent.dotDotDotToken !== undefined && parent.name === node;
   return (ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) && parent.expression === node && isDestructuringTarget(node);
 }
 
@@ -6360,6 +6397,52 @@ function nestedSources(element: ts.BindingElement, checker: ts.TypeChecker, seen
 }
 
 /**
+ * What the array or object a rest element makes holds, under one key, or
+ * under every key when no key is given: for a rest parameter, what
+ * `restArguments` finds; for any other, what `restElements` finds; and,
+ * under a key, what code writes to the key of the rest element's own array
+ * or object, as `writtenTo` finds it. What code writes to it under any key
+ * is read where `placeContents` and `writtenTo` read a container's.
+ */
+function restValues(target: ts.Identifier, key: string | undefined, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const found = ts.isParameter(target.parent) ? restArguments(target.parent, key, checker) : restElements(target, key, checker, seen);
+  if (key !== undefined) {
+    const written = writtenTo(target, key, checker);
+    found.values.push(...written.values);
+    found.unread ??= written.unread;
+  }
+  return found;
+}
+
+/**
+ * What the array a rest parameter makes holds, under one key, or under
+ * every key when no key is given: each argument at or after its position,
+ * in every call of its function that `callsOf` finds, or, for an index, the
+ * argument that many places after its position. A key that is no index
+ * holds no argument. Where no rule can find every call, or a call hands its
+ * function to a library as a callback, or passes a spread anywhere at or
+ * after the position of any parameter it fills, which arguments the array
+ * holds is not known, so it holds what no rule reads.
+ */
+function restArguments(parameter: ts.ParameterDeclaration, key: string | undefined, checker: ts.TypeChecker): Contents {
+  const owner = parameter.parent;
+  const sites = callsOf(owner, checker);
+  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
+  if (sites === undefined || sites.handing.length > 0 || at < 0) return { values: [], unread: parameter.name };
+  const found: Contents = { values: [], unread: null };
+  if (key !== undefined && !isIndexKey(key)) return found;
+  for (const call of sites.calls) {
+    const given = call.arguments ?? [];
+    if (given.some(ts.isSpreadElement)) {
+      found.unread ??= parameter.name;
+      continue;
+    }
+    found.values.push(...key === undefined ? given.slice(at) : given.slice(at + Number(key), at + Number(key) + 1));
+  }
+  return found;
+}
+
+/**
  * What the array or object a rest element makes holds, as `restOrigin`
  * finds where it takes it from, under one key, or under every key when no
  * key is given. From an array literal, the rest element takes each item at
@@ -6368,10 +6451,9 @@ function nestedSources(element: ts.BindingElement, checker: ts.TypeChecker, seen
  * each property whose key no other element takes, as `keyedProperties`
  * reads it for a key. Any other value it is made from gives what it holds,
  * as `placeContents` or `reachedContents` finds it, which includes what the
- * rest element takes. What code writes to the rest element's own array or
- * object is read where `placeContents` and `writtenTo` read a container's.
+ * rest element takes.
  */
-function restValues(target: ts.Identifier, key: string | undefined, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+function restElements(target: ts.Identifier, key: string | undefined, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
   const origin = restOrigin(target, checker, seen);
   const found: Contents = { values: [], unread: origin.unread };
   for (const source of origin.sources) {
@@ -6410,11 +6492,6 @@ function restValues(target: ts.Identifier, key: string | undefined, checker: ts.
     found.values.push(...held.values);
     found.unread ??= held.unread;
     if (!held.reached && mayCarryFunction(source, checker)) found.unread ??= target;
-  }
-  if (key !== undefined) {
-    const written = writtenTo(target, key, checker);
-    found.values.push(...written.values);
-    found.unread ??= written.unread;
   }
   return found;
 }
