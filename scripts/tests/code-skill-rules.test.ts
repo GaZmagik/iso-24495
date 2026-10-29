@@ -2537,6 +2537,12 @@ describe("the code skill's rules for this repository's own code", () => {
         const text = `export function main(): number {\n  return ${call};\n}\n${form}${callback}${wrappers}`;
         expect(boundHelpers("probe.ts", text), form).toEqual(["probe.ts / cb / helper"]);
       }
+      // A spread before the function hides which parameter takes it, and a function handed twice is given what either parameter gives.
+      const pair = "function apply(first: (box: Boxer) => number, second?: (box: Boxer) => number): number {\n  return first(consuming) + (second?.(boxing) ?? 0);\n}\n";
+      for (const call of ["apply(...others, cb)", "apply(cb, cb)"]) {
+        const text = `export function main(others: Array<(box: Boxer) => number>): number {\n  return ${call};\n}\n${pair}${callback}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), call).toEqual(["probe.ts / cb / helper"]);
+      }
     });
 
     test("a method's parameter is given what each call of the method gives, wherever every call can be found, beside its breach", () => {
@@ -2735,6 +2741,17 @@ describe("the code skill's rules for this repository's own code", () => {
       ]) {
         const text = `export async function main(): Promise<number> {\n  ${statement}\n  const box = await promise;\n  ${reader}\n  return 0;\n}\n${wrappers}`;
         expect(boundHelpers("probe.ts", text), statement).toEqual(["probe.ts / main / helper"]);
+      }
+      // The promise, settled with a wrapper and read through another promise a library makes of it, is reported.
+      for (const read of [
+        "const [box] = await Promise.all([promise]);",
+        "const box = await Promise.race([promise]);",
+        "const box = await promise.catch(() => consuming);",
+        "const box = await promise.finally(() => undefined);",
+        "const box = await Promise.resolve(promise);",
+      ]) {
+        const text = `export async function main(): Promise<number> {\n  const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(boxing);\n  ${read}\n  ${reader}\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), read).toEqual(["probe.ts / main / helper"]);
       }
     });
 
