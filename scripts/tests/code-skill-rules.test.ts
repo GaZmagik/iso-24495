@@ -2945,6 +2945,22 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), form).toEqual(reported);
       }
     });
+
+    test("a key a constant holds is read through its values, so a read of a value of any type under other keys leaves a method's callers known, beside its breach", () => {
+      const runner = "class Runner {\n  run(box: Boxer): number {\n    const helper = box((): number => 1);\n    void helper;\n    return 0;\n  }\n}\n";
+      // Each form reads a value typed any under KEYS, then calls the method with VALUE.
+      for (const [keys, value, found] of [
+        ["\"a\", \"b\"", "consuming", []],
+        ["\"a\", \"b\"", "boxing", ["probe.ts / run / helper"]],
+        ["\"a\", \"run\"", "consuming", ["probe.ts / run / helper"]],
+      ] as Array<[keys: string, value: string, found: string[]]>) {
+        const text = `export function main(): number {\n  const data = JSON.parse("{}");\n  for (const name of [${keys}]) void data[name];\n  return new Runner().run(${value});\n}\n${runner}${wrappers}`;
+        expect(boundHelpers("probe.ts", text), keys + value).toEqual(found);
+      }
+      // A key a name that is no constant holds may be any key.
+      const text = `export function main(): number {\n  const data = JSON.parse("{}");\n  let name = "a";\n  name = String(name);\n  void data[name];\n  return new Runner().run(consuming);\n}\n${runner}${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(["probe.ts / run / helper"]);
+    });
   });
 });
 
@@ -5421,8 +5437,9 @@ function memberKeys(member: ts.PropertyAccessExpression | ts.ElementAccessExpres
 
 /**
  * The keys an expression may give: its text, written as a string or number
- * literal, the key `identityKey` finds for a symbol or an object, or each
- * string or number literal its type allows.
+ * literal, the key `identityKey` finds for a symbol or an object, each
+ * string or number literal its type allows, or, where its type allows any,
+ * the keys `namedKeys` finds a name holds.
  *
  * @returns The keys, or undefined when its type allows a key that is no literal.
  */
@@ -5435,10 +5452,67 @@ function keysOf(key: ts.Expression | undefined, checker: ts.TypeChecker): readon
   const type = checker.getTypeAtLocation(key);
   const keys: string[] = [];
   for (const part of type.isUnion() ? type.types : [type]) {
-    if (!part.isStringLiteral() && !part.isNumberLiteral()) return undefined;
+    if (!part.isStringLiteral() && !part.isNumberLiteral()) return namedKeys(key, checker);
     keys.push(String(part.value));
   }
   return keys;
+}
+
+/**
+ * What `namedKeys` finds for each name, for each checker, null where it finds
+ * none. Only a reading made once the table of changes is finished is kept,
+ * since one made while it is being made may find fewer values, and so fewer
+ * keys, than the name holds.
+ */
+const NAMED_KEYS = new WeakMap<ts.TypeChecker, WeakMap<ts.Node, readonly string[] | null>>();
+
+/** The names whose keys `namedKeys` is reading, so that a key met meanwhile is read as not known rather than read again. */
+const NAMES_BEING_KEYED = new Set<ts.Node>();
+
+/**
+ * The keys a constant may hold whose type, a string or a number, allows a
+ * key that is no literal, as a for-of over a list of strings gives one: the
+ * text of each value `declaredValues` finds it may be, where every one is a
+ * string or number written as a literal.
+ *
+ * @returns The keys, or undefined for any other expression, a name that is
+ *     no such constant, a value that is no such literal or cannot be read,
+ *     or a name met while another's
+ *     keys are being read, whose own keys that reading may need.
+ */
+function namedKeys(key: ts.Expression, checker: ts.TypeChecker): readonly string[] | undefined {
+  const name = heldValue(key);
+  if (name === undefined || !ts.isIdentifier(name) || NAMES_BEING_KEYED.size > 0) return undefined;
+  const declaration = referencedSymbol(name, checker)?.declarations?.[0];
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
+    || !(checker.getTypeAtLocation(name).flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike))) return undefined;
+  const finished = WRITE_TABLES.has(checker);
+  const kept = finished ? NAMED_KEYS.get(checker)?.get(name) : undefined;
+  if (kept !== undefined) return kept === null ? undefined : kept;
+  const keys = readNamedKeys(name, checker);
+  if (finished) {
+    const known = NAMED_KEYS.get(checker) ?? new WeakMap<ts.Node, readonly string[] | null>();
+    NAMED_KEYS.set(checker, known);
+    known.set(name, keys ?? null);
+  }
+  return keys;
+}
+
+/** The keys `namedKeys` finds a name holds, read afresh. */
+function readNamedKeys(name: ts.Identifier, checker: ts.TypeChecker): readonly string[] | undefined {
+  NAMES_BEING_KEYED.add(name);
+  let values: DeclaredValue[];
+  try {
+    values = declaredValues(name, checker, new Set());
+  } finally {
+    NAMES_BEING_KEYED.delete(name);
+  }
+  const keys: string[] = [];
+  for (const value of values) {
+    if (!ts.isExpression(value) || (!ts.isStringLiteralLike(value) && !ts.isNumericLiteral(value))) return undefined;
+    keys.push(ts.isNumericLiteral(value) ? String(Number(value.text)) : value.text);
+  }
+  return keys.length === 0 ? undefined : keys;
 }
 
 /** How a key that is a symbol or an object begins, so that it never equals a key written as a string. */
