@@ -2837,6 +2837,26 @@ describe("the code skill's rules for this repository's own code", () => {
         }
       }
     });
+
+    test("a key of the object Object.fromEntries makes holds the second item of each entry under that key, beside its breach", () => {
+      // Each form puts VALUE in the entry under "box", and OTHER in any other: `consuming` and `boxing` in the valid form, swapped in its breach.
+      const forms = [
+        "const box = Object.fromEntries([[\"box\", VALUE]]).box as Boxer;",
+        "const box = Object.fromEntries([[\"other\", OTHER], [\"box\", VALUE]]).box as Boxer;",
+        "const list: Array<[string, Boxer]> = [[\"other\", OTHER], [\"box\", VALUE]];\n  const box = Object.fromEntries(list)[\"box\"] as Boxer;",
+        "const made: Record<string, Boxer> = Object.fromEntries([[\"box\", VALUE], [\"other\", OTHER]]);\n  const box = made.box as Boxer;",
+      ];
+      for (const form of forms) {
+        for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value).replace("OTHER", other)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // An entry whose key is not known may be under any key.
+      const text = `export function main(key: string): number {\n  const box = Object.fromEntries([["box", consuming], [key, boxing]]).box as Boxer;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(reported);
+    });
   });
 });
 
@@ -3606,7 +3626,8 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
 /**
  * What an item read by index is given where it is written: the item at that
  * position of each array literal, as `itemSource` reads it, what the key
- * gives in each object literal, as `keyedValues` reads it, the item at that
+ * gives in each object literal, as `keyedValues` reads it, or in the object
+ * `Object.fromEntries` makes, as `entriesValues` reads it, the item at that
  * position of an array a library call makes, where `libraryItemSource` can
  * tell, or else each value `libraryContents` finds that a call of a library
  * function holds, whose type fits the item's, that the value read from may be.
@@ -3623,6 +3644,8 @@ function indexedValues(access: ts.ElementAccessExpression, checker: ts.TypeCheck
   let unread = false;
   const found = declaredValues(access.expression, checker, seen).flatMap((literal): DeclaredValue[] => {
     if (ts.isObjectLiteralExpression(literal)) return keyedValues(literal, key, access, checker, seen);
+    const entries = ts.isExpression(literal) ? entriesValues(literal, key, access, checker, seen) : undefined;
+    if (entries !== undefined) return entries;
     if (isLibraryCall(literal, checker)) {
       const positional = isIndexKey(key) ? libraryItemSource(literal, Number(key), checker) : undefined;
       if (positional !== undefined) {
@@ -5742,7 +5765,8 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
  * What one key of a value a member is read from gives: what it gives in an
  * object literal, as `keyedValues` reads it, or in the object a rest element
  * makes, as `restValues` reads it, with what code writes to it there, as
- * `writtenTo` finds it; in a call of a library function whose value is
+ * `writtenTo` finds it; in the object `Object.fromEntries` makes, what
+ * `entriesValues` finds; in a call of a library function whose value is
  * any, unknown or object, as JSON.parse's is, each value the call holds
  * whose type fits the member's, as `libraryContents` finds them, where it
  * is handed a value written here; and the member read, as unread, for any
@@ -5750,6 +5774,8 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
  */
 function keyOfValue(literal: DeclaredValue, key: string, read: ts.PropertyAccessExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
   if (ts.isObjectLiteralExpression(literal)) return keyedValues(literal, key, read, checker, seen);
+  const entries = ts.isExpression(literal) ? entriesValues(literal, key, read, checker, seen) : undefined;
+  if (entries !== undefined) return entries;
   if (isLibraryCall(literal, checker) && isOpenType(checker.getTypeAtLocation(literal))) {
     const held = libraryContents(literal, checker.getTypeAtLocation(read), checker, seen);
     if (held.reached) return readContents(held, read, checker, seen);
@@ -5757,6 +5783,46 @@ function keyOfValue(literal: DeclaredValue, key: string, read: ts.PropertyAccess
   if (!isRestTarget(literal)) return [read];
   const rested = restValues(literal, key, checker, seen);
   return readContents(rested, read, checker, seen);
+}
+
+/**
+ * What one key of the object `Object.fromEntries` makes holds: the second
+ * item of each entry iterating its list gives, as `iteratedContents` finds
+ * them, that `mayHaveKey` finds may be under the key, read as `itemSource`
+ * reads the entry, as `declaredValues` reads each entry not written in
+ * place, and what code writes to the key after, as `writtenTo` finds it.
+ * An entry that is no array literal, a list hidden by a spread or not
+ * handed, and a change no rule reads, give what no rule reads.
+ *
+ * @param read The expression that reads the key, given back as well, as unread, where the key may hold what no rule reads.
+ * @returns The values, or undefined for any other value.
+ */
+function entriesValues(made: ts.Expression, key: string, read: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] | undefined {
+  if (!isLibraryCall(made, checker)) return undefined;
+  const invocation = invocationOf(made, checker);
+  if (invocation.declaration === undefined || libraryMemberName(invocation.declaration) !== "Object.fromEntries") return undefined;
+  const [list] = invocation.args;
+  if (list === undefined || ts.isSpreadElement(list)) return [read];
+  const listed = iteratedContents(list, checker.getTypeAtLocation(list).getNumberIndexType() ?? checker.getTypeAtLocation(list), checker, seen);
+  const written = writtenTo(made, key, checker);
+  let unread = listed.unread !== null || written.unread !== null;
+  const values: DeclaredValue[] = written.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
+  for (const entry of listed.values) {
+    if (!ts.isExpression(entry) || !mayHaveKey(entry, [key], made, checker)) {
+      unread ||= !ts.isExpression(entry);
+      continue;
+    }
+    for (const literal of ts.isArrayLiteralExpression(entry) ? [entry] : declaredValues(entry, checker, seen)) {
+      if (!ts.isExpression(literal) || !ts.isArrayLiteralExpression(literal)) {
+        unread = true;
+        continue;
+      }
+      const item = itemSource(literal, 1, checker);
+      unread ||= item.unknownAfter !== null;
+      values.push(...item.holders.map(heldBy).flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)));
+    }
+  }
+  return unread ? [...values, read] : values;
 }
 
 /**
