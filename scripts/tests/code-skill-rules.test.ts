@@ -3271,6 +3271,13 @@ describe("the code skill's rules for this repository's own code", () => {
         ["Object.defineProperty[\"call\"](Object, overrides, \"box\", { enumerable: !hide });", "", true],
         ["const run = Reflect.apply;\n  run(Object.defineProperty, Object, [overrides, \"box\", { enumerable: true }]);", "", false],
         ["const run = Reflect.apply;\n  run(Object.defineProperty, Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
+        // The same function read from a record of it, whose items may be missing, by an optional call, through `!`, or by an optional `call`.
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: true });", "", false],
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]!(overrides, \"box\", { enumerable: true });", "", false],
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]!(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.call(Object, overrides, \"box\", { enumerable: true });", "", false],
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.call(Object, overrides, \"box\", { enumerable: !hide });", "", true],
         // A descriptor's `enumerable` is read by the type of its value: a name declared `true` keeps the key; one declared boolean, a cast, a call or an accessor may not.
         ["const enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", false],
         ["const shown: true = true;\n  Object.defineProperty(overrides, \"box\", { configurable: true, enumerable: shown });", "", false],
@@ -3316,6 +3323,7 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.other;", []],
         ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.box;", ["probe.ts:8: the comment on helper does not say what it throws"]],
         ["const define = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", ["probe.ts:8: the comment on helper does not say what it throws"]],
+        ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", ["probe.ts:8: the comment on helper does not say what it throws"]],
       ] as Array<[statement: string, problems: string[]]>) {
         const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
           + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
@@ -4088,14 +4096,15 @@ function memberReceiver(expression: ts.Expression): ts.Expression | undefined {
  * The declaration of the signature that runs when `call`, `apply`, `bind` or
  * `Reflect` runs a function: the one signature its type has, or the
  * implementation that the signatures of a function declared with overloads
- * share.
+ * share. Its type is read without `undefined` and `null`, as
+ * `f?.call(self, a)` reads it.
  *
  * @param constructs Whether the function is made with `new`, so that its construct signatures run.
  * @returns The declaration, or undefined when the signatures belong to more
  *     than one function, or have no declaration.
  */
 function targetDeclaration(callee: ts.Expression, constructs: boolean, checker: ts.TypeChecker): ts.SignatureDeclaration | undefined {
-  const type = checker.getTypeAtLocation(callee);
+  const type = checker.getNonNullableType(checker.getTypeAtLocation(callee));
   // The type says a signature always has a declaration, but one the checker makes has none.
   const declarations = (constructs ? type.getConstructSignatures() : type.getCallSignatures())
     .map((signature): ts.SignatureDeclaration | ts.JSDocSignature | undefined => signature.getDeclaration());
@@ -9217,9 +9226,15 @@ function calleeForwarding(callee: ts.Expression, checker: ts.TypeChecker): Forwa
   return signatureDeclarations(callee, checker).map(forwardingDeclared).find((each) => each !== undefined);
 }
 
-/** The declarations of the call signatures of an expression's type, leaving out a signature the checker makes for itself, which has none. */
+/**
+ * The declarations of the call signatures of an expression's type, leaving
+ * out a signature the checker makes for itself, which has none. The type is
+ * read without `undefined` and `null`, as an optional call or `!` reads it,
+ * so that an item of a record that may be missing has the signatures of
+ * the function it holds.
+ */
 function signatureDeclarations(expression: ts.Expression, checker: ts.TypeChecker): ts.SignatureDeclaration[] {
-  return checker.getTypeAtLocation(expression).getCallSignatures().flatMap((signature) => {
+  return checker.getNonNullableType(checker.getTypeAtLocation(expression)).getCallSignatures().flatMap((signature) => {
     // The type says a signature always has a declaration, but one the checker makes for itself has none.
     const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = signature.getDeclaration();
     return declaration === undefined || ts.isJSDocSignature(declaration) ? [] : [declaration];
