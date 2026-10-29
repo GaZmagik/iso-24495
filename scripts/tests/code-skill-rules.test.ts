@@ -2779,6 +2779,29 @@ describe("the code skill's rules for this repository's own code", () => {
       const text = `export function main(key: object): number {\n  const box = new WeakMap<object, Boxer>([[{}, consuming], [key, boxing]]).get(key);\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
       expect(boundHelpers("probe.ts", text)).toEqual(reported);
     });
+
+    test("a position counted from the end, or written as a fraction, is read where the library reads it, and so is the item at reads, beside its breach", () => {
+      // Each pair reads the position that holds `consuming`, then the one that holds `boxing`.
+      const pairs: Array<[valid: string, breach: string]> = [
+        ["const box = [boxing, consuming].slice(-1)[0];", "const box = [consuming, boxing].slice(-1)[0];"],
+        ["const box = [boxing, consuming, consuming].slice(-2, -1)[0];", "const box = [consuming, boxing, consuming].slice(-2, -1)[0];"],
+        ["const box = [boxing, consuming].slice(1.5)[0];", "const box = [consuming, boxing].slice(1.5)[0];"],
+        ["const box = [boxing].with(-1, consuming)[0];", "const box = [consuming].with(-1, boxing)[0];"],
+        ["const box = [boxing, consuming].at(-1);", "const box = [consuming, boxing].at(-1);"],
+        ["const box = [boxing, consuming].at(1.9);", "const box = [consuming, boxing].at(1.9);"],
+        ["const list = [boxing, consuming];\n  const box = list.at(-1);", "const list = [consuming, boxing];\n  const box = list.at(-1);"],
+      ];
+      for (const [valid, breach] of pairs) {
+        for (const [statement, found] of [[valid, []], [breach, reported]] as Array<[statement: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${statement}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), statement).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual([]);
+        }
+      }
+      // A list whose length code changes has no end known, so a position counted from it may hold any item.
+      const text = `export function main(): number {\n  const list: Boxer[] = [consuming];\n  list.push(boxing);\n  list.pop();\n  const box = list.at(-1);\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(reported);
+    });
   });
 });
 
@@ -3516,7 +3539,8 @@ function resolvedPromise(call: ts.CallExpression | ts.NewExpression, checker: ts
  * A call of a generator is the call itself, which holds what
  * `generatorContents` finds the generator yields and returns.
  *
- * @returns The values; for a library function, what `libraryValues` finds
+ * @returns The values; for a library function, the item `itemAt` finds
+ *     `at` reads, or else what `libraryValues` finds
  *     it gives back of what it is handed; none when the function that runs
  *     is declared with no body here, whose declared type alone describes
  *     its value; and the call itself as well when a function
@@ -3528,7 +3552,12 @@ function calledValues(call: ts.CallExpression, checker: ts.TypeChecker, seen: Se
   if (invocation.binds) return invocation.unread.length > 1 ? [call] : declaredValues(invocation.callee, checker, seen);
   if (invocation.declaration === undefined) return [call];
   const implementations = implementationsOf(call, invocation.callee, invocation.declaration, checker);
-  if (implementations.functions.length === 0 && !implementations.unread && invocation.declaration.getSourceFile().isDeclarationFile) return libraryValues(call, checker, seen);
+  if (implementations.functions.length === 0 && !implementations.unread && invocation.declaration.getSourceFile().isDeclarationFile) {
+    const item = itemAt(call, checker);
+    if (item === undefined) return libraryValues(call, checker, seen);
+    const held = item.holders.map(heldBy).flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen));
+    return item.unknownAfter === null ? held : [...held, call];
+  }
   const values = implementations.functions.flatMap((run) => {
     if (isGenerator(run)) return [call];
     const body = bodyOf(run);
@@ -4433,8 +4462,8 @@ const POSITIONAL_METHODS: ReadonlySet<string> = new Set(["concat", "slice", "wit
  * and for `with`, the value it is handed at its index, and the item there
  * elsewhere. Each array read must be one array literal whose length no code
  * changes, as `singleList` and `fixedLength` read it, read at that position
- * as `itemSource` reads it, and each start or index a whole number written
- * so its value is known. What code writes to the position in the array the
+ * as `itemSource` reads it, and each start, end or index a number written
+ * so its value is known, read as `listPosition` reads it. What code writes to the position in the array the
  * call makes counts too, as `writtenTo` finds it.
  *
  * @returns Where the item comes from, or undefined when the call is none of
@@ -4467,15 +4496,18 @@ function positionalSource(call: ts.CallExpression | ts.NewExpression, method: st
   const list = receiver === undefined ? undefined : singleList(receiver, checker);
   if (list === undefined) return undefined;
   if (method === "with") {
-    const index = first === undefined ? undefined : wholeNumber(first, checker);
+    const index = first === undefined ? undefined : listPosition(first, list, checker);
     if (index === undefined || second === undefined) return undefined;
+    // An index outside the list makes `with` throw, so it gives nothing.
+    if (index < 0) return { holders: [], unknownAfter: null };
     return index === at ? { holders: [second], unknownAfter: null } : itemSource(list, at, checker);
   }
   if (method === "slice") {
-    const start = first === undefined ? 0 : wholeNumber(first, checker);
-    const end = second === undefined ? undefined : wholeNumber(second, checker);
+    const start = first === undefined ? 0 : listPosition(first, list, checker);
+    const end = second === undefined ? undefined : listPosition(second, list, checker);
     if (start === undefined || (second !== undefined && end === undefined)) return undefined;
-    return end !== undefined && start + at >= end ? { holders: [], unknownAfter: null } : itemSource(list, start + at, checker);
+    const from = Math.max(start, 0);
+    return end !== undefined && from + at >= end ? { holders: [], unknownAfter: null } : itemSource(list, from + at, checker);
   }
   let left = at;
   for (const part of [receiver, ...args]) {
@@ -4497,10 +4529,45 @@ function positionalSource(call: ts.CallExpression | ts.NewExpression, method: st
   return { holders: [], unknownAfter: null };
 }
 
-/** The whole number of zero or more an expression's type says it is, as a number literal type does, or undefined for any other. */
-function wholeNumber(expression: ts.Expression, checker: ts.TypeChecker): number | undefined {
+/**
+ * The position in an array literal that an argument of `slice`, `with` or
+ * `at` names, as the library reads it: the number its type says it is, as a
+ * number literal type does, cut to a whole number towards zero, and, where
+ * it is negative, counted back from the end of the list, which must then be
+ * of a length no code changes, as `fixedLength` reads it.
+ *
+ * @returns The position, negative where it falls before the start; or
+ *     undefined when the argument's type is no number literal, or it counts
+ *     back from an end not known.
+ */
+function listPosition(expression: ts.Expression, list: ts.ArrayLiteralExpression, checker: ts.TypeChecker): number | undefined {
   const type = checker.getTypeAtLocation(expression);
-  return type.isNumberLiteral() && Number.isInteger(type.value) && type.value >= 0 ? type.value : undefined;
+  if (!type.isNumberLiteral()) return undefined;
+  const position = Number.isNaN(type.value) ? 0 : Math.trunc(type.value);
+  if (position >= 0) return position;
+  const length = fixedLength(list, checker);
+  return length === undefined ? undefined : length + position;
+}
+
+/**
+ * The item a call of `at` of an array reads: the item of the one array
+ * literal it is called on, as `singleList` finds it, at the position
+ * `listPosition` finds its argument names, as `itemSource` reads it.
+ *
+ * @returns Where the item comes from, none before the start, or undefined
+ *     for any other call, or a list or position not known.
+ */
+function itemAt(call: ts.CallExpression, checker: ts.TypeChecker): ElementSource | undefined {
+  const invocation = invocationOf(call, checker);
+  const owner = invocation.declaration?.parent;
+  const [index] = invocation.args;
+  if (owner === undefined || !ts.isInterfaceDeclaration(owner) || (owner.name.text !== "Array" && owner.name.text !== "ReadonlyArray")
+    || memberName(call.expression) !== "at" || invocation.callee !== call.expression || index === undefined || ts.isSpreadElement(index)) return undefined;
+  const receiver = memberReceiver(call.expression);
+  const list = receiver === undefined ? undefined : singleList(receiver, checker);
+  const position = list === undefined ? undefined : listPosition(index, list, checker);
+  if (list === undefined || position === undefined) return undefined;
+  return position < 0 ? { holders: [], unknownAfter: null } : itemSource(list, position, checker);
 }
 
 /** What code gives a container under any of some keys, as `writtenTo` finds it for each. */
