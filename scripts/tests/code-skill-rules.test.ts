@@ -2689,12 +2689,10 @@ describe("the code skill's rules for this repository's own code", () => {
     });
 
     test("a callback a library may give what it keeps from another call is unread, and a promise's resolve is read, beside its breach", () => {
-      // The library keeps what `register`, `emit` and `resolve` are handed for a callback handed to another call, which no rule reads.
+      // The library keeps what `register` and `emit` are handed for a callback handed to another call, which no rule reads.
       for (const [statement, name] of [
         ["const registry = new FinalizationRegistry((box: Boxer) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  registry.register({}, consuming);", "(an unnamed function)"],
         ["process.on(\"message\", (box: Boxer) => {\n    const helper = box((): number => 1);\n    void helper;\n  });\n  process.emit(\"message\", consuming as never);", "(an unnamed function)"],
-        ["const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);\n  await promise.then((box) => {\n    const helper = box((): number => 1);\n    void helper;\n  });", "(an unnamed function)"],
-        ["const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);\n  const box = await promise;\n  const helper = box((): number => 1);\n  void helper;", "main"],
       ] as Array<[statement: string, name: string]>) {
         const text = `export async function main(): Promise<number> {\n  ${statement}\n  return 0;\n}\n${wrappers}`;
         expect(boundHelpers("probe.ts", text), statement).toEqual([`probe.ts / ${name} / helper`]);
@@ -2707,6 +2705,36 @@ describe("the code skill's rules for this repository's own code", () => {
         const text = `export async function main(): Promise<number> {\n  ${statement}\n  return 0;\n}\n`;
         expect(boundHelpers("probe.ts", text), statement).toEqual([]);
         expect(unplacedFunctions("probe.ts", text).problems, statement).toEqual(problems);
+      }
+    });
+
+    test("the promise Promise.withResolvers makes, destructured, holds what each call of its resolve and reject is handed, beside its breach", () => {
+      const reader = "const helper = box((): number => 1);\n    void helper;";
+      // Each form settles the promise with VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[statement: string, name: string]> = [
+        [`const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(VALUE);\n  const box = await promise;\n  ${reader}`, "main"],
+        [`const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(VALUE);\n  await promise.then((box) => {\n    ${reader}\n  });`, "(an unnamed function)"],
+        [`const { promise: settled, resolve: settle } = Promise.withResolvers<Boxer>();\n  setTimeout(settle, 1, VALUE);\n  const box = await settled;\n  ${reader}`, "main"],
+        [`const { promise, resolve, reject } = Promise.withResolvers<Boxer>();\n  if (Math.random() > 0.5) resolve(VALUE);\n  else reject(new Error("no"));\n  const box = await promise;\n  ${reader}`, "main"],
+        [`const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(Promise.resolve(VALUE));\n  const box = await promise;\n  ${reader}`, "main"],
+      ];
+      for (const [statement, name] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", [`probe.ts / ${name} / helper`]]] as Array<[value: string, found: string[]]>) {
+          const text = `export async function main(): Promise<number> {\n  ${statement.replace("VALUE", value)}\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+      // `resolve` handed on anywhere else, a spread among what it is handed, a rest element, and the call's value held whole, may settle the promise with anything its type allows.
+      for (const statement of [
+        "const { promise, resolve } = Promise.withResolvers<Boxer>();\n  [consuming].forEach(resolve);",
+        "const { promise, resolve } = Promise.withResolvers<Boxer>();\n  resolve(...[consuming] as [Boxer]);",
+        "const { promise, ...rest } = Promise.withResolvers<Boxer>();\n  rest.resolve(consuming);",
+        "const resolvers = Promise.withResolvers<Boxer>();\n  resolvers.resolve(consuming);\n  const { promise } = resolvers;",
+        "const { promise = Promise.resolve(boxing), resolve } = Promise.withResolvers<Boxer>();\n  resolve(consuming);",
+      ]) {
+        const text = `export async function main(): Promise<number> {\n  ${statement}\n  const box = await promise;\n  ${reader}\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), statement).toEqual(["probe.ts / main / helper"]);
       }
     });
 
@@ -4142,7 +4170,7 @@ function awaitedValues(awaited: ts.Expression, at: ts.AwaitExpression, checker: 
   if (values.length === 0) return [at];
   return values.flatMap((value): DeclaredValue[] => {
     if (!ts.isExpression(value)) return [value];
-    if (isPromiseCall(value, checker)) {
+    if (isPromiseCall(value, checker) || isResolversPromise(value, checker)) {
       const resolved = checker.getAwaitedType(checker.getTypeAtLocation(value));
       // What reads a value that holds a function and is none, as an iterator's result or an array is, reads it through the promise, which holds what it resolves to.
       if (resolved !== undefined && !mayBeFunction(resolved, checker, value) && mayHoldFunction(resolved, checker, value)) return [value];
@@ -5045,7 +5073,8 @@ function placeContents(container: Container, checker: ts.TypeChecker, seen: Set<
   } else if (ts.isClassLike(container)) {
     found.values.push(...container.members.filter(ts.isPropertyDeclaration).flatMap((member) => member.initializer === undefined ? [] : [member.initializer]));
   } else if (ts.isIdentifier(container)) {
-    const rested = restValues(container, undefined, checker, seen);
+    // The promise Promise.withResolvers makes holds only what is written to it, which is read below.
+    const rested = isResolversPromise(container, checker) ? { values: [], unread: null } : restValues(container, undefined, checker, seen);
     found.values.push(...rested.values);
     found.unread ??= rested.unread;
   } else if (ts.isCallExpression(container) && generatorsOf(container, checker) !== undefined) {
@@ -5792,7 +5821,9 @@ function reachesOnlyContainers(expression: ts.Expression, checker: ts.TypeChecke
 
 /**
  * The containers one value is: itself for an object or array literal, for
- * a class, or for the name a rest element binds; each class a `new` makes an instance of; the class, or the object
+ * a class, for the name a rest element binds, or for the name the promise
+ * `Promise.withResolvers` makes is bound to, as `isResolversPromise` finds
+ * it; each class a `new` makes an instance of; the class, or the object
  * literal, whose method `this` is read in; itself for a call or `new` of
  * a library function whose value is an array, a set, a map or a promise;
  * and itself for a call of a generator written here.
@@ -5800,7 +5831,7 @@ function reachesOnlyContainers(expression: ts.Expression, checker: ts.TypeChecke
  * @returns The containers, or undefined when the value is none of these.
  */
 function containersOfValue(value: DeclaredValue, checker: ts.TypeChecker): Container[] | undefined {
-  if (ts.isArrayLiteralExpression(value) || ts.isObjectLiteralExpression(value) || ts.isClassLike(value) || isRestTarget(value)) return [value];
+  if (ts.isArrayLiteralExpression(value) || ts.isObjectLiteralExpression(value) || ts.isClassLike(value) || isRestTarget(value) || isResolversPromise(value, checker)) return [value];
   if (value.kind === ts.SyntaxKind.ThisKeyword) {
     const owner = thisOwner(value);
     return owner === undefined ? undefined : [owner];
@@ -5997,8 +6028,10 @@ function changesAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
  * its key, as `holder[key] = boxing` gives each key the key's type allows,
  * or any key when its type is no literal; a member a destructuring, a for-in
  * or a for-of assigns, as `destructuredTargetValues` reads it; what a
- * promise's executor gives it, as `promiseChanges` finds it; and each change
- * a call makes, as `callChanges` finds them.
+ * promise's executor gives it, as `promiseChanges` finds it, and what the
+ * functions that settle a promise `Promise.withResolvers` makes give it, as
+ * `resolversChanges` finds it; and each change a call makes, as
+ * `callChanges` finds them.
  */
 function madeChanges(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && !isDestructuringTarget(node)) {
@@ -6009,6 +6042,7 @@ function madeChanges(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isDestructuringTarget(node)) {
     return [{ receiver: node.expression, write: { kind: "destructured", keys: memberKeys(node, checker), target: node }, at: node }];
   }
+  if (ts.isVariableDeclaration(node)) return resolversChanges(node, checker);
   if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return [];
   return isPromiseConstructor(node, checker) ? promiseChanges(node, checker) : callChanges(node, checker);
 }
@@ -6025,29 +6059,76 @@ function madeChanges(node: ts.Node, checker: ts.TypeChecker): Change[] {
 function promiseChanges(promise: ts.NewExpression, checker: ts.TypeChecker): Change[] {
   const executor = heldValue(promise.arguments?.[0]);
   if (executor === undefined || (!ts.isArrowFunction(executor) && !ts.isFunctionExpression(executor))) return [{ receiver: promise, write: { kind: "unread" }, at: promise }];
+  return executor.parameters.slice(0, 2).flatMap((parameter) => settlingChanges(promise, parameter, checker));
+}
+
+/**
+ * The changes one function that settles a promise gives it, as `resolve`
+ * and `reject` do: each value a call of it hands on, wherever the call is
+ * written, and the first value a library timer hands it, as
+ * `timerArguments` reads it. A use of it that is neither, a spread among
+ * what it is handed, and a name that is no plain identifier, give what no
+ * rule reads.
+ *
+ * @param promise The promise, as a container its changes are placed on.
+ * @param settler The parameter, or the binding element, that names the function.
+ */
+function settlingChanges(promise: ts.Expression, settler: ts.ParameterDeclaration | ts.BindingElement, checker: ts.TypeChecker): Change[] {
+  if (!ts.isIdentifier(settler.name)) return [{ receiver: promise, write: { kind: "unread" }, at: settler }];
   const changes: Change[] = [];
-  for (const parameter of executor.parameters.slice(0, 2)) {
-    if (!ts.isIdentifier(parameter.name)) {
-      changes.push({ receiver: promise, write: { kind: "unread" }, at: parameter });
-      continue;
-    }
-    for (const use of usesOf(parameter, checker)) {
-      if (use === parameter.name) continue;
-      const outer = outerValue(use);
-      const call = outer.parent;
-      const called = ts.isCallExpression(call) && call.expression === outer;
-      const timed = called ? undefined : timerArguments(outer, checker);
-      const value = called ? call.arguments[0] : timed?.[0];
-      if (value !== undefined && ts.isSpreadElement(value)) {
-        changes.push({ receiver: promise, write: { kind: "unread" }, at: call });
-      } else if (called || timed !== undefined) {
-        if (value !== undefined) changes.push({ receiver: promise, write: { kind: "value", keys: undefined, value }, at: call });
-      } else {
-        changes.push({ receiver: promise, write: { kind: "unread" }, at: use });
-      }
+  for (const use of usesOf(settler, checker)) {
+    if (use === settler.name) continue;
+    const outer = outerValue(use);
+    const call = outer.parent;
+    const called = ts.isCallExpression(call) && call.expression === outer;
+    const timed = called ? undefined : timerArguments(outer, checker);
+    const value = called ? call.arguments[0] : timed?.[0];
+    if (value !== undefined && ts.isSpreadElement(value)) {
+      changes.push({ receiver: promise, write: { kind: "unread" }, at: call });
+    } else if (called || timed !== undefined) {
+      if (value !== undefined) changes.push({ receiver: promise, write: { kind: "value", keys: undefined, value }, at: call });
+    } else {
+      changes.push({ receiver: promise, write: { kind: "unread" }, at: use });
     }
   }
   return changes;
+}
+
+/**
+ * The changes the promise a destructured `Promise.withResolvers()` makes is
+ * given, placed on the name its `promise` is bound to, as
+ * `isResolversPromise` finds it: what `settlingChanges` finds each of its
+ * `resolve` and `reject` gives it. A rest element, or a key not known,
+ * may take either, so it gives what no rule reads.
+ */
+function resolversChanges(declaration: ts.VariableDeclaration, checker: ts.TypeChecker): Change[] {
+  const pattern = declaration.name;
+  if (!ts.isObjectBindingPattern(pattern)) return [];
+  const promise = pattern.elements.map((element) => element.name).find((name): name is ts.Identifier => isResolversPromise(name, checker));
+  if (promise === undefined) return [];
+  return pattern.elements.flatMap((element): Change[] => {
+    const key = element.dotDotDotToken === undefined ? boundKey(element, checker) : undefined;
+    if (key === "resolve" || key === "reject") return settlingChanges(promise, element, checker);
+    return key === undefined ? [{ receiver: promise, write: { kind: "unread" }, at: element }] : [];
+  });
+}
+
+/**
+ * Whether a node is the name a variable declaration binds to the `promise`
+ * key of what a call of the library's `Promise.withResolvers` makes,
+ * destructured in place with no default, so that the promise is reached
+ * only through that name and holds only what `resolversChanges` finds.
+ */
+function isResolversPromise(node: ts.Node, checker: ts.TypeChecker): node is ts.Identifier {
+  const element = node.parent;
+  if (!ts.isIdentifier(node) || !ts.isBindingElement(element) || element.name !== node || element.initializer !== undefined || element.dotDotDotToken !== undefined) return false;
+  const declaration = element.parent.parent;
+  if (!ts.isObjectBindingPattern(element.parent) || !ts.isVariableDeclaration(declaration) || boundKey(element, checker) !== "promise") return false;
+  const call = heldValue(declaration.initializer);
+  if (call === undefined || !ts.isCallExpression(call) || !isLibraryCall(call, checker)) return false;
+  const invocation = invocationOf(call, checker);
+  const owner = invocation.declaration?.parent;
+  return invocation.callee === call.expression && memberName(call.expression) === "withResolvers" && owner !== undefined && ts.isInterfaceDeclaration(owner) && owner.name.text === "PromiseConstructor";
 }
 
 /** The library's timers, each of which calls the handler it is handed first with each argument handed at or after its rest parameter's position. */
@@ -6726,7 +6807,7 @@ function destructuredValues(value: ts.Identifier | ts.PropertyAccessExpression, 
   seen: Set<ts.Node>): DeclaredValue[] {
   const name = declaration.name;
   if (!ts.isIdentifier(name)) return [value];
-  if (declaration.dotDotDotToken !== undefined) return [name];
+  if (declaration.dotDotDotToken !== undefined || isResolversPromise(name, checker)) return [name];
   const root = ts.walkUpBindingElementsAndPatterns(declaration);
   const passed: Passed = ts.isParameter(root) ? passedValues(root, checker, seen)
     : { values: root.initializer === undefined ? [] : declaredValues(root.initializer, checker, seen), handed: [], unread: false };
