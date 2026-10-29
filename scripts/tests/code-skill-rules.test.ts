@@ -3235,6 +3235,9 @@ describe("the code skill's rules for this repository's own code", () => {
         ["Object.defineProperty(overrides, \"box\", { enumerable: !hide });", "", true],
         ["Object.defineProperty(overrides, \"box\", { value: VALUE });", "", true],
         ["Object.defineProperties(overrides, { box: { enumerable: !hide } });", "", true],
+        ["Object.defineProperties(overrides, { other: { enumerable: !hide }, box: { enumerable: true } });", "", false],
+        ["Reflect.defineProperty(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["defineProperty(overrides, \"box\");", "function defineProperty(each: object, key: string): void {\n  void each;\n  void key;\n}\n", false],
         ["const key: string = hide ? \"box\" : \"other\";\n  delete (overrides as Record<string, unknown>)[key];", "", true],
         ["strip(overrides);", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
         ["void strip;", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
@@ -3246,6 +3249,16 @@ describe("the code skill's rules for this repository's own code", () => {
           expect(boundHelpers("probe.ts", text), statement + value).toEqual(removes || value === "boxing" ? reported : []);
           expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
         }
+      }
+      // A list of descriptors not written in place, or holding a spread, changes the value in a way no rule reads, and the report says so.
+      for (const descriptors of ["descriptors", "{ ...descriptors }"]) {
+        const statement = `const descriptors = { box: { enumerable: !hide } };\n  Object.defineProperties(overrides, ${descriptors});`;
+        const text = `export function main(hide = true): number {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
+          + `  const { box } = { ...dependencies, ...overrides };\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), descriptors).toEqual([
+          `probe.ts / main / box: it is read from a value that Object.defineProperties(overrides, ${descriptors}) changes in a way no rule reads, so what it holds cannot be read`,
+          "probe.ts / main / helper",
+        ]);
       }
       // Placing a removal whose receiver is a member read may ask whether Object.assign replaced that member, which asks for the table being made: it reads no key as kept meanwhile, and the table is made once.
       for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
@@ -3386,6 +3399,21 @@ describe("the code skill's rules for this repository's own code", () => {
         const { source, checker } = typedSource("probe.ts", text);
         expect(boundHelpersIn("probe.ts", source, checker), value).toEqual(found);
         expect(ITEM_TABLES_STARTED.get(checker), value).toBe(1);
+      }
+    });
+
+    test("a reducer that reduces with itself, and an item of Promise.all that may or may not be a promise, are read, beside each breach", () => {
+      const pick = "function pick(previous: Boxer, next: Boxer, at: number, list: Boxer[]): Boxer {\n  void at;\n  return list.length > 1 ? [next].reduce(pick, previous) : next;\n}\n";
+      // Each form gives `box` VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[signature: string, statement: string]> = [
+        ["function main(): number", "const box = [consuming, VALUE].reduce(pick, consuming);"],
+        ["async function main(ready = true): Promise<number>", "const item = ready ? Promise.resolve(VALUE) : VALUE;\n  const [box] = await Promise.all([item]);"],
+      ];
+      for (const [signature, statement] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export ${signature} {\n  ${statement.replaceAll("VALUE", value)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${pick}${wrappers}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+        }
       }
     });
 
