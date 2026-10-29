@@ -2961,6 +2961,37 @@ describe("the code skill's rules for this repository's own code", () => {
       const text = `export function main(): number {\n  const data = JSON.parse("{}");\n  let name = "a";\n  name = String(name);\n  void data[name];\n  return new Runner().run(consuming);\n}\n${runner}${wrappers}`;
       expect(boundHelpers("probe.ts", text)).toEqual(["probe.ts / run / helper"]);
     });
+
+    test("a reduction is its first value and each value its callback may return, beside its breach", () => {
+      const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
+      // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        "const box = [VALUE].reduce(last, consuming);",
+        "const box = [VALUE].reduceRight(last, consuming);",
+        "const box = [consuming].reduce((previous: Boxer): Boxer => previous, VALUE);",
+        "const box = [consuming].reduce((): Boxer => VALUE, consuming);",
+        // With no first value, a list of one item gives back that item, and the callback never runs.
+        "const box = [VALUE].reduce((): Boxer => consuming);",
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${last}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // The throws check and the entry-point rule read a reduction the same way, in a function and at the top of a module.
+      const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+      for (const [value, problems, entry] of [
+        ["consuming", [], null],
+        ["boxing", ["probe.ts:4: the comment on helper does not say what it throws"], "probe.ts:2: the first function, first, is not exported"],
+      ] as Array<[value: string, problems: string[], entry: string | null]>) {
+        const text = `export function main(): object {\n  const box = [${value}].reduce(last, consuming);\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}${last}`;
+        expect(undocumentedThrows("probe.ts", text).problems, value).toEqual(problems);
+        const top = `/** Reads a size. */\nconst first = [${value}].reduce(last, consuming)((): number => 1);\nexport function main(): object {\n  return first;\n}\n${wrappers}${last}`;
+        expect(entryPointProblem("probe.ts", top).problem, value).toEqual(entry);
+      }
+    });
   });
 });
 
@@ -3305,7 +3336,72 @@ function callValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Type
     if (fitsResult(checker.getTypeAtLocation(value), result, checker)) found.given.push(value);
     else if (mayHoldFunction(result, checker, call)) found.held.push(value);
   }
+  const reduced = declaration === undefined ? undefined : reducedValues(call, invocation, declaration, checker, following);
+  if (reduced !== undefined) {
+    // With nothing else given back, as `reduce` handed no first value, the call is read as well, through the items it is called on.
+    if (found.given.length === 0 || reduced.unread) found.given.push(call);
+    for (const value of reduced.values) {
+      (fitsResult(checker.getTypeAtLocation(value), result, checker) ? found.given : found.held).push(value);
+    }
+  }
   return found;
+}
+
+/** The calls whose callbacks `reducedValues` is reading, so that a call met again inside that reading is not read twice. */
+const REDUCTIONS_BEING_READ = new Set<ts.Node>();
+
+/** What the callbacks a reduction is handed may return, as `reducedValues` reads them. */
+interface Reduced {
+  /** Each value a callback may return. */
+  values: ts.Expression[];
+  /** Whether a callback is a function written here that no rule can follow, so that what it returns cannot be read. */
+  unread: boolean;
+}
+
+/**
+ * What a call of a library function gives back from the callbacks it is
+ * handed, where its declared result is a type parameter that the callback's
+ * declared type returns, as `reduce` and `reduceRight` declare theirs: each
+ * value each function the callback may be, as `heldFunctions` finds them,
+ * may return, as `returnedValues` reads it. A call whose declared result
+ * only holds such a type parameter, as `map` returns `U[]`, gives back none
+ * of them, as `libraryContents` reads what it holds.
+ *
+ * @returns What the callbacks return, or undefined when the call is none
+ *     such, or is met again while its callbacks are being read.
+ */
+function reducedValues(call: ts.CallExpression | ts.NewExpression, invocation: Invocation, declaration: ts.SignatureDeclaration, checker: ts.TypeChecker,
+  following: ReadonlySet<ts.Node>): Reduced | undefined {
+  if (!declaration.getSourceFile().isDeclarationFile || REDUCTIONS_BEING_READ.has(call)) return undefined;
+  const result = checker.getSignatureFromDeclaration(declaration)?.getReturnType();
+  const parts = result === undefined ? [] : (result.isUnion() ? result.types : [result]).filter((part) => (part.flags & ts.TypeFlags.TypeParameter) !== 0);
+  if (parts.length === 0) return undefined;
+  const callbacks = invocation.args.filter((argument, at) => {
+    const parameter = parameterOf(declaration, invocation.args, at);
+    return parameter !== undefined && isCallbackParameter(parameter, checker) && returnsResultPart(parameter, new Set(parts), checker);
+  });
+  if (callbacks.length === 0) return undefined;
+  REDUCTIONS_BEING_READ.add(call);
+  try {
+    const found: Reduced = { values: [], unread: false };
+    const returned = new Map<ts.SignatureDeclaration, ts.Expression[] | undefined>();
+    for (const callback of callbacks) {
+      const held = heldFunctions(callback, checker, new Set());
+      found.unread ||= held.unread;
+      for (const run of held.functions) {
+        const values = returnedValues(run, checker, following, returned);
+        // A function whose body is being read already may return anything.
+        if (values === undefined) {
+          found.unread = true;
+        } else {
+          found.values.push(...values);
+        }
+      }
+    }
+    return found;
+  } finally {
+    REDUCTIONS_BEING_READ.delete(call);
+  }
 }
 
 /**
