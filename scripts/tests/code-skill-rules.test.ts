@@ -3293,6 +3293,11 @@ describe("the code skill's rules for this repository's own code", () => {
         }
       }
       // The same forms read through a record, an optional call or a type that cannot say which function it holds. Each text is type checked once, and both checks read that program.
+      const unchanged = "function unchanged(target: object, key: PropertyKey, descriptor: PropertyDescriptor): object {\n  void key;\n  void descriptor;\n  return target;\n}\n";
+      const typeofApply = "function applyRemoval(define: typeof unchanged, target: object, enumerable: boolean): void {\n  define(target, \"box\", { enumerable });\n}\n";
+      const genericApply = "function applyRemoval<T extends (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object>(define: T, target: object, enumerable: boolean): void {\n"
+        + "  define(target, \"box\", { enumerable });\n}\n";
+      const writer = "interface Callbacks {\n  writeLog?: (record: object, path: string) => void;\n}\nfunction ignored(record: object, path: string): void {\n  void record;\n  void path;\n}\n";
       const typedForms: Array<[statement: string, after: string, removes: boolean]> = [
         // The same function read from a record of it, whose items may be missing, by an optional call, through `!`, or by an optional `call`.
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: true });", "", false],
@@ -3318,6 +3323,19 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const define: any = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", "", true],
         // A function type that no removing function can be given to, as one that takes fewer arguments than it needs, holds none.
         ["const removers: Record<string, (target: object) => object> = { define: (target) => target };\n  removers[\"define\"]?.(overrides);", "", false],
+        // A parameter whose type is read from a function written here, or bounded by a function type, may be handed any function that fits, and runs what each caller hands it.
+        ["applyRemoval(unchanged, overrides, !hide);", unchanged + typeofApply, false],
+        ["applyRemoval(Object.defineProperty, overrides, !hide);", unchanged + typeofApply, true],
+        ["applyRemoval(unchanged, overrides, !hide);", unchanged + genericApply, false],
+        ["applyRemoval(Object.defineProperty, overrides, !hide);", unchanged + genericApply, true],
+        // A callee every value of which is a function written here runs only those, whatever else its type may hold: a record's item, or an optional callback read through `??`.
+        ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: unchanged };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", unchanged, false],
+        ["const callbacks: Callbacks = { writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
+        ["const callbacks: Callbacks = { writeLog: Reflect.deleteProperty };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        ["check((): number => 1, \"box\");", "function check(run: () => number, message: string): void {\n  void run;\n  void message;\n}\n", false],
+        // A call whose first argument cannot be an object removes no key, whatever its callee may hold.
+        ["const define: any = Object.defineProperty;\n  define(\"box\", overrides, { enumerable: !hide });", "", false],
+        ["const define: Function = Reflect.deleteProperty;\n  define(\"box\", \"other\");", "", false],
       ];
       for (const [statement, after, removes] of typedForms) {
         for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
@@ -3357,6 +3375,17 @@ describe("the code skill's rules for this repository's own code", () => {
       ] as Array<[statement: string, problems: string[]]>) {
         const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
           + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, statement).toEqual(problems);
+      }
+      // It reads a removal run through a parameter the same way.
+      for (const [statement, after, problems] of [
+        ["applyRemoval(unchanged, overrides, !hide);", unchanged + typeofApply, []],
+        ["applyRemoval(Object.defineProperty, overrides, !hide);", unchanged + typeofApply, ["probe.ts:7: the comment on helper does not say what it throws"]],
+        ["applyRemoval(unchanged, overrides, !hide);", unchanged + genericApply, []],
+        ["applyRemoval(Object.defineProperty, overrides, !hide);", unchanged + genericApply, ["probe.ts:7: the comment on helper does not say what it throws"]],
+      ] as Array<[statement: string, after: string, problems: string[]]>) {
+        const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
+          + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}${after}`;
         expect(undocumentedThrows("probe.ts", text).problems, statement).toEqual(problems);
       }
     });
@@ -4508,6 +4537,8 @@ function keyedValues(literal: ts.ObjectLiteralExpression, key: string, read: ts.
  * declared with no value that no assignment gives one, where
  * `isGivenLater` finds code here may give it one, as Object.assign does;
  * and for any other declaration written here that none of these reads.
+ * Where a name that may be a function gives no value written here, that is
+ * noted as `noteUnseenFunction` notes it.
  *
  * @returns Each value; none for a name declared with `declare`, or a name
  *     every declaration of which is in a declaration file, as the library's
@@ -4520,13 +4551,16 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
   const declarations = symbol?.declarations ?? [];
   if (declarations.length === 0 && ts.isPropertyAccessExpression(value)) return unnamedMemberValues(value, checker, seen);
   if (declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)) {
-    return ts.isPropertyAccessExpression(value) ? libraryMemberValues(value, declarations, checker, seen) : [];
+    const library = ts.isPropertyAccessExpression(value) ? libraryMemberValues(value, declarations, checker, seen) : [];
+    if (library.length === 0) noteUnseenFunction(value, checker);
+    return library;
   }
   return declarations.flatMap((declaration): DeclaredValue[] => {
     if (seen.has(declaration)) return [];
     seen.add(declaration);
     if (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) {
       const run = implementationOf(declaration);
+      if (run === undefined) noteUnseenFunction(value, checker);
       return [...run === undefined ? [] : [run], ...memberWrites(value, declaration, checker, seen)];
     }
     if (ts.isClassLike(declaration)) return [declaration];
@@ -4557,7 +4591,11 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       return [...passed.values, ...passed.handed, ...passed.unread ? [value] : [], ...assigned.values, ...written];
     }
     if (ts.isBindingElement(declaration)) return [...destructuredValues(value, declaration, checker, seen), ...assigned.values];
-    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) return isAmbient(declaration) ? [] : [value];
+    if (!ts.isPropertyAccessExpression(value) || !ts.isTypeElement(declaration)) {
+      if (!isAmbient(declaration)) return [value];
+      noteUnseenFunction(value, checker);
+      return [];
+    }
     const key = value.name.text;
     return [...declaredValues(value.expression, checker, seen)
       .flatMap((literal) => keyOfValue(literal, key, value, checker, seen)), ...assigned.values];
@@ -9207,7 +9245,10 @@ const REMOVING_FUNCTIONS: ReadonlySet<string> = new Set(["Reflect.deleteProperty
  * by `call`, `apply` or `Reflect.apply` is read as well, wherever
  * `mayRunRemoval` says it may run one. A function whose type cannot say
  * which function it is runs each of these that `hiddenRemovals` finds its
- * type may hold, read the same way.
+ * type may hold and `takesArguments` finds the call's arguments fit, read
+ * the same way, unless `runsOnlyWrittenFunctions` finds every value it may
+ * hold is a function written here, whose own removals are read where they
+ * are written.
  */
 function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (ts.isDeleteExpression(node)) {
@@ -9218,9 +9259,11 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (!ts.isCallExpression(node) || !mayRunRemoval(node, checker)) return [];
   const invocation = invocationOf(node, checker);
   const name = invocation.declaration === undefined ? undefined : libraryMemberName(invocation.declaration);
-  const names = name !== undefined && REMOVING_FUNCTIONS.has(name) ? [name] : hiddenRemovals(invocation.callee, checker);
   const [target, key, described] = invocation.args;
   if (target === undefined || ts.isSpreadElement(target)) return [];
+  if (name !== undefined && REMOVING_FUNCTIONS.has(name)) return removalsBy(name, target, key, described, node, checker);
+  const names = hiddenRemovals(invocation.callee, checker).filter((each) => takesArguments(each, invocation.args, checker));
+  if (names.length === 0 || runsOnlyWrittenFunctions(invocation.callee, checker)) return [];
   return names.flatMap((each) => removalsBy(each, target, key, described, node, checker));
 }
 
@@ -9265,24 +9308,128 @@ function removingTypes(checker: ts.TypeChecker): ReadonlyMap<string, ts.Type> {
  * The functions REMOVING_FUNCTIONS lists that an expression may hold
  * although its type cannot say which function it holds: each whose type
  * the checker finds can be given to the expression's type, read without
- * `undefined` and `null`. A type cannot say which function it holds when
- * it is any, the library's `Function`, or a type with a call signature
- * written here with no body that runs, as a function type, a method of an
- * interface or a function declared with `declare` are. A function the
- * library declares, or one written here with a body, is the function its
+ * `undefined` and `null`, and a type parameter read as its constraint. A
+ * type says which function it holds only where the expression names the
+ * function its call signature declares, as `namesFunction` finds it, and
+ * the library declares that function or it is written here with a body.
+ * Any, the library's `Function`, a signature the checker makes for itself,
+ * and a signature the expression does not name cannot say: a parameter
+ * typed with `typeof` a function, or with a type parameter, may be handed
+ * any function that fits, and so may an item of a record, or a name typed
+ * with a function type, a method of an interface or a function declared
+ * with `declare`. A function the expression names is the function its
  * signature says, which `removalsAt` reads by that signature.
  *
  * @returns The names; none for an expression whose type says which function it holds.
  */
 function hiddenRemovals(expression: ts.Expression, checker: ts.TypeChecker): string[] {
-  const type = checker.getNonNullableType(checker.getTypeAtLocation(expression));
+  const read = checker.getNonNullableType(checker.getTypeAtLocation(expression));
+  const type = (read.flags & ts.TypeFlags.TypeParameter) !== 0 ? checker.getBaseConstraintOfType(read) ?? read : read;
   const hidden = (type.flags & ts.TypeFlags.Any) !== 0 || isFunctionInterface(type) || type.getCallSignatures().some((signature) => {
     // The type says a signature always has a declaration, but one the checker makes for itself has none.
     const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = signature.getDeclaration();
-    return declaration !== undefined && !ts.isJSDocSignature(declaration) && !declaration.getSourceFile().isDeclarationFile && implementationOf(declaration) === undefined;
+    return declaration === undefined || ts.isJSDocSignature(declaration) || !namesFunction(expression, declaration, checker)
+      || (!declaration.getSourceFile().isDeclarationFile && implementationOf(declaration) === undefined);
   });
   if (!hidden) return [];
   return [...removingTypes(checker)].filter(([, removing]) => checker.isTypeAssignableTo(removing, type)).map(([name]) => name);
+}
+
+/**
+ * Whether the arguments a call hands on could be those a function
+ * REMOVING_FUNCTIONS lists needs to remove a key, read by their types: an
+ * object first, as `mayBeObjectType` reads it, then a key, as
+ * `mayBePropertyKey` reads it, or, for `Object.defineProperties`, an object
+ * of descriptors. A spread may be anything. A key not handed on is undefined, which
+ * `Reflect.deleteProperty` reads as the key "undefined", and with which
+ * each of the others throws. A call such as `write("path", "text")`, whose
+ * first argument is a string, can remove no key.
+ *
+ * @param args What the parameters of the function that runs take, in order, as `invocationOf` finds them.
+ */
+function takesArguments(name: string, args: readonly ts.Expression[], checker: ts.TypeChecker): boolean {
+  const [target, second] = args;
+  if (target === undefined || !argumentFits(target, mayBeObjectType, checker)) return false;
+  if (second === undefined) return name === "Reflect.deleteProperty";
+  return argumentFits(second, name === "Object.defineProperties" ? mayBeObjectType : mayBePropertyKey, checker);
+}
+
+/** Whether an argument is a spread, which may be anything, or has a type that `wanted` finds may be what a parameter needs. */
+function argumentFits(argument: ts.Expression, wanted: (type: ts.Type, checker: ts.TypeChecker) => boolean, checker: ts.TypeChecker): boolean {
+  return ts.isSpreadElement(argument) || wanted(checker.getTypeAtLocation(argument), checker);
+}
+
+/**
+ * Whether a value of a type may be an object, a function included: the
+ * type is an object type, any, unknown or `object`, or one whose values are
+ * those of its constraint, as CONSTRAINED_TYPES names them, whose
+ * constraint may, or which has none. A union may be one when any of its
+ * parts may; an intersection when each of its parts may. A string, a
+ * number, a boolean, a bigint, a symbol, undefined and null cannot be.
+ */
+function mayBeObjectType(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.flags & (OPEN_TYPES | ts.TypeFlags.Object)) return true;
+  if (isConstrainedType(type)) {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return constraint === undefined || constraint === type || mayBeObjectType(constraint, checker);
+  }
+  if (type.isUnion()) return type.types.some((part) => mayBeObjectType(part, checker));
+  return type.isIntersection() && type.types.every((part) => mayBeObjectType(part, checker));
+}
+
+/**
+ * Whether a value of a type may be a key, as the library's `PropertyKey`
+ * names them: the type is a string, a number, a symbol or an enum, of any
+ * literal, any or unknown, or one whose values are those of its
+ * constraint, as CONSTRAINED_TYPES names them, whose constraint may, or
+ * which has none. A union, or an intersection such as a branded string,
+ * may be one when any of its parts may.
+ */
+function mayBePropertyKey(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.ESSymbolLike | ts.TypeFlags.EnumLike)) return true;
+  if (isConstrainedType(type)) {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return constraint === undefined || constraint === type || mayBePropertyKey(constraint, checker);
+  }
+  return (type.isUnion() || type.isIntersection()) && type.types.some((part) => mayBePropertyKey(part, checker));
+}
+
+/**
+ * The lists `runsOnlyWrittenFunctions` fills while it reads, one for each
+ * reading under way. While any is, `namedValues` adds to each a value it
+ * reads that may be a function but gives no value written here, as a
+ * library's function, one declared with `declare`, or one declared with no
+ * body, so that the reading knows a function it cannot see was met. Adding
+ * to them changes no value any reading gives, so nothing a reading keeps
+ * for later depends on whether one was under way.
+ */
+const UNSEEN_FUNCTIONS: ts.Node[][] = [];
+
+/**
+ * Whether every value a callee may hold, as `declaredValues` reads it, is a
+ * function written here with a body, or a class, none of which is a
+ * function REMOVING_FUNCTIONS lists. Any other value, a value no rule
+ * reads, a callee that holds none, and a function met while reading that
+ * gives no value written here, as `UNSEEN_FUNCTIONS` collects them, may be
+ * one.
+ */
+function runsOnlyWrittenFunctions(callee: ts.Expression, checker: ts.TypeChecker): boolean {
+  const unseen: ts.Node[] = [];
+  UNSEEN_FUNCTIONS.push(unseen);
+  try {
+    const values = declaredValues(callee, checker, new Set());
+    return values.length > 0 && unseen.length === 0 && values.every((value) => ts.isClassLike(value) || (ts.isFunctionLike(value) && bodyOf(value) !== undefined));
+  } finally {
+    UNSEEN_FUNCTIONS.pop();
+  }
+}
+
+/** Adds a value that may be a function but gives no value written here to each list `UNSEEN_FUNCTIONS` holds, when any reading is under way. */
+function noteUnseenFunction(value: ts.Expression, checker: ts.TypeChecker): void {
+  if (UNSEEN_FUNCTIONS.length === 0 || !mayBeFunction(checker.getTypeAtLocation(value), checker, value)) return;
+  for (const unseen of UNSEEN_FUNCTIONS) {
+    unseen.push(value);
+  }
 }
 
 /** Whether a type is the library's `Function`, which any function may be, and which has no call signature to say which. */
