@@ -2857,6 +2857,36 @@ describe("the code skill's rules for this repository's own code", () => {
       const text = `export function main(key: string): number {\n  const box = Object.fromEntries([["box", consuming], [key, boxing]]).box as Boxer;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
       expect(boundHelpers("probe.ts", text)).toEqual(reported);
     });
+
+    test("a listener is given what each emit of its event on the same emitter hands on, where every emit can be found, beside its breach", () => {
+      const listener = "(box: Boxer) => {\n    const helper = box((): number => 1);\n    void helper;\n  }";
+      // Each form emits VALUE under the listener's event: `consuming` in the valid form, `boxing` in its breach.
+      const forms = [
+        `process.on("review-value", ${listener});\n  process.emit("review-value", VALUE);`,
+        `process.once("review-value", ${listener});\n  process.emit("review-value", VALUE);`,
+        `const emitter = new EventEmitter();\n  emitter.once("value", ${listener});\n  emitter.emit("value", VALUE);`,
+        `const emitter = new EventEmitter();\n  emitter.on("value", ${listener});\n  emitter.emit("value", VALUE);\n  emitter.emit("other", boxing);`,
+      ];
+      for (const form of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", ["probe.ts / (an unnamed function) / helper"]]] as Array<[value: string, found: string[]]>) {
+          const text = `import { EventEmitter } from "node:events";\nexport function main(): number {\n  ${form.replace("VALUE", value)}\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // An event the library emits itself, an event not known, a spread, reading the listeners, and handing the emitter on, may give the listener anything.
+      for (const form of [
+        `const emitter = new EventEmitter();\n  emitter.on("newListener", ${listener});\n  emitter.emit("value", consuming);`,
+        `const emitter = new EventEmitter();\n  emitter.on(String(Math.random()), ${listener});\n  emitter.emit("value", consuming);`,
+        `const emitter = new EventEmitter();\n  emitter.on("value", ${listener});\n  emitter.emit("value", ...[consuming]);`,
+        `const emitter = new EventEmitter();\n  emitter.on("value", ${listener});\n  emitter.emit("value", consuming);\n  void emitter.listeners("value");`,
+        `const emitter = new EventEmitter();\n  emitter.on("value", ${listener});\n  emitter.emit("value", consuming);\n  void [emitter];`,
+        `process.on("review-value", ${listener});\n  process.emit("review-value", consuming);\n  void [process];`,
+      ]) {
+        const text = `import { EventEmitter } from "node:events";\nexport function main(): number {\n  ${form}\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), form).toEqual(["probe.ts / (an unnamed function) / helper"]);
+      }
+    });
   });
 });
 
@@ -6024,6 +6054,7 @@ interface Passed {
  * read where the caller writes it, so a wrapper handed to a function is
  * read as the wrapper it is. Each call of a library that `callsOf` finds the
  * function is handed to as a callback, written in place or by its name, gives
+ * what `emittedValues` finds an event emitter's listener is given, or else
  * what `handedValues` finds the library is handed, unless the library may
  * give the callback what it keeps from another call, as `keepsForCallbacks`
  * says, which no rule reads; and a set accessor's
@@ -6044,13 +6075,14 @@ function passedValues(parameter: ts.ParameterDeclaration, checker: ts.TypeChecke
   const sites = callsOf(owner, checker);
   if (sites === undefined) return { values, handed: [], unread: true };
   const passed: Passed = { values, handed: [], unread: false };
+  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
   for (const call of sites.handing) {
-    const handed = keepsForCallbacks(call, checker) ? { values: [], unread: true } : handedValues(call, checker, seen);
+    const emitted = parameter.dotDotDotToken === undefined ? emittedValues(call, at, checker, seen) : undefined;
+    const handed = emitted ?? (keepsForCallbacks(call, checker) ? { values: [], unread: true } : handedValues(call, checker, seen));
     passed.handed.push(...handed.values);
     passed.unread ||= handed.unread;
   }
   if (sites.calls.length === 0) return passed;
-  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
   if (at < 0 || parameter.dotDotDotToken !== undefined) return { ...passed, unread: true };
   for (const call of sites.calls) {
     const given = call.arguments ?? [];
@@ -6092,7 +6124,8 @@ function setValues(accessor: ts.SetAccessorDeclaration, checker: ts.TypeChecker,
 /**
  * The call of a library function that a value is handed to as a callback:
  * the value is an argument, through any wrapper `heldValue` looks through,
- * at a parameter `isCallbackParameter` finds the library calls.
+ * at a parameter `isCallbackParameter` finds the library calls, or the
+ * listener an event emitter registers, as `listeningEmitter` finds it.
  *
  * @param outer The value, outside every wrapper `heldValue` looks through.
  * @returns The call, or undefined when the value is handed to none such.
@@ -6102,6 +6135,7 @@ function handingCall(outer: ts.Node, checker: ts.TypeChecker): ts.CallExpression
   if ((!ts.isCallExpression(call) && !ts.isNewExpression(call)) || !isLibraryCall(call, checker)) return undefined;
   const invocation = invocationOf(call, checker);
   const at = invocation.args.findIndex((argument) => argument === outer);
+  if (at === 1 && listeningEmitter(call, checker) !== undefined) return call;
   const parameter = at < 0 || invocation.declaration === undefined ? undefined : parameterOf(invocation.declaration, invocation.args, at);
   return parameter !== undefined && isCallbackParameter(parameter, checker) ? call : undefined;
 }
@@ -6126,6 +6160,166 @@ function handedValues(call: ts.CallExpression | ts.NewExpression, checker: ts.Ty
   handed.values.push(...readContents({ values: returned.values, unread: null }, call, checker, seen));
   handed.unread ||= returned.unread !== null;
   return handed;
+}
+
+/** The methods of an event emitter that register a listener, which runs with what each emit of its event hands on after the event's name. */
+const LISTENING_METHODS: ReadonlySet<string> = new Set(["on", "once", "addListener", "prependListener", "prependOnceListener"]);
+
+/** The members of an event emitter that hand its listeners to the code that reads them, so that code may run them with anything. */
+const LISTENER_READERS: ReadonlySet<string> = new Set(["listeners", "rawListeners"]);
+
+/**
+ * What a listener an event emitter is handed is given at one parameter,
+ * where every value it may be given can be found: the argument at that
+ * position after the event's name of each `emit` of a matching event on the
+ * same emitter, as `declaredValues` reads it. The emitter is the global
+ * `process`, or a constant made with `new EventEmitter()`, since a class
+ * that extends it may emit its own events, and each
+ * use of it anywhere is a member read other than `emit`, `listeners` and
+ * `rawListeners`, or a call of `emit`. An event the library itself emits,
+ * one its event map names, as `mappedEvents` finds `"message"` is for `process`, or one every
+ * emitter emits, as `"newListener"` is, which `emitterEvents` lists, gives
+ * what no rule reads; so does an event whose name is not known, a spread
+ * among what an emit hands on, and any other use of the emitter.
+ *
+ * @param at The position of the parameter among the listener's own.
+ * @returns What it is given, or undefined when the call registers no listener of an emitter the library declares.
+ */
+function emittedValues(call: ts.CallExpression | ts.NewExpression, at: number, checker: ts.TypeChecker, seen: Set<ts.Node>): Passed | undefined {
+  const events = listeningEmitter(call, checker);
+  if (events === undefined || !ts.isCallExpression(call)) return undefined;
+  const unread: Passed = { values: [], handed: [], unread: true };
+  const [event] = call.arguments;
+  const keys = keysOf(event, checker);
+  const mapped = mappedEvents(call, checker);
+  if (keys === undefined || mapped === undefined || keys.some((key) => mapped.has(key) || emitterEvents(events).has(key))) return unread;
+  const receiver = memberReceiver(call.expression);
+  const emits = receiver === undefined ? undefined : emitsOn(receiver, checker);
+  if (emits === undefined) return unread;
+  const given: Passed = { values: [], handed: [], unread: false };
+  for (const emit of emits) {
+    const [name, ...args] = emit.arguments;
+    const emitted = keysOf(name, checker);
+    if (emitted !== undefined && !emitted.some((key) => keys.includes(key))) continue;
+    if (name === undefined || ts.isSpreadElement(name) || args.slice(0, at + 1).some(ts.isSpreadElement)) return unread;
+    const value = args[at];
+    if (value !== undefined) given.values.push(...declaredValues(value, checker, seen));
+  }
+  return given;
+}
+
+/**
+ * The events an emitter's own event map names, which the library emits
+ * itself: each name an overload of the listening method takes as a type
+ * parameter of its own, as `on<E extends keyof T>(eventName: E)` does, by
+ * the string literals that parameter's constraint allows at the call.
+ *
+ * @returns The names, or undefined when a constraint allows a name that is no literal, so that any event may be one.
+ */
+function mappedEvents(call: ts.CallExpression, checker: ts.TypeChecker): ReadonlySet<string> | undefined {
+  const names = new Set<string>();
+  for (const signature of checker.getTypeAtLocation(call.expression).getCallSignatures()) {
+    const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = signature.getDeclaration();
+    const first = declaration === undefined || ts.isJSDocSignature(declaration) ? undefined : declaration.parameters[0]?.type;
+    if (first === undefined || !ts.isTypeReferenceNode(first) || !ts.isIdentifier(first.typeName)) continue;
+    const named = first.typeName.text;
+    const parameter = (signature.getTypeParameters() ?? []).find((each) => each.getSymbol()?.name === named);
+    const constraint = parameter === undefined ? undefined : checker.getBaseConstraintOfType(parameter);
+    if (parameter === undefined) continue;
+    for (const part of constraint === undefined ? [] : constraint.isUnion() ? constraint.types : [constraint]) {
+      if (!part.isStringLiteral()) return undefined;
+      names.add(part.value);
+    }
+  }
+  return names;
+}
+
+/**
+ * Each call of `emit` on an event emitter, wherever every one can be found:
+ * the global `process`, read through each name that refers to it in the
+ * program's files, or a constant made with `new EventEmitter()`, read
+ * through each use of it, as `usesOf` finds them. Every use must read a
+ * member, by name, other than those LISTENER_READERS names, and one that
+ * reads `emit` must call it.
+ *
+ * @returns The calls, or undefined when the emitter is no such value, or a use of it hands it on or reads its listeners.
+ */
+function emitsOn(receiver: ts.Expression, checker: ts.TypeChecker): ts.CallExpression[] | undefined {
+  const name = heldValue(receiver);
+  const symbol = name !== undefined && ts.isIdentifier(name) ? referencedSymbol(name, checker) : undefined;
+  const declarations = symbol?.declarations ?? [];
+  if (symbol === undefined || declarations.length === 0) return undefined;
+  let uses: ts.Node[];
+  if (declarations.every((one) => one.getSourceFile().isDeclarationFile)) {
+    if (symbol.name !== "process") return undefined;
+    uses = (PROGRAM_SOURCES.get(checker) ?? [receiver.getSourceFile()]).flatMap((file) => writtenNames(file).byText.get(symbol.name) ?? [])
+      .filter((one) => ts.isIdentifier(one) && referencedSymbol(one, checker) === symbol);
+  } else {
+    const [declaration] = declarations;
+    if (declarations.length !== 1 || declaration === undefined || !ts.isVariableDeclaration(declaration) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
+      || declaration.initializer === undefined || !ts.isNewExpression(heldValue(declaration.initializer) ?? declaration.initializer)
+      || !isLibraryCall(heldValue(declaration.initializer) ?? declaration.initializer, checker)
+      || checker.getTypeAtLocation(declaration.initializer).getSymbol()?.name !== "EventEmitter") return undefined;
+    uses = usesOf(declaration, checker).filter((one) => one !== declaration.name);
+  }
+  const emits: ts.CallExpression[] = [];
+  for (const use of uses) {
+    const access = outerValue(use).parent;
+    if (!ts.isPropertyAccessExpression(access) || access.expression !== outerValue(use) || LISTENER_READERS.has(access.name.text)) return undefined;
+    if (access.name.text !== "emit") continue;
+    const emit = outerValue(access).parent;
+    if (!ts.isCallExpression(emit) || emit.expression !== outerValue(access)) return undefined;
+    emits.push(emit);
+  }
+  return emits;
+}
+
+/**
+ * The file that declares the library's EventEmitter, where a call registers
+ * a listener with one of LISTENING_METHODS of a value whose type is, or
+ * extends, that class, as `process` and `new EventEmitter()` are.
+ *
+ * @returns The file, or undefined for any other call.
+ */
+function listeningEmitter(call: ts.CallExpression | ts.NewExpression, checker: ts.TypeChecker): ts.SourceFile | undefined {
+  if (!ts.isCallExpression(call) || !LISTENING_METHODS.has(memberName(call.expression) ?? "")) return undefined;
+  const invocation = invocationOf(call, checker);
+  const receiver = memberReceiver(call.expression);
+  if (receiver === undefined || invocation.callee !== call.expression || invocation.declaration?.getSourceFile().isDeclarationFile !== true) return undefined;
+  const pending: ts.Type[] = [checker.getTypeAtLocation(receiver)];
+  const read = new Set<ts.Type>();
+  for (let type = pending.pop(); type !== undefined; type = pending.pop()) {
+    if (read.has(type)) continue;
+    read.add(type);
+    const declared = type.getSymbol()?.declarations?.find((one) => one.getSourceFile().isDeclarationFile && (ts.isClassDeclaration(one) || ts.isInterfaceDeclaration(one)));
+    if (type.getSymbol()?.name === "EventEmitter" && declared !== undefined) return declared.getSourceFile();
+    const target = (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference ? (type as ts.TypeReference).target : type;
+    if (target.isClassOrInterface()) pending.push(...checker.getBaseTypes(target));
+  }
+  return undefined;
+}
+
+/** The events every event emitter emits itself, by name, as the library's EventEmitterEventMap names them, read once for each declaration file. */
+const EMITTER_EVENTS = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/** The events every event emitter emits itself, as the EventEmitterEventMap interfaces the file that declares EventEmitter declares name them. */
+function emitterEvents(file: ts.SourceFile): ReadonlySet<string> {
+  const kept = EMITTER_EVENTS.get(file);
+  if (kept !== undefined) return kept;
+  const found = new Set<string>();
+  const pending: ts.Node[] = [file];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (ts.isInterfaceDeclaration(node) && node.name.text === "EventEmitterEventMap") {
+      for (const member of node.members) {
+        if (member.name !== undefined && (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))) found.add(member.name.text);
+      }
+    }
+    ts.forEachChild(node, (child) => {
+      pending.push(child);
+    });
+  }
+  EMITTER_EVENTS.set(file, found);
+  return found;
 }
 
 /**
