@@ -3262,6 +3262,15 @@ describe("the code skill's rules for this repository's own code", () => {
         ["Object.defineProperty.call(Object, overrides, \"box\", { enumerable: !hide });", "", true],
         ["Object.defineProperty.apply(Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
         ["Reflect.apply(Object.defineProperty, Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
+        // The same function run by a call of what bind made, by a call member read with brackets, or by Reflect.apply held by another name.
+        ["Object.defineProperty.bind(Object)(overrides, \"box\", { enumerable: true });", "", false],
+        ["Object.defineProperty.bind(Object)(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["Object.defineProperty.bind(Object, overrides)(\"box\", { enumerable: true });", "", false],
+        ["Object.defineProperty.bind(Object, overrides)(\"box\", { enumerable: !hide });", "", true],
+        ["Object.defineProperty[\"call\"](Object, overrides, \"box\", { enumerable: true });", "", false],
+        ["Object.defineProperty[\"call\"](Object, overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const run = Reflect.apply;\n  run(Object.defineProperty, Object, [overrides, \"box\", { enumerable: true }]);", "", false],
+        ["const run = Reflect.apply;\n  run(Object.defineProperty, Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
         // A descriptor's `enumerable` is read by the type of its value: a name declared `true` keeps the key; one declared boolean, a cast, a call or an accessor may not.
         ["const enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", false],
         ["const shown: true = true;\n  Object.defineProperty(overrides, \"box\", { configurable: true, enumerable: shown });", "", false],
@@ -4053,7 +4062,12 @@ function listed(callee: ts.Expression, constructs: boolean, list: ts.Expression 
  */
 function forwardingMember(call: ts.CallExpression, checker: ts.TypeChecker): Forwarding | undefined {
   const declaration = calledDeclaration(call, checker);
-  if (declaration === undefined || !declaration.getSourceFile().isDeclarationFile || declaration.name === undefined || !ts.isIdentifier(declaration.name)) return undefined;
+  return declaration === undefined ? undefined : forwardingDeclared(declaration);
+}
+
+/** Which member of the library that runs a function with other arguments, as `forwardingMember` names them, a signature's declaration declares; undefined for any other. */
+function forwardingDeclared(declaration: ts.SignatureDeclaration): Forwarding | undefined {
+  if (!declaration.getSourceFile().isDeclarationFile || declaration.name === undefined || !ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const owner = declaration.parent;
   if (ts.isInterfaceDeclaration(owner) && FUNCTION_INTERFACES.has(owner.name.text)) {
@@ -9151,7 +9165,8 @@ const REMOVING_FUNCTIONS: ReadonlySet<string> = new Set(["Reflect.deleteProperty
  * may be any key, and a list of descriptors not written in place may hold
  * any. A call is read by the function it runs, as `invocationOf` finds
  * it, so a function held by another name, taken by a destructuring, or run
- * by `call`, `apply` or `Reflect.apply` is read as well.
+ * by `call`, `apply` or `Reflect.apply` is read as well, wherever
+ * `mayRunRemoval` says it may run one.
  */
 function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (ts.isDeleteExpression(node)) {
@@ -9159,7 +9174,7 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
     if (target === undefined || (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target))) return [];
     return [removalOf(target.expression, memberKeys(target, checker), node)];
   }
-  if (!ts.isCallExpression(node)) return [];
+  if (!ts.isCallExpression(node) || !mayRunRemoval(node, checker)) return [];
   const invocation = invocationOf(node, checker);
   const name = invocation.declaration === undefined ? undefined : libraryMemberName(invocation.declaration);
   const [target, key, described] = invocation.args;
@@ -9171,6 +9186,43 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
     if (!ts.isPropertyAssignment(property)) return [removalOf(target, undefined, node)];
     const given = propertyKey(property.name, checker);
     return keepsEnumerable(property.initializer, checker) ? [] : [removalOf(target, given === undefined ? undefined : [given], node)];
+  });
+}
+
+/**
+ * Whether a call may run a function REMOVING_FUNCTIONS lists, read from
+ * types alone: the type of its callee has a call signature that function
+ * declares, or the callee's type is one a member that forwards declares, as
+ * `forwardingDeclared` names it, and the function it forwards to has such a
+ * type. `call`, `apply` and `bind` forward to the value their member is
+ * read from, `Reflect.apply` and `Reflect.construct` to their first
+ * argument, and a call of what `bind` made to the value `bind` was read
+ * from. Reading these types, rather than resolving the call as
+ * `invocationOf` does, leaves the call's arguments unread, which keeps a
+ * table made over every call of a program cheap.
+ */
+function mayRunRemoval(call: ts.CallExpression, checker: ts.TypeChecker): boolean {
+  const callee = heldValue(call.expression) ?? call.expression;
+  const forwarding = calleeForwarding(callee, checker);
+  const forwarded = forwarding === "Reflect.apply" || forwarding === "Reflect.construct" ? call.arguments[0] : forwarding === undefined ? undefined : memberReceiver(callee);
+  const bound = ts.isCallExpression(callee) && calleeForwarding(callee.expression, checker) === "bind" ? memberReceiver(callee.expression) : undefined;
+  return [callee, forwarded, bound].some((each) => each !== undefined && signatureDeclarations(each, checker).some((declaration) => {
+    const name = libraryMemberName(declaration);
+    return name !== undefined && REMOVING_FUNCTIONS.has(name);
+  }));
+}
+
+/** The member that forwards, as `forwardingDeclared` names it, whose signature the type of a callee has, or undefined when it has none. */
+function calleeForwarding(callee: ts.Expression, checker: ts.TypeChecker): Forwarding | undefined {
+  return signatureDeclarations(callee, checker).map(forwardingDeclared).find((each) => each !== undefined);
+}
+
+/** The declarations of the call signatures of an expression's type, leaving out a signature the checker makes for itself, which has none. */
+function signatureDeclarations(expression: ts.Expression, checker: ts.TypeChecker): ts.SignatureDeclaration[] {
+  return checker.getTypeAtLocation(expression).getCallSignatures().flatMap((signature) => {
+    // The type says a signature always has a declaration, but one the checker makes for itself has none.
+    const declaration: ts.SignatureDeclaration | ts.JSDocSignature | undefined = signature.getDeclaration();
+    return declaration === undefined || ts.isJSDocSignature(declaration) ? [] : [declaration];
   });
 }
 
