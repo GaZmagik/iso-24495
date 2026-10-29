@@ -2887,6 +2887,24 @@ describe("the code skill's rules for this repository's own code", () => {
         expect(boundHelpers("probe.ts", text), form).toEqual(["probe.ts / (an unnamed function) / helper"]);
       }
     });
+
+    test("a for await, and an asynchronous generator's yield, read what awaiting each value gives, beside its breach", () => {
+      // Each form awaits VALUE on its way to the call: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[statement: string, after: string]> = [
+        ["let box: Boxer | undefined;\n  for await (const each of [Promise.resolve(VALUE)]) box = each;", ""],
+        ["let box: Boxer = consuming;\n  for await (box of [Promise.resolve(VALUE)]) void box;", ""],
+        ["let box: Boxer | undefined;\n  for await (const [...rest] of [Promise.resolve([VALUE])]) box = rest[0];", ""],
+        ["let box: Boxer | undefined;\n  for await (const each of [make()]) box = each;", "async function make(): Promise<Boxer> {\n  return VALUE;\n}\n"],
+        ["let box: Boxer | undefined;\n  for await (const each of boxes()) box = each;", "async function* boxes(): AsyncGenerator<Boxer, void> {\n  yield Promise.resolve(VALUE);\n}\n"],
+      ];
+      for (const [statement, after] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export async function main(): Promise<number> {\n  ${statement.replace("VALUE", value)}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after.replace("VALUE", value)}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+    });
   });
 });
 
@@ -3772,7 +3790,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
       if (declaration.initializer !== undefined) return [...declaredValues(declaration.initializer, checker, seen), ...assigned.values, ...written];
       const loop = declaration.parent.parent;
-      if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop.expression, checker, seen), ...assigned.values];
+      if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop, checker, seen), ...assigned.values];
       if (assigned.found) return [...assigned.values, ...written];
       // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
       return isGivenLater(declaration) ? [value, ...written] : written;
@@ -3905,7 +3923,8 @@ function destructuredTargetValues(target: ts.Node, checker: ts.TypeChecker, seen
   if (path.unknown !== null) return { values: path.defaults, unread: path.unknown };
   let level: WrittenValue[] = [path.source];
   if (path.iterated) {
-    const items = iteratedContents(path.source, checker.getTypeAtLocation(target), checker, seen);
+    const loop = path.source.parent;
+    const items = ts.isForOfStatement(loop) ? loopItems(loop, checker.getTypeAtLocation(target), checker, seen) : iteratedContents(path.source, checker.getTypeAtLocation(target), checker, seen);
     level = items.values;
     found.unread ??= items.unread;
   }
@@ -4185,12 +4204,83 @@ function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefin
 }
 
 /**
- * What a for-of name is given: each item `iteratedContents` finds the value
- * iterated gives, as `declaredValues` reads it, with the name read given
+ * What a for-of name is given: each item `loopItems` finds the loop
+ * gives, as `declaredValues` reads it, with the name read given
  * back as well, as unread, where it may give what no rule reads.
  */
-function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, iterated: ts.Expression, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
-  return readContents(iteratedContents(iterated, checker.getTypeAtLocation(value), checker, seen), value, checker, seen);
+function iteratedValues(value: ts.Identifier | ts.PropertyAccessExpression, loop: ts.ForOfStatement, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  return readContents(loopItems(loop, checker.getTypeAtLocation(value), checker, seen), value, checker, seen);
+}
+
+/** Each item a for-of gives its target: each item iterating its value gives, as `iteratedContents` finds them, and, for a for await, what awaiting each gives, as `settledContents` reads it. */
+function loopItems(loop: ts.ForOfStatement, wanted: ts.Type, checker: ts.TypeChecker, seen: Set<ts.Node>): ReachedContents {
+  const items = iteratedContents(loop.expression, wanted, checker, seen);
+  if (loop.awaitModifier === undefined) return items;
+  const settled = settledContents(items.values, checker, seen);
+  return { ...items, values: settled.values, unread: items.unread ?? settled.unread };
+}
+
+/**
+ * What awaiting each of some values gives, as a for await awaits each item
+ * and an asynchronous generator each value it yields: a value that is no
+ * promise, by its type, is itself; a call of an `async` function written
+ * here gives what `asynchronousReturns` finds it returns, awaited in turn; a
+ * promise a library call makes gives what it holds, as `placeContents` finds
+ * it, awaited in turn, or is itself where what it resolves to may hold a
+ * function but cannot be one, so that what reads it reads through it. Any
+ * other promise, and one that `declaredValues` finds may be anything but
+ * such a call, gives what no rule reads.
+ */
+function settledContents(values: readonly WrittenValue[], checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
+  const found: Contents = { values: [], unread: null };
+  const pending = [...values];
+  const read = new Set<ts.Node>();
+  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+    const type = ts.isMethodDeclaration(value) ? undefined : checker.getTypeAtLocation(value);
+    if (ts.isMethodDeclaration(value) || type === undefined || checker.getAwaitedType(type) === type) {
+      found.values.push(value);
+      continue;
+    }
+    if (read.has(value)) continue;
+    read.add(value);
+    const returned = asynchronousReturns(value, checker);
+    if (returned !== undefined) {
+      pending.push(...returned);
+      continue;
+    }
+    for (const promise of declaredValues(value, checker, seen)) {
+      if (!ts.isExpression(promise) || !isPromiseCall(promise, checker)) {
+        found.unread ??= value;
+        continue;
+      }
+      const resolved = checker.getAwaitedType(checker.getTypeAtLocation(promise));
+      // A promise of a value that may hold a function but is none stays a container, as `awaitedValues` keeps it.
+      if (resolved !== undefined && !mayBeFunction(resolved, checker, promise) && mayHoldFunction(resolved, checker, promise)) {
+        found.values.push(promise);
+        continue;
+      }
+      const held = placeContents(promise, checker, seen);
+      pending.push(...held.values);
+      found.unread ??= held.unread;
+    }
+  }
+  return found;
+}
+
+/**
+ * What a call of an `async` function written here settles to: each value
+ * each function that may run returns, as `returnedExpressions` finds them.
+ *
+ * @returns The values, or undefined for any other value, or a call whose functions cannot all be followed, or that runs one that is not `async`.
+ */
+function asynchronousReturns(value: ts.Expression, checker: ts.TypeChecker): ts.Expression[] | undefined {
+  const call = heldValue(value);
+  if (call === undefined || !ts.isCallExpression(call)) return undefined;
+  const invocation = invocationOf(call, checker);
+  if (invocation.binds || invocation.declaration === undefined || invocation.declaration.getSourceFile().isDeclarationFile) return undefined;
+  const runs = implementationsOf(call, invocation.callee, invocation.declaration, checker);
+  const asynchronous = runs.functions.every((run) => (ts.getCombinedModifierFlags(run as ts.Declaration) & ts.ModifierFlags.Async) !== 0 && !isGenerator(run));
+  return runs.unread || runs.functions.length === 0 || !asynchronous ? undefined : runs.functions.flatMap(returnedExpressions);
 }
 
 /**
@@ -4388,9 +4478,9 @@ function generatorsOf(call: ts.CallExpression, checker: ts.TypeChecker): Generat
  * a library call it is handed and `next` give: each value each generator
  * that may run yields, each item iterating what its `yield*` hands on gives,
  * as `iteratedContents` finds them, and each value it returns, which `next`
- * gives last. A promise an asynchronous generator yields gives what it
- * resolves to, which no rule reads here, and so does a callee whose
- * functions cannot all be followed.
+ * gives last. An asynchronous generator yields what awaiting each value
+ * gives, as `settledContents` reads it. A callee whose functions cannot all
+ * be followed holds what no rule reads.
  */
 function generatorContents(call: ts.CallExpression, checker: ts.TypeChecker, seen: Set<ts.Node>): Contents {
   const generators = generatorsOf(call, checker);
@@ -4407,12 +4497,9 @@ function generatorContents(call: ts.CallExpression, checker: ts.TypeChecker, see
         if (!delegated.reached && mayCarryFunction(yielded.expression, checker)) found.unread ??= yielded;
         continue;
       }
-      const type = checker.getTypeAtLocation(yielded.expression);
-      if (asynchronous && checker.getAwaitedType(type) !== type) {
-        found.unread ??= yielded;
-      } else {
-        found.values.push(yielded.expression);
-      }
+      const settled = asynchronous ? settledContents([yielded.expression], checker, seen) : { values: [yielded.expression], unread: null };
+      found.values.push(...settled.values);
+      found.unread ??= settled.unread;
     }
   }
   return found;
@@ -5924,7 +6011,7 @@ interface PatternSources {
 /**
  * Each value a binding pattern destructures. A declaration's pattern
  * destructures the value it is declared with, or, in a for-of, each item
- * iterating its value gives, as `iteratedContents` finds them; a
+ * iterating its value gives, as `loopItems` finds them; a
  * parameter's, what `passedValues` finds each caller and library gives it,
  * unless a caller may give what no rule reads. A pattern
  * nested in another destructures, for each value the enclosing pattern
@@ -5944,7 +6031,7 @@ function patternSources(pattern: ts.BindingPattern, cause: ts.Node, checker: ts.
   }
   const loop = holder.parent.parent;
   if (ts.isVariableDeclaration(holder) && holder.initializer === undefined && ts.isForOfStatement(loop)) {
-    const items = iteratedContents(loop.expression, checker.getTypeAtLocation(pattern), checker, seen);
+    const items = loopItems(loop, checker.getTypeAtLocation(pattern), checker, seen);
     return { sources: items.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)), unread: items.unread };
   }
   if (!ts.isVariableDeclaration(holder) || holder.initializer === undefined) return { sources: [], unread: cause };
