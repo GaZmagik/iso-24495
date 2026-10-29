@@ -3095,6 +3095,35 @@ describe("the code skill's rules for this repository's own code", () => {
       expect(boundHelpers("probe.ts", text)).toEqual(reported);
     });
 
+    test("Object.assign written later in the same block replaces a key an object literal is written with, for a member read after it, beside its breach", () => {
+      // Each form writes OTHER with the literal and VALUE with Object.assign: `consuming` and `boxing` in the valid form, swapped in its breach.
+      const forms = [
+        "const holder = { box: OTHER };\n  Object.assign(holder, { box: VALUE });\n  const box = holder.box;",
+        "const holder = { box: OTHER, size: 1 };\n  void String(1);\n  Object.assign(holder, { size: 2 }, { box: VALUE });\n  const box = holder.box;",
+      ];
+      for (const form of forms) {
+        for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value).replace("OTHER", other)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A read before the call, a call that may not run, a use of the name between, and a read in a nested function, may each read the key before it is replaced.
+      for (const [form, read] of [
+        ["const holder = { box: boxing };\n  const early = holder.box;\n  Object.assign(holder, { box: consuming });", "early"],
+        ["const holder = { box: boxing };\n  if (ready) Object.assign(holder, { box: consuming });", "holder.box"],
+        ["const holder = { box: boxing };\n  const alias = holder;\n  Object.assign(holder, { box: consuming });\n  void alias;", "holder.box"],
+        ["const holder = { box: boxing };\n  Object.assign(holder, { box: consuming });\n  const box = [0].map((): Boxer => holder.box)[0]!;", "box"],
+        ["let holder = { box: boxing };\n  Object.assign(holder, { box: consuming });\n  holder = { box: consuming };", "holder.box"],
+      ]) {
+        const text = `export function main(ready = true): number {\n  ${form}\n  const helper = ${read}((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), form).toEqual(reported);
+      }
+      // An object a module declares may be read by any function, at any time.
+      const text = `const holder = { box: boxing };\nObject.assign(holder, { box: consuming });\nexport function main(): number {\n  const helper = holder.box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(reported);
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -4073,7 +4102,9 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     const assigned = assignedValues(value, declaration, checker, seen);
     const written = memberWrites(value, declaration, checker, seen);
     if (ts.isVariableDeclaration(declaration) || ts.isPropertyDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
-      if (declaration.initializer !== undefined) return [...declaredValues(declaration.initializer, checker, seen), ...assigned.values, ...written];
+      // A value a property is written with that a later write always replaces before this read runs is never read here.
+      const replaced = ts.isPropertyAssignment(declaration) && ts.isPropertyAccessExpression(value) && isAssignedBefore(value, declaration, checker);
+      if (declaration.initializer !== undefined) return [...replaced ? [] : declaredValues(declaration.initializer, checker, seen), ...assigned.values, ...written];
       const loop = declaration.parent.parent;
       if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop, checker, seen), ...assigned.values];
       if (ts.isVariableDeclaration(declaration) && ts.isCatchClause(declaration.parent)) return [...caughtValues(value, declaration.parent, checker, seen), ...assigned.values];
@@ -4093,6 +4124,61 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
     const key = value.name.text;
     return [...declaredValues(value.expression, checker, seen)
       .flatMap((literal) => keyOfValue(literal, key, value, checker, seen)), ...assigned.values];
+  });
+}
+
+/**
+ * Whether a call of the library's `Object.assign` always replaces the value
+ * a property of an object literal is written with before a member read
+ * reads it. The literal is the value a `const` declares in a block; a
+ * statement written later in that block is the call, handed the name as its
+ * target and, as a later source, an object literal that writes the key, as
+ * `givesKey` reads it; no use of the name is written between the
+ * declaration and that statement; and the read is a member of the same
+ * name, written after the statement in the same block, outside any function
+ * nested there, so it runs only once the statement has. Any other read may
+ * still give the value, and so does a read where any of this does not hold.
+ */
+function isAssignedBefore(read: ts.PropertyAccessExpression, property: ts.PropertyAssignment, checker: ts.TypeChecker): boolean {
+  const literal = property.parent;
+  const declaration = outerValue(literal).parent;
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer !== outerValue(literal) || !ts.isIdentifier(declaration.name)
+    || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return false;
+  const statement = declaration.parent.parent;
+  const block = statement.parent;
+  const key = propertyKey(property.name, checker);
+  const receiver = heldValue(read.expression);
+  if (!ts.isVariableStatement(statement) || (!ts.isBlock(block) && !ts.isCaseOrDefaultClause(block)) || key === undefined
+    || receiver === undefined || !refersTo(receiver, declaration, checker)) return false;
+  const statements: readonly ts.Statement[] = block.statements;
+  const write = statements.slice(statements.indexOf(statement) + 1).find((each) => isAssignmentOf(each, declaration, key, checker));
+  if (write === undefined || read.getStart() < write.getEnd()) return false;
+  if (usesOf(declaration, checker).some((use) => use.pos >= statement.end && use.end <= write.pos)) return false;
+  for (let node: ts.Node = read; node !== block; node = node.parent) {
+    if (ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node) || ts.isSourceFile(node)) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a statement is a call of the library's `Object.assign`, written as
+ * the whole statement, whose target is a name that refers to a declaration
+ * and one of whose later sources is an object literal that always writes a
+ * key, as `givesKey` reads it. A spread among its arguments hides which is
+ * the target.
+ */
+function isAssignmentOf(statement: ts.Statement, declaration: ts.VariableDeclaration, key: string, checker: ts.TypeChecker): boolean {
+  if (!ts.isExpressionStatement(statement)) return false;
+  const call = heldValue(statement.expression);
+  if (call === undefined || !ts.isCallExpression(call) || !isLibraryCall(call, checker) || call.arguments.some(ts.isSpreadElement)) return false;
+  const run = invocationOf(call, checker).declaration;
+  if (run === undefined || libraryMemberName(run) !== "Object.assign" || invocationOf(call, checker).callee !== call.expression) return false;
+  const [target, ...sources] = call.arguments;
+  const named = target === undefined ? undefined : heldValue(target);
+  if (named === undefined || !ts.isIdentifier(named) || !refersTo(named, declaration, checker)) return false;
+  return sources.some((source) => {
+    const given = heldValue(source);
+    return given !== undefined && ts.isObjectLiteralExpression(given) && givesKey(source, [given], key, checker);
   });
 }
 
