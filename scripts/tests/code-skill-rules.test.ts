@@ -2996,6 +2996,40 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("a key written later in an object literal replaces what gave it before, and a spread does when it always gives the key, beside its breach", () => {
+      // Each form gives the key read VALUE last, and OTHER before it: `consuming` and `boxing` in the valid form, swapped in its breach.
+      const forms = [
+        "const base = { box: OTHER };\n  const { box } = { ...base, box: VALUE };",
+        "const base = { box: OTHER };\n  const holder = { ...base, box: VALUE };\n  const box = holder.box;",
+        "const first = { box: OTHER };\n  const second = { box: VALUE };\n  const { box } = { ...first, ...second };",
+        "const first = { box: OTHER };\n  const second = { ...{ box: VALUE } };\n  const box = { ...first, ...second }.box;",
+      ];
+      for (const form of forms) {
+        for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${form.replace("VALUE", value).replace("OTHER", other)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), form + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, form + value).toEqual([]);
+        }
+      }
+      // A spread that may not give the key, as one whose key is optional and may be deleted, leaves what gave it before.
+      for (const form of [
+        "const base: { box?: Boxer } = { box: consuming };\n  delete base.box;\n  const { box } = { box: boxing as Boxer, ...base };",
+        "const base = ready ? { box: consuming } : {};\n  const { box } = { box: boxing as Boxer, ...base };",
+      ]) {
+        const text = `export function main(ready = true): number {\n  ${form}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+        expect(boundHelpers("probe.ts", text), form).toEqual(reported);
+      }
+      // The throws check reads the key the same way.
+      const thrower = "(): never => {\n    throw new RangeError(\"size\");\n  }";
+      for (const [value, other, problems] of [
+        ["consuming", "boxing", []],
+        ["boxing", "consuming", ["probe.ts:5: the comment on helper does not say what it throws"]],
+      ] as Array<[value: string, other: string, problems: string[]]>) {
+        const text = `export function main(): object {\n  const base = { box: ${other} };\n  const { box } = { ...base, box: ${value} };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
+        expect(undocumentedThrows("probe.ts", text).problems, value).toEqual(problems);
+      }
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -7999,7 +8033,7 @@ type Holder = ts.PropertyAssignment | ts.ShorthandPropertyAssignment | ts.Method
 
 /** Where one element of a pattern takes its value from, in one literal. */
 interface ElementSource {
-  /** Each property, method or array item that may give the element its value: a later one as well as one it overrides. */
+  /** Each property, method or array item that may give the element its value: in an object literal, the last that gives its key, and any that a spread may or may not replace. */
   holders: Holder[];
   /** What may give the element its value instead, so that it cannot be read, or null. */
   unknownAfter: UnknownCause | null;
@@ -8087,8 +8121,11 @@ function heldBy(holder: Holder): ts.Expression | ts.MethodDeclaration {
  * Each property or method of an object literal that gives one key, read
  * through each spread of another object literal, with what may give the key
  * a value after the last of them instead: a spread of anything else, or a
- * key computed from anything but a literal. An accessor gives the key, but
- * no value a pattern can read, so it settles the key and holds nothing.
+ * key computed from anything but a literal. A property written later
+ * replaces each that gave the key before it, and so does a spread that
+ * `givesKey` finds always gives the key; a spread that may not give it
+ * keeps them. An accessor gives the key, but no value a pattern can read,
+ * so it settles the key and holds nothing.
  */
 function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): ElementSource {
   const found: ElementSource = { holders: [], unknownAfter: null };
@@ -8100,6 +8137,7 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
         continue;
       }
       const inner = spreads.map((spread) => keyedProperties(spread, key, checker));
+      if (givesKey(property.expression, spreads, key, checker)) found.holders = [];
       found.holders.push(...inner.flatMap((each) => each.holders));
       // A key an inner literal gives is settled there, unless something inside one that may give any key comes later.
       if (inner.some((each) => each.holders.length > 0 || each.unknownAfter !== null)) found.unknownAfter = inner.find((each) => each.unknownAfter !== null)?.unknownAfter ?? null;
@@ -8111,13 +8149,31 @@ function keyedProperties(literal: ts.ObjectLiteralExpression, key: string, check
       continue;
     }
     if (given !== key) continue;
-    if (!ts.isGetAccessorDeclaration(property) && !ts.isSetAccessorDeclaration(property)) found.holders.push(property);
+    found.holders = ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property) ? [] : [property];
     found.unknownAfter = null;
   }
   const written = writtenTo(literal, key, checker);
   found.holders.push(...written.values);
   if (written.unread !== null) found.unknownAfter = written.unread;
   return found;
+}
+
+/**
+ * Whether a value spread into an object literal always gives one key, so
+ * that it replaces what gave the key before: each object literal it may be,
+ * as `spreadLiterals` finds them, writes the key, as a property, a method,
+ * an accessor or a spread that always gives it; and the value's type
+ * declares the key and not as optional, since only an optional key may be
+ * deleted, which no rule reads.
+ */
+function givesKey(spread: ts.Expression, literals: readonly ts.ObjectLiteralExpression[], key: string, checker: ts.TypeChecker): boolean {
+  const declared = checker.getPropertyOfType(checker.getTypeAtLocation(spread), key);
+  if (declared === undefined || (declared.flags & ts.SymbolFlags.Optional) !== 0) return false;
+  return literals.every((literal) => literal.properties.some((property) => {
+    if (!ts.isSpreadAssignment(property)) return property.name !== undefined && propertyKey(property.name, checker) === key;
+    const inner = spreadLiterals(property.expression, checker);
+    return inner !== undefined && givesKey(property.expression, inner, key, checker);
+  }));
 }
 
 /**
