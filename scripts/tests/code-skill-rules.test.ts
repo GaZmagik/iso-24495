@@ -3262,6 +3262,14 @@ describe("the code skill's rules for this repository's own code", () => {
         ["Object.defineProperty.call(Object, overrides, \"box\", { enumerable: !hide });", "", true],
         ["Object.defineProperty.apply(Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
         ["Reflect.apply(Object.defineProperty, Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
+        // A descriptor's `enumerable` is read by the type of its value: a name declared `true` keeps the key; one declared boolean, a cast, a call or an accessor may not.
+        ["const enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", false],
+        ["const shown: true = true;\n  Object.defineProperty(overrides, \"box\", { configurable: true, enumerable: shown });", "", false],
+        ["let enumerable = true;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", true],
+        ["const enumerable: boolean = !hide;\n  Object.defineProperty(overrides, \"box\", { enumerable });", "", true],
+        ["Object.defineProperty(overrides, \"box\", { enumerable: !hide as true });", "", true],
+        ["Object.defineProperty(overrides, \"box\", { enumerable: shown(hide) });", "function shown(hide: boolean): boolean {\n  return !hide;\n}\n", true],
+        ["Object.defineProperty(overrides, \"box\", {\n    get enumerable(): boolean {\n      return !hide;\n    },\n  });", "", true],
         ["defineProperty(overrides, \"box\");", "function defineProperty(each: object, key: string): void {\n  void each;\n  void key;\n}\n", false],
         ["const key: string = hide ? \"box\" : \"other\";\n  delete (overrides as Record<string, unknown>)[key];", "", true],
         ["strip(overrides);", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
@@ -9137,8 +9145,9 @@ const REMOVING_FUNCTIONS: ReadonlySet<string> = new Set(["Reflect.deleteProperty
  * `Reflect.deleteProperty`, under the keys its key may be, as `keysOf` finds
  * them; and `Object.defineProperty`, `Reflect.defineProperty` and each key
  * of `Object.defineProperties`, unless the descriptor is an object literal
- * written in place that sets `enumerable` to `true`, since any other
- * descriptor may make the key one a spread leaves out. A key not known
+ * written in place that sets `enumerable` to `true`, as `keepsEnumerable`
+ * reads it, since any other descriptor may make the key one a spread
+ * leaves out. A key not known
  * may be any key, and a list of descriptors not written in place may hold
  * any. A call is read by the function it runs, as `invocationOf` finds
  * it, so a function held by another name, taken by a destructuring, or run
@@ -9155,13 +9164,13 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   const name = invocation.declaration === undefined ? undefined : libraryMemberName(invocation.declaration);
   const [target, key, described] = invocation.args;
   if (name === undefined || !REMOVING_FUNCTIONS.has(name) || target === undefined || ts.isSpreadElement(target)) return [];
-  if (name !== "Object.defineProperties") return name === "Reflect.deleteProperty" || !keepsEnumerable(described) ? [removalOf(target, keysOf(key, checker), node)] : [];
+  if (name !== "Object.defineProperties") return name === "Reflect.deleteProperty" || !keepsEnumerable(described, checker) ? [removalOf(target, keysOf(key, checker), node)] : [];
   const descriptors = heldValue(key);
   if (descriptors === undefined || !ts.isObjectLiteralExpression(descriptors)) return [removalOf(target, undefined, node)];
   return descriptors.properties.flatMap((property): Change[] => {
     if (!ts.isPropertyAssignment(property)) return [removalOf(target, undefined, node)];
     const given = propertyKey(property.name, checker);
-    return keepsEnumerable(property.initializer) ? [] : [removalOf(target, given === undefined ? undefined : [given], node)];
+    return keepsEnumerable(property.initializer, checker) ? [] : [removalOf(target, given === undefined ? undefined : [given], node)];
   });
 }
 
@@ -9170,11 +9179,40 @@ function removalOf(receiver: ts.Expression, keys: readonly string[] | undefined,
   return { receiver, write: { kind: "value", keys, value: at }, at };
 }
 
-/** Whether a property descriptor is an object literal written in place whose `enumerable` property is the literal `true`, so that a spread gives the key it describes. */
-function keepsEnumerable(descriptor: ts.Expression | undefined): boolean {
+/**
+ * Whether a property descriptor is an object literal written in place whose
+ * last property that may set `enumerable` sets it to a value of the
+ * literal type `true`, as `isTrueValue` reads it, so that a spread gives
+ * the key it describes. A spread, a key not known, an accessor or a method
+ * may set it to anything, and so does any of them written after it.
+ */
+function keepsEnumerable(descriptor: ts.Expression | undefined, checker: ts.TypeChecker): boolean {
   const literal = heldValue(descriptor);
-  return literal !== undefined && ts.isObjectLiteralExpression(literal) && literal.properties.some((property) => ts.isPropertyAssignment(property)
-    && (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)) && property.name.text === "enumerable" && property.initializer.kind === ts.SyntaxKind.TrueKeyword);
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) return false;
+  let keeps = false;
+  for (const property of literal.properties) {
+    const key = property.name === undefined ? undefined : propertyKey(property.name, checker);
+    if (key === "enumerable" || key === undefined) keeps = key !== undefined && isTrueValue(property, checker);
+  }
+  return keeps;
+}
+
+/**
+ * Whether a property of an object literal, written with a value or in
+ * shorthand, holds a value of the literal type `true`, read through any
+ * wrapper `heldValue` looks through, so that `!hide as true` is boolean. A
+ * name is read by the type it is declared with, so that
+ * `const enumerable = true` is `true` and `let enumerable = true` is
+ * boolean, whatever the checker narrows it to where it is read, since a
+ * function called meanwhile may change it.
+ */
+function isTrueValue(property: ts.ObjectLiteralElementLike, checker: ts.TypeChecker): boolean {
+  const value = ts.isPropertyAssignment(property) ? property.initializer : ts.isShorthandPropertyAssignment(property) ? property.name : undefined;
+  const held = heldValue(value);
+  if (value === undefined || held === undefined) return false;
+  const named = ts.isIdentifier(held) ? usedSymbol(held, checker) : undefined;
+  const type = named === undefined ? checker.getTypeAtLocation(held) : checker.getTypeOfSymbol(named);
+  return (type.flags & ts.TypeFlags.BooleanLiteral) !== 0 && checker.isTypeAssignableTo(type, checker.getTrueType());
 }
 
 /**
