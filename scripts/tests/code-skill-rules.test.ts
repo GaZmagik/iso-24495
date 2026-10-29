@@ -3055,6 +3055,27 @@ describe("the code skill's rules for this repository's own code", () => {
       }
     });
 
+    test("an item of what Promise.all gives is what the item at its position settles to, beside its breach", () => {
+      const load = "async function load(): Promise<Boxer> {\n  return await Promise.resolve(VALUE);\n}\n";
+      // Each form settles to VALUE at the position read, and OTHER elsewhere: `consuming` and `boxing` in the valid form, swapped in its breach.
+      const forms: Array<[statement: string, after: string]> = [
+        ["const [box] = await Promise.all([Promise.resolve(VALUE)]);", ""],
+        ["const [other, box] = await Promise.all([Promise.resolve(OTHER), Promise.resolve(VALUE)]);\n  void other;", ""],
+        ["const box = (await Promise.all([OTHER, VALUE]))[1];", ""],
+        ["const list = [Promise.resolve(OTHER), load()];\n  const [, box] = await Promise.all(list);", load],
+      ];
+      for (const [statement, after] of forms) {
+        for (const [value, other, found] of [["consuming", "boxing", []], ["boxing", "consuming", reported]] as Array<[value: string, other: string, found: string[]]>) {
+          const text = `export async function main(): Promise<number> {\n  ${statement.replace("VALUE", value).replace("OTHER", other)}\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after.replace("VALUE", value)}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+      // A promise that is not written here may settle to anything its type allows.
+      const text = `export async function main(pending: Promise<Boxer>): Promise<number> {\n  const [box] = await Promise.all([pending]);\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
+      expect(boundHelpers("probe.ts", text)).toEqual(reported);
+    });
+
     test("a reduction is its first value and each value its callback may return, beside its breach", () => {
       const last = "function last(previous: Boxer, next: Boxer): Boxer {\n  void previous;\n  return next;\n}\n";
       // Each form may give back VALUE: `consuming` in the valid form, `boxing` in its breach.
@@ -4885,15 +4906,18 @@ function singleList(expression: ts.Expression, checker: ts.TypeChecker): ts.Arra
   return values.length === 1 && only !== undefined && ts.isExpression(only) && ts.isArrayLiteralExpression(only) ? only : undefined;
 }
 
-/** The methods of an array, and the functions of Array, whose result holds each item at a position its arguments say, as `libraryItemSource` reads them. */
-const POSITIONAL_METHODS: ReadonlySet<string> = new Set(["concat", "slice", "with", "Array.of", "Array.from"]);
+/** The methods of an array, and the functions of Array and Promise, whose result holds each item at a position its arguments say, as `libraryItemSource` reads them. */
+const POSITIONAL_METHODS: ReadonlySet<string> = new Set(["concat", "slice", "with", "Array.of", "Array.from", "Promise.all"]);
 
 /**
  * The item at one position of the array a library call makes, where its
  * arguments say what sits there: for `concat`, the items of the array it is
  * called on and then each argument, or each item of one that is an array;
  * for `Array.of`, its arguments; for `Array.from` handed one array, that
- * array's items; for `slice`, the item that many places after its start;
+ * array's items; for `Promise.all` handed one array, what each of its items
+ * settles to, as `settledItems` reads it, which a destructuring or an index
+ * reads through the `await` that gives the call; for `slice`, the item that
+ * many places after its start;
  * and for `with`, the value it is handed at its index, and the item there
  * elsewhere. Each array read must be one array literal whose length no code
  * changes, as `singleList` and `fixedLength` read it, read at that position
@@ -4911,7 +4935,8 @@ function libraryItemSource(call: ts.CallExpression | ts.NewExpression, at: numbe
   const owner = declaration?.parent;
   const name = declaration?.name !== undefined && ts.isIdentifier(declaration.name) ? declaration.name.text : undefined;
   const method = owner !== undefined && ts.isInterfaceDeclaration(owner) && (owner.name.text === "Array" || owner.name.text === "ReadonlyArray") ? name
-    : owner !== undefined && ts.isInterfaceDeclaration(owner) && owner.name.text === "ArrayConstructor" ? `Array.${name ?? ""}` : undefined;
+    : owner !== undefined && ts.isInterfaceDeclaration(owner) && owner.name.text === "ArrayConstructor" ? `Array.${name ?? ""}`
+      : owner !== undefined && ts.isInterfaceDeclaration(owner) && owner.name.text === "PromiseConstructor" ? `Promise.${name ?? ""}` : undefined;
   if (method === undefined || !POSITIONAL_METHODS.has(method) || invocation.callee !== call.expression || invocation.args.some(ts.isSpreadElement)) return undefined;
   const written = writtenTo(call, String(at), checker);
   if (written.moved) return undefined;
@@ -4924,9 +4949,10 @@ function positionalSource(call: ts.CallExpression | ts.NewExpression, method: st
   if (method === "Array.of") return { holders: args.slice(at, at + 1), unknownAfter: null };
   const receiver = ts.isCallExpression(call) ? memberReceiver(call.expression) : undefined;
   const [first, second] = args;
-  if (method === "Array.from") {
+  if (method === "Array.from" || method === "Promise.all") {
     const list = args.length === 1 && first !== undefined ? singleList(first, checker) : undefined;
-    return list === undefined ? undefined : itemSource(list, at, checker);
+    if (list === undefined) return undefined;
+    return method === "Array.from" ? itemSource(list, at, checker) : settledItems(itemSource(list, at, checker), checker);
   }
   const list = receiver === undefined ? undefined : singleList(receiver, checker);
   if (list === undefined) return undefined;
@@ -4962,6 +4988,47 @@ function positionalSource(call: ts.CallExpression | ts.NewExpression, method: st
     left -= length;
   }
   return { holders: [], unknownAfter: null };
+}
+
+/**
+ * What the items that may sit at one position of a list handed to
+ * `Promise.all` settle to: an item none of whose values, as `declaredValues`
+ * reads them, is a promise is itself, as a function or a call of an `async`
+ * function written here is not, since `calledValues` reads that call as
+ * what the function returns; and a value that is a promise a library call
+ * makes, as `isPromiseCall` finds it, settles to what it holds, as
+ * `placeContents` finds it. A promise of any other kind, and one that holds
+ * a promise in turn, settle to what no rule reads.
+ */
+function settledItems(source: ElementSource, checker: ts.TypeChecker): ElementSource {
+  const found: ElementSource = { holders: [], unknownAfter: source.unknownAfter };
+  for (const holder of source.holders) {
+    const item = heldBy(holder);
+    const values = ts.isMethodDeclaration(item) ? [] : declaredValues(item, checker, new Set());
+    if (values.every((value) => isSettled(value, checker))) {
+      found.holders.push(holder);
+      continue;
+    }
+    for (const value of values) {
+      if (isSettled(value, checker)) {
+        found.holders.push(holder);
+      } else if (ts.isExpression(value) && isPromiseCall(value, checker)) {
+        const held = placeContents(value, checker, new Set());
+        found.holders.push(...held.values);
+        found.unknownAfter ??= held.unread ?? (held.values.every((one) => isSettled(one, checker)) ? null : value);
+      } else {
+        found.unknownAfter ??= value;
+      }
+    }
+  }
+  return found;
+}
+
+/** Whether a value is what awaiting it gives, by its type: it is no promise, nor anything else with a `then`. A method, a function or a class always is. */
+function isSettled(value: DeclaredValue, checker: ts.TypeChecker): boolean {
+  if (!ts.isExpression(value)) return true;
+  const type = checker.getTypeAtLocation(value);
+  return checker.getAwaitedType(type) === type;
 }
 
 /**
