@@ -2802,6 +2802,25 @@ describe("the code skill's rules for this repository's own code", () => {
       const text = `export function main(): number {\n  const list: Boxer[] = [consuming];\n  list.push(boxing);\n  list.pop();\n  const box = list.at(-1);\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}`;
       expect(boundHelpers("probe.ts", text)).toEqual(reported);
     });
+
+    test("a rest element in a nested pattern, or in a parameter's pattern, holds what each enclosing key or position holds, beside its breach", () => {
+      // Each form puts VALUE where the rest element's read takes it from: `consuming` in the valid form, `boxing` in its breach.
+      const forms: Array<[statement: string, after: string]> = [
+        ["const holder = { items: [boxing, VALUE] };\n  const { items: [, ...rest] } = holder;\n  const box = rest[0];", ""],
+        ["const { items: [...rest] } = { items: [VALUE] };\n  const box = rest[0];", ""],
+        ["const [[, ...rest]] = [[boxing, VALUE]];\n  const box = rest[0];", ""],
+        ["const { a: { ...rest } } = { a: { b: VALUE } };\n  const box = rest.b;", ""],
+        ["const { items: [...rest] = [VALUE] } = {} as { items?: Boxer[] };\n  const box = rest[0];", ""],
+        ["const box = run({ a: boxing, b: VALUE });", "function run({ a, ...rest }: { a: Boxer; b: Boxer }): Boxer {\n  void a;\n  return rest.b;\n}\n"],
+      ];
+      for (const [statement, after] of forms) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(): number {\n  ${statement.replace("VALUE", value)}\n  if (box === undefined) return 1;\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n${wrappers}${after}`;
+          expect(boundHelpers("probe.ts", text), statement + value).toEqual(found);
+          expect(unplacedFunctions("probe.ts", text).problems, statement + value).toEqual([]);
+        }
+      }
+    });
   });
 });
 
@@ -5750,10 +5769,8 @@ interface RestOrigin {
 /**
  * Where the rest element that binds a name takes what it holds from: the
  * pattern it sits in, the position or keys the other elements take, and
- * each value the pattern destructures. A declaration's pattern destructures
- * the value it is declared with, or, in a for-of, each item iterating its
- * value gives, as `iteratedContents` finds them; a parameter's, or one
- * nested in another pattern, destructures what no rule reads. A destructuring assignment's pattern destructures what its `=`
+ * each value the pattern destructures, as `patternSources` finds them for a
+ * declaration's pattern, or one nested in another. A destructuring assignment's pattern destructures what its `=`
  * assigns, or, nested or in a for-of, what `destructuredTargetValues` finds
  * it is given. A key another element takes that is not known may be any
  * key, so the rest element may hold every key but those known.
@@ -5770,15 +5787,9 @@ function restOrigin(target: ts.Identifier, checker: ts.TypeChecker, seen: Set<ts
     return key === undefined ? [] : [key];
   }));
   const origin: RestOrigin = { sources: [], at: array ? elements.indexOf(element) : undefined, taken, unread: null };
-  if (ts.isBindingElement(element)) {
-    const holder = pattern.parent;
-    const loop = holder.parent.parent;
-    if (ts.isVariableDeclaration(holder) && holder.initializer === undefined && ts.isForOfStatement(loop)) {
-      const items = iteratedContents(loop.expression, checker.getTypeAtLocation(pattern), checker, seen);
-      return { ...origin, sources: items.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)), unread: items.unread };
-    }
-    if (!ts.isVariableDeclaration(holder) || holder.initializer === undefined) return { ...origin, unread: element };
-    return { ...origin, sources: declaredValues(holder.initializer, checker, seen) };
+  if (ts.isBindingElement(element) && (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern))) {
+    const destructured = patternSources(pattern, element, checker, seen);
+    return { ...origin, sources: destructured.sources, unread: destructured.unread };
   }
   const outer = outerValue(pattern);
   const assignment = outer.parent;
@@ -5787,6 +5798,65 @@ function restOrigin(target: ts.Identifier, checker: ts.TypeChecker, seen: Set<ts
   }
   const given = destructuredTargetValues(pattern, checker, seen);
   return { ...origin, sources: given.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)), unread: given.unread };
+}
+
+/** What a binding pattern destructures, as `patternSources` finds it. */
+interface PatternSources {
+  /** Each value the pattern may destructure, as `declaredValues` reads it. */
+  sources: DeclaredValue[];
+  /** What makes it destructure what no rule reads, or null. */
+  unread: ts.Node | null;
+}
+
+/**
+ * Each value a binding pattern destructures. A declaration's pattern
+ * destructures the value it is declared with, or, in a for-of, each item
+ * iterating its value gives, as `iteratedContents` finds them; a
+ * parameter's, what `passedValues` finds each caller and library gives it,
+ * unless a caller may give what no rule reads. A pattern
+ * nested in another destructures, for each value the enclosing pattern
+ * destructures, what its key or position holds there, in an object or array
+ * literal, as `keyedProperties` and `itemSource` read it, and its default.
+ * A pattern a rest element holds, a key not known, and a value no literal
+ * of the kind read, destructure what no rule reads.
+ *
+ * @param cause What is given as unread where a declaration's pattern has no value.
+ */
+function patternSources(pattern: ts.BindingPattern, cause: ts.Node, checker: ts.TypeChecker, seen: Set<ts.Node>): PatternSources {
+  const holder = pattern.parent;
+  if (ts.isBindingElement(holder)) return nestedSources(holder, checker, seen);
+  if (ts.isParameter(holder)) {
+    const passed = passedValues(holder, checker, seen);
+    return { sources: [...passed.values, ...passed.handed], unread: passed.unread ? cause : null };
+  }
+  const loop = holder.parent.parent;
+  if (ts.isVariableDeclaration(holder) && holder.initializer === undefined && ts.isForOfStatement(loop)) {
+    const items = iteratedContents(loop.expression, checker.getTypeAtLocation(pattern), checker, seen);
+    return { sources: items.values.flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)), unread: items.unread };
+  }
+  if (!ts.isVariableDeclaration(holder) || holder.initializer === undefined) return { sources: [], unread: cause };
+  return { sources: declaredValues(holder.initializer, checker, seen), unread: null };
+}
+
+/** What a binding element whose name is a pattern takes, as `patternSources` reads a nested pattern. */
+function nestedSources(element: ts.BindingElement, checker: ts.TypeChecker, seen: Set<ts.Node>): PatternSources {
+  const pattern = element.parent;
+  if (element.dotDotDotToken !== undefined) return { sources: [], unread: element };
+  const outer = patternSources(pattern, element, checker, seen);
+  const found: PatternSources = { sources: element.initializer === undefined ? [] : declaredValues(element.initializer, checker, seen), unread: outer.unread };
+  const key = ts.isArrayBindingPattern(pattern) ? String(pattern.elements.indexOf(element)) : boundKey(element, checker);
+  for (const source of outer.sources) {
+    const from = key === undefined || !ts.isExpression(source) ? undefined
+      : ts.isObjectLiteralExpression(source) ? keyedProperties(source, key, checker)
+        : ts.isArrayLiteralExpression(source) && isIndexKey(key) ? itemSource(source, Number(key), checker) : undefined;
+    if (from === undefined) {
+      found.unread ??= element;
+      continue;
+    }
+    found.sources.push(...from.holders.map(heldBy).flatMap((one): DeclaredValue[] => ts.isMethodDeclaration(one) ? [one] : declaredValues(one, checker, seen)));
+    found.unread ??= from.unknownAfter;
+  }
+  return found;
 }
 
 /**
