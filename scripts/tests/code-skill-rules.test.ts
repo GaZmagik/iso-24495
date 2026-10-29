@@ -2905,6 +2905,23 @@ describe("the code skill's rules for this repository's own code", () => {
         }
       }
     });
+
+    test("a catch clause's name is given what its try block throws, and is unread where the block may run code that throws, beside its breach", () => {
+      // Each form throws VALUE: `consuming` in the valid form, `boxing` in its breach.
+      for (const block of ["throw VALUE;", "if (ready) throw VALUE;\n    throw consuming;"]) {
+        for (const [value, found] of [["consuming", []], ["boxing", reported]] as Array<[value: string, found: string[]]>) {
+          const text = `export function main(ready = true): number {\n  try {\n    ${block.replace("VALUE", value)}\n  } catch (caught) {\n    const helper = (caught as Boxer)((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}`;
+          expect(boundHelpers("probe.ts", text), block + value).toEqual(found);
+        }
+      }
+      // A call in the block may throw anything, and so may a destructured catch clause's value.
+      for (const text of [
+        `export function main(): number {\n  try {\n    void String(1);\n    throw consuming;\n  } catch (caught) {\n    const helper = (caught as Boxer)((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}`,
+        `export function main(): number {\n  try {\n    throw { cause: consuming };\n  } catch ({ cause }: any) {\n    const helper = (cause as Boxer)((): number => 1);\n    void helper;\n  }\n  return 0;\n}\n${wrappers}`,
+      ]) {
+        expect(boundHelpers("probe.ts", text), text).toEqual(reported);
+      }
+    });
   });
 });
 
@@ -3791,6 +3808,7 @@ function namedValues(value: ts.Identifier | ts.PropertyAccessExpression, checker
       if (declaration.initializer !== undefined) return [...declaredValues(declaration.initializer, checker, seen), ...assigned.values, ...written];
       const loop = declaration.parent.parent;
       if (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(loop)) return [...iteratedValues(value, loop, checker, seen), ...assigned.values];
+      if (ts.isVariableDeclaration(declaration) && ts.isCatchClause(declaration.parent)) return [...caughtValues(value, declaration.parent, checker, seen), ...assigned.values];
       if (assigned.found) return [...assigned.values, ...written];
       // A name declared here with no value that no assignment gives one, as a class field set by Object.assign, is given one no rule reads.
       return isGivenLater(declaration) ? [value, ...written] : written;
@@ -5821,13 +5839,41 @@ function holdsPossibleFunction(type: ts.Type, checker: ts.TypeChecker, location:
 
 /**
  * Whether a variable or class field declared with no value is given one by
- * code written here, as an assignment or a for-of gives it, which no rule
- * reads. A name written under `declare` is given none here, and a `catch`
- * clause's name is given what was thrown, which its declared type describes.
+ * code written here, as an assignment, a for-of or a throw caught by a
+ * `catch` clause gives it, which no rule reads. A name written under
+ * `declare` is given none here.
  */
 function isGivenLater(declaration: ts.VariableDeclaration | ts.PropertyDeclaration | ts.PropertyAssignment | ts.BindingElement): boolean {
   const root = ts.isBindingElement(declaration) ? ts.walkUpBindingElementsAndPatterns(declaration) : declaration;
-  return !isAmbient(root) && !ts.isParameter(root) && !ts.isCatchClause(root.parent);
+  return !isAmbient(root) && !ts.isParameter(root);
+}
+
+/** The kinds of node that may run code written elsewhere, which may throw anything: a call, `new`, a tagged template, `await`, `yield`, a member read, which may run a getter, and iterating, which runs an iterator. */
+const RUNNING_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.CallExpression, ts.SyntaxKind.NewExpression, ts.SyntaxKind.TaggedTemplateExpression, ts.SyntaxKind.AwaitExpression,
+  ts.SyntaxKind.YieldExpression, ts.SyntaxKind.PropertyAccessExpression, ts.SyntaxKind.ElementAccessExpression, ts.SyntaxKind.ForOfStatement,
+  ts.SyntaxKind.SpreadElement, ts.SyntaxKind.ArrayBindingPattern, ts.SyntaxKind.ObjectBindingPattern, ts.SyntaxKind.Decorator,
+]);
+
+/**
+ * What a `catch` clause's name is given: each value each `throw` its `try`
+ * block holds may throw, as `declaredValues` reads it, besides one a
+ * function nested in the block holds; and the name read as well, as unread,
+ * where the block holds a node of a kind RUNNING_KINDS names, which may run
+ * code that throws anything.
+ */
+function caughtValues(value: ts.Identifier | ts.PropertyAccessExpression, clause: ts.CatchClause, checker: ts.TypeChecker, seen: Set<ts.Node>): DeclaredValue[] {
+  const found: DeclaredValue[] = [];
+  let unread = false;
+  const pending: ts.Node[] = [clause.parent.tryBlock];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (RUNNING_KINDS.has(node.kind)) unread = true;
+    if (ts.isThrowStatement(node)) found.push(...declaredValues(node.expression, checker, seen));
+    ts.forEachChild(node, (child) => {
+      if (!ts.isFunctionLike(child)) pending.push(child);
+    });
+  }
+  return unread ? [...found, value] : found;
 }
 
 /** Whether a declaration is written under `declare`, its own or that of a statement or namespace around it, or in a declaration file. */
