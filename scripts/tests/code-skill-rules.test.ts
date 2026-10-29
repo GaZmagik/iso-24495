@@ -3254,6 +3254,14 @@ describe("the code skill's rules for this repository's own code", () => {
         ["Object.defineProperties(overrides, { box: { enumerable: !hide } });", "", true],
         ["Object.defineProperties(overrides, { other: { enumerable: !hide }, box: { enumerable: true } });", "", false],
         ["Reflect.defineProperty(overrides, \"box\", { enumerable: !hide });", "", true],
+        // A removing function held by another name, taken by a destructuring, or run by call, apply or Reflect.apply removes the same.
+        ["const define = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: true });", "", false],
+        ["const define = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const { defineProperty: define } = Object;\n  define(overrides, \"box\", { enumerable: !hide });", "", true],
+        ["const remove = Reflect.deleteProperty;\n  if (hide) remove(overrides, \"box\");", "", true],
+        ["Object.defineProperty.call(Object, overrides, \"box\", { enumerable: !hide });", "", true],
+        ["Object.defineProperty.apply(Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
+        ["Reflect.apply(Object.defineProperty, Object, [overrides, \"box\", { enumerable: !hide }]);", "", true],
         ["defineProperty(overrides, \"box\");", "function defineProperty(each: object, key: string): void {\n  void each;\n  void key;\n}\n", false],
         ["const key: string = hide ? \"box\" : \"other\";\n  delete (overrides as Record<string, unknown>)[key];", "", true],
         ["strip(overrides);", "function strip(each: Partial<{ box: Boxer }>): void {\n  delete each.box;\n}\n", true],
@@ -3290,6 +3298,7 @@ describe("the code skill's rules for this repository's own code", () => {
       for (const [statement, problems] of [
         ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.other;", []],
         ["const optional: Partial<typeof overrides> = overrides;\n  if (hide) delete optional.box;", ["probe.ts:8: the comment on helper does not say what it throws"]],
+        ["const define = Object.defineProperty;\n  define(overrides, \"box\", { enumerable: !hide });", ["probe.ts:8: the comment on helper does not say what it throws"]],
       ] as Array<[statement: string, problems: string[]]>) {
         const text = `export function main(hide = true): object {\n  const overrides = { box: consuming, other: 1 };\n  ${statement}\n  const dependencies = { box: boxing };\n`
           + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}`;
@@ -9027,9 +9036,6 @@ function removalTable(checker: ts.TypeChecker, location: ts.Node): WriteTable | 
 /** The library functions that may remove a key from the object they are handed first, or change whether a spread gives it. */
 const REMOVING_FUNCTIONS: ReadonlySet<string> = new Set(["Reflect.deleteProperty", "Object.defineProperty", "Reflect.defineProperty", "Object.defineProperties"]);
 
-/** The names each function REMOVING_FUNCTIONS lists is called by, so that a call by any other name is not resolved. */
-const REMOVING_NAMES: ReadonlySet<string> = new Set([...REMOVING_FUNCTIONS].map((name) => name.slice(name.indexOf(".") + 1)));
-
 /**
  * The changes one node makes that may remove a key, each written as a
  * "value" change under the keys it may remove, holding the node itself: a
@@ -9040,8 +9046,9 @@ const REMOVING_NAMES: ReadonlySet<string> = new Set([...REMOVING_FUNCTIONS].map(
  * written in place that sets `enumerable` to `true`, since any other
  * descriptor may make the key one a spread leaves out. A key not known
  * may be any key, and a list of descriptors not written in place may hold
- * any. A call is read only where it names the function by the name the
- * library gives it, as REMOVING_NAMES lists them.
+ * any. A call is read by the function it runs, as `invocationOf` finds
+ * it, so a function held by another name, taken by a destructuring, or run
+ * by `call`, `apply` or `Reflect.apply` is read as well.
  */
 function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
   if (ts.isDeleteExpression(node)) {
@@ -9050,9 +9057,6 @@ function removalsAt(node: ts.Node, checker: ts.TypeChecker): Change[] {
     return [removalOf(target.expression, memberKeys(target, checker), node)];
   }
   if (!ts.isCallExpression(node)) return [];
-  const callee = heldValue(node.expression);
-  const called = callee === undefined ? undefined : ts.isIdentifier(callee) ? callee.text : memberName(callee);
-  if (called === undefined || !REMOVING_NAMES.has(called)) return [];
   const invocation = invocationOf(node, checker);
   const name = invocation.declaration === undefined ? undefined : libraryMemberName(invocation.declaration);
   const [target, key, described] = invocation.args;
