@@ -3298,6 +3298,7 @@ describe("the code skill's rules for this repository's own code", () => {
       const genericApply = "function applyRemoval<T extends (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object>(define: T, target: object, enumerable: boolean): void {\n"
         + "  define(target, \"box\", { enumerable });\n}\n";
       const writer = "interface Callbacks {\n  writeLog?: (record: object, path: string) => void;\n}\nfunction ignored(record: object, path: string): void {\n  void record;\n  void path;\n}\n";
+      const parameterWriter = "function write(callbacks: Callbacks, target: object): void {\n  (callbacks.writeLog ?? ignored)(target, \"box\");\n}\n";
       const typedForms: Array<[statement: string, after: string, removes: boolean]> = [
         // The same function read from a record of it, whose items may be missing, by an optional call, through `!`, or by an optional `call`.
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: true });", "", false],
@@ -3332,6 +3333,9 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: unchanged };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", unchanged, false],
         ["const callbacks: Callbacks = { writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
         ["const callbacks: Callbacks = { writeLog: Reflect.deleteProperty };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        // A parameter's member is read from the literal each call hands it, written in place.
+        ["write({ writeLog: ignored }, overrides);", `${writer}${parameterWriter}`, false],
+        ["write({ writeLog: Reflect.deleteProperty }, overrides);", `${writer}${parameterWriter}`, true],
         // A literal whose member may be written, or which is handed on, may hold any function there.
         ["const callbacks: Callbacks = { writeLog: ignored };\n  callbacks.writeLog = Reflect.deleteProperty;\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
         ["const callbacks: Callbacks = { writeLog: ignored };\n  Object.assign(callbacks, { writeLog: Reflect.deleteProperty });\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
@@ -9408,7 +9412,7 @@ function mayBePropertyKey(type: ts.Type, checker: ts.TypeChecker): boolean {
  * it: each value `possibleValues` finds it may be; a function written in
  * place; a name, a parameter included, as `declaresWrittenFunction` reads
  * it; a call, as `returnsOnlyWrittenFunctions` reads it; and a member read
- * from an object literal, as `literalMember` finds it. Any other value, as
+ * from object literals, as `literalMembers` finds them. Any other value, as
  * a library's function, may be any function, a removing one included.
  *
  * @param seen The declarations read already, so that names given each other are read once.
@@ -9418,12 +9422,13 @@ function runsOnlyWrittenFunctions(callee: ts.Expression, checker: ts.TypeChecker
     if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) return true;
     if (ts.isIdentifier(value)) return declaresWrittenFunction(usedSymbol(value, checker)?.declarations ?? [], checker, seen);
     if (ts.isCallExpression(value)) return returnsOnlyWrittenFunctions(value, checker, seen);
-    const member = literalMember(value, checker);
-    if (member === undefined) return false;
-    if (member === "missing") return true;
-    if (ts.isPropertyAssignment(member)) return runsOnlyWrittenFunctions(member.initializer, checker, seen);
-    if (ts.isShorthandPropertyAssignment(member)) return runsOnlyWrittenFunctions(member.name, checker, seen);
-    return ts.isMethodDeclaration(member) && member.body !== undefined;
+    const members = literalMembers(value, checker);
+    return members !== undefined && members.every((member) => {
+      if (member === "missing") return true;
+      if (ts.isPropertyAssignment(member)) return runsOnlyWrittenFunctions(member.initializer, checker, seen);
+      if (ts.isShorthandPropertyAssignment(member)) return runsOnlyWrittenFunctions(member.name, checker, seen);
+      return ts.isMethodDeclaration(member) && member.body !== undefined;
+    });
   });
 }
 
@@ -9471,54 +9476,98 @@ function returnsOnlyWrittenFunctions(call: ts.CallExpression, checker: ts.TypeCh
 
 /**
  * Whether a parameter is given only functions written here with a body:
- * one no assignment replaces, named by a name, not a rest parameter, whose
- * default, if any, and the argument each call that `callsOf` finds hands
- * it, are read so by `runsOnlyWrittenFunctions`. A call that hands it no
- * argument gives the default, or undefined, which runs nothing. A function
- * whose calls cannot all be found, or that a library calls, as a callback
- * is, may be handed anything, and so may a parameter an argument list with
- * a spread hides.
+ * its default, if any, and each argument `passedArguments` finds it is
+ * handed, are read so by `runsOnlyWrittenFunctions`. A call that hands it
+ * no argument gives the default, or undefined, which runs nothing. A
+ * parameter whose arguments cannot all be found may be handed anything.
  */
 function passesOnlyWrittenFunctions(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker, seen: Set<ts.Node>): boolean {
-  if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name) || usesOf(parameter, checker).some(isWrittenTo)) return false;
+  if (usesOf(parameter, checker).some(isWrittenTo)) return false;
   if (parameter.initializer !== undefined && !runsOnlyWrittenFunctions(parameter.initializer, checker, seen)) return false;
-  const owner = parameter.parent;
-  const sites = callsOf(owner, checker);
-  if (sites === undefined || sites.handing.length > 0) return false;
-  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
-  return at >= 0 && sites.calls.every((call) => {
-    const given = spreadArguments(call.arguments ?? [], at, checker);
-    const argument = given?.[at];
-    return given !== undefined && (argument === undefined || runsOnlyWrittenFunctions(argument, checker, seen));
-  });
+  const passed = passedArguments(parameter, checker);
+  return passed !== undefined && passed.every((argument) => argument === undefined || runsOnlyWrittenFunctions(argument, checker, seen));
 }
 
 /**
- * The property of an object literal that a member read gives: a member
- * read by name, or by a key written as a literal, from a name declared with
- * `const` whose value is the literal, through any wrapper `heldValue` looks
- * through. Of the properties that give the key, the last written gives it.
- * The name must be used nowhere but as the value a member is read from,
- * none of which is written to or deleted, so that no code changes what the
- * literal holds.
+ * The argument each call that `callsOf` finds hands a parameter named by a
+ * name, not a rest parameter, in order, undefined where a call hands it
+ * none.
  *
- * @returns The property; "missing" where the literal gives no such key, so
- *     that the read gives undefined; or undefined where the literal cannot
- *     be found, may be changed, or may give the key by a spread, a key not
- *     known, or an accessor.
+ * @returns The arguments; undefined where the function's calls cannot all
+ *     be found, a library calls it, as a callback is called, or an argument
+ *     list with a spread hides which argument the parameter takes.
  */
-function literalMember(value: ts.Expression, checker: ts.TypeChecker): ts.ObjectLiteralElementLike | "missing" | undefined {
+function passedArguments(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): Array<ts.Expression | undefined> | undefined {
+  if (parameter.dotDotDotToken !== undefined || !ts.isIdentifier(parameter.name)) return undefined;
+  const owner = parameter.parent;
+  const sites = callsOf(owner, checker);
+  const at = owner.parameters.filter((each) => !ts.isIdentifier(each.name) || each.name.text !== "this").indexOf(parameter);
+  if (sites === undefined || sites.handing.length > 0 || at < 0) return undefined;
+  const passed: Array<ts.Expression | undefined> = [];
+  for (const call of sites.calls) {
+    const given = spreadArguments(call.arguments ?? [], at, checker);
+    if (given === undefined) return undefined;
+    passed.push(given[at]);
+  }
+  return passed;
+}
+
+/**
+ * The properties of object literals that a member read gives: a member
+ * read by name, or by a key written as a literal, from a name whose
+ * literals `heldLiterals` finds, through any wrapper `heldValue` looks
+ * through, each read as `literalMember` reads it. The name must be used
+ * nowhere but as the value a member is read from, none of which is written
+ * to or deleted, so that no code changes what a literal holds.
+ *
+ * @returns The properties, one for each literal; undefined where a literal
+ *     cannot be found, may be changed, or may give the key in a way that
+ *     cannot be read.
+ */
+function literalMembers(value: ts.Expression, checker: ts.TypeChecker): Array<ts.ObjectLiteralElementLike | "missing"> | undefined {
   const read = heldValue(value);
   if (read === undefined || (!ts.isPropertyAccessExpression(read) && !ts.isElementAccessExpression(read))) return undefined;
   const key = ts.isPropertyAccessExpression(read) ? read.name.text : ts.isStringLiteralLike(read.argumentExpression) ? read.argumentExpression.text : undefined;
   const receiver = heldValue(read.expression);
   const declarations = receiver !== undefined && ts.isIdentifier(receiver) ? usedSymbol(receiver, checker)?.declarations ?? [] : [];
   const [declaration] = declarations;
-  if (key === undefined || declarations.length !== 1 || declaration === undefined || !ts.isVariableDeclaration(declaration)
-    || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return undefined;
-  const literal = heldValue(declaration.initializer);
-  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) return undefined;
-  if (!usesOf(declaration, checker).every((use) => use === declaration.name || isReadMember(use))) return undefined;
+  if (key === undefined || declarations.length !== 1 || declaration === undefined) return undefined;
+  const literals = heldLiterals(declaration, checker);
+  const name = ts.getNameOfDeclaration(declaration);
+  if (literals === undefined || !usesOf(declaration, checker).every((use) => use === name || isReadMember(use))) return undefined;
+  const members: Array<ts.ObjectLiteralElementLike | "missing"> = [];
+  for (const literal of literals) {
+    const member = literalMember(literal, key, checker);
+    if (member === undefined) return undefined;
+    members.push(member);
+  }
+  return members;
+}
+
+/**
+ * The object literals a name holds: the value of a name declared with
+ * `const`, or each argument a parameter is handed, as `passedArguments`
+ * finds them, when each is an object literal written in place, through any
+ * wrapper `heldValue` looks through.
+ *
+ * @returns The literals; undefined where any value the name may hold is no such literal.
+ */
+function heldLiterals(declaration: ts.Declaration, checker: ts.TypeChecker): ts.ObjectLiteralExpression[] | undefined {
+  const values = ts.isVariableDeclaration(declaration) && (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 ? [declaration.initializer]
+    : ts.isParameter(declaration) && declaration.initializer === undefined ? passedArguments(declaration, checker) : undefined;
+  const literals = (values ?? []).map(heldValue).filter((value) => value !== undefined && ts.isObjectLiteralExpression(value));
+  return values !== undefined && literals.length === values.length ? literals : undefined;
+}
+
+/**
+ * The property of an object literal that gives a key: of those that give
+ * it, the last written.
+ *
+ * @returns The property; "missing" where the literal gives no such key, so
+ *     that a read gives undefined; or undefined where the literal may give
+ *     the key by a spread, a key not known, or an accessor.
+ */
+function literalMember(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): ts.ObjectLiteralElementLike | "missing" | undefined {
   let found: ts.ObjectLiteralElementLike | "missing" | undefined = "missing";
   for (const property of literal.properties) {
     const given = property.name === undefined ? undefined : propertyKey(property.name, checker);
