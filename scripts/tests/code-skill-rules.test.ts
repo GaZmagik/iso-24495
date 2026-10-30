@@ -3332,6 +3332,9 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const removers: Record<string, (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => object> = { define: unchanged };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: !hide });", unchanged, false],
         ["const callbacks: Callbacks = { writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
         ["const callbacks: Callbacks = { writeLog: Reflect.deleteProperty };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        // A literal whose member may be written, or which is handed on, may hold any function there.
+        ["const callbacks: Callbacks = { writeLog: ignored };\n  callbacks.writeLog = Reflect.deleteProperty;\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        ["const callbacks: Callbacks = { writeLog: ignored };\n  Object.assign(callbacks, { writeLog: Reflect.deleteProperty });\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
         ["check((): number => 1, \"box\");", "function check(run: () => number, message: string): void {\n  void run;\n  void message;\n}\n", false],
         // A callee made by a call runs what the function called returns.
         ["const write = writer();\n  if (hide) write(overrides, \"box\");", "function writer(): (record: object, path: string) => boolean {\n  return (record, path) => record !== path;\n}\n", false],
@@ -3346,6 +3349,9 @@ describe("the code skill's rules for this repository's own code", () => {
         // A call whose first argument cannot be an object removes no key, whatever its callee may hold.
         ["const define: any = Object.defineProperty;\n  define(\"box\", overrides, { enumerable: !hide });", "", false],
         ["const define: Function = Reflect.deleteProperty;\n  define(\"box\", \"other\");", "", false],
+        // Nor does one whose second argument can be no key, as a removing function needs.
+        ["const remove: Function = Reflect.deleteProperty;\n  remove(overrides, hide);", "", false],
+        ["const remove: Function = Reflect.deleteProperty;\n  remove(overrides, hide ? \"box\" : \"other\");", "", true],
       ];
       for (const [statement, after, removes] of typedForms) {
         for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
@@ -9424,10 +9430,10 @@ function runsOnlyWrittenFunctions(callee: ts.Expression, checker: ts.TypeChecker
 /**
  * Whether a name's declarations, written here, give it only functions
  * written here with a body: a function declared with a body, or one whose
- * overloads share one, that no assignment replaces; a name declared with
- * `const` whose value `runsOnlyWrittenFunctions` reads so; or a parameter
- * that `passesOnlyWrittenFunctions` reads so. A declaration met again while
- * it is read gives nothing new.
+ * overloads share one, which the compiler allows no assignment to replace;
+ * a name declared with `const` whose value `runsOnlyWrittenFunctions` reads
+ * so; or a parameter that `passesOnlyWrittenFunctions` reads so. A
+ * declaration met again while it is read gives nothing new.
  */
 function declaresWrittenFunction(declarations: readonly ts.Declaration[], checker: ts.TypeChecker, seen: Set<ts.Node>): boolean {
   const [declaration] = declarations;
@@ -9435,9 +9441,7 @@ function declaresWrittenFunction(declarations: readonly ts.Declaration[], checke
   if (declarations.length > 1 && !declarations.every(ts.isFunctionDeclaration)) return false;
   if (seen.has(declaration)) return true;
   seen.add(declaration);
-  if (ts.isFunctionDeclaration(declaration)) {
-    return implementationOf(declaration) !== undefined && usesOf(declaration, checker).every((use) => !isWrittenTo(use));
-  }
+  if (ts.isFunctionDeclaration(declaration)) return implementationOf(declaration) !== undefined;
   if (ts.isParameter(declaration)) return passesOnlyWrittenFunctions(declaration, checker, seen);
   return ts.isVariableDeclaration(declaration) && (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
     && declaration.initializer !== undefined && runsOnlyWrittenFunctions(declaration.initializer, checker, seen);
@@ -9445,8 +9449,8 @@ function declaresWrittenFunction(declarations: readonly ts.Declaration[], checke
 
 /**
  * Whether a call gives back only functions written here with a body: its
- * callee names a function declared with a body that no assignment
- * replaces, as `declaresWrittenFunction` reads it, and each expression that
+ * callee names a function declared with a body, as
+ * `declaresWrittenFunction` reads it, and each expression that
  * function returns, as `returnedExpressions` finds them, is read so by
  * `runsOnlyWrittenFunctions`. A function that returns nothing gives
  * undefined, which runs nothing. A body met again while it is read gives
