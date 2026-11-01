@@ -3299,6 +3299,7 @@ describe("the code skill's rules for this repository's own code", () => {
         + "  define(target, \"box\", { enumerable });\n}\n";
       const writer = "interface Callbacks {\n  writeLog?: (record: object, path: string) => void;\n}\nfunction ignored(record: object, path: string): void {\n  void record;\n  void path;\n}\n";
       const parameterWriter = "function write(callbacks: Callbacks, target: object): void {\n  (callbacks.writeLog ?? ignored)(target, \"box\");\n}\n";
+      const forwards = "function forwards(write: (record: object, path: string) => void, target: object): void {\n  write(target, \"box\");\n}\n";
       const typedForms: Array<[statement: string, after: string, removes: boolean]> = [
         // The same function read from a record of it, whose items may be missing, by an optional call, through `!`, or by an optional `call`.
         ["const removers: Record<string, typeof Object.defineProperty> = { define: Object.defineProperty };\n  removers[\"define\"]?.(overrides, \"box\", { enumerable: true });", "", false],
@@ -3359,6 +3360,26 @@ describe("the code skill's rules for this repository's own code", () => {
         // Nor does one that hands no key at all, as a callback handed to a value typed any is.
         ["const remove: any = Reflect.deleteProperty;\n  remove(overrides);", "", false],
         ["const remove: any = Reflect.deleteProperty;\n  remove(overrides, \"box\");", "", true],
+        // A parameter runs its default too, unless it is given something else; and what is written to it, whatever it is handed.
+        ["withDefault(overrides);", `${writer}function withDefault(target: object, write: (record: object, path: string) => void = ignored): void {\n  write(target, "box");\n}\n`, false],
+        ["withDefault(overrides);", `${writer}function withDefault(target: object, write: (record: object, path: string) => void = Reflect.deleteProperty): void {\n  write(target, "box");\n}\n`, true],
+        ["forwards(ignored, overrides);", `${writer}${forwards}`, false],
+        ["rewritten(ignored, overrides);", `${writer}function rewritten(write: (record: object, path: string) => void, target: object): void {\n  write = Reflect.deleteProperty;\n  write(target, "box");\n}\n`, true],
+        // A function handed on as a value, or called with a list that cannot be read, may be handed anything.
+        ["const held = [forwards];\n  held[0]?.(ignored, overrides);", `${writer}${forwards}`, true],
+        ["forwards(...handed, overrides);", `${writer}${forwards}declare const handed: [(record: object, path: string) => void];\n`, true],
+        // A literal that gives no such key gives undefined, so the other side runs. A key given by a name or a method is read as one given by a value.
+        ["const callbacks: Callbacks = {};\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
+        ["const writeLog = ignored;\n  const callbacks: Callbacks = { writeLog };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
+        ["const writeLog = Reflect.deleteProperty;\n  const callbacks: Callbacks = { writeLog };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        ["const callbacks: Callbacks = {\n    writeLog(record, path) {\n      void record;\n      void path;\n    },\n  };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
+        // A literal may hold more than a read of it shows: held by `let`, given a key by a spread or by a key not known, or by an accessor. The last given wins.
+        ["let callbacks: Callbacks = { writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        ["const others: Callbacks = { writeLog: Reflect.deleteProperty };\n  const callbacks: Callbacks = { writeLog: ignored, ...others };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        ["const others: Callbacks = { writeLog: Reflect.deleteProperty };\n  const callbacks: Callbacks = { ...others, writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
+        ["const callbacks: Callbacks = {\n    get writeLog() {\n      return Reflect.deleteProperty;\n    },\n  };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        // A parameter handed a name rather than a literal written in place may hold anything there.
+        ["const handed: Callbacks = { writeLog: ignored };\n  write(handed, overrides);", `${writer}${parameterWriter}`, true],
       ];
       for (const [statement, after, removes] of typedForms) {
         for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
@@ -3411,6 +3432,46 @@ describe("the code skill's rules for this repository's own code", () => {
           + `  const { box } = { ...dependencies, ...overrides };\n  /** Reads a size. */\n  const helper = box(${thrower});\n  return helper;\n}\n${wrappers}${after}`;
         expect(undocumentedThrows("probe.ts", text).problems, statement).toEqual(problems);
       }
+    });
+
+    test("a call is read as handing a removing function an object first and a key second by the types of its arguments, beside what cannot be", () => {
+      const rows: Array<[args: string, deletes: boolean, defines: boolean]> = [
+        ["plain, \"key\"", true, false],
+        ["plain, plain", false, true],
+        ["\"text\", \"key\"", false, false],
+        ["count, \"key\"", false, false],
+        ["loose, loose", true, true],
+        ["vague, vague", true, true],
+        ["plain, 1", true, false],
+        ["plain, count", true, false],
+        ["plain, mark", true, false],
+        ["plain, flag", false, false],
+        ["plain, undefined", false, false],
+        ["plain", false, false],
+        ["either, \"key\"", true, false],
+        ["words, \"key\"", false, false],
+        ["branded, \"key\"", true, false],
+        ["brandedWord, \"key\"", false, false],
+        ["plain, brandedWord", true, false],
+        ["plain, either", true, true],
+        ["...rest, \"key\"", true, false],
+        ["plain, ...rest", true, true],
+        ["word, \"key\"", false, false],
+        ["free, free", true, true],
+        ["item, key", true, false],
+        ["plain, word", true, false],
+        ["plain, item", false, true],
+      ];
+      const text = "declare const probe: (...args: unknown[]) => void;\ndeclare const plain: object;\ndeclare const count: number;\ndeclare const loose: any;\ndeclare const vague: unknown;\n"
+        + "declare const mark: symbol;\ndeclare const flag: boolean;\ndeclare const either: string | object;\ndeclare const words: string | number;\n"
+        + "declare const branded: object & { brand: 1 };\ndeclare const brandedWord: string & { brand: 1 };\ndeclare const rest: unknown[];\n"
+        + "export function probes<Word extends string, Free, Key extends PropertyKey, Item extends object>(word: Word, free: Free, key: Key, item: Item): void {\n"
+        + rows.map(([args]) => `  probe(${args});\n`).join("") + "}\n";
+      const { source, checker } = typedSource("probe.ts", text);
+      const statements = source.statements.find(ts.isFunctionDeclaration)?.body?.statements ?? [];
+      const calls = statements.flatMap((statement) => (ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression) ? [statement.expression] : []));
+      expect(calls.map((call) => [call.getText(source), takesArguments("Reflect.deleteProperty", call.arguments, checker), takesArguments("Object.defineProperties", call.arguments, checker)]))
+        .toEqual(rows.map(([args, deletes, defines]) => [`probe(${args})`, deletes, defines]));
     });
 
     test("a removal written after a spread, in the block whose const makes the literal spread, leaves what the spread gave, beside its breaches", () => {
@@ -9445,8 +9506,7 @@ function runsOnlyWrittenFunctions(callee: ts.Expression, checker: ts.TypeChecker
  */
 function declaresWrittenFunction(declarations: readonly ts.Declaration[], checker: ts.TypeChecker, seen: Set<ts.Node>): boolean {
   const [declaration] = declarations;
-  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return false;
-  if (declarations.length > 1 && !declarations.every(ts.isFunctionDeclaration)) return false;
+  if (declaration === undefined) return false;
   if (seen.has(declaration)) return true;
   seen.add(declaration);
   if (ts.isFunctionDeclaration(declaration)) return implementationOf(declaration) !== undefined;
@@ -9566,16 +9626,16 @@ function heldLiterals(declaration: ts.Declaration, checker: ts.TypeChecker): ts.
  * The property of an object literal that gives a key: of those that give
  * it, the last written.
  *
- * @returns The property; "missing" where the literal gives no such key, so
- *     that a read gives undefined; or undefined where the literal may give
- *     the key by a spread, a key not known, or an accessor.
+ * @returns The property, which may be an accessor; "missing" where the
+ *     literal gives no such key, so that a read gives undefined; or undefined
+ *     where the literal may give the key by a spread or a key not known.
  */
 function literalMember(literal: ts.ObjectLiteralExpression, key: string, checker: ts.TypeChecker): ts.ObjectLiteralElementLike | "missing" | undefined {
   let found: ts.ObjectLiteralElementLike | "missing" | undefined = "missing";
   for (const property of literal.properties) {
     const given = property.name === undefined ? undefined : propertyKey(property.name, checker);
     if (given === key) {
-      found = ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property) ? undefined : property;
+      found = property;
     } else if (given === undefined) {
       found = undefined;
     }
@@ -9589,14 +9649,10 @@ function isReadMember(use: ts.Node): boolean {
   return (ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)) && member.expression === use && !isWrittenTo(member);
 }
 
-/** Whether an expression is written to where it is used: the target of an assignment, of `++` or `--`, or what `delete` removes. */
+/** Whether an expression is written to where it is used, as the target of an assignment. Neither `++` nor `delete` can leave a function there to run. */
 function isWrittenTo(node: ts.Node): boolean {
   const parent = node.parent;
-  if (ts.isBinaryExpression(parent)) return parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
-  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
-    return parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken;
-  }
-  return ts.isDeleteExpression(parent);
+  return ts.isBinaryExpression(parent) && parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
 }
 
 /** Whether a type is the library's `Function`, which any function may be, and which has no call signature to say which. */
