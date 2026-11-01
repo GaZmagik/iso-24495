@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { auditCorpus } from "../scripts/audit-corpus.ts";
@@ -268,6 +268,22 @@ describe("one file named for both the state and the report", () => {
       }
       expect(run("--state", join(directory, "link.md"), "--out", target)).toEqual({ exit: 2, stdout: [], stderr: [oneFile] });
       expect(readFileSync(target, "utf8")).toBe("kept");
+    });
+  });
+
+  // The guard once compared spellings alone, and a hard link is a second name
+  // with nothing in its spelling to show it. Issue 51.
+  test("two hard links to one file are the same file", () => {
+    withInputs((directory, run) => {
+      const kept = JSON.stringify({ snapshots: [] });
+      const state = join(directory, "state.json");
+      const link = join(directory, "report.md");
+      writeFileSync(state, kept);
+      linkSync(state, link);
+      for (const options of [["--state", state, "--out", link], ["--state", link, "--out", state]]) {
+        expect(run(...options)).toEqual({ exit: 2, stdout: [], stderr: [oneFile] });
+      }
+      expect(readFileSync(state, "utf8")).toBe(kept);
     });
   });
 
