@@ -3456,6 +3456,7 @@ describe("the code skill's rules for this repository's own code", () => {
         ["plain, either", true, true],
         ["...rest, \"key\"", true, false],
         ["plain, ...rest", true, true],
+        ["...digits, \"key\"", true, false],
         ["word, \"key\"", false, false],
         ["free, free", true, true],
         ["item, key", true, false],
@@ -3464,7 +3465,7 @@ describe("the code skill's rules for this repository's own code", () => {
       ];
       const text = "declare const probe: (...args: unknown[]) => void;\ndeclare const plain: object;\ndeclare const count: number;\ndeclare const loose: any;\ndeclare const vague: unknown;\n"
         + "declare const mark: symbol;\ndeclare const flag: boolean;\ndeclare const either: string | object;\ndeclare const words: string | number;\n"
-        + "declare const branded: object & { brand: 1 };\ndeclare const brandedWord: string & { brand: 1 };\ndeclare const rest: unknown[];\n"
+        + "declare const branded: object & { brand: 1 };\ndeclare const brandedWord: string & { brand: 1 };\ndeclare const rest: unknown[];\ndeclare const digits: number[];\n"
         + "export function probes<Word extends string, Free, Key extends PropertyKey, Item extends object>(word: Word, free: Free, key: Key, item: Item): void {\n"
         + rows.map(([args]) => `  probe(${args});\n`).join("") + "}\n";
       const { source, checker } = typedSource("probe.ts", text);
