@@ -3356,6 +3356,9 @@ describe("the code skill's rules for this repository's own code", () => {
         // Nor does one whose second argument can be no key, as a removing function needs.
         ["const remove: Function = Reflect.deleteProperty;\n  remove(overrides, hide);", "", false],
         ["const remove: Function = Reflect.deleteProperty;\n  remove(overrides, hide ? \"box\" : \"other\");", "", true],
+        // Nor does one that hands no key at all, as a callback handed to a value typed any is.
+        ["const remove: any = Reflect.deleteProperty;\n  remove(overrides);", "", false],
+        ["const remove: any = Reflect.deleteProperty;\n  remove(overrides, \"box\");", "", true],
       ];
       for (const [statement, after, removes] of typedForms) {
         for (const [value, other] of [["consuming", "boxing"], ["boxing", "consuming"]] as Array<[value: string, other: string]>) {
@@ -9351,8 +9354,9 @@ function hiddenRemovals(expression: ts.Expression, checker: ts.TypeChecker): str
  * REMOVING_FUNCTIONS lists needs to remove a key, read by their types: an
  * object first, as `mayBeObjectType` reads it, then a key, as
  * `mayBePropertyKey` reads it, or, for `Object.defineProperties`, an object
- * of descriptors. A spread may be anything. A key not handed on is undefined, which
- * `Reflect.deleteProperty` reads as the key "undefined", and with which
+ * of descriptors. A spread may be anything. A key not handed on is
+ * undefined, which is no key, as it is when handed on by name: the most
+ * `Reflect.deleteProperty` does with it is remove the key "undefined", and
  * each of the others throws. A call such as `write("path", "text")`, whose
  * first argument is a string, can remove no key.
  *
@@ -9360,8 +9364,7 @@ function hiddenRemovals(expression: ts.Expression, checker: ts.TypeChecker): str
  */
 function takesArguments(name: string, args: readonly ts.Expression[], checker: ts.TypeChecker): boolean {
   const [target, second] = args;
-  if (target === undefined || !argumentFits(target, mayBeObjectType, checker)) return false;
-  if (second === undefined) return name === "Reflect.deleteProperty";
+  if (target === undefined || second === undefined || !argumentFits(target, mayBeObjectType, checker)) return false;
   return argumentFits(second, name === "Object.defineProperties" ? mayBeObjectType : mayBePropertyKey, checker);
 }
 
