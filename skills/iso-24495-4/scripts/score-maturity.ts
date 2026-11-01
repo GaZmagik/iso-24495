@@ -29,7 +29,9 @@ export const ANSWERS_SHAPE: Shape = {
  * Exit 0 means the answers were scored. Exit 1 means the answers file could
  * not be read, is not JSON or does not hold the shape `ANSWERS_SHAPE` states,
  * or the scores file could not be written. Exit 2 means the arguments were
- * wrong.
+ * wrong. That includes `--json` with no file after it, or with a value that
+ * starts with `--`, which is taken to be the next option written in its place:
+ * a file of that name is given as `./--name`.
  *
  * The shape is checked before anything is scored, so answers of the wrong
  * shape print no table and write no scores file.
@@ -50,7 +52,9 @@ export function runCli(
   }
   const jsonFlag = argv.indexOf("--json");
   const jsonPath = jsonFlag === -1 ? undefined : argv[jsonFlag + 1];
-  if (jsonFlag !== -1 && !jsonPath) {
+  // A value that starts with "--" is the next option, written where the file was
+  // meant to go. Taken as the file, it once named the output file. Issue 54.
+  if (jsonFlag !== -1 && (!jsonPath || jsonPath.startsWith("--"))) {
     stderr("score-maturity: --json requires an output file");
     return 2;
   }

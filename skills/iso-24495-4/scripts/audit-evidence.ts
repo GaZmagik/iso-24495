@@ -21,7 +21,9 @@ import type { Evidence } from "./lib/types.ts";
  *
  * Exit 0 means the sweep ran, whatever it found. Exit 1 means the workspace
  * could not be read in full or the evidence file could not be written. Exit 2
- * means the arguments were wrong.
+ * means the arguments were wrong. That includes `--json` with no file after
+ * it, or with a value that starts with `--`, which is taken to be the next
+ * option written in its place: a file of that name is given as `./--name`.
  *
  * @param argv The whole command line, so the workspace is at index 2.
  * @param stdout Receives the table, one line at a time.
@@ -39,7 +41,9 @@ export function runCli(
   }
   const jsonFlag = argv.indexOf("--json");
   const jsonPath = jsonFlag === -1 ? undefined : argv[jsonFlag + 1];
-  if (jsonFlag !== -1 && !jsonPath) {
+  // A value that starts with "--" is the next option, written where the file was
+  // meant to go. Taken as the file, it once named the output file. Issue 54.
+  if (jsonFlag !== -1 && (!jsonPath || jsonPath.startsWith("--"))) {
     stderr("audit-evidence: --json requires an output file");
     return 2;
   }

@@ -23,9 +23,12 @@ import { basename, dirname, join, resolve } from "node:path";
  *
  * Exit 0 means the report was produced. Exit 1 means a file could not be read
  * or written, or an input did not hold the shape its command writes. Exit 2
- * means the arguments were wrong. That includes `--state` and `--out` naming
- * one file, as `asOneFile` and `isOneFileOnDisk` decide: the report would be
- * written over the history. It is refused before anything is read or written.
+ * means the arguments were wrong. That includes `--state` or `--out` with no
+ * file after it, or with a value that starts with `--`, which is taken to be
+ * the next option written in its place: a file of that name is given as
+ * `./--name`. It also includes `--state` and `--out` naming one file, as
+ * `asOneFile` and `isOneFileOnDisk` decide: the report would be written over
+ * the history. It is refused before anything is read or written.
  *
  * Every input is checked against its shape in `lib/types.ts` before the
  * report is built, the state file included when it exists. A maturity file
@@ -58,11 +61,13 @@ export function runCli(
   const outFlag = argv.indexOf("--out");
   const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
   const outPath = outFlag !== -1 ? argv[outFlag + 1] : null;
-  if (stateFlag !== -1 && !statePath) {
+  // A value that starts with "--" is the next option, written where the file was
+  // meant to go. Taken as the file, it once named a state file "--out". Issue 54.
+  if (stateFlag !== -1 && (!statePath || statePath.startsWith("--"))) {
     stderr("generate-report: --state requires a state file");
     return 2;
   }
-  if (outFlag !== -1 && !outPath) {
+  if (outFlag !== -1 && (!outPath || outPath.startsWith("--"))) {
     stderr("generate-report: --out requires a report file");
     return 2;
   }
