@@ -270,7 +270,9 @@ bash scripts/audit-pull-request-text.sh <file>
 
 Findings are advice, and never fail the check. The script lists them in its log, and on the job's summary page when it runs on GitHub. No explanation of why a text suits its readers could satisfy a check that failed on findings.
 
-The check fails in two cases only. It fails a description that is empty or holds nothing a reader can see, because there is nothing to audit. It also fails when the audit does not run.
+The check fails in two cases only. It fails a description that is empty, because there is nothing to audit. It also fails when the audit does not run.
+
+Empty means that the source holds only white space, control characters and characters that Unicode says to leave undrawn, such as a zero width space. The check reads those characters and does not render the description. So a description holding only an HTML comment, or only the braille blank, is not empty, and it passes.
 
 A pass means only that the audit ran on a description that is not empty. It does not mean the description is clear.
 

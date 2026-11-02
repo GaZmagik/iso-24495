@@ -99,9 +99,10 @@ describe("the file is read once, and that reading is what is judged", () => {
 });
 
 // A description of one zero width space passed as not empty: the test for emptiness
-// asked for white space, and that character is none. A description is empty when it
-// holds nothing a reader can see. Issue 47.
-describe("a description that holds nothing a reader can see is empty", () => {
+// asked for white space, and that character is none. A description is empty when its
+// source holds only white space and characters that Unicode says to leave undrawn.
+// The check reads characters and renders nothing. Issues 47 and 53.
+describe("a description of only white space and characters Unicode leaves undrawn is empty", () => {
   const empty = "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.";
   const unseen: Array<[name: string, text: string]> = [
     ["a zero width space", String.fromCodePoint(0x200b)],
@@ -125,6 +126,16 @@ describe("a description that holds nothing a reader can see is empty", () => {
   test("one letter among them is a description, and the audit reads it", () => {
     const [, several] = unseen.at(-1) as [string, string];
     for (const text of [`${several}a${several}`, `${String.fromCodePoint(0x200b)}a`, `a${String.fromCodePoint(0x2060)}`, "-", String.fromCodePoint(0x1f600), String.fromCodePoint(0x301)]) {
+      const result = run("description.md", [text]);
+      expect(result.exit, JSON.stringify(text)).toBe(0);
+      expect(result.stdout.join(" ")).toContain(PASS_MEANING);
+    }
+  });
+
+  // A known limit, as the README states it: the check renders nothing, so a page
+  // that would show nothing still passes when its source holds a character to read.
+  test("a comment, or the braille blank, is a description, because nothing is rendered", () => {
+    for (const text of ["<!-- comment -->", String.fromCodePoint(0x2800), `${String.fromCodePoint(0x2800)}\n`]) {
       const result = run("description.md", [text]);
       expect(result.exit, JSON.stringify(text)).toBe(0);
       expect(result.stdout.join(" ")).toContain(PASS_MEANING);

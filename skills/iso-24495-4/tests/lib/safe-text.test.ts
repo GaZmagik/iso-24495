@@ -388,7 +388,7 @@ describe("a character that draws nothing is shown as its code", () => {
   });
 });
 
-describe("text that holds nothing a reader can see", () => {
+describe("text of only white space and characters Unicode leaves undrawn", () => {
   test("is spaces and the characters a printed path shows as their codes, and nothing else", () => {
     for (const point of [0x20, 0x9, 0xa, 0xd, 0xa0, 0x2002, 0x3000, 0x200b, 0x2060, 0xfeff, 0xad, 0x200d, 0x202e, 0xfe0f, 0x34f, 0xfffc, 0xe0041, 0x2028]) {
       const character = String.fromCodePoint(point);
@@ -401,7 +401,8 @@ describe("text that holds nothing a reader can see", () => {
       }
     }
     expect(drawsNothing("")).toBe(true);
-    // A character that draws is seen, whatever it is: a letter, a mark, an emoji, the braille blank.
+    // Any other character counts, whatever it is: a letter, a mark, an emoji, and even the
+    // braille blank, which a page shows as blank. Nothing is rendered.
     for (const point of [0x61, 0x2d, 0x301, 0x1f600, 0x2800, 0xfffd, 0xe000]) {
       expect(drawsNothing(String.fromCodePoint(point)), point.toString(16)).toBe(false);
       expect(safePath(String.fromCodePoint(point), false), point.toString(16)).toBe(String.fromCodePoint(point));

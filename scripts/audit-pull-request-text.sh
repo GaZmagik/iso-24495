@@ -13,7 +13,9 @@
 #
 #   0  The audit ran on a description that is not empty. Any findings are
 #      listed, as advice. A pass does not mean the description is clear.
-#   1  The description is empty, or holds nothing a reader can see.
+#   1  The description is empty. Its source holds only white space, control
+#      characters and characters that Unicode says to leave undrawn. The check
+#      reads those characters and renders nothing.
 #   2  The arguments were wrong, which includes naming a file that cannot be
 #      read, a directory or a symbolic link.
 #   3  The audit did not run.
