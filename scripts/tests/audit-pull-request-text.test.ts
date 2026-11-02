@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
+import { REAL_FILES, readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
 import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
 const FILE = { isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false };
+// Making a symbolic link needs a right that Windows gives few accounts. A test that
+// needs a link is skipped where none can be made, so the runner counts it as skipped
+// rather than as a pass that checked nothing. Issue 55.
+const CAN_MAKE_LINKS = canMakeSymbolicLink();
 
 /** What one run printed, and what it asked of the file system. */
 interface Run {
@@ -99,9 +103,10 @@ describe("the file is read once, and that reading is what is judged", () => {
 });
 
 // A description of one zero width space passed as not empty: the test for emptiness
-// asked for white space, and that character is none. A description is empty when it
-// holds nothing a reader can see. Issue 47.
-describe("a description that holds nothing a reader can see is empty", () => {
+// asked for white space, and that character is none. A description is empty when its
+// source holds only white space and characters that Unicode says to leave undrawn.
+// The check reads characters and renders nothing. Issues 47 and 53.
+describe("a description of only white space and characters Unicode leaves undrawn is empty", () => {
   const empty = "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.";
   const unseen: Array<[name: string, text: string]> = [
     ["a zero width space", String.fromCodePoint(0x200b)],
@@ -125,6 +130,16 @@ describe("a description that holds nothing a reader can see is empty", () => {
   test("one letter among them is a description, and the audit reads it", () => {
     const [, several] = unseen.at(-1) as [string, string];
     for (const text of [`${several}a${several}`, `${String.fromCodePoint(0x200b)}a`, `a${String.fromCodePoint(0x2060)}`, "-", String.fromCodePoint(0x1f600), String.fromCodePoint(0x301)]) {
+      const result = run("description.md", [text]);
+      expect(result.exit, JSON.stringify(text)).toBe(0);
+      expect(result.stdout.join(" ")).toContain(PASS_MEANING);
+    }
+  });
+
+  // A known limit, as the README states it: the check renders nothing, so a page
+  // that would show nothing still passes when its source holds a character to read.
+  test("a comment, or the braille blank, is a description, because nothing is rendered", () => {
+    for (const text of ["<!-- comment -->", String.fromCodePoint(0x2800), `${String.fromCodePoint(0x2800)}\n`]) {
       const result = run("description.md", [text]);
       expect(result.exit, JSON.stringify(text)).toBe(0);
       expect(result.stdout.join(" ")).toContain(PASS_MEANING);
@@ -386,19 +401,98 @@ describe("the file is opened once, and what was opened is what is read", () => {
       expect(stderr).toEqual([
         `The path given as the first argument, ${join(workspace, "a-directory").length} characters long, names a file that exists but cannot be read.`,
       ]);
-      // Where this account may make a symbolic link to a file. Where it may not, as on
-      // Windows without the right to, the last case is passed over.
-      try {
-        symlinkSync(file, join(workspace, "link.md"), "file");
-      } catch {
-        return;
-      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CAN_MAKE_LINKS)("on the real file system: a symbolic link to a file is not read", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const file = join(workspace, "description.md");
+      writeFileSync(file, "We shall pay.\n");
+      symlinkSync(file, join(workspace, "link.md"), "file");
       expect(() => readRegularFile(join(workspace, "link.md"))).toThrow(refused);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  // The comparison in readRegularFile refuses a link on every system, so a test through
+  // it still passes with the no-follow flag taken off the open. This asks the open call
+  // alone. Windows has no such flag, so there the test is skipped. Issue 55.
+  test.skipIf(!CAN_MAKE_LINKS || constants.O_NOFOLLOW === undefined)("on a system that can refuse a link at open, the open refuses one", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const file = join(workspace, "description.md");
+      writeFileSync(file, "We shall pay.\n");
+      symlinkSync(file, join(workspace, "link.md"), "file");
+      expect(errorCodeOfOpening(join(workspace, "link.md"))).toBe("ELOOP");
+      expect(errorCodeOfOpening(file)).toBeNull();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  // A named pipe opened to read waits for something to write to it, and the check writes
+  // nothing. One swapped in for the file between the inspection and the open held the
+  // check for ever. Windows has no named pipe in its file system. Issue 52.
+  test.skipIf(process.platform === "win32")("on the real file system: a named pipe is refused at once, not waited on", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const pipe = join(workspace, "description.md");
+      expect(Bun.spawnSync(["mkfifo", pipe]).exitCode).toBe(0);
+      // In a second process, because an open that waits holds the whole of this one,
+      // and no test timeout could end it. A wait shows as that process being stopped.
+      const probe = join(workspace, "probe.ts");
+      writeFileSync(probe, [
+        `import { readRegularFile } from ${JSON.stringify(join(import.meta.dir, "..", "audit-pull-request-text.ts"))};`,
+        "try {",
+        `  readRegularFile(${JSON.stringify(pipe)});`,
+        "  process.stdout.write(\"read\");",
+        "} catch (error) {",
+        "  process.stdout.write((error as Error).message);",
+        "}",
+      ].join("\n"));
+      const result = Bun.spawnSync([process.execPath, probe], { timeout: 10000 });
+      expect(result.exitedDueToTimeout).toBeFalsy();
+      expect(result.stdout.toString()).toBe(refused);
+      expect(result.exitCode).toBe(0);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });
+
+/**
+ * Whether this account may make a symbolic link to a file, found by making one in a
+ * folder of its own and removing the folder.
+ */
+function canMakeSymbolicLink(): boolean {
+  const workspace = mkdtempSync(join(tmpdir(), "iso-24495-link-probe-"));
+  try {
+    writeFileSync(join(workspace, "file.md"), "");
+    symlinkSync(join(workspace, "file.md"), join(workspace, "link.md"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The code the real open call fails with for the path, or null where it opens. A
+ * handle that opens is closed at once.
+ */
+function errorCodeOfOpening(path: string): unknown {
+  try {
+    REAL_FILES.close(REAL_FILES.open(path));
+    return null;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code;
+  }
+}
 
 /**
  * A stand-in for a file system call that finds no file at the path.

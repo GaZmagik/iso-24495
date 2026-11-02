@@ -183,10 +183,12 @@ export function safeText(text: string): string {
 }
 
 /**
- * Whether text holds nothing a reader can see: no character but the plain space
- * and those that `safePath` shows as their codes, which are the ones that draw
- * nothing. It is the one definition of such a character, read here for a whole
- * text where `safePath` reads it for a name.
+ * Whether text holds no character but the plain space and those that `safePath`
+ * shows as their codes: white space, control characters, and those Unicode says
+ * to leave undrawn. It is the one definition of such a character, read here for
+ * a whole text where `safePath` reads it for a name. It reads characters and
+ * renders nothing, so a character a page shows as blank, such as the braille
+ * blank, is not one of them.
  *
  * @returns True for empty text as well.
  */

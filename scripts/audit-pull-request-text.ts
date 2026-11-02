@@ -47,7 +47,10 @@ export interface Dependencies {
  *
  * - Exit 0: the audit ran on a description that is not empty. Any findings are
  *   listed, as advice. A pass does not mean the description is clear.
- * - Exit 1: the description is empty, or holds nothing a reader can see.
+ * - Exit 1: the description is empty. Its source holds only white space,
+ *   control characters and characters that Unicode says to leave undrawn.
+ *   The check reads those characters and renders nothing, so a description
+ *   holding only an HTML comment, or only the braille blank, is not empty.
  * - Exit 2: the arguments were wrong. That includes a path that names nothing,
  *   a directory, a symbolic link, anything else that is not a regular file,
  *   and a file that cannot be read.
@@ -148,10 +151,25 @@ export interface FileCalls {
 }
 
 const NOT_THE_FILE = "what was opened is not the regular file the path names";
+
+/**
+ * The real file system calls `readRegularFile` makes by default. Exported so that
+ * a test can ask the open call alone whether it refuses a link, which a test
+ * through `readRegularFile` cannot tell: its comparison refuses a link as well.
+ *
+ * Each call throws as the system call it makes throws. `open` throws an error
+ * with the code `ELOOP` where the system refuses a symbolic link at open.
+ */
 // Linux and macOS can refuse a symbolic link at open, and Windows has no such flag.
 // The comparison in `readRegularFile` is what holds on all three.
-const REAL_FILES: FileCalls = {
-  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)),
+//
+// A named pipe opened to read waits until something writes to it, so one swapped in
+// for the file after the inspection held the check for ever. Opened without waiting,
+// it returns at once, and the handle check refuses it as no regular file. The flag
+// has no effect on a regular file, as the Linux manual page for open(2) says. Windows
+// has no such flag, and no named pipe in its file system to wait on. Issue 52.
+export const REAL_FILES: FileCalls = {
+  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)),
   ofHandle: (handle) => fstatSync(handle, { bigint: true }),
   ofPath: (path) => lstatSync(path, { bigint: true }),
   read: (handle) => readFileSync(handle, "utf8"),
@@ -236,9 +254,11 @@ function unreadableKind(path: string, dependencies: Dependencies): string | null
  * An audit of nothing finds nothing, so an empty description would pass having
  * been read by nobody. Emptiness is a test of the Markdown source, not of what
  * a page would show: a description holding a comment or an image is not empty,
- * and the audit reads it. A description is empty when it holds nothing a reader
- * can see, as `drawsNothing` decides: white space of every kind, and every
- * character that draws nothing, such as a zero width space or a word joiner.
+ * and the audit reads it. A description is empty when its source holds only
+ * the characters `drawsNothing` names: white space of every kind, control
+ * characters, and those Unicode says to leave undrawn, such as a zero width
+ * space or a word joiner. A character outside those makes a description, even
+ * one a page shows as blank, such as the braille blank.
  *
  * A description has no front matter. GitHub shows a leading "---" block as a
  * rule and a heading, so the audit reads the block as that text.
