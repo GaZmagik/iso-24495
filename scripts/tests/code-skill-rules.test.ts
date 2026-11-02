@@ -3378,6 +3378,11 @@ describe("the code skill's rules for this repository's own code", () => {
         ["const others: Callbacks = { writeLog: Reflect.deleteProperty };\n  const callbacks: Callbacks = { writeLog: ignored, ...others };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
         ["const others: Callbacks = { writeLog: Reflect.deleteProperty };\n  const callbacks: Callbacks = { ...others, writeLog: ignored };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
         ["const callbacks: Callbacks = {\n    get writeLog() {\n      return Reflect.deleteProperty;\n    },\n  };\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        // A member deleted may expose one the literal inherits, and a member stepped by `++` may run a setter that replaces another. A key or a number held one level down changes no member of the literal.
+        ["const callbacks: Callbacks & { __proto__: Callbacks } = {\n    __proto__: { writeLog: Reflect.deleteProperty },\n    writeLog: ignored,\n  };\n  delete callbacks.writeLog;\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, true],
+        ["const callbacks: Callbacks & { extra: { quiet?: boolean } } = { writeLog: ignored, extra: { quiet: true } };\n  delete callbacks.extra.quiet;\n  (callbacks.writeLog ?? ignored)(overrides, \"box\");", writer, false],
+        ["const callbacks = {\n    writeLog: ignored,\n    get sequence(): number {\n      return 0;\n    },\n    set sequence(value: number) {\n      void value;\n      this.writeLog = Reflect.deleteProperty;\n    },\n  };\n  callbacks.sequence++;\n  callbacks.writeLog(overrides, \"box\");", writer, true],
+        ["const callbacks = { writeLog: ignored, counts: { sequence: 0 } };\n  callbacks.counts.sequence++;\n  callbacks.writeLog(overrides, \"box\");", writer, false],
         // A parameter handed a name rather than a literal written in place may hold anything there.
         ["const handed: Callbacks = { writeLog: ignored };\n  write(handed, overrides);", `${writer}${parameterWriter}`, true],
       ];
@@ -9650,10 +9655,14 @@ function isReadMember(use: ts.Node): boolean {
   return (ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)) && member.expression === use && !isWrittenTo(member);
 }
 
-/** Whether an expression is written to where it is used, as the target of an assignment. Neither `++` nor `delete` can leave a function there to run. */
+/** Whether an expression is written to where it is used: the target of an assignment, of `++` or `--`, or what `delete` removes. */
 function isWrittenTo(node: ts.Node): boolean {
   const parent = node.parent;
-  return ts.isBinaryExpression(parent) && parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
+  if (ts.isBinaryExpression(parent)) return parent.left === node && isAssignmentOperator(parent.operatorToken.kind);
+  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+    return parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken;
+  }
+  return ts.isDeleteExpression(parent);
 }
 
 /** Whether a type is the library's `Function`, which any function may be, and which has no call signature to say which. */
