@@ -433,6 +433,35 @@ describe("the file is opened once, and what was opened is what is read", () => {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  // A named pipe opened to read waits for something to write to it, and the check writes
+  // nothing. One swapped in for the file between the inspection and the open held the
+  // check for ever. Windows has no named pipe in its file system. Issue 52.
+  test.skipIf(process.platform === "win32")("on the real file system: a named pipe is refused at once, not waited on", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const pipe = join(workspace, "description.md");
+      expect(Bun.spawnSync(["mkfifo", pipe]).exitCode).toBe(0);
+      // In a second process, because an open that waits holds the whole of this one,
+      // and no test timeout could end it. A wait shows as that process being stopped.
+      const probe = join(workspace, "probe.ts");
+      writeFileSync(probe, [
+        `import { readRegularFile } from ${JSON.stringify(join(import.meta.dir, "..", "audit-pull-request-text.ts"))};`,
+        "try {",
+        `  readRegularFile(${JSON.stringify(pipe)});`,
+        "  process.stdout.write(\"read\");",
+        "} catch (error) {",
+        "  process.stdout.write((error as Error).message);",
+        "}",
+      ].join("\n"));
+      const result = Bun.spawnSync([process.execPath, probe], { timeout: 10000 });
+      expect(result.exitedDueToTimeout).toBeFalsy();
+      expect(result.stdout.toString()).toBe(refused);
+      expect(result.exitCode).toBe(0);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });
 
 /**

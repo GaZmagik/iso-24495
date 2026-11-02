@@ -162,8 +162,14 @@ const NOT_THE_FILE = "what was opened is not the regular file the path names";
  */
 // Linux and macOS can refuse a symbolic link at open, and Windows has no such flag.
 // The comparison in `readRegularFile` is what holds on all three.
+//
+// A named pipe opened to read waits until something writes to it, so one swapped in
+// for the file after the inspection held the check for ever. Opened without waiting,
+// it returns at once, and the handle check refuses it as no regular file. The flag
+// has no effect on a regular file, as the Linux manual page for open(2) says. Windows
+// has no such flag, and no named pipe in its file system to wait on. Issue 52.
 export const REAL_FILES: FileCalls = {
-  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)),
+  open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)),
   ofHandle: (handle) => fstatSync(handle, { bigint: true }),
   ofPath: (path) => lstatSync(path, { bigint: true }),
   read: (handle) => readFileSync(handle, "utf8"),
