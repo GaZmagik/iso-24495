@@ -7,7 +7,7 @@ import type { AuditState, Evidence, Findings, Maturity } from "./lib/types.ts";
 import { readJsonFile, writeTextFile, type JsonFile } from "./lib/failure.ts";
 import { shapeProblem } from "./lib/json-shape.ts";
 import { safeCell, safePathCell } from "./lib/safe-text.ts";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 /**
@@ -23,9 +23,12 @@ import { basename, dirname, join, resolve } from "node:path";
  *
  * Exit 0 means the report was produced. Exit 1 means a file could not be read
  * or written, or an input did not hold the shape its command writes. Exit 2
- * means the arguments were wrong. That includes `--state` and `--out` naming
- * one file, as `asOneFile` decides: the report would be written over the
- * history. It is refused before anything is read or written.
+ * means the arguments were wrong. That includes `--state` or `--out` with no
+ * file after it, or with a value that starts with `--`, which is taken to be
+ * the next option written in its place: a file of that name is given as
+ * `./--name`. It also includes `--state` and `--out` naming one file, as
+ * `asOneFile` and `isOneFileOnDisk` decide: the report would be written over
+ * the history. It is refused before anything is read or written.
  *
  * Every input is checked against its shape in `lib/types.ts` before the
  * report is built, the state file included when it exists. A maturity file
@@ -58,15 +61,17 @@ export function runCli(
   const outFlag = argv.indexOf("--out");
   const statePath = stateFlag !== -1 ? argv[stateFlag + 1] : null;
   const outPath = outFlag !== -1 ? argv[outFlag + 1] : null;
-  if (stateFlag !== -1 && !statePath) {
+  // A value that starts with "--" is the next option, written where the file was
+  // meant to go. Taken as the file, it once named a state file "--out". Issue 54.
+  if (stateFlag !== -1 && (!statePath || statePath.startsWith("--"))) {
     stderr("generate-report: --state requires a state file");
     return 2;
   }
-  if (outFlag !== -1 && !outPath) {
+  if (outFlag !== -1 && (!outPath || outPath.startsWith("--"))) {
     stderr("generate-report: --out requires a report file");
     return 2;
   }
-  if (statePath && outPath && asOneFile(statePath) === asOneFile(outPath)) {
+  if (statePath && outPath && (asOneFile(statePath) === asOneFile(outPath) || isOneFileOnDisk(statePath, outPath))) {
     stderr("generate-report: --state and --out name one file; give each a file of its own");
     return 2;
   }
@@ -135,7 +140,8 @@ export function runCli(
  * absolute. On Windows the result is in lower case, since a name there is one name
  * in any case.
  *
- * Two links to one file, made with a hard link, are not seen as one.
+ * Two links to one file, made with a hard link, are not seen as one here, since
+ * nothing in a spelling shows them. `isOneFileOnDisk` sees them.
  */
 function asOneFile(path: string): string {
   const absolute = resolve(path);
@@ -143,6 +149,35 @@ function asOneFile(path: string): string {
   const directory = nameOnDisk(dirname(absolute));
   const one = file ?? (directory === null ? absolute : join(directory, basename(absolute)));
   return process.platform === "win32" ? one.toLowerCase() : one;
+}
+
+/**
+ * Whether two paths that are both there lead to one file, as the file system
+ * identifies it: the same device and the same file number. This catches what a
+ * spelling cannot show, such as two hard links to one file.
+ *
+ * A path that is not there, or cannot be read, gives false, and is left to
+ * `asOneFile`. A file number of 0 gives false as well, because a file system
+ * that numbers no file gives every file that number.
+ */
+function isOneFileOnDisk(first: string, second: string): boolean {
+  const one = identityOnDisk(first);
+  const other = identityOnDisk(second);
+  return one !== null && other !== null && one.ino !== 0n && one.dev === other.dev && one.ino === other.ino;
+}
+
+/**
+ * The device and file number of what a path leads to, or null where nothing is
+ * there. They are read as big integers, since a file number on Windows can be
+ * too large for a plain number to hold exactly.
+ */
+function identityOnDisk(path: string): { dev: bigint; ino: bigint } | null {
+  try {
+    const { dev, ino } = statSync(path, { bigint: true });
+    return { dev, ino };
+  } catch {
+    return null;
+  }
 }
 
 /** The path as the file system names it, or null where nothing is there. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditCorpus, runCli as runCorpusCli } from "../scripts/audit-corpus.ts";
@@ -12,6 +12,8 @@ const FIXTURES = join(import.meta.dir, "fixtures");
 const CORPUS = join(FIXTURES, "corpus");
 const REPOSITORY = join(FIXTURES, "repo-level2");
 const ANSWERS = join(FIXTURES, "answers.sample.json");
+/** The audit time given to the report command where the time is not what a test checks. */
+const NOW_FOR_OPTIONS = "2026-08-13T12:00:00.000Z";
 const SCRIPTS = join(import.meta.dir, "..", "scripts");
 const TEXT_AUDIT_SCRIPT = join(
   import.meta.dir,
@@ -31,6 +33,22 @@ function capture() {
     writeOut: (text: string) => stdout.push(text),
     writeErr: (text: string) => stderr.push(text),
   };
+}
+
+/**
+ * Runs a check with an empty directory of its own as the working directory, so a
+ * file that a command names after an option shows up there, and then removes it.
+ */
+function inEmptyDirectory(check: (directory: string) => void): void {
+  const directory = mkdtempSync(join(tmpdir(), "iso-option-value-"));
+  const original = process.cwd();
+  try {
+    process.chdir(directory);
+    check(directory);
+  } finally {
+    process.chdir(original);
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 /** How many findings a totals map describes. */
@@ -180,9 +198,42 @@ describe("audit-evidence runCli", () => {
     expect(missing.stderr[0]).toStartWith("Usage:");
     const flag = capture();
     expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json"], flag.writeOut, flag.writeErr)).toBe(2);
+    expect(flag.stderr).toEqual(["audit-evidence: --json requires an output file"]);
     const absent = capture();
     expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", join(REPOSITORY, "missing")], absent.writeOut, absent.writeErr)).toBe(1);
     expect(absent.stderr[0]).toStartWith("audit-evidence:");
+  });
+});
+
+// An option written straight after --json was once taken as the file to write,
+// so a file named for the option appeared. Issue 54.
+describe("an option after --json is not taken as its file", () => {
+  test("audit-evidence refuses it and writes nothing", () => {
+    inEmptyDirectory((directory) => {
+      const output = capture();
+      expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", "--json"], output.writeOut, output.writeErr)).toBe(2);
+      expect(output.stdout).toEqual([]);
+      expect(output.stderr).toEqual(["audit-evidence: --json requires an output file"]);
+      expect(readdirSync(directory)).toEqual([]);
+    });
+  });
+
+  test("score-maturity refuses it and writes nothing", () => {
+    inEmptyDirectory((directory) => {
+      const output = capture();
+      expect(runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", "--json"], output.writeOut, output.writeErr)).toBe(2);
+      expect(output.stdout).toEqual([]);
+      expect(output.stderr).toEqual(["score-maturity: --json requires an output file"]);
+      expect(readdirSync(directory)).toEqual([]);
+    });
+  });
+
+  test("a file whose name starts with two hyphens is still written when its directory is named", () => {
+    inEmptyDirectory((directory) => {
+      expect(runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", "./--scores.json"], () => {}, () => {})).toBe(0);
+      expect(runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", "./--evidence.json"], () => {}, () => {})).toBe(0);
+      expect(readdirSync(directory).sort()).toEqual(["--evidence.json", "--scores.json"]);
+    });
   });
 });
 
@@ -215,6 +266,7 @@ describe("score-maturity runCli", () => {
     expect(runMaturityCli(["bun", "score-maturity-cli.ts"], missing.writeOut, missing.writeErr)).toBe(2);
     const flag = capture();
     expect(runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json"], flag.writeOut, flag.writeErr)).toBe(2);
+    expect(flag.stderr).toEqual(["score-maturity: --json requires an output file"]);
     const absent = capture();
     expect(runMaturityCli(["bun", "score-maturity-cli.ts", join(FIXTURES, "missing.json")], absent.writeOut, absent.writeErr)).toBe(1);
     const temp = mkdtempSync(join(tmpdir(), "iso-maturity-bad-"));
@@ -273,8 +325,10 @@ describe("generate-report runCli", () => {
     expect(runReportCli(["bun", "generate-report-cli.ts"], missing.writeOut, missing.writeErr)).toBe(2);
     const flag = capture();
     expect(runReportCli(["bun", "generate-report-cli.ts", "a", "b", "c", "--out"], flag.writeOut, flag.writeErr)).toBe(2);
+    expect(flag.stderr).toEqual(["generate-report: --out requires a report file"]);
     const stateFlag = capture();
     expect(runReportCli(["bun", "generate-report-cli.ts", "a", "b", "c", "--state"], stateFlag.writeOut, stateFlag.writeErr)).toBe(2);
+    expect(stateFlag.stderr).toEqual(["generate-report: --state requires a state file"]);
     const absent = capture();
     expect(runReportCli(["bun", "generate-report-cli.ts", "missing-a", "missing-b", "missing-c"], absent.writeOut, absent.writeErr)).toBe(1);
     expect(absent.stderr[0]).toStartWith("generate-report:");
@@ -287,6 +341,32 @@ describe("generate-report runCli", () => {
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
+  });
+
+  // "--state --out accidental.md" once wrote a state file named "--out" and the
+  // report to accidental.md, and exited 0. Issue 54.
+  test("an option after --state or --out is not taken as its file", () => {
+    inEmptyDirectory((directory) => {
+      runCorpusCli(["bun", "audit-corpus-cli.ts", CORPUS, "--json", "findings.json"], () => {}, () => {});
+      runEvidenceCli(["bun", "audit-evidence-cli.ts", REPOSITORY, "--json", "evidence.json"], () => {}, () => {});
+      runMaturityCli(["bun", "score-maturity-cli.ts", ANSWERS, "--json", "maturity.json"], () => {}, () => {});
+      const inputs = ["findings.json", "evidence.json", "maturity.json"];
+      const refusals: Array<[string[], string]> = [
+        [["--state", "--out", "accidental.md"], "generate-report: --state requires a state file"],
+        [["--out", "--state", "state.json"], "generate-report: --out requires a report file"],
+        [["--state", "state.json", "--out", "--other"], "generate-report: --out requires a report file"],
+      ];
+      for (const [options, message] of refusals) {
+        const output = capture();
+        expect(runReportCli(["bun", "generate-report-cli.ts", ...inputs, ...options], output.writeOut, output.writeErr, () => NOW_FOR_OPTIONS), options.join(" ")).toBe(2);
+        expect(output.stdout).toEqual([]);
+        expect(output.stderr).toEqual([message]);
+      }
+      expect(readdirSync(directory).sort()).toEqual(inputs.slice().sort());
+      // A name that starts with two hyphens can still be given, through its directory.
+      expect(runReportCli(["bun", "generate-report-cli.ts", ...inputs, "--state", "./--state.json", "--out", "./--report.md"], () => {}, () => {}, () => NOW_FOR_OPTIONS)).toBe(0);
+      expect(readdirSync(directory).sort()).toEqual(["--report.md", "--state.json", ...inputs].sort());
+    });
   });
 
   test("uses the real clock when no clock is injected", () => {
