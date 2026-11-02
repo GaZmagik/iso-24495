@@ -151,9 +151,18 @@ export interface FileCalls {
 }
 
 const NOT_THE_FILE = "what was opened is not the regular file the path names";
+
+/**
+ * The real file system calls `readRegularFile` makes by default. Exported so that
+ * a test can ask the open call alone whether it refuses a link, which a test
+ * through `readRegularFile` cannot tell: its comparison refuses a link as well.
+ *
+ * Each call throws as the system call it makes throws. `open` throws an error
+ * with the code `ELOOP` where the system refuses a symbolic link at open.
+ */
 // Linux and macOS can refuse a symbolic link at open, and Windows has no such flag.
 // The comparison in `readRegularFile` is what holds on all three.
-const REAL_FILES: FileCalls = {
+export const REAL_FILES: FileCalls = {
   open: (path) => openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)),
   ofHandle: (handle) => fstatSync(handle, { bigint: true }),
   ofPath: (path) => lstatSync(path, { bigint: true }),

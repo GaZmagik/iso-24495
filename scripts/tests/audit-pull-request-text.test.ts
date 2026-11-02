@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
+import { REAL_FILES, readRegularFile, realDependencies, runCli, type Dependencies, type FileCalls } from "../audit-pull-request-text.ts";
 import { itemAt } from "../../skills/iso-24495-4/scripts/lib/item-at.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const PASS_MEANING = "A pass means the audit ran on a description that is not empty.";
 const FILE = { isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false };
+// Making a symbolic link needs a right that Windows gives few accounts. A test that
+// needs a link is skipped where none can be made, so the runner counts it as skipped
+// rather than as a pass that checked nothing. Issue 55.
+const CAN_MAKE_LINKS = canMakeSymbolicLink();
 
 /** What one run printed, and what it asked of the file system. */
 interface Run {
@@ -397,19 +401,69 @@ describe("the file is opened once, and what was opened is what is read", () => {
       expect(stderr).toEqual([
         `The path given as the first argument, ${join(workspace, "a-directory").length} characters long, names a file that exists but cannot be read.`,
       ]);
-      // Where this account may make a symbolic link to a file. Where it may not, as on
-      // Windows without the right to, the last case is passed over.
-      try {
-        symlinkSync(file, join(workspace, "link.md"), "file");
-      } catch {
-        return;
-      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CAN_MAKE_LINKS)("on the real file system: a symbolic link to a file is not read", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const file = join(workspace, "description.md");
+      writeFileSync(file, "We shall pay.\n");
+      symlinkSync(file, join(workspace, "link.md"), "file");
       expect(() => readRegularFile(join(workspace, "link.md"))).toThrow(refused);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  // The comparison in readRegularFile refuses a link on every system, so a test through
+  // it still passes with the no-follow flag taken off the open. This asks the open call
+  // alone. Windows has no such flag, so there the test is skipped. Issue 55.
+  test.skipIf(!CAN_MAKE_LINKS || constants.O_NOFOLLOW === undefined)("on a system that can refuse a link at open, the open refuses one", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "iso-24495-opened-"));
+    try {
+      const file = join(workspace, "description.md");
+      writeFileSync(file, "We shall pay.\n");
+      symlinkSync(file, join(workspace, "link.md"), "file");
+      expect(errorCodeOfOpening(join(workspace, "link.md"))).toBe("ELOOP");
+      expect(errorCodeOfOpening(file)).toBeNull();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });
+
+/**
+ * Whether this account may make a symbolic link to a file, found by making one in a
+ * folder of its own and removing the folder.
+ */
+function canMakeSymbolicLink(): boolean {
+  const workspace = mkdtempSync(join(tmpdir(), "iso-24495-link-probe-"));
+  try {
+    writeFileSync(join(workspace, "file.md"), "");
+    symlinkSync(join(workspace, "file.md"), join(workspace, "link.md"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The code the real open call fails with for the path, or null where it opens. A
+ * handle that opens is closed at once.
+ */
+function errorCodeOfOpening(path: string): unknown {
+  try {
+    REAL_FILES.close(REAL_FILES.open(path));
+    return null;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code;
+  }
+}
 
 /**
  * A stand-in for a file system call that finds no file at the path.
