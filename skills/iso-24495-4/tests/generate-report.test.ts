@@ -162,26 +162,6 @@ describe("a report built from files nobody has read", () => {
 describe("one file named for both the state and the report", () => {
   const oneFile = "generate-report: --state and --out name one file; give each a file of its own";
 
-  /** Runs the command on the three sample inputs, in a directory of its own, and removes it. */
-  function withInputs(check: (directory: string, run: (...options: string[]) => { exit: number; stdout: string[]; stderr: string[] }) => void): void {
-    const directory = mkdtempSync(join(tmpdir(), "one-file-"));
-    try {
-      const inputs = [["findings.json", findings], ["evidence.json", evidence], ["maturity.json", maturity]].map(([name, value]) => {
-        const path = join(directory, name as string);
-        writeFileSync(path, JSON.stringify(value));
-        return path;
-      });
-      check(directory, (...options) => {
-        const stdout: string[] = [];
-        const stderr: string[] = [];
-        const exit = runCli(["bun", "cli", ...inputs, ...options], (text) => stdout.push(text), (text) => stderr.push(text), () => NOW);
-        return { exit, stdout, stderr };
-      });
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  }
-
   test("is refused before anything is written, whichever option comes first", () => {
     withInputs((directory, run) => {
       const one = join(directory, "audit");
@@ -285,3 +265,23 @@ describe("one file named for both the state and the report", () => {
     });
   });
 });
+
+/** Runs the command on the three sample inputs, in a directory of its own, and removes it. */
+function withInputs(check: (directory: string, run: (...options: string[]) => { exit: number; stdout: string[]; stderr: string[] }) => void): void {
+  const directory = mkdtempSync(join(tmpdir(), "one-file-"));
+  try {
+    const inputs = [["findings.json", findings], ["evidence.json", evidence], ["maturity.json", maturity]].map(([name, value]) => {
+      const path = join(directory, name as string);
+      writeFileSync(path, JSON.stringify(value));
+      return path;
+    });
+    check(directory, (...options) => {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const exit = runCli(["bun", "cli", ...inputs, ...options], (text) => stdout.push(text), (text) => stderr.push(text), () => NOW);
+      return { exit, stdout, stderr };
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}

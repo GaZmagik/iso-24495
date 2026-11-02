@@ -225,7 +225,6 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
   // The case a review found, made general: an emoji before a link is an ordinary line.
   test("characters that are no word, put before a line with a link and an acronym, leave its findings as they were", () => {
     const random = generator(9009);
-    const findings = (text: string): string[] => auditText(text).map((found) => `${found.rule} at line ${found.line}: ${found.detail}`);
     const counts = { lines: 0, withAFinding: 0, withAnAcronymFinding: 0 };
     for (let made = 0; made < 3_000; made++) {
       const line = `${pick(random, ["identity and access", "Identity and access", "The"])} [${pieces(random, LABEL, 3)}](${pieces(random, TAIL, 4)}) `
@@ -247,7 +246,6 @@ describe("what the acronym rule takes for a link is what a renderer shows as one
   // file's to change, so it is only asked the same question.
   test("the same characters before a line with emphasis marks and no link leave its findings as they were", () => {
     const random = generator(1010);
-    const findings = (text: string): string[] => auditText(text).map((found) => `${found.rule} at line ${found.line}: ${found.detail}`);
     const counts = { lines: 0, withAFinding: 0, withAnAcronymFinding: 0 };
     const marks = ["*", "**", "_", "__", "~~", ""];
     for (let made = 0; made < 3_000; made++) {
@@ -300,6 +298,11 @@ function placesOf(parsed: string, written: string, at = 0, from = 0): Array<[fro
 /** The words the acronym rule reads in a document of one block. */
 function readingText(document: string): string {
   return acronymReading(document).blocks.map((block) => block.lines.join(" ")).join(" ");
+}
+
+/** Each finding the audit gives for a text, as "rule at line n: detail". */
+function findings(text: string): string[] {
+  return auditText(text).map((found) => `${found.rule} at line ${found.line}: ${found.detail}`);
 }
 
 /** The letters a page shows for rendered HTML, an image as its alternative text, which is what a screen reader says. */

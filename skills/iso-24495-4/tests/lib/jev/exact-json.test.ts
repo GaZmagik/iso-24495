@@ -61,10 +61,14 @@ function expectSameShape(exact: unknown, plain: unknown, where: string): void {
     if (Array.isArray(plain) && key === "length") continue;
     const there = Object.getOwnPropertyDescriptor(plain, key) as PropertyDescriptor;
     const here = Object.getOwnPropertyDescriptor(exact as object, key) as PropertyDescriptor;
-    const flags = (descriptor: PropertyDescriptor) => [descriptor.writable, descriptor.enumerable, descriptor.configurable];
     expect(flags(here), `${where}.${String(key)}: flags`).toEqual(flags(there));
     expectSameShape(here.value, there.value, `${where}.${String(key)}`);
   }
+}
+
+/** The three flags of a property descriptor: writable, enumerable and configurable, in that order. */
+function flags(descriptor: PropertyDescriptor): Array<boolean | undefined> {
+  return [descriptor.writable, descriptor.enumerable, descriptor.configurable];
 }
 
 describe("every key reads as JSON.parse reads it", () => {

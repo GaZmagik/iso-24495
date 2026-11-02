@@ -44,7 +44,11 @@ function skillFiles(): string[] {
   return found.sort();
 }
 
-/** The text between the opening and closing fence, which is what a loader hands to YAML. */
+/**
+ * The text between the opening and closing fence, which is what a loader hands to YAML.
+ *
+ * @throws An `Error` naming the file when it has no frontmatter fence.
+ */
 function frontmatter(relativePath: string): string {
   const text = readFileSync(join(ROOT, relativePath), "utf8");
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);

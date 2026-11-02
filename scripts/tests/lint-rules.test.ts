@@ -3,7 +3,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ESLint } from "eslint";
 import tseslint from "typescript-eslint";
-import { ENFORCED_RULES, GUIDE_SYNTAX, type RuleSetting } from "../../eslint.config.mjs";
+import { CODE_SKILL_SYNTAX, ENFORCED_RULES, GUIDE_SYNTAX, RULE_EXCEPTIONS, type RuleSetting } from "../../eslint.config.mjs";
 
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..");
 const LINTER = join(REPOSITORY_ROOT, "node_modules", "eslint", "bin", "eslint.js");
@@ -174,6 +174,99 @@ const PROBE: ReadonlyArray<readonly [rules: readonly string[], line: string]> = 
   [[], "  return 1;"],
   [[], "}"],
 
+  // The code skill's helpers: a named helper sits at the top level, or is a
+  // class member. A callback passed to a call is not a helper.
+  [[], "export function outer(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  function inner(): number {"],
+  [[], "    return 1;"],
+  [[], "  }"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const arrowed = (): number => inner();"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const typed: () => number = () => arrowed();"],
+  [[], "  return [1].map((value) => value + typed()).length;"],
+  [[], "}"],
+  [[], "export class Helped {"],
+  [[], "  size(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "    const inner = (): number => 1;"],
+  [[], "    return inner();"],
+  [[], "  }"],
+  [[], "}"],
+  // An object method or accessor declares a named function as a declaration
+  // does. A property whose value is an arrow is a value handed on, most often
+  // a stand-in for a dependency, and is left alone.
+  [[], "export function holdsHelpers(): number {"],
+  [[], "  const helpers = {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "    value(): number {"],
+  [[], "      return 1;"],
+  [[], "    },"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "    get size(): number {"],
+  [[], "      return 2;"],
+  [[], "    },"],
+  [[], "    handed: (): number => 3,"],
+  [[], "  };"],
+  [[], "  return helpers.value() + helpers.size + helpers.handed();"],
+  [[], "}"],
+  // A type wrapper changes nothing that runs, so it hides no helper.
+  [[], "export function wrappedHelpers(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const viaSatisfies = ((): number => 1) satisfies () => number;"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const viaAs = ((): number => 2) as () => number;"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const viaBoth = (((): number => 3) satisfies () => number) as () => number;"],
+  [["@typescript-eslint/no-non-null-assertion", restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const viaNonNull = ((): number => 4)!;"],
+  [[], "  return viaSatisfies() + viaAs() + viaBoth() + viaNonNull();"],
+  [[], "}"],
+  // Object.freeze returns the function it is given, so it hides no helper
+  // either. Another call with one callback builds a value, and is left alone.
+  [[], "export function frozenHelpers(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const frozen = Object.freeze<() => number>(() => 1);"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const frozenTyped = Object.freeze((): number => 2) as () => number;"],
+  [[], "  const mapped = [1].map((value) => value + frozen() + frozenTyped());"],
+  [[], "  const settings = Object.freeze({ size: 1 });"],
+  [[], "  return mapped.length + settings.size;"],
+  [[], "}"],
+  [[], "export const frozenAtTop = Object.freeze((): number => 1);"],
+  // One name bound by destructuring a literal of one function is a helper
+  // too. A destructured value that is not a function is left alone. Other
+  // destructured helpers are found by code-skill-rules.test.ts.
+  [[], "export function destructuredHelpers(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { next } = { next: (n: number): number => n + 1 };"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [previous] = [(n: number): number => n - 1] as const;"],
+  [[], "  const { size } = { size: 1 };"],
+  [[], "  return next(size) + previous(size);"],
+  [[], "}"],
+  [[], "export const { topNext } = { topNext: (n: number): number => n + 1 };"],
+  // A default that is a function, or a function in a frozen literal, binds a
+  // helper as well. A default that is not a function is left alone.
+  [[], "export function destructuredDefaults(): number {"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { step = (n: number): number => n + 1 }: { step?: (n: number) => number } = {};"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [back = (n: number): number => n - 1] = [] as Array<(n: number) => number>;"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const { frozenNext } = Object.freeze({ frozenNext: (n: number): number => n + 1 });"],
+  [[restricted("code skill: a named helper is declared at the top level, not inside a function")], "  const [frozenBack] = Object.freeze([(n: number): number => n - 1]);"],
+  [[], "  const { limit = 1 } = { limit: 2 };"],
+  [[], "  return step(limit) + back(limit) + frozenNext(limit) + (frozenBack?.(limit) ?? 0);"],
+  [[], "}"],
+  // A function the destructuring does not bind to a name is not a helper.
+  [[], "export function unboundCallbacks(): number {"],
+  [[], "  const { unbound }: { unused: () => number; unbound: number } = { unused: (): number => 1, unbound: 2 };"],
+  [[], "  const [first] = [2, (n: number): number => n + 1] as const;"],
+  [[], "  return unbound + first;"],
+  [[], "}"],
+  [[], "export const topLevelHelpers = {"],
+  [[], "  value(): number {"],
+  [[], "    return 1;"],
+  [[], "  },"],
+  [[], "};"],
+  [["brace-style", "@typescript-eslint/only-throw-error"], "export function parsedThrow(): never { throw JSON.parse(\"1\"); }"],
+  // A value typed unknown is refused too, but for the one test file that
+  // stands in for code outside this project. A caught value may be thrown on.
+  [["brace-style", "@typescript-eslint/only-throw-error"], "export function failWith(value: unknown): never { throw value; }"],
+  [[], "export function rethrows(): void {"],
+  [[], "  try {"],
+  [[], "    scoped(true);"],
+  [[], "  } catch (error) {"],
+  [[], "    if (error instanceof RangeError) return;"],
+  [[], "    throw error;"],
+  [[], "  }"],
+  [[], "}"],
+
   // Classes.
   [["brace-style", "@typescript-eslint/explicit-member-accessibility"], "export class Shown { public size = 1; }"],
   [["brace-style", "@typescript-eslint/prefer-readonly"], "export class Kept { private size = 1; read(): number { return this.size; } }"],
@@ -246,6 +339,13 @@ describe("the lint rules the gate relies on", () => {
     expect(settings.filter(([, setting]) => !isError(setting)).map(([rule]) => rule)).toEqual([]);
   });
 
+  test("one file alone may throw a value typed unknown, and every exception is still an error", () => {
+    expect(RULE_EXCEPTIONS.map(({ files, rule }) => ({ files, rule }))).toEqual([
+      { files: ["scripts/tests/traffic-snapshot.test.ts"], rule: "@typescript-eslint/only-throw-error" },
+    ]);
+    expect(RULE_EXCEPTIONS.filter(({ setting }) => !isError(setting))).toEqual([]);
+  });
+
   test("every enforced rule is set as stated in every TypeScript file, as ESLint resolves it", async () => {
     expect(existsSync(LINTER), "the linter is not installed: run bun install first").toBe(true);
     const files = scriptFiles();
@@ -272,6 +372,19 @@ describe("the lint rules the gate relies on", () => {
     for (const rule of Object.keys(ENFORCED_RULES)) {
       expect(resolvedSeverity(stated, rule), `${rule} as stated`).toBe(ERROR);
     }
+    // A file named in RULE_EXCEPTIONS is held to the setting stated there, for
+    // that rule alone, resolved the same way.
+    const statedExceptions = new Map<string, unknown>();
+    for (const { files, rule, setting } of RULE_EXCEPTIONS) {
+      const exception: unknown = await new ESLint({
+        cwd: REPOSITORY_ROOT,
+        overrideConfigFile: true,
+        overrideConfig: [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": tseslint.plugin }, rules: { ...ENFORCED_RULES, [rule]: setting } }],
+      }).calculateConfigForFile("any-name.ts");
+      for (const file of files) {
+        statedExceptions.set(`${file} ${rule}`, exception);
+      }
+    }
 
     const eslint = new ESLint({ cwd: REPOSITORY_ROOT });
     const weak: string[] = [];
@@ -288,7 +401,7 @@ describe("the lint rules the gate relies on", () => {
       const resolved: unknown = await eslint.calculateConfigForFile(file);
       for (const rule of Object.keys(ENFORCED_RULES)) {
         if (resolvedSeverity(resolved, rule) !== ERROR) weak.push(`${file}: ${rule}`);
-        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(stated, rule), true)) {
+        else if (!Bun.deepEquals(resolvedEntry(resolved, rule), resolvedEntry(statedExceptions.get(`${file} ${rule}`) ?? stated, rule), true)) {
           changed.push(`${file}: ${rule}`);
         }
       }
@@ -313,10 +426,18 @@ describe("the lint rules the gate relies on", () => {
     // cannot join the set without its breach either.
     const probed = new Set(PROBE.flatMap(([rules]) => rules));
     probed.delete(INERT_COMMENT);
-    const selectors = GUIDE_SYNTAX.map(({ message }) => restricted(message));
+    const selectors = [...GUIDE_SYNTAX, ...CODE_SKILL_SYNTAX].map(({ message }) => restricted(message));
     expect(new Set(selectors).size, "two selectors share a message").toBe(selectors.length);
     const rules = Object.keys(ENFORCED_RULES).filter((rule) => rule !== "no-restricted-syntax");
     expect([...probed].sort()).toEqual([...rules, ...selectors].sort());
+  });
+
+  test("a thrown value typed unknown is refused in shipped code, and allowed only in the traffic snapshot tests", () => {
+    const text = ["export function failWith(value: unknown): never {", "  throw value;", "}", ""].join("\n");
+    const refused = ["2: @typescript-eslint/only-throw-error"];
+    expect(reportsFor(text, join(REPOSITORY_ROOT, "scripts", "traffic-snapshot.ts"))).toEqual(refused);
+    expect(reportsFor(text, join(REPOSITORY_ROOT, "skills", "iso-24495-4", "scripts", "lib", "item-at.ts"))).toEqual(refused);
+    expect(reportsFor(text, join(REPOSITORY_ROOT, "scripts", "tests", "traffic-snapshot.test.ts"))).toEqual([]);
   });
 });
 
@@ -399,9 +520,10 @@ interface LintMessage {
 /**
  * What the linter reports for a text, under this repository's configuration.
  *
- * The text is linted under this file's own name. The typed rules read types
- * from a project, and the project service refuses a name it cannot find on
- * disk.
+ * The text is linted under this file's own name, or under the name of
+ * another file of the repository when one is given. The typed rules read
+ * types from a project, and the project service refuses a name it cannot
+ * find on disk.
  *
  * @returns One "line: rule" entry for each line and rule reported, sorted. A
  *     report that names no rule reads "(no rule)". A report from a syntax
@@ -411,9 +533,9 @@ interface LintMessage {
  * @throws An `Error` when the linter prints anything but its JSON report, or
  *     could not parse the text, which leaves every rule unrun.
  */
-function reportsFor(text: string): string[] {
+function reportsFor(text: string, file = import.meta.path): string[] {
   const run = Bun.spawnSync(
-    ["node", LINTER, "--stdin", "--stdin-filename", import.meta.path, "--format", "json"],
+    ["node", LINTER, "--stdin", "--stdin-filename", file, "--format", "json"],
     { cwd: REPOSITORY_ROOT, stdin: Buffer.from(text, "utf8") },
   );
   const printed = run.stdout.toString();

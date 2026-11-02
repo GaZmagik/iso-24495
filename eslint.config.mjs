@@ -9,11 +9,12 @@
 // expression, the rules of the recommended sets that have found a fault
 // here, and the further rules of the guide that a linter can state.
 //
-// scripts/tests/lint-rules.test.ts imports ENFORCED_RULES and GUIDE_SYNTAX. It
-// asks ESLint for the configuration that applies to each TypeScript file and
-// requires every rule there to be an error. It also gives the linter one
-// breach of each rule, and of each syntax selector, and requires an error for
-// each. Add a rule and its breach together.
+// scripts/tests/lint-rules.test.ts imports ENFORCED_RULES, GUIDE_SYNTAX,
+// CODE_SKILL_SYNTAX and RULE_EXCEPTIONS. It asks ESLint for the
+// configuration that applies to each TypeScript file and requires every rule
+// there to be an error. It also gives the linter one breach of each rule, and
+// of each syntax selector, and requires an error for each. Add a rule and its
+// breach together.
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
@@ -126,6 +127,77 @@ export const GUIDE_SYNTAX = [
   },
 ];
 
+/** A node that states a type and changes nothing that runs. */
+const TYPE_WRAPPER = ":matches(TSSatisfiesExpression, TSAsExpression, TSNonNullExpression)";
+
+/** A node whose value is a function. */
+const FUNCTION_VALUE = ":matches(ArrowFunctionExpression, FunctionExpression)";
+
+/**
+ * A call of Object.freeze on one value, which returns the value it is given.
+ * A selector cannot see types, so it cannot tell a call that returns its
+ * callback from one that builds a value with it, such as a map. This one
+ * call is named for that reason.
+ */
+const FREEZE_CALL = "CallExpression[callee.type='MemberExpression'][callee.object.name='Object'][callee.property.name='freeze'][arguments.length=1]";
+
+/**
+ * A declaration that destructures one name, with or without a default, from
+ * an object, with no type stated. Given a literal of one property, the type
+ * check allows only the key the name is bound to, so the property is bound.
+ */
+const ONE_NAME_FROM_OBJECT = "VariableDeclarator[id.type='ObjectPattern'][id.properties.length=1][id.properties.0.computed=false]"
+  + ":matches([id.properties.0.value.type='Identifier'], [id.properties.0.value.left.type='Identifier']):not([id.typeAnnotation])";
+
+/** A declaration that destructures one name, with or without a default, from an array. */
+const ONE_NAME_FROM_ARRAY = "VariableDeclarator[id.type='ArrayPattern'][id.elements.length=1]"
+  + ":matches([id.elements.0.type='Identifier'], [id.elements.0.left.type='Identifier'])";
+
+/**
+ * The rules of this plugin's own code skill, `iso-24495-code`, that a syntax
+ * selector can state. Each works as the entries above do, and the lint test
+ * probes each the same way. The skill's other rules that this repository
+ * holds its code to are tested in scripts/tests/code-skill-rules.test.ts.
+ */
+export const CODE_SKILL_SYNTAX = [
+  {
+    // Rule 2 of the skill: a reader cannot reach a closure without reading
+    // its container first. A class member is allowed, as the skill allows it.
+    // An object method or accessor inside a function is a named helper too.
+    // A property whose value is an arrow is not: it is a value handed on,
+    // most often a stand-in for a dependency. A type wrapper changes nothing
+    // that runs, so a helper under up to three of them is read as a helper.
+    // Object.freeze returns the function it is given, so a helper it wraps,
+    // or a type wrapper around that call, is read as a helper too. A
+    // selector cannot match a name to its key, so it reads a destructured
+    // literal only where the type check makes the match certain: one name
+    // from a literal of one item, frozen or not. A destructured name whose
+    // default is a function is a helper too. Every other function bound by
+    // destructuring or a default, and every parameter default, is found by
+    // a test in scripts/tests/code-skill-rules.test.ts.
+    // The parser keeps no node for parentheses, so they need no selector.
+    selector: [
+      ":function FunctionDeclaration",
+      ":function VariableDeclarator > :matches(ArrowFunctionExpression, FunctionExpression).init",
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FUNCTION_VALUE}.expression`,
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${TYPE_WRAPPER}.expression > ${TYPE_WRAPPER}.expression > ${FUNCTION_VALUE}.expression`,
+      `:function VariableDeclarator > ${FREEZE_CALL}.init > ${FUNCTION_VALUE}.arguments`,
+      `:function VariableDeclarator > ${TYPE_WRAPPER}.init > ${FREEZE_CALL}.expression > ${FUNCTION_VALUE}.arguments`,
+      `:function ${ONE_NAME_FROM_OBJECT} > ObjectExpression.init[properties.length=1] > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function ${ONE_NAME_FROM_OBJECT} > ${TYPE_WRAPPER}.init > ObjectExpression.expression[properties.length=1] > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function ${ONE_NAME_FROM_ARRAY} > ArrayExpression.init[elements.length=1] > ${FUNCTION_VALUE}`,
+      `:function ${ONE_NAME_FROM_ARRAY} > ${TYPE_WRAPPER}.init > ArrayExpression.expression[elements.length=1] > ${FUNCTION_VALUE}`,
+      `:function ${ONE_NAME_FROM_OBJECT} > ${FREEZE_CALL}.init > ObjectExpression.arguments[properties.length=1] > Property[method=false] > ${FUNCTION_VALUE}.value`,
+      `:function ${ONE_NAME_FROM_ARRAY} > ${FREEZE_CALL}.init > ArrayExpression.arguments[elements.length=1] > ${FUNCTION_VALUE}`,
+      `:function VariableDeclarator > ObjectPattern.id > Property > AssignmentPattern.value > ${FUNCTION_VALUE}.right`,
+      `:function VariableDeclarator > ArrayPattern.id > AssignmentPattern > ${FUNCTION_VALUE}.right`,
+      ":function Property:matches([method=true], [kind='get'], [kind='set'])",
+    ].join(", "),
+    message: "code skill: a named helper is declared at the top level, not inside a function",
+  },
+];
+
 /** Every name selector forbids a leading or trailing underscore, as the guide does. */
 const NO_UNDERSCORE = { leadingUnderscore: "forbid", trailingUnderscore: "forbid" };
 
@@ -188,7 +260,7 @@ export const ENFORCED_RULES = {
 
   // Group 2: the other rules of the hand-written test.
   "one-var": ["error", "never"],
-  "no-restricted-syntax": ["error", ...GUIDE_SYNTAX],
+  "no-restricted-syntax": ["error", ...GUIDE_SYNTAX, ...CODE_SKILL_SYNTAX],
   "@typescript-eslint/no-explicit-any": "error",
   "@typescript-eslint/no-namespace": "error",
   // The recommended set allows a "lib" reference and, where the module is
@@ -261,7 +333,13 @@ export const ENFORCED_RULES = {
   "@typescript-eslint/prefer-for-of": "error",
   // Exceptions.
   "no-empty": "error",
-  "@typescript-eslint/only-throw-error": "error",
+  // A value typed any or unknown is no more an Error than a string is: the
+  // type check has given up on it, or never knew. A caught value may still be
+  // thrown on unchanged, as the rule allows by default, but only at the three
+  // sites that scripts/tests/code-skill-rules.test.ts names with their
+  // reasons, by the owner's ruling. RULE_EXCEPTIONS below names the one test
+  // file that may throw a value typed unknown.
+  "@typescript-eslint/only-throw-error": ["error", { allowThrowingAny: false, allowThrowingUnknown: false }],
   "@typescript-eslint/prefer-promise-reject-errors": "error",
   // Disallowed features.
   "semi": ["error", "always"],
@@ -288,6 +366,23 @@ export const ENFORCED_RULES = {
   "multiline-comment-style": ["error", "separate-lines"],
 };
 
+/**
+ * The files where an enforced rule is set otherwise, each with the setting
+ * it has there and the reason. The setting is still an error. The lint test
+ * reads this list, holds each file to the setting given here, and pins the
+ * list itself, so an exception cannot be added without a test changing.
+ */
+export const RULE_EXCEPTIONS = [
+  {
+    // Two tests stand in for code outside this project, which may throw
+    // anything, and check that what it throws is handled. They throw a
+    // value typed unknown on purpose.
+    files: ["scripts/tests/traffic-snapshot.test.ts"],
+    rule: "@typescript-eslint/only-throw-error",
+    setting: ["error", { allowThrowingAny: false, allowThrowingUnknown: true }],
+  },
+];
+
 export default defineConfig([
   // With this setting, a comment in a file cannot change a rule or switch one
   // off. A later block could set it back for some files, and no test here
@@ -311,4 +406,5 @@ export default defineConfig([
       ...ENFORCED_RULES,
     },
   },
+  ...RULE_EXCEPTIONS.map(({ files, rule, setting }) => ({ files, rules: { [rule]: setting } })),
 ]);
