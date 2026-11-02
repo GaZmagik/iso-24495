@@ -16,19 +16,15 @@ export const SKILLS = ["skills/iso-24495-1", "skills/iso-24495-text-audit", "cod
  */
 function makeCheckout(version: string): string {
   const root = mkdtempSync(join(tmpdir(), "iso-24495-release-"));
-  const write = (path: string, text: string): void => {
-    mkdirSync(join(root, path, ".."), { recursive: true });
-    writeFileSync(join(root, path), text, "utf8");
-  };
-  write(".claude-plugin/plugin.json", JSON.stringify({ name: "plugin", version }));
-  write(".codex-plugin/plugin.json", JSON.stringify({ name: "plugin", version }));
-  write(".claude-plugin/marketplace.json", JSON.stringify({
+  write(root, ".claude-plugin/plugin.json", JSON.stringify({ name: "plugin", version }));
+  write(root, ".codex-plugin/plugin.json", JSON.stringify({ name: "plugin", version }));
+  write(root, ".claude-plugin/marketplace.json", JSON.stringify({
     plugins: [{ version, source: { source: "url", ref: `v${version}` } }],
   }));
   for (const skill of SKILLS) {
-    write(`${skill}/SKILL.md`, `---\nname: x\nmetadata:\n  version: "${version}"\n---\n\n# Skill\n`);
+    write(root, `${skill}/SKILL.md`, `---\nname: x\nmetadata:\n  version: "${version}"\n---\n\n# Skill\n`);
   }
-  write("CHANGELOG.md", `# Changelog\n\n## [${version}] - 2026-09-27\n\n- A change.\n`);
+  write(root, "CHANGELOG.md", `# Changelog\n\n## [${version}] - 2026-09-27\n\n- A change.\n`);
   return root;
 }
 
@@ -57,4 +53,10 @@ export function withCheckout(version: string, body: (root: string) => void): voi
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+/** Writes one file of a checkout, making the directories above it. */
+function write(root: string, path: string, text: string): void {
+  mkdirSync(join(root, path, ".."), { recursive: true });
+  writeFileSync(join(root, path), text, "utf8");
 }

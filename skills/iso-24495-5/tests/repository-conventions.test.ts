@@ -317,23 +317,6 @@ describe("repository writing conventions", () => {
     );
     const examples = section.split(/\n(?=#### \d+\. )/).slice(1);
     expect(examples.length).toBe(4);
-    /** The words a reader meets, once the structure a restructure may add is removed. */
-    const words = (block: string): string[] => block
-      .split("\n")
-      .map((line) => line.replace(/^(?:Before:|After:)/, "").replace(/^ {0,8}/, ""))
-      // A heading, and an elision standing for the lines not shown.
-      .filter((line) => !/^\s*(?:#|\.\.\.\s*$)/.test(line))
-      // A list marker, a bold label such as "**Purpose:**", and a marked slot.
-      .map((line) => line
-        .replace(/^\s*-\s*/, "")
-        .replace(/^\*\*[^*]+:\*\*\s*/, "")
-        .replace(/\[Author needed:[^\]]*\]/g, "")
-        .replace(/\*\*/g, "")
-        // A link reads as its text.
-        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1"))
-      .join(" ")
-      .split(/\s+/)
-      .filter((word) => word !== "");
     for (const example of examples) {
       const title = example.split("\n")[0];
       const code = /```text\n([\s\S]*?)```/.exec(example);
@@ -515,13 +498,7 @@ describe("repository writing conventions", () => {
 
   test("the legal skill's rules, example and checklist are exactly this text", () => {
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
-    const between = (start: string, end: string): string[] => {
-      const from = legal.indexOf(start);
-      expect(from, `iso-24495-2 must contain ${start}`).toBeGreaterThan(-1);
-      const to = legal.indexOf(end, from);
-      expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
-      return legal.slice(from, to).trimEnd().split(/\r?\n/);
-    };
+    const between = legalSectionReader(legal);
     expect(between("4. **Defined Terms:**", "\n---")).toEqual(part2DocumentRules);
     const example = between("### Example 2:", "\n---");
     expect(example).toEqual(part2SummaryExample);
@@ -740,14 +717,6 @@ describe("repository writing conventions", () => {
     "The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.",
   ];
   test("the lines this branch wrote elsewhere are exactly this text", () => {
-    const blockOf = (text: string, start: string, end: string, what: string): string[] => {
-      const from = text.indexOf(start);
-      expect(from, `${what} must contain ${start}`).toBeGreaterThan(-1);
-      const to = text.indexOf(end, from);
-      expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
-      return text.slice(from, to).trimEnd().split(/\r?\n/);
-    };
-
     const legal = readFileSync(join(SKILLS_ROOT, "iso-24495-2", "SKILL.md"), "utf8");
     expect(blockOf(legal, "3. **Document Design Applies Here Too:**", "\n---", "iso-24495-2"))
       .toEqual(part2ScopeBoundary);
@@ -874,36 +843,17 @@ describe("repository writing conventions", () => {
     // The other kinds this repository is known to ship: what a skill hands a
     // reader, the output style, and the three documents at the root. Removing
     // one line from the list passed until these were counted too.
-    // Files, at whatever depth, and text only. A review added a note in a
-    // sub-folder and a diagram beside it, and the floor demanded the folder
-    // rather than the note while the diagram failed for not being text. A
-    // skill may hand a reader a picture; this list holds what it says, and a
-    // picture says nothing this fixture can hold.
-    const textFilesUnder = (directory: string, prefix: string): void => {
-      const base = join(REPOSITORY_ROOT, directory);
-      if (!existsSync(base)) return;
-      for (const entry of readdirSync(base)) {
-        const here = `${prefix}/${entry}`;
-        const path = join(base, entry);
-        if (statSync(path).isDirectory()) {
-          textFilesUnder(`${directory}/${entry}`, here);
-        } else if (isPinnedKind(entry) && !listed.has(here)) {
-          missing.push(here);
-        }
-      }
-    };
-
     for (const root of ["skills", "codex-skills"]) {
       const base = join(REPOSITORY_ROOT, root);
       if (!existsSync(base)) continue;
       for (const skill of readdirSync(base)) {
         for (const kind of ["assets", "references"]) {
-          textFilesUnder(`${root}/${skill}/${kind}`, `${root}/${skill}/${kind}`);
+          textFilesUnder(`${root}/${skill}/${kind}`, `${root}/${skill}/${kind}`, listed, missing);
         }
       }
     }
 
-    textFilesUnder("output-styles", "output-styles");
+    textFilesUnder("output-styles", "output-styles", listed, missing);
 
     // Named rather than swept, because the root holds build and repository
     // furniture that no reader receives. A review added a contributing guide
@@ -941,7 +891,6 @@ describe("repository writing conventions", () => {
         `bun skills/iso-24495-5/tests/reference/build-pinned-documents.ts "${rebuilt}"`,
         { cwd: REPOSITORY_ROOT, stdio: "pipe" },
       );
-      const asWritten = (text: string): string => text.replace(/\r\n/g, "\n");
       expect(
         asWritten(readFileSync(rebuilt, "utf8")),
         "a rebuild on an unchanged tree must reproduce the fixture",
@@ -1138,41 +1087,6 @@ describe("repository writing conventions", () => {
       );
     });
 
-    // Windows separators reach bash as escape characters rather than as path
-    // separators, and `dirname` then reads the whole path as one name. Both
-    // platforms accept forward slashes, so both get them.
-    const forBash = (path: string): string => path.split("\\").join("/");
-
-    /** The one run block of a workflow job, read from the parsed YAML. */
-    const runBlock = (path: string, job: string): string => {
-      const parsed = Bun.YAML.parse(readFileSync(path, "utf8")) as {
-        jobs: Record<string, { steps: Array<{ run?: string }> }>;
-      };
-      const runSteps = parsed.jobs[job]?.steps.filter((step) => step.run !== undefined) ?? [];
-      expect(runSteps.length, `the ${job} job must hold exactly one run block`).toBe(1);
-      return runSteps[0]?.run ?? "";
-    };
-
-    /** Runs a run block with bash, the way the runner would, and returns its exit code. */
-    const runBlockIn = (
-      block: string,
-      cwd: string,
-      env: Record<string, string> = {},
-    ): number | null => {
-      const directory = mkdtempSync(join(tmpdir(), "iso-24495-step-"));
-      try {
-        const step = join(directory, "step.sh");
-        writeFileSync(step, block, "utf8");
-        const run = Bun.spawnSync(["bash", forBash(step)], {
-          cwd,
-          env: { ...process.env, RUNNER_TEMP: forBash(directory), ...env },
-        });
-        return run.exitCode;
-      } finally {
-        rmSync(directory, { recursive: true, force: true });
-      }
-    };
-
     // Execute the checked-in shell block against a stand-in gate. It must pass
     // when the gate passes and fail when the gate fails. Running the real gate
     // here would run this suite inside itself. This test does not validate the
@@ -1368,43 +1282,15 @@ describe("repository writing conventions", () => {
       // named as github.ref or github.sha; any other ref or repository is
       // refused.
       test("every checkout takes the commit the pushed tag names", () => {
-        interface Workflow {
-          jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
-        }
         const triggeringRef = /^\$\{\{\s*github\.(?:ref|sha)\s*\}\}$/;
         const triggeringRepository = /^\$\{\{\s*github\.repository\s*\}\}$/;
-        /** Every checkout step's problem with what it checks out, if any. */
-        const wrongCheckouts = (text: string): string[] => {
-          const parsed = Bun.YAML.parse(text) as Workflow;
-          const checkouts = Object.values(parsed.jobs).flatMap((job) =>
-            job.steps.filter((step) => step.uses?.startsWith("actions/checkout@")));
-          expect(checkouts.length, "the workflow checks the repository out").toBeGreaterThan(0);
-          return checkouts.flatMap((step) => {
-            const ref = step.with?.ref;
-            const repository = step.with?.repository;
-            return [
-              ...(ref === undefined || triggeringRef.test(String(ref)) ? [] : [`ref: ${ref}`]),
-              ...(repository === undefined || triggeringRepository.test(String(repository))
-                ? []
-                : [`repository: ${repository}`]),
-            ];
-          });
-        };
+        const wrongCheckouts = checkoutProblems(triggeringRef, triggeringRepository);
 
         const workflow = readFileSync(tagWorkflow, "utf8").replace(/\r\n/g, "\n");
         expect(wrongCheckouts(workflow)).toEqual([]);
 
         // The rule itself, on edited copies of the workflow.
-        const checkoutWith = (lines: string[]): string => {
-          const edited = workflow.replace(
-            /^( *)- uses: actions\/checkout@(\S+)\n/m,
-            (match, indent: string, version: string) =>
-              [`${indent}- uses: actions/checkout@${version}`, `${indent}  with:`,
-                ...lines.map((line) => `${indent}    ${line}`), ""].join("\n"),
-          );
-          expect(edited, "the edit must reach the checkout step").not.toBe(workflow);
-          return edited;
-        };
+        const checkoutWith = checkoutEditor(workflow);
         expect(wrongCheckouts(checkoutWith(["ref: main"]))).toEqual(["ref: main"]);
         expect(wrongCheckouts(checkoutWith(["repository: someone/fork"])))
           .toEqual(["repository: someone/fork"]);
@@ -1417,21 +1303,7 @@ describe("repository writing conventions", () => {
       // runs inside itself. The tag check passes only for the tag it is given.
       test("the run fails when the tag check fails, and when the gate fails", () => {
         const block = runBlock(tagWorkflow, "validate");
-        const run = (tag: string, gate: number): number | null => {
-          const repository = mkdtempSync(join(tmpdir(), "iso-24495-tag-"));
-          try {
-            mkdirSync(join(repository, "scripts"));
-            writeFileSync(
-              join(repository, "scripts", "release-tag-cli.ts"),
-              "process.exit(process.argv[2] === \"v9.9.9\" ? 0 : 1);\n",
-              "utf8",
-            );
-            writeFileSync(join(repository, "scripts", "check.sh"), `exit ${gate}\n`, "utf8");
-            return runBlockIn(block, repository, { GITHUB_REF_NAME: tag });
-          } finally {
-            rmSync(repository, { recursive: true, force: true });
-          }
-        };
+        const run = tagCheckRunner(block);
         expect(run("v9.9.9", 0), "a matching tag and a passing gate").toBe(0);
         expect(run("v9.9.8", 0), "a tag that does not match").not.toBe(0);
         expect(run("v9.9.9", 1), "a gate that fails").not.toBe(0);
@@ -1451,46 +1323,7 @@ describe("repository writing conventions", () => {
         "pull-request-text.yml",
       );
 
-      /** The environment the check runs in, with no step summary unless one is given. */
-      const checkEnvironment = (extra: Record<string, string> = {}): Record<string, string> => {
-        const environment: Record<string, string> = {};
-        for (const [key, value] of Object.entries(process.env)) {
-          if (value !== undefined && key !== "GITHUB_STEP_SUMMARY") environment[key] = value;
-        }
-        return { ...environment, ...extra };
-      };
-
-      /** Runs a copy of the check, and reports its exit code and everything it printed. */
-      const runCheck = (
-        script: string,
-        file: string,
-        extra: Record<string, string> = {},
-      ): { status: number | null; output: string } => {
-        const run = Bun.spawnSync(["bash", forBash(script), forBash(file)], {
-          env: checkEnvironment(extra),
-        });
-        const decoder = new TextDecoder();
-        return {
-          status: run.exitCode,
-          output: `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`,
-        };
-      };
-
-      /** Runs the check over one piece of text, and reports what a reader sees. */
-      const audit = (
-        text: string,
-        name = "description.md",
-        extra: Record<string, string> = {},
-      ): { status: number | null; output: string } => {
-        const directory = mkdtempSync(join(tmpdir(), "iso-24495-description-"));
-        try {
-          const file = join(directory, name);
-          writeFileSync(file, text, "utf8");
-          return runCheck(auditScript, file, extra);
-        } finally {
-          rmSync(directory, { recursive: true, force: true });
-        }
-      };
+      const audit = descriptionAuditor(auditScript);
 
       // Every pass says what a pass means, so nobody reads a green tick as a
       // judgement that the description is clear.
@@ -1817,11 +1650,7 @@ describe("repository writing conventions", () => {
         expect(run.exitCode).toBe(2);
       });
 
-      /** The parsed description workflow. */
-      const parsedWorkflow = (): {
-        on: { pull_request: { types: string[] } };
-        jobs: Record<string, { steps: Array<{ run?: string; env?: Record<string, string> }> }>;
-      } => Bun.YAML.parse(readFileSync(descriptionWorkflow, "utf8")) as ReturnType<typeof parsedWorkflow>;
+      const parsedWorkflow = workflowReader(descriptionWorkflow);
 
       // A description changes without a commit, so pushes alone would miss it.
       test("the workflow runs when a description is edited", () => {
@@ -1853,10 +1682,7 @@ describe("repository writing conventions", () => {
       // next setting it did not know, so none is added here.
       test("the workflow's own shell passes any text and fails an empty description", () => {
         const block = runBlock(descriptionWorkflow, "audit");
-        // An empty summary path stands for none, so this run never writes to
-        // the summary of the job running the suite.
-        const run = (description: string): number | null =>
-          runBlockIn(block, REPOSITORY_ROOT, { PR_BODY: description, GITHUB_STEP_SUMMARY: "" });
+        const run = descriptionRunner(block);
         expect(run("This description reads plainly.\n")).toBe(0);
         expect(run(`${"word ".repeat(40)}stop.`), "findings are advice, so they pass").toBe(0);
         expect(run(" \t\r\n  \n"), "whitespace is not text a reader can read").toBe(1);
@@ -2087,9 +1913,6 @@ describe("repository writing conventions", () => {
     });
 
     test("the rule refuses a package, a bare built-in and a file it does not read", () => {
-      const problems = (files: Record<string, string>, onDisk: string[] = []): string[] =>
-        importProblems(new Map(Object.entries(files)), (path) => onDisk.includes(path));
-
       expect(problems({ "scripts/a.ts": "import \"typescript\";" }))
         .toEqual(["scripts/a.ts imports \"typescript\", which is neither relative nor a node: built-in"]);
       expect(problems({ "scripts/a.ts": "import { sep } from \"path\"; console.log(sep);" }))
@@ -2162,17 +1985,25 @@ const SOURCE_FILE = /\.(?:ts|js|mjs|cjs)$/;
  */
 function shippedSources(): Map<string, string> {
   const sources = new Map<string, string>();
-  const walk = (directory: string): void => {
-    for (const entry of readdirSync(join(REPOSITORY_ROOT, directory))) {
-      if (SKIPPED_DIRECTORIES.has(entry) || entry === "tests") continue;
-      const path = `${directory}/${entry}`;
-      if (statSync(join(REPOSITORY_ROOT, path)).isDirectory()) walk(path);
-      else if (SOURCE_FILE.test(entry)) sources.set(path, readFileSync(join(REPOSITORY_ROOT, path), "utf8"));
-    }
-  };
-  walk("skills");
-  walk("scripts");
+  addShippedSources("skills", sources);
+  addShippedSources("scripts", sources);
   return sources;
+}
+
+/**
+ * Adds to `sources` the text of every source file under a directory, outside
+ * the tests, keyed by its path from the repository root.
+ *
+ * @throws The file system error when a directory cannot be listed or a file
+ *     cannot be read.
+ */
+function addShippedSources(directory: string, sources: Map<string, string>): void {
+  for (const entry of readdirSync(join(REPOSITORY_ROOT, directory))) {
+    if (SKIPPED_DIRECTORIES.has(entry) || entry === "tests") continue;
+    const path = `${directory}/${entry}`;
+    if (statSync(join(REPOSITORY_ROOT, path)).isDirectory()) addShippedSources(path, sources);
+    else if (SOURCE_FILE.test(entry)) sources.set(path, readFileSync(join(REPOSITORY_ROOT, path), "utf8"));
+  }
 }
 
 /**
@@ -2232,17 +2063,19 @@ function importProblems(sources: ReadonlyMap<string, string>, exists: (path: str
 function writtenImports(source: string, fileName = "source.ts"): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const modules = new Set<string>();
-  const visit = (node: ts.Node): void => {
-    const module = writtenModule(node);
-    if (module !== null) modules.add(module);
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
+  addWrittenModules(file, modules);
   const loader = fileName.endsWith(".ts") ? "ts" : "js";
   for (const found of new Bun.Transpiler({ loader }).scanImports(source)) {
     modules.add(found.path);
   }
   return [...modules].sort();
+}
+
+/** Adds to `modules` every module a node and its descendants import under a written name. */
+function addWrittenModules(node: ts.Node, modules: Set<string>): void {
+  const module = writtenModule(node);
+  if (module !== null) modules.add(module);
+  ts.forEachChild(node, (child) => addWrittenModules(child, modules));
 }
 
 /**
@@ -2283,4 +2116,286 @@ function isImportMetaRequire(expression: ts.Expression): boolean {
   return ts.isPropertyAccessExpression(expression) && expression.name.text === "require"
     && ts.isMetaProperty(expression.expression)
     && expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword;
+}
+
+/** The words a reader meets, once the structure a restructure may add is removed. */
+function words(block: string): string[] {
+  return block
+    .split("\n")
+    .map((line) => line.replace(/^(?:Before:|After:)/, "").replace(/^ {0,8}/, ""))
+    // A heading, and an elision standing for the lines not shown.
+    .filter((line) => !/^\s*(?:#|\.\.\.\s*$)/.test(line))
+    // A list marker, a bold label such as "**Purpose:**", and a marked slot.
+    .map((line) => line
+      .replace(/^\s*-\s*/, "")
+      .replace(/^\*\*[^*]+:\*\*\s*/, "")
+      .replace(/\[Author needed:[^\]]*\]/g, "")
+      .replace(/\*\*/g, "")
+      // A link reads as its text.
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1"))
+    .join(" ")
+    .split(/\s+/)
+    .filter((word) => word !== "");
+}
+
+/**
+ * Makes the reader of the legal skill between two markers.
+ *
+ * @returns A function that gives the lines of the legal skill from a start
+ *     marker up to an end marker, with trailing space removed. It fails the
+ *     test when either marker is missing.
+ */
+function legalSectionReader(legal: string): (start: string, end: string) => string[] {
+  return (start: string, end: string): string[] => {
+    const from = legal.indexOf(start);
+    expect(from, `iso-24495-2 must contain ${start}`).toBeGreaterThan(-1);
+    const to = legal.indexOf(end, from);
+    expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
+    return legal.slice(from, to).trimEnd().split(/\r?\n/);
+  };
+}
+
+/**
+ * The lines of a text from a start marker up to an end marker, with trailing
+ * space removed. It fails the test when either marker is missing.
+ *
+ * @param what Names the text in a failure message.
+ * @returns The lines.
+ */
+function blockOf(text: string, start: string, end: string, what: string): string[] {
+  const from = text.indexOf(start);
+  expect(from, `${what} must contain ${start}`).toBeGreaterThan(-1);
+  const to = text.indexOf(end, from);
+  expect(to, `${start} must be followed by ${end}`).toBeGreaterThan(from);
+  return text.slice(from, to).trimEnd().split(/\r?\n/);
+}
+
+// Files, at whatever depth, and text only. A review added a note in a
+// sub-folder and a diagram beside it, and the floor demanded the folder
+// rather than the note while the diagram failed for not being text. A
+// skill may hand a reader a picture; this list holds what it says, and a
+// picture says nothing this fixture can hold.
+/**
+ * Adds to `missing` each text file under a directory, at any depth, that
+ * `listed` does not hold. A directory that does not exist adds nothing.
+ *
+ * @param prefix The directory's path as `listed` writes it.
+ */
+function textFilesUnder(directory: string, prefix: string, listed: ReadonlySet<string>, missing: string[]): void {
+  const base = join(REPOSITORY_ROOT, directory);
+  if (!existsSync(base)) return;
+  for (const entry of readdirSync(base)) {
+    const here = `${prefix}/${entry}`;
+    const path = join(base, entry);
+    if (statSync(path).isDirectory()) {
+      textFilesUnder(`${directory}/${entry}`, here, listed, missing);
+    } else if (isPinnedKind(entry) && !listed.has(here)) {
+      missing.push(here);
+    }
+  }
+}
+
+/** A text with each Windows line ending made a single line feed. */
+function asWritten(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
+// Windows separators reach bash as escape characters rather than as path
+// separators, and `dirname` then reads the whole path as one name. Both
+// platforms accept forward slashes, so both get them.
+/** A path with each backslash made a forward slash. */
+function forBash(path: string): string {
+  return path.split("\\").join("/");
+}
+
+/** The one run block of a workflow job, read from the parsed YAML. */
+function runBlock(path: string, job: string): string {
+  const parsed = Bun.YAML.parse(readFileSync(path, "utf8")) as {
+    jobs: Record<string, { steps: Array<{ run?: string }> }>;
+  };
+  const runSteps = parsed.jobs[job]?.steps.filter((step) => step.run !== undefined) ?? [];
+  expect(runSteps.length, `the ${job} job must hold exactly one run block`).toBe(1);
+  return runSteps[0]?.run ?? "";
+}
+
+/** Runs a run block with bash, the way the runner would, and returns its exit code. */
+function runBlockIn(
+  block: string,
+  cwd: string,
+  env: Record<string, string> = {},
+): number | null {
+  const directory = mkdtempSync(join(tmpdir(), "iso-24495-step-"));
+  try {
+    const step = join(directory, "step.sh");
+    writeFileSync(step, block, "utf8");
+    const run = Bun.spawnSync(["bash", forBash(step)], {
+      cwd,
+      env: { ...process.env, RUNNER_TEMP: forBash(directory), ...env },
+    });
+    return run.exitCode;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+/** The checkout steps of a workflow, as the pushed tag check reads them. */
+interface Workflow {
+  jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, unknown> }> }>;
+}
+
+/**
+ * Makes the check of a workflow's checkout steps.
+ *
+ * @returns A function that gives every checkout step's problem with what it
+ *     checks out, if any. It fails the test when the workflow holds no
+ *     checkout step.
+ */
+function checkoutProblems(triggeringRef: RegExp, triggeringRepository: RegExp): (text: string) => string[] {
+  return (text: string): string[] => {
+    const parsed = Bun.YAML.parse(text) as Workflow;
+    const checkouts = Object.values(parsed.jobs).flatMap((job) =>
+      job.steps.filter((step) => step.uses?.startsWith("actions/checkout@")));
+    expect(checkouts.length, "the workflow checks the repository out").toBeGreaterThan(0);
+    return checkouts.flatMap((step) => {
+      const ref = step.with?.ref;
+      const repository = step.with?.repository;
+      return [
+        ...(ref === undefined || triggeringRef.test(String(ref)) ? [] : [`ref: ${ref}`]),
+        ...(repository === undefined || triggeringRepository.test(String(repository))
+          ? []
+          : [`repository: ${repository}`]),
+      ];
+    });
+  };
+}
+
+/**
+ * Makes the editor of a workflow's first checkout step.
+ *
+ * @returns A function that gives a copy of the workflow whose first checkout
+ *     step has a `with:` block holding the given lines. It fails the test
+ *     when the edit does not reach that step.
+ */
+function checkoutEditor(workflow: string): (lines: string[]) => string {
+  return (lines: string[]): string => {
+    const edited = workflow.replace(
+      /^( *)- uses: actions\/checkout@(\S+)\n/m,
+      (match, indent: string, version: string) =>
+        [`${indent}- uses: actions/checkout@${version}`, `${indent}  with:`,
+          ...lines.map((line) => `${indent}    ${line}`), ""].join("\n"),
+    );
+    expect(edited, "the edit must reach the checkout step").not.toBe(workflow);
+    return edited;
+  };
+}
+
+/**
+ * Makes a runner for the pushed tag workflow's run block, with stand-ins for
+ * the tag check and the gate.
+ *
+ * @returns A function that runs the block for a tag, beside a gate that exits
+ *     with the given status, and gives the block's exit code.
+ */
+function tagCheckRunner(block: string): (tag: string, gate: number) => number | null {
+  return (tag: string, gate: number): number | null => {
+    const repository = mkdtempSync(join(tmpdir(), "iso-24495-tag-"));
+    try {
+      mkdirSync(join(repository, "scripts"));
+      writeFileSync(
+        join(repository, "scripts", "release-tag-cli.ts"),
+        "process.exit(process.argv[2] === \"v9.9.9\" ? 0 : 1);\n",
+        "utf8",
+      );
+      writeFileSync(join(repository, "scripts", "check.sh"), `exit ${gate}\n`, "utf8");
+      return runBlockIn(block, repository, { GITHUB_REF_NAME: tag });
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  };
+}
+
+/** The environment the check runs in, with no step summary unless one is given. */
+function checkEnvironment(extra: Record<string, string> = {}): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== "GITHUB_STEP_SUMMARY") environment[key] = value;
+  }
+  return { ...environment, ...extra };
+}
+
+/** Runs a copy of the check, and reports its exit code and everything it printed. */
+function runCheck(
+  script: string,
+  file: string,
+  extra: Record<string, string> = {},
+): { status: number | null; output: string } {
+  const run = Bun.spawnSync(["bash", forBash(script), forBash(file)], {
+    env: checkEnvironment(extra),
+  });
+  const decoder = new TextDecoder();
+  return {
+    status: run.exitCode,
+    output: `${decoder.decode(run.stdout)}${decoder.decode(run.stderr)}`,
+  };
+}
+
+/**
+ * Makes a runner for the pull request description check.
+ *
+ * @returns A function that runs the check over one piece of text, and
+ *     reports what a reader sees.
+ */
+function descriptionAuditor(auditScript: string): (text: string, name?: string, extra?: Record<string, string>) => { status: number | null; output: string } {
+  return (
+    text: string,
+    name = "description.md",
+    extra: Record<string, string> = {},
+  ): { status: number | null; output: string } => {
+    const directory = mkdtempSync(join(tmpdir(), "iso-24495-description-"));
+    try {
+      const file = join(directory, name);
+      writeFileSync(file, text, "utf8");
+      return runCheck(auditScript, file, extra);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  };
+}
+
+/** The parts of the description workflow that the tests read. */
+interface DescriptionWorkflow {
+  on: { pull_request: { types: string[] } };
+  jobs: Record<string, { steps: Array<{ run?: string; env?: Record<string, string> }> }>;
+}
+
+/**
+ * Makes the reader of the description workflow.
+ *
+ * @returns A function that gives the parsed description workflow.
+ */
+function workflowReader(descriptionWorkflow: string): () => DescriptionWorkflow {
+  return (): DescriptionWorkflow => Bun.YAML.parse(readFileSync(descriptionWorkflow, "utf8")) as DescriptionWorkflow;
+}
+
+/**
+ * Makes a runner for the description workflow's run block.
+ *
+ * @returns A function that runs the block over a description and gives its
+ *     exit code.
+ */
+function descriptionRunner(block: string): (description: string) => number | null {
+  // An empty summary path stands for none, so this run never writes to
+  // the summary of the job running the suite.
+  return (description: string): number | null =>
+    runBlockIn(block, REPOSITORY_ROOT, { PR_BODY: description, GITHUB_STEP_SUMMARY: "" });
+}
+
+/**
+ * What the import rule finds wrong in a set of source files.
+ *
+ * @param onDisk The paths that exist on disk.
+ * @returns One sentence for each import at fault.
+ */
+function problems(files: Record<string, string>, onDisk: string[] = []): string[] {
+  return importProblems(new Map(Object.entries(files)), (path) => onDisk.includes(path));
 }

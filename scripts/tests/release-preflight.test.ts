@@ -129,20 +129,16 @@ describe("the release preflight", () => {
         GIT_COMMITTER_NAME: "Test",
         GIT_COMMITTER_EMAIL: "test@example.invalid",
       };
-      const git = (cwd: string, ...args: string[]): void => {
-        const run = Bun.spawnSync(["git", ...args], { cwd, env });
-        expect(run.exitCode, `git ${args.join(" ")}: ${new TextDecoder().decode(run.stderr)}`).toBe(0);
-      };
       const remote = join(workspace, "remote.git");
       const local = join(workspace, "local");
       mkdirSync(local);
-      git(workspace, "init", "--quiet", "--bare", remote);
-      git(local, "init", "--quiet");
-      git(local, "commit", "--quiet", "--allow-empty", "-m", "Start");
-      git(local, "tag", "-a", "v0.9.0", "-m", "Release");
-      git(local, "tag", "v0.10.0");
-      git(local, "remote", "add", "origin", remote);
-      git(local, "push", "--quiet", "origin", "--tags");
+      git(env, workspace, "init", "--quiet", "--bare", remote);
+      git(env, local, "init", "--quiet");
+      git(env, local, "commit", "--quiet", "--allow-empty", "-m", "Start");
+      git(env, local, "tag", "-a", "v0.9.0", "-m", "Release");
+      git(env, local, "tag", "v0.10.0");
+      git(env, local, "remote", "add", "origin", remote);
+      git(env, local, "push", "--quiet", "origin", "--tags");
 
       const tags = remoteTags(local);
       expect(tags.ok).toBe(true);
@@ -181,11 +177,7 @@ describe("the release preflight", () => {
   test("git that runs and fails is described in fixed words, never in its own", () => {
     const marker = "https://user:hunter2@host.invalid/owner/repo.git";
     const encoder = new TextEncoder();
-    const failing = (): { exitCode: number; stdout: Uint8Array; stderr: Uint8Array } => ({
-      exitCode: 128,
-      stdout: encoder.encode(`listing for ${marker}`),
-      stderr: encoder.encode(`fatal: unable to access '${marker}/': Could not resolve host: host.invalid`),
-    });
+    const failing = failedListing(marker, encoder);
     const reason = "git exited with code 128 when asked for the tags on origin. "
       + "Run \"git ls-remote --tags origin\" in the checkout to see its reason.";
     expect(remoteTags("checkout", failing)).toEqual({ ok: false, reason });
@@ -203,3 +195,23 @@ describe("the release preflight", () => {
     expect(silent.ok ? "" : silent.reason).toStartWith("git exited with code 1 when asked");
   });
 });
+
+/** Runs git in a directory under the environment given, and fails the test if git fails. */
+function git(env: Record<string, string | undefined>, cwd: string, ...args: string[]): void {
+  const run = Bun.spawnSync(["git", ...args], { cwd, env });
+  expect(run.exitCode, `git ${args.join(" ")}: ${new TextDecoder().decode(run.stderr)}`).toBe(0);
+}
+
+/**
+ * A stand-in for a git run that fails, and names the remote address, with its
+ * password, in both its outputs.
+ *
+ * @returns A function that gives what such a run gives.
+ */
+function failedListing(marker: string, encoder: TextEncoder): () => { exitCode: number; stdout: Uint8Array; stderr: Uint8Array } {
+  return () => ({
+    exitCode: 128,
+    stdout: encoder.encode(`listing for ${marker}`),
+    stderr: encoder.encode(`fatal: unable to access '${marker}/': Could not resolve host: host.invalid`),
+  });
+}

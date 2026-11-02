@@ -575,9 +575,6 @@ describe("reader-facing behaviour contracts", () => {
   test("deep nesting finishes and does not exhaust the stack", () => {
     // Reading a label by starting again inside it would cost a pass for every level.
     // Brackets that never resolve must stay cheap too, and must not exhaust the stack.
-    const deep = (size: number): void => {
-      auditText(deepLabelDocument(size));
-    };
     deep(3_000);
 
     let layered = "innermost";
@@ -632,9 +629,6 @@ ${sentence}`)
   test("nested link labels and unmatched brackets finish", () => {
     // Every rule that reads links once ran a separate scan. Ten thousand
     // unmatched brackets took about nine seconds before the shared scan.
-    const audit = (size: number): void => {
-      auditText(nestedLinkDocument(size));
-    };
     audit(3_000);
 
     // Brackets that never close are the shape that was worst, and the shape a generated
@@ -689,7 +683,6 @@ ${sentence}`)
     // decides how many that is. A fixed six was borrowed from the pattern that finds a
     // definition, whose capture really is capped at six, and applied to the pattern that
     // finds an acronym, which is not capped at all.
-    const spell = (letters: string[]): string => letters.join(".") + ".";
     const words = ["Alpha", "Beta", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
       "India", "Juliett"];
     for (const size of [3, 6, 7, 8, 9, 10]) {
@@ -708,9 +701,6 @@ ${sentence}`)
     // Every word here is discounted: "A" reads as the article, and so does "and". The
     // guard counted nothing and therefore read the whole remaining document for every
     // candidate, which is the cost it was written to prevent.
-    const hostile = (size: number): void => {
-      auditText(discountedAcronymDocument(size));
-    };
     hostile(3_000);
   }, HOSTILE_TIMEOUT_MS);
 
@@ -739,15 +729,9 @@ ${sentence}`)
     //
     // Every acronym rebuilt the entire remaining token list to look three tokens ahead.
     const known = new Set(["AB"]);
-    const acronyms = (size: number): void => {
-      auditText(acronymDefinitionDocument(size), { knownAcronyms: known });
-    };
-    acronyms(3_000);
+    auditAcronymDefinitions(3_000, known);
 
     // Every finding counted the line endings before it from the start of the paragraph.
-    const paragraphs = (size: number): void => {
-      auditText(longParagraphDocument(size));
-    };
     paragraphs(3_000);
 
     // The findings themselves must survive the repair, not merely arrive sooner.
@@ -1037,8 +1021,6 @@ ${sentence}`)
       ["link-text", 1],
       ["image-alt", 3],
     ];
-    const found = (text: string): Array<[string, number]> =>
-      auditText(text).map((violation) => [violation.rule, violation.line]);
     expect(found(document.join(BREAK))).toEqual(expected);
     expect(found(document.join(carriageReturn))).toEqual(expected);
     expect(found(document.join(carriageReturn + BREAK))).toEqual(expected);
@@ -1733,8 +1715,6 @@ ${sentence}`)
   // sentences stay out, because a heading is not a sentence and heading-style already
   // bounds its length. "## The tenant shall pay" once reported nothing in any document.
   test("the rules about words read headings, and the rules about sentences do not", () => {
-    const located = (text: string): Array<[string, number]> =>
-      auditText(text).map((violation) => [violation.rule, violation.line]);
     // Each of the five rules, one at a time, on an ATX heading and on a Setext one.
     // A Setext heading over two lines reports on its first line, where it starts.
     for (const [rule, words] of [
@@ -2544,7 +2524,6 @@ describe("a block that may hold a link keeps its emphasis marks", () => {
   // this group is what the code before the pairing gave for the same text.
   const tick = String.fromCharCode(96);
   const slash = String.fromCharCode(92);
-  const wordy = (line: number) => [`wordy-phrase at line ${line}: "in order to" says what "to" says`];
   const legal = ['legalese at line 1: banned term "shall"'];
 
   test("every case the reviews raised is read as written", () => {
@@ -2765,18 +2744,17 @@ describe("labels nested to great depth", () => {
   // label sat once copied those places up through every level, so the work grew with
   // the square of the depth: 8,000 levels took a second to flatten and nine to audit.
   // Nothing records them now, and these hold the cost where it was before.
-  const nested = (depth: number): string => "![".repeat(depth) + "Words" + "](u)".repeat(depth);
 
   test("the text is flattened in proportion to its length", () => {
     for (const depth of [8_000, 16_000]) {
-      const text = nested(depth);
+      const text = imageLabelsNestedTo(depth);
       expect(elapsed(() => readerProseBlocks(text)), `${depth} levels`).toBeLessThan(750);
     }
   }, HOSTILE_TIMEOUT_MS);
 
   test("the audit reads it in proportion to its length", () => {
     for (const depth of [8_000, 16_000]) {
-      const text = nested(depth);
+      const text = imageLabelsNestedTo(depth);
       expect(elapsed(() => auditText(text)), `${depth} levels`).toBeLessThan(4_000);
     }
   }, 2 * HOSTILE_TIMEOUT_MS);
@@ -2786,7 +2764,6 @@ describe("labels nested to great depth", () => {
   // destination made every scan run to the end: 16,000 levels took eight seconds, where
   // the audit took one before that check was written.
   test("labels nested with open parentheses are read in proportion to their length", () => {
-    const open = (depth: number): string => "[".repeat(depth) + "x" + "](()".repeat(depth) + ")".repeat(depth);
     for (const depth of [8_000, 16_000]) {
       const text = open(depth);
       expect(elapsed(() => auditText(text)), `${depth} levels`).toBeLessThan(4_000);
@@ -2831,7 +2808,7 @@ describe("an acronym definition whose emphasis runs over a line break", () => {
   // had no partner and stayed in its word. "identi*ty" then gave two initials and the
   // expansion no longer spelt the acronym. The uses of the acronym were read a block at a
   // time, so the same text on one line was a definition.
-  const undefinedAt = (line: number) => [`acronym-undefined at line ${line}: define acronym "IAM" on first use`];
+  const undefinedAt = undefinedAtFor("IAM");
 
   test("the expansion defines the acronym on two lines as it does on one", () => {
     expect(findingsIn("identi*ty and access management* (IAM). Use IAM.")).toEqual([]);
@@ -2873,8 +2850,6 @@ describe("an acronym definition whose emphasis runs over a line break", () => {
     // A table row is in no block, so it is judged alone: with a link it keeps its marks.
     expect(findingsIn("| identi*ty and access management (IAM) | [the guide](a*b) |" + BREAK + "|---|---|"
       + BREAK + "| one | two |" + BREAK + BREAK + "Use IAM.")).toEqual(undefinedAt(5));
-    const row = (meaning: string) => ["| Term | Meaning |", "|---|---|",
-      `| identi*ty* and access management (IAM) | ${meaning} |`, "", "Use IAM."].join(BREAK);
     expect(findingsIn(row("a service"))).toEqual([]);
     expect(findingsIn(row("[a service](u)"))).toEqual(undefinedAt(5));
     // Marks that sit in no word of the expansion change no initial, so the definition
@@ -2916,9 +2891,6 @@ describe("a link between an expansion and its acronym", () => {
   // the words of its destination counted as words of the expansion. A reader never
   // sees a destination. "[identity and access management](guide) (IAM)" gave the
   // initials AMG, and IAM was reported as undefined on its next use.
-  const undefinedAt = (acronym: string, line: number) =>
-    [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
-  const acronyms = (text: string) => findingsIn(text).filter((finding) => finding.startsWith("acronym"));
 
   // A review put one emoji before a link. The places of the link were counted in
   // UTF-16 units and dropped by code points, so each place after the emoji was one out:
@@ -2947,11 +2919,6 @@ describe("a link between an expansion and its acronym", () => {
   // renderer of GitHub accepts one more: asked on 2026-10-08, it took a label of 1,000
   // characters for a reference and refused one of 1,001. That is known and left so.
   test("a reference label of 999 characters is a label, and one of 1,000 is not", () => {
-    const nested = (spaces: number): string => {
-      const label = " ".repeat(spaces) + "management";
-      expect(label).toHaveLength(spaces + 10);
-      return [`[identity and access [${label}]](guide) (IAM).`, "Use IAM.", "", `[${label}]: /u`].join(BREAK);
-    };
     // At 999 the inner pair is a link to the reference. The outer pair is then text,
     // and "(guide)" stands between the expansion and its acronym.
     for (const spaces of [0, 988, 989]) {
@@ -2964,13 +2931,6 @@ describe("a link between an expansion and its acronym", () => {
       expect(Bun.markdown.html(nested(spaces)), `${spaces + 10}`).toContain('href="guide"');
     }
     // The limit alone, with the reference given, so that nothing else can set it.
-    const marked = (length: number): number[] => {
-      const label = "a".repeat(length);
-      const syntax = linkSyntaxIn(`[${label}]`, new Set([label]));
-      expect(syntax).toHaveLength(length + 2);
-      expect([...syntax.subarray(1, length + 1)].includes(1)).toBe(false);
-      return [itemAt(syntax, 0), itemAt(syntax, length + 1)];
-    };
     expect([998, 999, 1_000, 1_001].map(marked)).toEqual([[1, 1], [1, 1], [0, 0], [0, 0]]);
   });
 
@@ -3072,7 +3032,6 @@ describe("a link between an expansion and its acronym", () => {
 
   test("a reference is a link where the document defines it, and switches the outer brackets off like any link", () => {
     const defined = ["", "[and]: https://example.com/and"];
-    const outer = (inner: string): string[] => [`[identity ${inner} access management](guide) (IAM).`, "Use IAM."];
     // Each inner form is a link, so the outer brackets are text and "(guide)" is shown.
     for (const inner of ["[and]", "[and][]", "[and][and]", "[it][and]", "[and](<)"]) {
       expect(acronyms([...outer(inner), ...defined].join(BREAK)), inner).toEqual(undefinedAt("IAM", 2));
@@ -3112,8 +3071,8 @@ describe("a link between an expansion and its acronym", () => {
     const tick = String.fromCharCode(96);
     const quote = String.fromCharCode(34);
     const use = "Use IAM.";
-    const link = (before: string): string[] => [`identity and access ${before}[management](guide) (IAM).`, use];
-    const text = (before: string): string[] => [`identity and access ${before}management](guide) (IAM).`, use];
+    const link = linkAfter(use);
+    const text = closingBracketAfter(use);
     // A backslash in a code span escapes nothing, so the span ends at the backtick after it
     // and the link that follows is a link.
     expect(acronyms([`identity and access ${tick}${slash}${tick} [management](guide) ${tick} (IAM).`, use].join(BREAK))).toEqual([]);
@@ -3229,19 +3188,6 @@ describe("a line that holds only a space Markdown does not count as white space"
     ["a list marker with nothing else on its line", (held) => ["one", `- ${held}`, "two"]],
     ["a line that would close a code fence", (held) => [fence, "one", `${fence}${held}`, "two", fence, "three"]],
   ];
-  /**
-   * Where each block is and which lines are hidden as code, which is the shape of a
-   * document. What a line of spaces leaves to read is not compared: it leaves nothing,
-   * whichever space it is, because the start of every line of a paragraph is trimmed.
-   */
-  const shapeOf = (lines: string[]): unknown => {
-    const document = lines.join(BREAK);
-    const read = readDocument(document);
-    return {
-      blocks: proseBlocks(document).map((block) => [block.line, block.lines.length]),
-      hidden: lines.map((line, index) => read.hidden(index)),
-    };
-  };
 
   test("the case that was reported, and what a page shows for it", () => {
     const document = ["identity and access", String.fromCodePoint(0xa0), "management (IAM).", "Use IAM."].join(BREAK);
@@ -3393,3 +3339,134 @@ describe("an emphasis mark beside half a surrogate pair", () => {
     expect(withoutEmphasis(`${replacementCharacter}_in_ order to proceed.`)).toBe(`${replacementCharacter}in order to proceed.`);
   });
 });
+
+/** Audits a document of deeply nested labels that never resolve, and returns nothing. */
+function deep(size: number): void {
+  auditText(deepLabelDocument(size));
+}
+
+/** Audits a document of nested link labels, and returns nothing. */
+function audit(size: number): void {
+  auditText(nestedLinkDocument(size));
+}
+
+/** The letters given, each followed by a full stop, as an acronym is sometimes spelt. */
+function spell(letters: string[]): string {
+  return letters.join(".") + ".";
+}
+
+/** Audits a document of acronym candidates that are all discounted, and returns nothing. */
+function hostile(size: number): void {
+  auditText(discountedAcronymDocument(size));
+}
+
+/** Audits a document of acronym definitions with the acronyms given as known, and returns nothing. */
+function auditAcronymDefinitions(size: number, known: Set<string>): void {
+  auditText(acronymDefinitionDocument(size), { knownAcronyms: known });
+}
+
+/** Audits one paragraph of long sentences, and returns nothing. */
+function paragraphs(size: number): void {
+  auditText(longParagraphDocument(size));
+}
+
+/** Each finding of the audit as its rule and its line. */
+function found(text: string): Array<[string, number]> {
+  return auditText(text).map((violation) => [violation.rule, violation.line]);
+}
+
+/** Each finding of the audit as its rule and its line. */
+function located(text: string): Array<[string, number]> {
+  return auditText(text).map((violation) => [violation.rule, violation.line]);
+}
+
+/** The finding a wordy "in order to" gives on the line named. */
+function wordy(line: number): string[] {
+  return [`wordy-phrase at line ${line}: "in order to" says what "to" says`];
+}
+
+/** Image labels nested to the depth given around one word. */
+function imageLabelsNestedTo(depth: number): string {
+  return "![".repeat(depth) + "Words" + "](u)".repeat(depth);
+}
+
+/** Link labels nested to the depth given, with an open parenthesis in each destination. */
+function open(depth: number): string {
+  return "[".repeat(depth) + "x" + "](()".repeat(depth) + ")".repeat(depth);
+}
+
+/** A table that defines IAM with emphasis in the expansion, then a use of IAM. */
+function row(meaning: string): string {
+  return ["| Term | Meaning |", "|---|---|",
+    `| identi*ty* and access management (IAM) | ${meaning} |`, "", "Use IAM."].join(BREAK);
+}
+
+/** The finding that the acronym named is used on the line named before it is defined. */
+function undefinedAt(acronym: string, line: number): string[] {
+  return [`acronym-undefined at line ${line}: define acronym "${acronym}" on first use`];
+}
+
+/** The finding list `undefinedAt` gives for one acronym, made for any line it is asked about. */
+function undefinedAtFor(acronym: string): (line: number) => string[] {
+  return (line) => undefinedAt(acronym, line);
+}
+
+/** The findings about acronyms in a text. */
+function acronyms(text: string): string[] {
+  return findingsIn(text).filter((finding) => finding.startsWith("acronym"));
+}
+
+/** A definition of IAM whose inner label, of the length given, a reference defines. */
+function nested(spaces: number): string {
+  const label = " ".repeat(spaces) + "management";
+  expect(label).toHaveLength(spaces + 10);
+  return [`[identity and access [${label}]](guide) (IAM).`, "Use IAM.", "", `[${label}]: /u`].join(BREAK);
+}
+
+/** Whether the first and last brackets of a defined reference label of the length given are link syntax, as 1 or 0. */
+function marked(length: number): number[] {
+  const label = "a".repeat(length);
+  const syntax = linkSyntaxIn(`[${label}]`, new Set([label]));
+  expect(syntax).toHaveLength(length + 2);
+  expect([...syntax.subarray(1, length + 1)].includes(1)).toBe(false);
+  return [itemAt(syntax, 0), itemAt(syntax, length + 1)];
+}
+
+/** The lines of an IAM definition whose expansion is wrapped in a link, with the text given inside it. */
+function outer(inner: string): string[] {
+  return [`[identity ${inner} access management](guide) (IAM).`, "Use IAM."];
+}
+
+/**
+ * Makes the lines of an IAM definition with a link to "management", after the text
+ * given, followed by the use given.
+ *
+ * @returns A function from the text before the link to the lines.
+ */
+function linkAfter(use: string): (before: string) => string[] {
+  return (before) => [`identity and access ${before}[management](guide) (IAM).`, use];
+}
+
+/**
+ * Makes the lines of an IAM definition with a closing bracket after "management",
+ * after the text given, followed by the use given.
+ *
+ * @returns A function from the text before "management" to the lines.
+ */
+function closingBracketAfter(use: string): (before: string) => string[] {
+  return (before) => [`identity and access ${before}management](guide) (IAM).`, use];
+}
+
+/**
+ * Where each block is and which lines are hidden as code, which is the shape of a
+ * document. What a line of spaces leaves to read is not compared: it leaves nothing,
+ * whichever space it is, because the start of every line of a paragraph is trimmed.
+ */
+function shapeOf(lines: string[]): unknown {
+  const document = lines.join(BREAK);
+  const read = readDocument(document);
+  return {
+    blocks: proseBlocks(document).map((block) => [block.line, block.lines.length]),
+    hidden: lines.map((line, index) => read.hidden(index)),
+  };
+}

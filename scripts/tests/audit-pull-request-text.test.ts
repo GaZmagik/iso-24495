@@ -149,9 +149,7 @@ describe("a path that is not a file to read is a wrong argument", () => {
 
   test("a path that names nothing, and a file that refuses to be read, say so in fixed words", () => {
     const path = "some/PRIVATE/description.md";
-    const thrower = (): never => {
-      throw new Error(`ENOENT: no such file or directory, open '${path}'`);
-    };
+    const thrower = missingFileThrower(path);
     const missing = run(path, [], { inspect: thrower });
     expect(missing.exit).toBe(2);
     expect(missing.read).toEqual([]);
@@ -307,43 +305,6 @@ describe("the real file system", () => {
 // that handle. So the thing inspected is the thing read.
 describe("the file is opened once, and what was opened is what is read", () => {
   const refused = "what was opened is not the regular file the path names";
-  interface Kind { isFile(): boolean; isSymbolicLink(): boolean; dev: bigint; ino: bigint }
-  const kind = (ino: number, dev = 1, file = true, link = false): Kind =>
-    ({ isFile: () => file, isSymbolicLink: () => link, dev: BigInt(dev), ino: BigInt(ino) });
-
-  /** Reads through calls that stand in for the file system, and lists the calls made. */
-  function reading(handle: Kind, path: Kind, replace: Partial<FileCalls> = {}): { text: string | null; thrown: unknown; calls: string[] } {
-    const calls: string[] = [];
-    const files: FileCalls = {
-      open: (asked) => {
-        calls.push(`open ${asked}`);
-        return 7;
-      },
-      ofHandle: (asked) => {
-        calls.push(`ofHandle ${asked}`);
-        return handle;
-      },
-      ofPath: (asked) => {
-        calls.push(`ofPath ${asked}`);
-        return path;
-      },
-      read: (asked) => {
-        calls.push(`read ${asked}`);
-        return "the text";
-      },
-      close: (asked) => {
-        calls.push(`close ${asked}`);
-      },
-      ...replace,
-    };
-    try {
-      return { text: readRegularFile("a.md", files), thrown: null, calls };
-    } catch (error) {
-      return { text: null, thrown: error, calls };
-    }
-  }
-  const message = (thrown: unknown): string => (thrown as Error).message;
-
   test("a regular file is opened once, inspected by its handle, and read from that handle", () => {
     expect(reading(kind(5), kind(5))).toEqual({
       text: "the text",
@@ -371,7 +332,6 @@ describe("the file is opened once, and what was opened is what is read", () => {
   });
 
   test("a link refused where the system can refuse one at open, and every other failure, is thrown as it came", () => {
-    const failure = (code: string): Error => Object.assign(new Error(`${code}: hunter2`), { code });
     const loop = reading(kind(5), kind(5), {
       open: () => {
         throw failure("ELOOP");
@@ -439,3 +399,64 @@ describe("the file is opened once, and what was opened is what is read", () => {
     }
   });
 });
+
+/**
+ * A stand-in for a file system call that finds no file at the path.
+ *
+ * @returns A function that throws an `Error` saying that no file is at the path.
+ */
+function missingFileThrower(path: string): () => never {
+  return () => {
+    throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+  };
+}
+
+/** What a handle or a path is found to be, as far as the reading asks. */
+interface Kind { isFile(): boolean; isSymbolicLink(): boolean; dev: bigint; ino: bigint }
+
+/** A thing on disk with the given inode and device, a file and no link unless told. */
+function kind(ino: number, dev = 1, file = true, link = false): Kind {
+  return { isFile: () => file, isSymbolicLink: () => link, dev: BigInt(dev), ino: BigInt(ino) };
+}
+
+/** Reads through calls that stand in for the file system, and lists the calls made. */
+function reading(handle: Kind, path: Kind, replace: Partial<FileCalls> = {}): { text: string | null; thrown: unknown; calls: string[] } {
+  const calls: string[] = [];
+  const files: FileCalls = {
+    open: (asked) => {
+      calls.push(`open ${asked}`);
+      return 7;
+    },
+    ofHandle: (asked) => {
+      calls.push(`ofHandle ${asked}`);
+      return handle;
+    },
+    ofPath: (asked) => {
+      calls.push(`ofPath ${asked}`);
+      return path;
+    },
+    read: (asked) => {
+      calls.push(`read ${asked}`);
+      return "the text";
+    },
+    close: (asked) => {
+      calls.push(`close ${asked}`);
+    },
+    ...replace,
+  };
+  try {
+    return { text: readRegularFile("a.md", files), thrown: null, calls };
+  } catch (error) {
+    return { text: null, thrown: error, calls };
+  }
+}
+
+/** The message of a value that was thrown, read as an `Error`. */
+function message(thrown: unknown): string {
+  return (thrown as Error).message;
+}
+
+/** A file system error with the given code, and a message holding a secret. */
+function failure(code: string): Error {
+  return Object.assign(new Error(`${code}: hunter2`), { code });
+}

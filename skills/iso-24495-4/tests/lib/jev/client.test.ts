@@ -14,6 +14,29 @@ async function noWait(): Promise<void> {
   // Waits for nothing, so a retry runs at once.
 }
 
+/**
+ * Makes a transport that checks each request it is sent, records its body,
+ * then changes the request it was made from. It fails the first attempt,
+ * answers the next two as busy, and answers every later one validly.
+ *
+ * @returns The transport.
+ */
+function recordingTransport(bodies: string[], request: typeof OPENING): Fetch {
+  return async (url, init) => {
+    expect(url).toContain("typesafe.ai");
+    expect(init.headers.Authorization).toBe("Bearer key");
+    bodies.push(init.body);
+    request.state.opening = "changed";
+    if (bodies.length === 1) throw new Error("key must be redacted");
+    if (bodies.length === 2) return new Response("busy", { status: 429 });
+    if (bodies.length === 3) return new Response("busy", { status: 503 });
+    return valid();
+  };
+}
+
+/** Does nothing with a response. It stands in until a real resolver is kept. */
+function ignoreResponse(): void {}
+
 describe("exact response validation", () => {
   test("keeps the calibration's exact probability and companion validation", () => {
     const text = JSON.stringify(VALID).replace('"both":0.1', '"both":0.10000000000000001');
@@ -100,16 +123,7 @@ describe("transport controls", () => {
     const bodies: string[] = [];
     const waits: number[] = [];
     const request = structuredClone(OPENING);
-    const send: Fetch = async (url, init) => {
-      expect(url).toContain("typesafe.ai");
-      expect(init.headers.Authorization).toBe("Bearer key");
-      bodies.push(init.body);
-      request.state.opening = "changed";
-      if (bodies.length === 1) throw new Error("key must be redacted");
-      if (bodies.length === 2) return new Response("busy", { status: 429 });
-      if (bodies.length === 3) return new Response("busy", { status: 503 });
-      return valid();
-    };
+    const send = recordingTransport(bodies, request);
     await createAsk(" key ", { fetch: send, clock: idle, sleep: async ms => {
       waits.push(ms);
     } })(request);
@@ -185,7 +199,7 @@ describe("transport controls", () => {
       callbacks.push(callback);
       return () => {};
     } };
-    let late: (response: Response) => void = () => {};
+    let late: (response: Response) => void = ignoreResponse;
     let calls = 0;
     const pending = createAsk("key", { fetch: async () => {
       calls++;

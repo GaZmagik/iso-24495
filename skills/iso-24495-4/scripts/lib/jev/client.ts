@@ -183,10 +183,7 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
 async function transport(body: string, key: string, send: Fetch, clock: Clock, signal?: AbortSignal): Promise<{ status: number; text: string }> {
   const controller = new AbortController();
   const interrupted = Promise.withResolvers<never>();
-  const cancel = (): void => {
-    interrupted.reject(new JevError("Jev execution was cancelled."));
-    controller.abort();
-  };
+  const cancel = cancellation(interrupted, controller);
   // Unset until the timer is made, so that a clock which throws leaves nothing to cancel.
   let cancelTimer: (() => void) | undefined;
   signal?.addEventListener("abort", cancel, { once: true });
@@ -206,6 +203,20 @@ async function transport(body: string, key: string, send: Fetch, clock: Clock, s
       signal?.removeEventListener("abort", cancel);
     }
   }
+}
+
+/**
+ * The listener that cancels one transport attempt when the caller aborts. It
+ * rejects the attempt and aborts the request. The caller adds and later
+ * removes this one function, so it is made once for each attempt.
+ *
+ * @returns The listener. It returns nothing and throws nothing.
+ */
+function cancellation(interrupted: PromiseWithResolvers<never>, controller: AbortController): () => void {
+  return () => {
+    interrupted.reject(new JevError("Jev execution was cancelled."));
+    controller.abort();
+  };
 }
 
 function isProbability(value: unknown): value is number {

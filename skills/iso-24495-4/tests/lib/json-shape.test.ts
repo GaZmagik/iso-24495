@@ -60,7 +60,6 @@ describe("a parsed value checked against a documented shape", () => {
   });
 
   test("a number must be whole and inside its range", () => {
-    const level = (value: unknown) => shapeProblem(value, { kind: "whole", least: 0, most: 4 }, "level");
     for (const fits of [0, 1, 4]) {
       expect(level(fits)).toBeNull();
     }
@@ -68,7 +67,6 @@ describe("a parsed value checked against a documented shape", () => {
     expect(level(-1)).toBe("level must be a whole number from 0 to 4; got a whole number outside that range");
     expect(level(1.5)).toBe("level must be a whole number from 0 to 4; got a number that is not whole");
     expect(level("3")).toBe("level must be a whole number from 0 to 4; got a string");
-    const count = (value: unknown) => shapeProblem(value, { kind: "whole", least: 0 }, "count");
     expect(count(Number.MAX_SAFE_INTEGER)).toBeNull();
     // Past this a number no longer holds every whole value, so it is not a count.
     expect(count(2 ** 60)).toBe("count must be a whole number of 0 or more; got a number that is not whole");
@@ -98,3 +96,13 @@ describe("a parsed value checked against a documented shape", () => {
     expect(shapeProblem({}, required, "<file>")).toBe('<file>, "constructor" must be a string; got nothing');
   });
 });
+
+/** What the shape check finds in a value read as a level: a whole number from 0 to 4. */
+function level(value: unknown): string | null {
+  return shapeProblem(value, { kind: "whole", least: 0, most: 4 }, "level");
+}
+
+/** What the shape check finds in a value read as a count: a whole number of 0 or more. */
+function count(value: unknown): string | null {
+  return shapeProblem(value, { kind: "whole", least: 0 }, "count");
+}

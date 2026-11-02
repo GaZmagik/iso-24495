@@ -103,14 +103,7 @@ describe("checkVersionSites, which the normal gate runs", () => {
   // read as YAML, and only metadata.version counts.
   test("a skill's version is metadata.version, read as YAML, and nothing else", () => {
     const skill = "skills/iso-24495-1/SKILL.md";
-    const problemsFor = (frontMatter: string[], body = "\n# Skill\n"): string[] => {
-      let problems: string[] = [];
-      withCheckout("0.7.0", (root) => {
-        writeFileSync(join(root, skill), ["---", ...frontMatter, "---", body].join("\n"), "utf8");
-        problems = checkVersionSites(root).problems;
-      });
-      return problems;
-    };
+    const problemsFor = frontMatterProblems(skill);
     const stale = `${skill} metadata.version states "0.6.2", not "0.7.0".`;
 
     // Version-like text inside a description, above a stale metadata.version.
@@ -259,3 +252,20 @@ describe("a manifest that is valid JSON of the wrong shape", () => {
     }
   });
 });
+
+/**
+ * A checker for one skill's front matter.
+ *
+ * @returns A function that writes the front matter and body given into that
+ *     skill of a fresh checkout, and gives the problems the version check finds.
+ */
+function frontMatterProblems(skill: string): (frontMatter: string[], body?: string) => string[] {
+  return (frontMatter, body = "\n# Skill\n") => {
+    let problems: string[] = [];
+    withCheckout("0.7.0", (root) => {
+      writeFileSync(join(root, skill), ["---", ...frontMatter, "---", body].join("\n"), "utf8");
+      problems = checkVersionSites(root).problems;
+    });
+    return problems;
+  };
+}

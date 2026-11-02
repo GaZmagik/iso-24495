@@ -186,29 +186,7 @@ describe("a path nobody has read", () => {
 describe("a path in Markdown that is rendered", () => {
   const tick = String.fromCharCode(96);
 
-  /** What Bun's renderer shows in each cell of the first column, for one row to a name. */
-  function renderedCells(names: readonly string[]): string[] {
-    const table = ["| File | Line |", "|------|------|", ...names.map((name) => `| ${safePathCell(name, false)} | 1 |`)];
-    const html = Bun.markdown.html(table.join(LINE_FEED));
-    const rows = [...html.matchAll(/<tr>([^]*?)<[/]tr>/g)].map((row) => [...itemAt(row, 1).matchAll(/<td>([^]*?)<[/]td>/g)]);
-    // The first row is the header, whose cells are not data cells.
-    const data = rows.slice(1);
-    expect(data, "one row for each name").toHaveLength(names.length);
-    for (const cells of data) {
-      expect(cells, "the row keeps its two columns").toHaveLength(2);
-      expect(itemAt(cells, 1)[1]).toBe("1");
-    }
-    return data.map((cells) => itemAt(itemAt(cells, 0), 1));
-  }
-
-  /** The text of a rendered cell that holds one code span and nothing else. */
-  function shown(cell: string): string {
-    const code = /^<code>([^]*)<[/]code>$/.exec(cell);
-    expect(code, cell).not.toBeNull();
-    const text = itemAt((code as RegExpExecArray), 1);
-    expect(text.includes("<"), cell).toBe(false);
-    return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", String.fromCharCode(34)).replaceAll("&amp;", "&");
-  }
+  const shown = codeSpanText;
 
   // A cell escaped the pipe and nothing else, so the rest of a name was read as
   // Markdown. Nine names gave seven results: an entity became the character it
@@ -284,9 +262,7 @@ describe("a path in Markdown that is rendered", () => {
 });
 
 describe("a character that draws nothing is shown as its code", () => {
-  /** The printed form of one code point: four digits in the basic plane, and braces past it. */
-  const shown = (point: number): string =>
-    point > 0xffff ? `${BACKSLASH}u{${point.toString(16)}}` : code(point);
+  const shown = printedCodePoint;
   const unseenPattern = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|(?! )\p{Zs}/u;
   const printable = /^[ -~]*$/;
 
@@ -445,4 +421,33 @@ function sequence(seed: number): () => number {
     mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
     return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** What Bun's renderer shows in each cell of the first column, for one row to a name. */
+function renderedCells(names: readonly string[]): string[] {
+  const table = ["| File | Line |", "|------|------|", ...names.map((name) => `| ${safePathCell(name, false)} | 1 |`)];
+  const html = Bun.markdown.html(table.join(LINE_FEED));
+  const rows = [...html.matchAll(/<tr>([^]*?)<[/]tr>/g)].map((row) => [...itemAt(row, 1).matchAll(/<td>([^]*?)<[/]td>/g)]);
+  // The first row is the header, whose cells are not data cells.
+  const data = rows.slice(1);
+  expect(data, "one row for each name").toHaveLength(names.length);
+  for (const cells of data) {
+    expect(cells, "the row keeps its two columns").toHaveLength(2);
+    expect(itemAt(cells, 1)[1]).toBe("1");
+  }
+  return data.map((cells) => itemAt(itemAt(cells, 0), 1));
+}
+
+/** The text of a rendered cell that holds one code span and nothing else. */
+function codeSpanText(cell: string): string {
+  const code = /^<code>([^]*)<[/]code>$/.exec(cell);
+  expect(code, cell).not.toBeNull();
+  const text = itemAt((code as RegExpExecArray), 1);
+  expect(text.includes("<"), cell).toBe(false);
+  return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", String.fromCharCode(34)).replaceAll("&amp;", "&");
+}
+
+/** The printed form of one code point: four digits in the basic plane, and braces past it. */
+function printedCodePoint(point: number): string {
+  return point > 0xffff ? `${BACKSLASH}u{${point.toString(16)}}` : code(point);
 }

@@ -32,7 +32,7 @@ test("preview is offline; send alone is not consent; explicit terminal agreement
         expect(record.timestamp).toBe("2026-10-03T17:00:00.000Z");
       },
     };
-    const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...args], text => output.push(text), text => output.push(text), dependencies);
+    const run = auditRunner(file, directory, output, output, () => dependencies);
     expect(await run("text", ["--jev-preview"])).toBe(0);
     expect(sent).toBe(0);
     expect(output.join("\n")).toContain("companion");
@@ -117,7 +117,7 @@ test("argument conflicts and local failures are classified without transmission"
       calls++;
       throw new Error();
     }, clock: { schedule: () => () => {} }, sleep: async () => {} }, writeLog: () => {} };
-    const run = (args: string[], mode: "text" | "design" = "design") => runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
+    const run = designByDefaultRunner(file, directory, out, dependencies);
     for (const args of [["--unknown"], ["--send", "--send"], ["--json"], ["--project-dir", "--send"], ["--yes"], ["--include-judged-text"], ["--no-front-matter"], ["--consent", "file"], ["--jev-preview"]]) {
       expect(await run(args)).toBe(2);
     }
@@ -172,7 +172,7 @@ test("complete exports, local title findings, unsure decisions and log failures 
       return Response.json({ model: MODEL, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, id === "purpose" ? { type: "choice", choice: "both", confidence: 0.8, probabilities: { both: 0.8, task_only: 0.1, scope_only: 0.05, neither: 0.05 } } : { type: "noul", noul: 0.5 }])) });
     }, clock: { schedule: () => () => {} }, sleep: async () => {} } };
     const out: string[] = [];
-    const run = (args: string[]) => runAuditCli("text", ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
+    const run = textRunner(file, directory, out, dependencies);
     const reportFile = join(directory, "report.json");
     expect(await run(["--jev", "--send", "--yes", "--json", reportFile, "--include-judged-text"])).toBe(0);
     const report = JSON.parse(readFileSync(reportFile, "utf8"));
@@ -226,6 +226,54 @@ function recordingDependencies(bodies: string[]): AuditDependencies {
   };
 }
 
+/**
+ * Makes a function that runs the Jev audit command on one target with a
+ * project directory. What the command prints goes to the two lists given, and
+ * the dependencies are made afresh for each run.
+ *
+ * @returns The function, which resolves to the command's exit code.
+ */
+function auditRunner(target: string, directory: string, out: string[], err: string[], dependencies: () => AuditDependencies): (mode: "text" | "design", args: string[]) => Promise<number> {
+  return (mode, args) => runAuditCli(mode, ["bun", "cli", target, "--project-dir", directory, ...args], text => out.push(text), text => err.push(text), dependencies());
+}
+
+/**
+ * Makes a function that runs the Jev audit command on one file with a project
+ * directory, as a design audit unless told otherwise. Everything the command
+ * prints goes to one list.
+ *
+ * @returns The function, which resolves to the command's exit code.
+ */
+function designByDefaultRunner(file: string, directory: string, out: string[], dependencies: AuditDependencies): (args: string[], mode?: "text" | "design") => Promise<number> {
+  return (args: string[], mode: "text" | "design" = "design") => runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
+}
+
+/**
+ * Makes a function that runs the Jev audit command as a text audit on one file
+ * with a project directory. Everything the command prints goes to one list.
+ *
+ * @returns The function, which resolves to the command's exit code.
+ */
+function textRunner(file: string, directory: string, out: string[], dependencies: AuditDependencies): (args: string[]) => Promise<number> {
+  return (args: string[]) => runAuditCli("text", ["bun", "cli", file, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), dependencies);
+}
+
+/**
+ * Makes a function that writes a text to a document in the directory given,
+ * named "doc.md" unless told otherwise, and selects it for a text audit. The
+ * function throws an `Error` when the selection holds no document.
+ *
+ * @returns The function, which returns the selected document.
+ */
+function documentSelector(directory: string): (text: string, name?: string) => Selection["documents"][number] {
+  return (text: string, name = "doc.md") => {
+    writeFileSync(join(directory, name), text);
+    const [document] = selectDocuments(join(directory, name), directory, "text").documents;
+    if (document === undefined) throw new Error("the selection holds no document");
+    return document;
+  };
+}
+
 test("a leading block the calibrated guard does not recognise is refused in the preview and never sent", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-front-matter-"));
   try {
@@ -236,7 +284,7 @@ test("a leading block the calibrated guard does not recognise is refused in the 
     const out: string[] = [];
     const warnings: string[] = [];
     const dependencies = recordingDependencies(bodies);
-    const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", directory, "--project-dir", directory, ...args], text => out.push(text), text => warnings.push(text), dependencies);
+    const run = auditRunner(directory, directory, out, warnings, () => dependencies);
 
     // Agreement is given on the preview, so the refusal has to be there.
     expect(await run("design", [])).toBe(0);
@@ -304,12 +352,7 @@ test("a refused document selected alone completes with nothing sent", async () =
 test("the refusal covers any closed leading block the guard rejects, and nothing else", () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-front-matter-shapes-"));
   try {
-    const refusalFor = (text: string, name = "doc.md") => {
-      writeFileSync(join(directory, name), text);
-      const [document] = selectDocuments(join(directory, name), directory, "text").documents;
-      if (document === undefined) throw new Error("the selection holds no document");
-      return document;
-    };
+    const refusalFor = documentSelector(directory);
     // Not YAML at all, and still refused: a block someone meant as metadata can be
     // malformed, and a test that needed valid YAML would send exactly that block.
     expect(refusalFor("---\nkey: [unclosed\nsecret here\n---\n# Title\n\nWords.").refusal).toBe(REFUSAL);
@@ -350,7 +393,7 @@ test("the Jev audit prints a file name, a finding and an excerpt without control
     writeFileSync(join(directory, name), `# Title${escape}[2J\n\nUse [here](https://x.invalid/${escape}[2J${control}) for the ${override}guide.\n`);
     const bodies: string[] = [];
     const out: string[] = [];
-    const run = (mode: "text" | "design", args: string[]) => runAuditCli(mode, ["bun", "cli", directory, "--project-dir", directory, ...args], text => out.push(text), text => out.push(text), recordingDependencies(bodies));
+    const run = auditRunner(directory, directory, out, out, () => recordingDependencies(bodies));
     expect(await run("text", ["--jev-preview"])).toBe(0);
     expect(await run("text", ["--jev", "--send", "--yes"])).toBe(0);
     expect(await run("design", ["--send", "--yes"])).toBe(0);

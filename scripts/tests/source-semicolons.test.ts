@@ -314,21 +314,25 @@ function endsInSemicolon(node: ts.Node, source: ts.SourceFile): boolean {
  */
 function unendedStatements(file: string, text: string): SemicolonCount {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const missing: string[] = [];
-  let checked = 0;
-  const visit = (node: ts.Node): void => {
-    const kind = kindOf(node);
-    if (kind !== null && !inInlineLiteral(node, source)) {
-      checked += 1;
-      if (!endsInSemicolon(node, source)) {
-        const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
-        missing.push(`${file}:${line}: ${kind} has no semicolon`);
-      }
+  const found: SemicolonCount = { checked: 0, missing: [] };
+  countUnendedStatements(source, file, source, found);
+  return found;
+}
+
+/**
+ * Counts one node and every node below it of a kind the check reads into
+ * `found`, and records each that has no semicolon.
+ */
+function countUnendedStatements(node: ts.Node, file: string, source: ts.SourceFile, found: SemicolonCount): void {
+  const kind = kindOf(node);
+  if (kind !== null && !inInlineLiteral(node, source)) {
+    found.checked += 1;
+    if (!endsInSemicolon(node, source)) {
+      const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+      found.missing.push(`${file}:${line}: ${kind} has no semicolon`);
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return { checked, missing };
+  }
+  ts.forEachChild(node, (child) => countUnendedStatements(child, file, source, found));
 }
 
 const UNREAD_DIRECTORIES = new Set([".git", "node_modules"]);

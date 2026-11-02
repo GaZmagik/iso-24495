@@ -205,7 +205,7 @@ describe("runCli", () => {
 
   test("merges into files that already hold rows", async () => {
     const { deps, files, stdout, stderr } = harness();
-    const push = (t: string) => stdout.push(t);
+    const push = collectorFor(stdout);
     await runCli(["bun", "cli", "data"], push, (t) => stderr.push(t), deps);
     await runCli(["bun", "cli", "data"], push, (t) => stderr.push(t), deps);
     expect(rowsOf(files.get(join("data", "daily.csv")) ?? "")).toHaveLength(3);
@@ -265,15 +265,6 @@ describe("runCli", () => {
   });
 
   test("names each endpoint from a fixed list, and never repeats one it does not know", async () => {
-    const said = async (endpoint: string, status: number): Promise<string[]> => {
-      const { deps, stdout, stderr } = harness({
-        fetchSnapshot: async () => {
-          throw new EndpointFailure(endpoint, status);
-        },
-      });
-      expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(1);
-      return stderr;
-    };
     expect(await said("/traffic/views", 500)).toEqual([
       "Could not read the traffic API: the views endpoint returned HTTP 500",
     ]);
@@ -709,47 +700,7 @@ describe("a table is read back as it was written", () => {
   const lineFeed = String.fromCharCode(10);
   const carriageReturn = String.fromCharCode(13);
   const quote = String.fromCharCode(34);
-
-  /** Every record of a table but its header, read by the rules the writer follows and by nothing of the module. */
-  function records(table: string): string[][] {
-    const rows: string[][] = [[""]];
-    let quoted = false;
-    for (let at = 0; at < table.length; at++) {
-      const character = itemAt(table, at);
-      const row = rows.at(-1) as string[];
-      if (quoted && character === quote && table[at + 1] === quote) {
-        row[row.length - 1] += quote;
-        at++;
-      } else if (character === quote) {
-        quoted = !quoted;
-      } else if (!quoted && character === ",") {
-        row.push("");
-      } else if (!quoted && character === lineFeed) {
-        rows.push([""]);
-      } else {
-        row[row.length - 1] += character;
-      }
-    }
-    expect(quoted, "every quote is closed").toBe(false);
-    // The writer ends the table with a line break, so the last record is empty.
-    expect(rows.pop()).toEqual([""]);
-    return rows.slice(1);
-  }
-
-  /** What a merge says is wrong with the table it was given. */
-  function faultOf(merge: () => string): string {
-    try {
-      merge();
-    } catch (error) {
-      if (error instanceof MalformedTable) return error.fault;
-    }
-    return "the merge read the table";
-  }
-
-  /** A snapshot holding these referrers and nothing else worth reading. */
-  function snapshotWith(referrers: string[]): Snapshot {
-    return { ...snapshotOf(RAW), referrers: referrers.map((referrer, index) => ({ referrer, count: index + 7, uniques: index + 2 })) };
-  }
+  const records = recordReader(lineFeed, quote);
 
   // The writer put a name holding a line break in quotes, as it should. The reader
   // cut the table into lines before it read the quotes, so on the next run that row
@@ -757,7 +708,7 @@ describe("a table is read back as it was written", () => {
   test("a referrer holding a line break is one row on the next run, and the run after", async () => {
     const name = `first${lineFeed}second`;
     const { deps, files, stdout, stderr } = harness({ fetchSnapshot: async () => ({ ...RAW, referrers: [{ referrer: name, count: 7, uniques: 2 }] }) });
-    const table = (): string => files.get(join("data", "referrers.csv")) as string;
+    const table = referrersTableIn(files);
     deps.today = () => "2000-01-01";
     expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(0);
     expect(records(table())).toEqual([["2000-01-01", name, "7", "2"]]);
@@ -776,14 +727,7 @@ describe("a table is read back as it was written", () => {
     const pieces = ["a", "b", "example.com", ",", quote, quote + quote, lineFeed, carriageReturn, carriageReturn + lineFeed, " ",
       lineFeed + lineFeed, String.fromCharCode(9)];
     const random = sequence(24495);
-    const name = (): string => {
-      let made = "";
-      const length = Math.floor(random() * 6);
-      for (let piece = 0; piece < length; piece++) {
-        made += itemAt(pieces, Math.floor(random() * pieces.length));
-      }
-      return made;
-    };
+    const name = nameGenerator(random, pieces);
     let compared = 0;
     for (let trial = 0; trial < 300; trial++) {
       const expected: string[][] = [];
@@ -794,7 +738,6 @@ describe("a table is read back as it was written", () => {
         names.forEach((referrer, index) => expected.push([date, referrer, String(index + 7), String(index + 2)]));
         // Every row written so far, on this run and on each one before it.
         const read = records(table);
-        const key = (row: string[]): string => JSON.stringify(row);
         if (JSON.stringify(read.map(key).sort()) !== JSON.stringify(expected.map(key).sort())) {
           expect(read.map(key).sort()).toEqual(expected.map(key).sort());
         }
@@ -847,16 +790,8 @@ describe("a table is read back as it was written", () => {
     const pieces = ["a", "b", "example.com", ",", ",,", quote, quote + quote, carriageReturn, " ", String.fromCharCode(9), String.fromCharCode(0xe9),
       String.fromCharCode(0x3000), "-", "1"];
     const random = sequence(70);
-    const count = (): string => String(Math.floor(random() * 5_000));
-    const name = (more: string[]): string => {
-      let made = "";
-      const length = Math.floor(random() * 6);
-      for (let piece = 0; piece < length; piece++) {
-        made += itemAt([...pieces, ...more], Math.floor(random() * (pieces.length + more.length)));
-      }
-      return made;
-    };
-    const sorted = (rows: string[][]): string[] => rows.map((row) => JSON.stringify(row)).sort();
+    const count = countGenerator(random);
+    const name = nameGeneratorWith(random, pieces);
     const empty: Snapshot = { ...snapshotOf(RAW), clones: { count: 0, uniques: 0, days: [] }, views: { count: 0, uniques: 0, days: [] }, referrers: [] };
     const headers = {
       daily: ["date", "clones", "clone_uniques", "views", "view_uniques"],
@@ -943,32 +878,9 @@ describe("a malformed table stops the run before anything is written", () => {
     "referrers.csv": (first) => `${first},a.example,2,2`,
   };
   const tables = Object.keys(headers);
-  const table = (name: string, ...rows: string[]): string => [headers[name], ...rows, ""].join(lineFeed);
-
-  /**
-   * Runs the command twice, to write and to print, with `text` as one table and a good
-   * table for each of the other two. Holds that nothing was written or printed, and
-   * gives what was reported.
-   */
-  async function refusal(name: string, text: string): Promise<string> {
-    let reported = "";
-    for (const mode of [[], ["--dry-run"]]) {
-      const written: string[] = [];
-      const { deps, files, stdout, stderr } = harness({
-        writeText: (path) => {
-          written.push(path);
-        },
-      });
-      for (const other of tables) {
-        files.set(join("data", other), other === name ? text : table(other, forTable(rowsByTable, other)("2000-01-02")));
-      }
-      const code = await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps);
-      expect([code, written, stdout], `${name} ${mode.join("")}`).toEqual([1, [], []]);
-      expect(stderr).toHaveLength(1);
-      reported = itemAt(stderr, 0);
-    }
-    return reported;
-  }
+  const table = tableWriter(headers, lineFeed);
+  const refusal = refusalRunner(tables, table, rowsByTable);
+  const other = nextTable(tables);
 
   // A review gave daily.csv a row with a quote that never closes. Everything after
   // the quote was read as one cell, a snapshot of that day replaced the row, and the
@@ -996,8 +908,7 @@ describe("a malformed table stops the run before anything is written", () => {
   test.each(tables)("%s with a row of more or fewer cells than its header", async (name) => {
     const row = forTable(rowsByTable, name);
     const cells = forTable(headers, name).split(",").length;
-    const words = (line: number, held: number): string =>
-      `Could not read ${name}: the row on line ${line} has ${held === 1 ? "1 cell" : `${held} cells`} where the header has ${cells}. ${asItWas}`;
+    const words = cellCountWords(name, cells, asItWas);
     expect(await refusal(name, table(name, row("2000-01-01"), `${row("2000-01-03")},9`))).toBe(words(3, cells + 1));
     expect(await refusal(name, table(name, row("2000-01-01").slice(0, -2), row("2000-01-03")))).toBe(words(2, cells - 1));
     // Two quotes on two lines pair, so the lines between them are one row. Its cells
@@ -1049,10 +960,8 @@ describe("a malformed table stops the run before anything is written", () => {
   test.each(tables)("%s with a cell that is not what its column holds", async (name) => {
     const columns = forTable(headers, name).split(",");
     const good = forTable(rowsByTable, name)("2000-01-01").split(",");
-    const quoted = (cell: string): string => (/^[0-9a-z.-]*$/.test(cell) ? cell : `${quote}${cell}${quote}`);
-    /** The table with one good row, then a row that has `cell` in one column. */
-    const withCell = (column: number, cell: string): string =>
-      table(name, good.join(","), good.map((held, at) => (at === column ? quoted(cell) : held)).join(","));
+    const quoted = quoterWith(quote);
+    const withCell = tableWithCell(table, name, good, quoted);
     const dates = ["", "2000-1-01", "2000-01-1", "20000-01-01", "2000/01/01", "2000-01-01T00:00:00Z", "x", " 2000-01-01", "2000-01-01 ", `2000-01-01${lineFeed}2000-01-02`, "2000-01-0x"];
     const counts = ["", "1.5", "-1", "+1", "1e3", "0x10", " 1", "1 ", "1,1", "x", `1${lineFeed}2`, "1_000"];
     for (const [at, column] of columns.entries()) {
@@ -1086,7 +995,7 @@ describe("a malformed table stops the run before anything is written", () => {
   // malformed, and so is a clock that gives no date.
   test("nothing is written that the next run would refuse", async () => {
     const day = { timestamp: "2000-01-01T00:00:00Z", count: 5, uniques: 3 };
-    const series = (list: string, point: object, totals: object = {}): object => ({ count: 5, uniques: 3, [list]: [{ ...day, ...point }], ...totals });
+    const series = seriesOn(day);
     const refused: Array<[payload: object, problem: string]> = [];
     for (const wrong of [1.5, -1, 2 ** 53, Number.MAX_VALUE]) {
       refused.push([{ ...RAW, clones: series("clones", { count: wrong }) }, "the clones response is missing a count, a uniques figure or its daily list"]);
@@ -1145,14 +1054,8 @@ describe("a malformed table stops the run before anything is written", () => {
   // A date had only to have the shape of one, so a row that opened with 2000-13-40 was
   // read. A date is a day of the calendar. Issue 44.
   describe("a date is a day that exists", () => {
-    const pad = (value: number): string => String(value).padStart(2, "0");
     const monthLengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    /** The last day of each month of a year, and the day after it, which does not exist. */
-    const ends = (year: string, leap: boolean): Array<[last: string, past: string]> =>
-      monthLengths.map((days, month) => {
-        const last = days + (leap && month === 1 ? 1 : 0);
-        return [`${year}-${pad(month + 1)}-${pad(last)}`, `${year}-${pad(month + 1)}-${pad(last + 1)}`];
-      });
+    const ends = monthEnds(monthLengths);
     const years: Array<[year: string, leap: boolean]> = [
       ["2000", true], ["2024", true], ["2400", true], ["0000", true], ["0004", true],
       ["2001", false], ["2023", false], ["1900", false], ["2100", false], ["0001", false], ["9999", false],
@@ -1198,7 +1101,6 @@ describe("a malformed table stops the run before anything is written", () => {
 
     // The writer and the reader ask the same question, so no run writes a day its next run refuses.
     test("a payload and a clock are held to the same days", async () => {
-      const point = (date: string): object => ({ timestamp: `${date}T00:00:00Z`, count: 5, uniques: 3 });
       for (const date of notReal) {
         for (const payload of [
           { ...RAW, clones: { count: 5, uniques: 3, clones: [point(date)] } },
@@ -1295,11 +1197,6 @@ describe("a malformed table stops the run before anything is written", () => {
       expect(rowsOf(files.get(join("data", "referrers.csv")) as string)).toHaveLength(3);
     }
   });
-
-  /** The table after this one in the list, whose header this one must not carry. */
-  function other(name: string): string {
-    return itemAt(tables, (tables.indexOf(name) + 1) % tables.length);
-  }
 });
 
 /**
@@ -1310,9 +1207,35 @@ describe("a malformed table stops the run before anything is written", () => {
 function merge070(existing: string | null, header: string[], rows: string[][], keyWidth: number): string {
   const lineFeed = String.fromCharCode(10);
   const quote = String.fromCharCode(34);
-  const cell = (value: string): string =>
+  const cell = cellWriter070(quote, lineFeed);
+  const split = lineSplitter070(quote);
+  const kept = (existing ?? "").split(lineFeed).map((line) => line.trim()).filter((line) => line !== "").slice(1).map(split);
+  const byKey = new Map<string, string[]>();
+  for (const row of [...kept, ...rows]) {
+    byKey.set(JSON.stringify(row.slice(0, keyWidth)), row);
+  }
+  const ordered = [...byKey.entries()].sort((left, right) => left[0].localeCompare(right[0])).map((entry) => entry[1]);
+  return [header, ...ordered].map((row) => row.map(cell).join(",")).join(lineFeed) + lineFeed;
+}
+
+/**
+ * How release 0.7.0 wrote one cell, for `merge070`.
+ *
+ * @returns A function that gives a value as its cell, in quotes only where it
+ *     holds a comma, a quote or a line feed.
+ */
+function cellWriter070(quote: string, lineFeed: string): (value: string) => string {
+  return (value: string): string =>
     value.includes(",") || value.includes(quote) || value.includes(lineFeed) ? quote + value.replaceAll(quote, quote + quote) + quote : value;
-  const split = (line: string): string[] => {
+}
+
+/**
+ * How release 0.7.0 cut one line into cells, for `merge070`.
+ *
+ * @returns A function that gives the cells of one line, with their quotes read.
+ */
+function lineSplitter070(quote: string): (line: string) => string[] {
+  return (line: string): string[] => {
     const cells: string[] = [];
     let held = "";
     let quoted = false;
@@ -1333,13 +1256,6 @@ function merge070(existing: string | null, header: string[], rows: string[][], k
     cells.push(held);
     return cells;
   };
-  const kept = (existing ?? "").split(lineFeed).map((line) => line.trim()).filter((line) => line !== "").slice(1).map(split);
-  const byKey = new Map<string, string[]>();
-  for (const row of [...kept, ...rows]) {
-    byKey.set(JSON.stringify(row.slice(0, keyWidth)), row);
-  }
-  const ordered = [...byKey.entries()].sort((left, right) => left[0].localeCompare(right[0])).map((entry) => entry[1]);
-  return [header, ...ordered].map((row) => row.map(cell).join(",")).join(lineFeed) + lineFeed;
 }
 
 /** A fixed sequence of numbers from 0 up to 1, the same for the same seed on every run. */
@@ -1357,6 +1273,8 @@ function sequence(seed: number): () => number {
 /**
  * What a record of tables holds for one table. Every record here names every
  * table, so a missing one is a mistake in the test itself.
+ *
+ * @throws An `Error` when the record does not name the table.
  */
 function forTable<T>(record: Readonly<Record<string, T>>, name: string): T {
   const value = record[name];
@@ -1364,4 +1282,284 @@ function forTable<T>(record: Readonly<Record<string, T>>, name: string): T {
     throw new Error("The test asked a record of tables for a table it does not name.");
   }
   return value;
+}
+
+/**
+ * A callback that keeps each line it is given.
+ *
+ * @returns The callback, which adds a line to the end of `lines`.
+ */
+function collectorFor(lines: string[]): (t: string) => number {
+  return (t: string) => lines.push(t);
+}
+
+/**
+ * Runs the command against an endpoint that fails with a status, and holds that it
+ * exits 1.
+ *
+ * @returns What the command printed as errors.
+ */
+async function said(endpoint: string, status: number): Promise<string[]> {
+  const { deps, stdout, stderr } = harness({
+    fetchSnapshot: async () => {
+      throw new EndpointFailure(endpoint, status);
+    },
+  });
+  expect(await runCli(["bun", "cli", "data"], (t) => stdout.push(t), (t) => stderr.push(t), deps)).toBe(1);
+  return stderr;
+}
+
+/**
+ * A reader of tables that follows the rules the writer follows and uses nothing of
+ * the module.
+ *
+ * @returns A function that gives every record of a table but its header.
+ */
+function recordReader(lineFeed: string, quote: string): (table: string) => string[][] {
+  return (table: string): string[][] => {
+    const rows: string[][] = [[""]];
+    let quoted = false;
+    for (let at = 0; at < table.length; at++) {
+      const character = itemAt(table, at);
+      const row = rows.at(-1) as string[];
+      if (quoted && character === quote && table[at + 1] === quote) {
+        row[row.length - 1] += quote;
+        at++;
+      } else if (character === quote) {
+        quoted = !quoted;
+      } else if (!quoted && character === ",") {
+        row.push("");
+      } else if (!quoted && character === lineFeed) {
+        rows.push([""]);
+      } else {
+        row[row.length - 1] += character;
+      }
+    }
+    expect(quoted, "every quote is closed").toBe(false);
+    // The writer ends the table with a line break, so the last record is empty.
+    expect(rows.pop()).toEqual([""]);
+    return rows.slice(1);
+  };
+}
+
+/**
+ * What a merge says is wrong with the table it was given.
+ *
+ * @returns The fault the merge reported, or a fixed sentence when it read the table.
+ */
+function faultOf(merge: () => string): string {
+  try {
+    merge();
+  } catch (error) {
+    if (error instanceof MalformedTable) return error.fault;
+  }
+  return "the merge read the table";
+}
+
+/**
+ * A snapshot holding these referrers and nothing else worth reading.
+ *
+ * @returns The snapshot.
+ */
+function snapshotWith(referrers: string[]): Snapshot {
+  return { ...snapshotOf(RAW), referrers: referrers.map((referrer, index) => ({ referrer, count: index + 7, uniques: index + 2 })) };
+}
+
+/**
+ * A reader of the table of referrers a run has written to `files`.
+ *
+ * @returns A function that gives the table as it stands when called.
+ */
+function referrersTableIn(files: Map<string, string>): () => string {
+  return (): string => files.get(join("data", "referrers.csv")) as string;
+}
+
+/**
+ * A maker of names built from up to five pieces chosen by `random`.
+ *
+ * @returns A function that gives the next name.
+ */
+function nameGenerator(random: () => number, pieces: string[]): () => string {
+  return (): string => {
+    let made = "";
+    const length = Math.floor(random() * 6);
+    for (let piece = 0; piece < length; piece++) {
+      made += itemAt(pieces, Math.floor(random() * pieces.length));
+    }
+    return made;
+  };
+}
+
+/**
+ * The key of a row, for comparing sets of rows.
+ *
+ * @returns The row as JSON.
+ */
+function key(row: string[]): string {
+  return JSON.stringify(row);
+}
+
+/**
+ * A maker of counts chosen by `random`.
+ *
+ * @returns A function that gives the next count, as written in a table.
+ */
+function countGenerator(random: () => number): () => string {
+  return (): string => String(Math.floor(random() * 5_000));
+}
+
+/**
+ * A maker of names built from up to five pieces chosen by `random`, from `pieces` and
+ * from the further pieces each call names.
+ *
+ * @returns A function that gives the next name.
+ */
+function nameGeneratorWith(random: () => number, pieces: string[]): (more: string[]) => string {
+  return (more: string[]): string => {
+    let made = "";
+    const length = Math.floor(random() * 6);
+    for (let piece = 0; piece < length; piece++) {
+      made += itemAt([...pieces, ...more], Math.floor(random() * (pieces.length + more.length)));
+    }
+    return made;
+  };
+}
+
+/**
+ * Rows in an order that does not depend on the order they were read in.
+ *
+ * @returns Each row as JSON, sorted.
+ */
+function sorted(rows: string[][]): string[] {
+  return rows.map((row) => JSON.stringify(row)).sort();
+}
+
+/**
+ * A writer of whole tables, each with its header from `headers`.
+ *
+ * @returns A function that gives a table's header, then its rows, each ending in a
+ *     line feed.
+ */
+function tableWriter(headers: Record<string, string>, lineFeed: string): (name: string, ...rows: string[]) => string {
+  return (name: string, ...rows: string[]): string => [headers[name], ...rows, ""].join(lineFeed);
+}
+
+/**
+ * Runs the command twice, to write and to print, with `text` as one table and a good
+ * table for each of the other two. Holds that nothing was written or printed, and
+ * gives what was reported.
+ *
+ * @returns A function that does this for one table and its text, and gives the one
+ *     line the command printed as an error.
+ */
+function refusalRunner(
+  tables: string[],
+  table: (name: string, ...rows: string[]) => string,
+  rowsByTable: Record<string, (first: string) => string>,
+): (name: string, text: string) => Promise<string> {
+  return async (name: string, text: string): Promise<string> => {
+    let reported = "";
+    for (const mode of [[], ["--dry-run"]]) {
+      const written: string[] = [];
+      const { deps, files, stdout, stderr } = harness({
+        writeText: (path) => {
+          written.push(path);
+        },
+      });
+      for (const other of tables) {
+        files.set(join("data", other), other === name ? text : table(other, forTable(rowsByTable, other)("2000-01-02")));
+      }
+      const code = await runCli(["bun", "cli", "data", ...mode], (t) => stdout.push(t), (t) => stderr.push(t), deps);
+      expect([code, written, stdout], `${name} ${mode.join("")}`).toEqual([1, [], []]);
+      expect(stderr).toHaveLength(1);
+      reported = itemAt(stderr, 0);
+    }
+    return reported;
+  };
+}
+
+/**
+ * The words for a row of one table that holds the wrong number of cells.
+ *
+ * @returns A function that gives the report for a row on a line, holding a number
+ *     of cells.
+ */
+function cellCountWords(name: string, cells: number, asItWas: string): (line: number, held: number) => string {
+  return (line: number, held: number): string =>
+    `Could not read ${name}: the row on line ${line} has ${held === 1 ? "1 cell" : `${held} cells`} where the header has ${cells}. ${asItWas}`;
+}
+
+/**
+ * A writer of one cell, in quotes unless it holds only digits, lowercase letters,
+ * full stops and hyphens.
+ *
+ * @returns A function that gives the cell as written.
+ */
+function quoterWith(quote: string): (cell: string) => string {
+  return (cell: string): string => (/^[0-9a-z.-]*$/.test(cell) ? cell : `${quote}${cell}${quote}`);
+}
+
+/**
+ * A maker of one table holding one good row, then a row that has `cell` in one column.
+ *
+ * @returns A function that gives the table for a column and a cell.
+ */
+function tableWithCell(
+  table: (name: string, ...rows: string[]) => string,
+  name: string,
+  good: string[],
+  quoted: (cell: string) => string,
+): (column: number, cell: string) => string {
+  return (column: number, cell: string): string =>
+    table(name, good.join(","), good.map((held, at) => (at === column ? quoted(cell) : held)).join(","));
+}
+
+/**
+ * A maker of one series of an API response, holding one day built on `day`.
+ *
+ * @returns A function that gives the series for a list name, the fields that change
+ *     the day, and the fields that change its totals.
+ */
+function seriesOn(day: object): (list: string, point: object, totals?: object) => object {
+  return (list: string, point: object, totals: object = {}): object => ({ count: 5, uniques: 3, [list]: [{ ...day, ...point }], ...totals });
+}
+
+/**
+ * A number of a day or month, as a date writes it.
+ *
+ * @returns The number in two digits or more.
+ */
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/**
+ * The last day of each month of a year, and the day after it, which does not exist.
+ *
+ * @returns A function that gives the pairs for a year, and whether it is a leap year.
+ */
+function monthEnds(monthLengths: number[]): (year: string, leap: boolean) => Array<[last: string, past: string]> {
+  return (year: string, leap: boolean): Array<[last: string, past: string]> =>
+    monthLengths.map((days, month) => {
+      const last = days + (leap && month === 1 ? 1 : 0);
+      return [`${year}-${pad(month + 1)}-${pad(last)}`, `${year}-${pad(month + 1)}-${pad(last + 1)}`];
+    });
+}
+
+/**
+ * One day of an API response, with fixed counts.
+ *
+ * @returns The day.
+ */
+function point(date: string): object {
+  return { timestamp: `${date}T00:00:00Z`, count: 5, uniques: 3 };
+}
+
+/**
+ * The table after each one in the list, whose header that one must not carry.
+ *
+ * @returns A function that gives the table after a named one.
+ */
+function nextTable(tables: string[]): (name: string) => string {
+  return (name: string): string => itemAt(tables, (tables.indexOf(name) + 1) % tables.length);
 }
