@@ -230,8 +230,9 @@ Credentials and raw responses are never saved.
 A local send log records transmission rather than proof of agreement.
 
 Sending requires Bun and a key in `TYPESAFE_API_KEY`.
-The client permits four concurrent requests and six transport attempts, with a 30-second timeout per attempt.
-It retries connection failures, timeouts, 429 and 5xx only, and never replaces an accepted answer.
+The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
+It retries connection failures, timeouts, 429, 5xx and answers that fail a value check, and never replaces an accepted answer.
+A reply that is not JSON, or that names another model, ends the run at once.
 On terminal failure, Jev verdicts are discarded and the report states incomplete execution.
 
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.

@@ -15,7 +15,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Disclosure before agreement.** Preview names files, payloads, companions, model, privacy terms and possible charges. Interactive sending requires exact yes from the controlling terminal.
 - **Explicit non-interactive agreement.** A user-supplied `--yes` is required alongside `--send`. Agents must never add `--yes` or infer agreement from a delegated instruction.
 - **Separate report sections.** Mechanical findings and Jev results have separate JSON properties. Full judged state needs an explicitly requested export path and an extra option.
-- **Transport controls.** Four concurrent requests use at most six transport attempts, with a 30-second timeout each. Retries preserve bytes and never replace an accepted answer.
+- **Transport controls.** Four concurrent requests use at most six attempts each, with a 30-second timeout per attempt. An answer that fails a value check is sent again. Retries preserve bytes and never replace an accepted answer.
 
 ### Known limits
 

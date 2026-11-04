@@ -105,8 +105,9 @@ An incomplete execution discards all Jev verdicts.
 | 3 | Rejection, exhausted retries, malformed response, wrong model or calibration integrity failure. |
 | 4 | Missing or locally invalid key. |
 
-The client permits four concurrent requests and six transport attempts, with a 30-second timeout per attempt.
-It retries connection failures, timeouts, 429 and 5xx only.
+The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
+It retries connection failures, timeouts, 429, 5xx and answers that fail a value check, such as a Choice whose probabilities do not sum to 1 within 0.01.
+A reply that is not JSON, or that names another model, ends the run at once.
 Retries may return different model answers; identical answers are not guaranteed.
 
 ## Boundaries
