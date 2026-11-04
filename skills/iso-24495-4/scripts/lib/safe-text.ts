@@ -184,11 +184,12 @@ export function safeText(text: string): string {
 
 /**
  * Whether text holds no character but the plain space and those that `safePath`
- * shows as their codes: white space, control characters, and those Unicode says
- * to leave undrawn. It is the one definition of such a character, read here for
- * a whole text where `safePath` reads it for a name. It reads characters and
- * renders nothing, so a character a page shows as blank, such as the braille
- * blank, is not one of them.
+ * shows as their codes. Empty means the source holds only white space, control
+ * or format characters, lone surrogates, characters marked default ignorable by
+ * Unicode, or U+FFFC. U+FFFC is the object replacement character. The check reads
+ * source characters and does not render the description. It uses the same
+ * character class as `safePath`. A character a page shows as blank, such as the
+ * braille blank, is not necessarily in that class.
  *
  * @returns True for empty text as well.
  */

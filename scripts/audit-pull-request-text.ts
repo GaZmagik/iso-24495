@@ -47,10 +47,12 @@ export interface Dependencies {
  *
  * - Exit 0: the audit ran on a description that is not empty. Any findings are
  *   listed, as advice. A pass does not mean the description is clear.
- * - Exit 1: the description is empty. Its source holds only white space,
- *   control characters and characters that Unicode says to leave undrawn.
- *   The check reads those characters and renders nothing, so a description
- *   holding only an HTML comment, or only the braille blank, is not empty.
+ * - Exit 1: the description is empty for this check. Empty means the source holds
+ *   only white space, control or format characters, lone surrogates, characters
+ *   marked default ignorable by Unicode, or U+FFFC. U+FFFC is the object replacement
+ *   character. The check reads source characters and does not render the description.
+ *   So a description holding only an HTML comment, or only the braille blank,
+ *   is not empty.
  * - Exit 2: the arguments were wrong. That includes a path that names nothing,
  *   a directory, a symbolic link, anything else that is not a regular file,
  *   and a file that cannot be read.
@@ -254,10 +256,10 @@ function unreadableKind(path: string, dependencies: Dependencies): string | null
  * An audit of nothing finds nothing, so an empty description would pass having
  * been read by nobody. Emptiness is a test of the Markdown source, not of what
  * a page would show: a description holding a comment or an image is not empty,
- * and the audit reads it. A description is empty when its source holds only
- * the characters `drawsNothing` names: white space of every kind, control
- * characters, and those Unicode says to leave undrawn, such as a zero width
- * space or a word joiner. A character outside those makes a description, even
+ * and the audit reads it. Empty means the source holds only white space, control
+ * or format characters, lone surrogates, characters marked default ignorable by
+ * Unicode, or U+FFFC. U+FFFC is the object replacement character. `drawsNothing`
+ * tests that rule. A character outside those makes a description, even
  * one a page shows as blank, such as the braille blank.
  *
  * A description has no front matter. GitHub shows a leading "---" block as a
@@ -267,7 +269,7 @@ function verdict(path: string, text: string, dependencies: Dependencies): { exit
   if (drawsNothing(text)) {
     return {
       exit: 1,
-      parts: ["The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why."],
+      parts: ["The description is empty for this check. It reads source characters and does not render the description. Write what the change does and why."],
     };
   }
   if (!isAuditedDocument(path)) {

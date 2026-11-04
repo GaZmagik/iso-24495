@@ -388,7 +388,7 @@ describe("a character that draws nothing is shown as its code", () => {
   });
 });
 
-describe("text of only white space and characters Unicode leaves undrawn", () => {
+describe("text made only of characters the source check removes", () => {
   test("is spaces and the characters a printed path shows as their codes, and nothing else", () => {
     for (const point of [0x20, 0x9, 0xa, 0xd, 0xa0, 0x2002, 0x3000, 0x200b, 0x2060, 0xfeff, 0xad, 0x200d, 0x202e, 0xfe0f, 0x34f, 0xfffc, 0xe0041, 0x2028]) {
       const character = String.fromCodePoint(point);

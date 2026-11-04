@@ -13,9 +13,10 @@
 #
 #   0  The audit ran on a description that is not empty. Any findings are
 #      listed, as advice. A pass does not mean the description is clear.
-#   1  The description is empty. Its source holds only white space, control
-#      characters and characters that Unicode says to leave undrawn. The check
-#      reads those characters and renders nothing.
+#   1  The description is empty for this check. Empty means the source holds only
+#      white space, control or format characters, lone surrogates, characters marked
+#      default ignorable by Unicode, or U+FFFC. U+FFFC is the object replacement
+#      character. The check reads source characters and does not render the description.
 #   2  The arguments were wrong, which includes naming a file that cannot be
 #      read, a directory or a symbolic link.
 #   3  The audit did not run.

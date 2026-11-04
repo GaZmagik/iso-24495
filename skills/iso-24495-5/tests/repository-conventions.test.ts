@@ -28,6 +28,9 @@ import { itemAt } from "../../iso-24495-4/scripts/lib/item-at.ts";
 const REPOSITORY_ROOT = join(import.meta.dir, "..", "..", "..");
 const SKILLS_ROOT = join(REPOSITORY_ROOT, "skills");
 const CODEX_SKILLS_ROOT = join(REPOSITORY_ROOT, "codex-skills");
+// Capabilities are checked before registration so the runner counts each skipped test.
+const CAN_MAKE_LINKS = canMakeSymbolicLink();
+const CAN_REMOVE_READ_PERMISSION = canRemoveReadPermission();
 
 /** Every skill this repository ships, whichever agent reads it. */
 function everySkillDirectory(): Array<{ name: string; path: string }> {
@@ -1383,7 +1386,7 @@ describe("repository writing conventions", () => {
         for (const empty of ["", " \t\r\n  \n", "\n\n\n", "\u00a0\u3000\ufeff\n"]) {
           const result = audit(empty);
           expect(result.status, `${JSON.stringify(empty)} gave: ${result.output}`).toBe(1);
-          expect(result.output).toContain("empty or holds only whitespace");
+          expect(result.output).toContain("empty for this check");
         }
       });
 
@@ -1435,7 +1438,7 @@ describe("repository writing conventions", () => {
 
           const blocked = audit(" \n", "description.md", { GITHUB_STEP_SUMMARY: forBash(summary) });
           expect(blocked.status).toBe(1);
-          expect(readFileSync(summary, "utf8")).toContain("empty or holds only whitespace");
+          expect(readFileSync(summary, "utf8")).toContain("empty for this check");
 
           // A summary that cannot be written is said in fixed words, and the verdict
           // stands. With the variable naming a directory, bash once printed its own
@@ -1467,10 +1470,9 @@ describe("repository writing conventions", () => {
       // The audit does not follow a symbolic link. The script once left that to the
       // audit, which skipped the link, and a report with no file in it was then
       // refused with exit 3. The program now asks what the path names before it
-      // reads, and a link is a wrong argument like a directory. A Windows account
-      // without the right to make a file link cannot build the first case, and the
-      // tests of the program cover it on every platform.
-      test("a linked description and a directory are refused before anything is read", () => {
+      // reads, and a link is a wrong argument like a directory. The directory case
+      // always runs; the link case is counted as skipped where no link can be made.
+      test("a directory is refused before anything is read", () => {
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-link-"));
         try {
           const refusedDirectory = runCheck(auditScript, directory);
@@ -1478,14 +1480,18 @@ describe("repository writing conventions", () => {
           expect(refusedDirectory.output).toBe(
             `The path given as the first argument, ${forBash(directory).length} characters long, names a directory, where a file is needed.\n`,
           );
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }, 60_000);
+
+      test.skipIf(!CAN_MAKE_LINKS)("a linked description is refused before anything is read", () => {
+        const directory = mkdtempSync(join(tmpdir(), "iso-24495-link-"));
+        try {
           const target = join(directory, "target.md");
           writeFileSync(target, "This description reads plainly.\n", "utf8");
           const link = join(directory, "description.md");
-          try {
-            symlinkSync(target, link, "file");
-          } catch {
-            return; // this account cannot make a file link
-          }
+          symlinkSync(target, link, "file");
           const refusedLink = runCheck(auditScript, link);
           expect(refusedLink.status, "a linked description").toBe(2);
           expect(refusedLink.output).toContain("names a symbolic link, which this check does not follow.");
@@ -1523,22 +1529,14 @@ describe("repository writing conventions", () => {
 
       // The script promises exit 2 for a file it cannot read, but a permission
       // error from grep fell through to "no text" with exit 1.
-      test("an unreadable file exits 2, not 1", () => {
+      test.skipIf(!CAN_REMOVE_READ_PERMISSION)("an unreadable file exits 2, not 1", () => {
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-unreadable-"));
         try {
           const file = join(directory, "locked.md");
           writeFileSync(file, "This text reads plainly.\n", "utf8");
-          // Probe whether chmod 000 actually removes read permission here.
-          // Git Bash on Windows may ignore it, so the test is skipped where it
-          // has no effect rather than asserting a platform it cannot control.
-          const probe = Bun.spawnSync(
+          Bun.spawnSync(
             ["bash", "-c", "chmod 000 -- \"$1\" && ! test -r \"$1\"", "_", forBash(file)],
           );
-          if (probe.exitCode !== 0) {
-            // chmod had no effect; restore and skip.
-            Bun.spawnSync(["bash", "-c", "chmod 644 -- \"$1\"", "_", forBash(file)]);
-            return; // skipped on this platform
-          }
           const run = Bun.spawnSync(["bash", forBash(auditScript), forBash(file)]);
           // Restore before any assertion, so cleanup always succeeds.
           Bun.spawnSync(["bash", "-c", "chmod 644 -- \"$1\"", "_", forBash(file)]);
@@ -1552,12 +1550,8 @@ describe("repository writing conventions", () => {
       // found another. A Windows exclusive lock leaves `-r` true while every
       // read fails, and the script called that "no text" with exit 1. The
       // chmod test above is skipped on Windows, where chmod has no effect, so
-      // this one holds a real lock there. Elsewhere it checks that the script
-      // reads the file before judging it, which is the guard both cases need.
-      test("a file that refuses to be read exits 2, whatever refuses it", async () => {
-        if (process.platform !== "win32") {
-          return;
-        }
+      // this one holds a real lock there. Elsewhere the runner counts it as skipped.
+      test.skipIf(process.platform !== "win32")("a file that refuses to be read exits 2, whatever refuses it", async () => {
         const directory = mkdtempSync(join(tmpdir(), "iso-24495-locked-"));
         try {
           // A review put the file under "reader's cache", and the apostrophe
@@ -2206,6 +2200,39 @@ function asWritten(text: string): string {
 /** A path with each backslash made a forward slash. */
 function forBash(path: string): string {
   return path.split("\\").join("/");
+}
+
+/**
+ * Whether this account may make a symbolic link to a file, found by making one in a
+ * folder of its own and removing the folder.
+ */
+function canMakeSymbolicLink(): boolean {
+  const workspace = mkdtempSync(join(tmpdir(), "iso-24495-link-probe-"));
+  try {
+    writeFileSync(join(workspace, "file.md"), "");
+    symlinkSync(join(workspace, "file.md"), join(workspace, "link.md"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
+/** Whether chmod removes read permission here; restores the probe file before removing its folder. */
+function canRemoveReadPermission(): boolean {
+  const workspace = mkdtempSync(join(tmpdir(), "iso-24495-permission-probe-"));
+  const file = join(workspace, "file.md");
+  try {
+    writeFileSync(file, "This text reads plainly.\n", "utf8");
+    const probe = Bun.spawnSync(
+      ["bash", "-c", "chmod 000 -- \"$1\" && ! test -r \"$1\"", "_", forBash(file)],
+    );
+    return probe.exitCode === 0;
+  } finally {
+    Bun.spawnSync(["bash", "-c", "chmod 644 -- \"$1\"", "_", forBash(file)]);
+    rmSync(workspace, { recursive: true, force: true });
+  }
 }
 
 /** The one run block of a workflow job, read from the parsed YAML. */
