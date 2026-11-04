@@ -635,8 +635,8 @@ const CAUSES: FailureCause[] = [
 interface FailedSend { code: number; stdout: string; stderr: string[]; json: string }
 
 /**
- * Runs a send of one opening through the design audit or the text audit's
- * `--jev` mode, with stand-ins that make it fail as the cause says.
+ * Runs a send of one opening through the design audit command or the text
+ * audit's `--jev` mode, with stand-ins that make it fail as the cause says.
  *
  * @returns The exit code, what was printed to each stream and the report file.
  */
@@ -660,8 +660,9 @@ async function sendFailing(cause: FailureCause, mode: "text" | "design"): Promis
       writeLog: () => {},
     };
     const argv = ["bun", "cli", file, "--project-dir", directory, ...(mode === "text" ? ["--jev"] : []), "--send", "--yes", "--json", reportFile];
-    const run = mode === "text" ? runTextCli : runDesignCli;
-    const code = await run(argv, text => stdout.push(text), text => stderr.push(text), dependencies);
+    // The text audit hands every Jev option to runAuditCli, so text mode is run there.
+    const code = mode === "text" ? await runAuditCli("text", argv, text => stdout.push(text), text => stderr.push(text), dependencies)
+      : await runDesignCli(argv, text => stdout.push(text), text => stderr.push(text), dependencies);
     return { code, stdout: stdout.join("\n"), stderr, json: readFileSync(reportFile, "utf8") };
   } finally {
     rmSync(directory, { recursive: true, force: true });
