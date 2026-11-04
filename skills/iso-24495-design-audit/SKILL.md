@@ -26,7 +26,7 @@ It names TypeSafe, `jev-1.13.0`, selected files, eligible openings and blocks, r
 Document text leaves the machine when sent, and charges may apply.
 
 The preview counts requests, not attempts, and each request may be sent up to six times.
-A request sent again after its answer fails a value check may be charged again.
+A request sent again for any reason may be charged again.
 Pricing, retention and live transport behaviour have not been checked.
 
 Link the [TypeSafe privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing).
@@ -43,7 +43,7 @@ Agents must never add `--yes`.
 Recheck the preview if the selected content changes.
 The command rebuilds the payload plan after agreement and refuses a changed plan.
 Retries use the same captured bytes and never replace an accepted answer.
-A local audit log records the disclosure version, payload digest, selected paths and timestamp.
+A local send log records the disclosure version, a digest of the payloads sent, the selected paths, the timestamp and whether execution completed.
 The log records transmission and does not prove agreement.
 
 ## Checks and calibration
@@ -117,7 +117,7 @@ The audit then discards every Jev verdict.
 Retries may return different model answers; identical answers are not guaranteed.
 
 The line after "Execution: incomplete." gives the first failure in fixed words, and the JSON report holds the same words in `failure`.
-Separate words cover a rejected key or permission, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
+Separate words cover a rejected key or permission, any other HTTP refusal, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
 The words never include the service's reply or the key. An unexpected error prints a generic line instead of its own message.
 
 ## Boundaries
