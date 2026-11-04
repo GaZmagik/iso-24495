@@ -598,3 +598,147 @@ test("the disclosure version names the text that says a request may be sent agai
   const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [] };
   expect(formatPlan(selection).split("\n")[0]).toBe(`Transmission preview: TypeSafe, model ${MODEL}, disclosure 0.8.0-r2.`);
 });
+
+// A failed send printed only "Jev execution is incomplete", so a rejected key, a busy
+// service and a wrong model all looked the same. Each cause now prints its own fixed
+// words, and never the service's reply, the key or the message of an unexpected error.
+const FAKE_KEY = "sk-test-not-real";
+const CANARY = "LEAK-CANARY-123";
+const REFUSED_KEY = "The API key was not accepted or lacks permission.";
+const BUSY = "Jev was rate limited or unavailable, with HTTP status 429 or 5xx, and six attempts gave no answer.";
+const UNEXPECTED = "The audit stopped on an unexpected error. Its message is not shown, because it may name a path or hold a value.";
+/** A Choice whose three options at 0.33 sum to 0.99, which fails the value check. */
+const INVALID_PURPOSE = { type: "choice", choice: "both", confidence: 0.33, probabilities: { both: 0.33, task_only: 0.33, scope_only: 0.33, neither: 0 } };
+
+/** One way a send can fail, the stand-ins that cause it, and the words the audit must print. */
+interface FailureCause { name: string; words: string; fetch: () => Promise<Response>; sleep?: () => Promise<void>; cancelled?: boolean }
+const CAUSES: FailureCause[] = [
+  { name: "HTTP 401", words: `Jev refused the request with HTTP status 401. ${REFUSED_KEY}`, fetch: async () => new Response(CANARY, { status: 401 }) },
+  { name: "HTTP 403", words: `Jev refused the request with HTTP status 403. ${REFUSED_KEY}`, fetch: async () => new Response(CANARY, { status: 403 }) },
+  { name: "HTTP 400", words: "Jev refused the request with HTTP status 400.", fetch: async () => new Response(CANARY, { status: 400 }) },
+  { name: "HTTP 429 six times", words: BUSY, fetch: async () => new Response(CANARY, { status: 429 }) },
+  { name: "HTTP 503 six times", words: BUSY, fetch: async () => new Response(CANARY, { status: 503 }) },
+  { name: "no connection six times", words: "Jev did not answer after six transport attempts.", fetch: async () => {
+    throw new Error(`${CANARY} ${FAKE_KEY}`);
+  } },
+  { name: "an invalid answer six times", words: "Jev did not give a valid answer after six attempts.", fetch: async () => Response.json({ model: MODEL, note: CANARY, answers: { purpose: INVALID_PURPOSE, reader: { type: "noul", noul: 0.5 } } }) },
+  { name: "a reply naming another model", words: "Jev returned a wrong or missing model. Expected jev-1.13.0.", fetch: async () => Response.json({ model: CANARY, answers: {} }) },
+  { name: "a reply that is not JSON", words: "Jev returned malformed JSON.", fetch: async () => new Response(`${CANARY} is not JSON`) },
+  { name: "a cancelled send", words: "Jev execution was cancelled.", fetch: async () => new Response(CANARY), cancelled: true },
+  // The wait between attempts sits outside the client's own catch, so its error reaches the audit as it was thrown.
+  { name: "an error that is not Jev's", words: UNEXPECTED, fetch: async () => new Response(CANARY, { status: 503 }), sleep: async () => {
+    throw new Error(`${CANARY} at C:/private/${FAKE_KEY}.md`);
+  } },
+];
+
+/** What one failed send printed and wrote, as text. */
+interface FailedSend { code: number; stdout: string; stderr: string[]; json: string }
+
+/**
+ * Runs a send of one opening through the design audit or the text audit's
+ * `--jev` mode, with stand-ins that make it fail as the cause says.
+ *
+ * @returns The exit code, what was printed to each stream and the report file.
+ */
+async function sendFailing(cause: FailureCause, mode: "text" | "design"): Promise<FailedSend> {
+  const directory = mkdtempSync(join(tmpdir(), "jev-failure-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, "# Title\n\n---\n");
+    const reportFile = join(directory, "report.json");
+    const controller = new AbortController();
+    if (cause.cancelled === true) controller.abort();
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const dependencies: AuditDependencies = {
+      env: { TYPESAFE_API_KEY: FAKE_KEY },
+      terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
+      client: { fetch: async (url, init) => {
+        expect(init.headers.Authorization).toBe(`Bearer ${FAKE_KEY}`);
+        return cause.fetch();
+      }, clock: { schedule: () => () => {} }, sleep: cause.sleep ?? (async () => {}), signal: controller.signal },
+      writeLog: () => {},
+    };
+    const argv = ["bun", "cli", file, "--project-dir", directory, ...(mode === "text" ? ["--jev"] : []), "--send", "--yes", "--json", reportFile];
+    const run = mode === "text" ? runTextCli : runDesignCli;
+    const code = await run(argv, text => stdout.push(text), text => stderr.push(text), dependencies);
+    return { code, stdout: stdout.join("\n"), stderr, json: readFileSync(reportFile, "utf8") };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+for (const cause of CAUSES) {
+  test(`a send that fails on ${cause.name} says why in fixed words, and prints nothing the service or the error held`, async () => {
+    for (const mode of ["design", "text"] as const) {
+      const result = await sendFailing(cause, mode);
+      expect(result.code, mode).toBe(3);
+      expect(result.stdout, mode).toContain(`Execution: incomplete.\nFailure: ${cause.words}\n`);
+      expect(result.stderr, mode).toEqual([`Jev execution is incomplete. ${cause.words} Jev verdicts were discarded; mechanical findings remain available.`]);
+      const report = JSON.parse(result.json);
+      expect(report.jev.complete, mode).toBe(false);
+      expect(report.jev.failure, mode).toBe(cause.words);
+      expect(report.jev.results, mode).toEqual([]);
+      for (const secret of [CANARY, FAKE_KEY]) {
+        for (const written of [result.stdout, result.stderr.join("\n"), result.json]) {
+          expect(written, `${mode} ${secret}`).not.toContain(secret);
+        }
+      }
+    }
+  });
+}
+
+test("each cause of a failed send has words of its own, and only the two busy statuses share them", () => {
+  const byWords = new Map<string, string[]>();
+  for (const cause of CAUSES) {
+    byWords.set(cause.words, [...(byWords.get(cause.words) ?? []), cause.name]);
+  }
+  expect([...byWords.values()].filter(names => names.length > 1)).toEqual([["HTTP 429 six times", "HTTP 503 six times"]]);
+});
+
+// Four requests are in flight when the first fails. The other three still end, later
+// and for another cause, and the failure they report must not replace the first.
+test("the failure shown is the first one, not one that ends later", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-first-failure-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, `# Title\n\n${Array.from({ length: 8 }, (slot, index) => `Paragraph ${index + 1}.`).join("\n\n")}\n`);
+    let calls = 0;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const dependencies: AuditDependencies = {
+      env: { TYPESAFE_API_KEY: FAKE_KEY },
+      terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
+      client: { fetch: async () => {
+        calls++;
+        return new Response(CANARY, { status: calls === 1 ? 401 : 503 });
+      }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+      writeLog: () => {},
+    };
+    const reportFile = join(directory, "report.json");
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => stdout.push(text), text => stderr.push(text), dependencies)).toBe(3);
+    // The first request's one attempt, and six for each of the three others already started.
+    expect(calls).toBe(19);
+    const refused = `Jev refused the request with HTTP status 401. ${REFUSED_KEY}`;
+    expect(JSON.parse(readFileSync(reportFile, "utf8")).jev.failure).toBe(refused);
+    expect(stdout.join("\n")).toContain(`Failure: ${refused}`);
+    expect(stderr.join("\n")).not.toContain(BUSY);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a complete report has no failure line and no failure in its JSON", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-no-failure-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, NO_BLOCK);
+    const out: string[] = [];
+    const reportFile = join(directory, "report.json");
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => out.push(text), text => out.push(text), recordingDependencies([]))).toBe(0);
+    expect(out.join("\n")).not.toContain("Failure:");
+    expect(JSON.parse(readFileSync(reportFile, "utf8")).jev).not.toHaveProperty("failure");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

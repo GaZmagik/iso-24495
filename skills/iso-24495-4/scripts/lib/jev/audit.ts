@@ -40,6 +40,8 @@ export interface AuditDependencies {
 }
 // Why a document is refused for sending. The words are fixed, so they are safe to print.
 const UNRECOGNISED_FRONT_MATTER = "front matter could not be recognised safely";
+// What a failed send prints when the error is not a JevError, whose message could hold anything.
+const UNEXPECTED_FAILURE = "The audit stopped on an unexpected error. Its message is not shown, because it may name a path or hold a value.";
 /** One document of a selection, with what a send would ask about it. */
 export interface SelectedDocument {
   file: string;
@@ -64,9 +66,9 @@ export interface Judgement extends Decision { file: string; line: number; id: st
 /**
  * What a Jev audit reports. `complete` is false when any request failed,
  * and `results` is then empty: the verdicts are discarded and the
- * mechanical findings stand.
+ * mechanical findings stand. `failure` then says why, in fixed words.
  */
-export interface JevReport { complete: boolean; limitation: string; evidence: GateEvidence[]; results: Judgement[]; notSent?: Array<{ file: string; reason: string }>; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
+export interface JevReport { complete: boolean; failure?: string; limitation: string; evidence: GateEvidence[]; results: Judgement[]; notSent?: Array<{ file: string; reason: string }>; localFindings: Array<{ file: string; line: number; rule: string; detail: string }>; coverage: Array<{ file: string; eligibleOpenings: number; eligibleBlocks: number; checks: { purpose: Counts; colour: Counts } }> }
 
 /**
  * Runs the calibrated Jev audit for one file or directory, as a preview or as
@@ -203,17 +205,18 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   const report = emptyReport(selection, true);
   const items = selection.documents.flatMap(document => document.plan.candidates.map(candidate => ({ document, candidate })));
   const sent = new Set<number>();
-  const queue: Queue = { items, sent, next: 0, failed: false };
+  const queue: Queue = { items, sent, next: 0 };
   await Promise.all(Array.from({ length: 4 }, () => worker(queue, ask, args.includeText, report)));
   report.results.sort((first, second) => selection.documents.findIndex(document => document.file === first.file) - selection.documents.findIndex(document => document.file === second.file) || first.line - second.line || first.id.localeCompare(second.id));
-  if (queue.failed) {
+  if (queue.failure !== undefined) {
     report.complete = false;
+    report.failure = queue.failure;
     report.results = [];
   }
   fillCoverage(report);
   report.results = report.results.filter(result => result.band !== "pass");
   try {
-    const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: !queue.failed };
+    const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: queue.failure === undefined };
     (dependencies.writeLog ?? writeAuditLog)(record, join(args.projectDir, ".iso-24495-4", "jev-audit.jsonl"));
     if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report }, null, 2));
   } catch {
@@ -221,18 +224,19 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
     return 1;
   }
   stdout(formatFindings(report));
-  if (queue.failed) {
-    stderr("Jev execution is incomplete. Jev verdicts were discarded; mechanical findings remain available.");
+  if (queue.failure !== undefined) {
+    stderr(`Jev execution is incomplete. ${queue.failure} Jev verdicts were discarded; mechanical findings remain available.`);
     return 3;
   }
   return 0;
 }
 
-interface Queue { items: Array<{ document: SelectedDocument; candidate: Candidate }>; sent: Set<number>; next: number; failed: boolean }
+/** The requests still to send, and the words of the first failure once one has failed. */
+interface Queue { items: Array<{ document: SelectedDocument; candidate: Candidate }>; sent: Set<number>; next: number; failure?: string }
 
 /** Asks about one queued candidate after another, until none is left or one fails. */
 async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevReport): Promise<void> {
-  while (!queue.failed) {
+  while (queue.failure === undefined) {
     const index = queue.next;
     const item = queue.items[index];
     if (item === undefined) break;
@@ -243,8 +247,10 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
       const decision = classify(candidate.kind, await ask(candidate.body));
       const result = judgement(document.file, candidate, decision, includeText);
       report.results.push(result);
-    } catch {
-      queue.failed = true;
+    } catch (error) {
+      // A request already in flight can fail after the first, and must not replace its words.
+      // Only a JevError's message is fixed words; any other may name a path or hold a value.
+      queue.failure ??= error instanceof JevError ? error.message : UNEXPECTED_FAILURE;
     }
   }
 }
@@ -383,8 +389,8 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
 }
 
 /**
- * The Jev section of a report as text: whether execution completed, each
- * document that was refused for sending, the limitation, the evidence table,
+ * The Jev section of a report as text: whether execution completed and, if
+ * not, why, each document that was refused for sending, the limitation, the evidence table,
  * the findings and the coverage counts.
  *
  * @returns Markdown tables joined by line breaks. The findings table lists
@@ -397,6 +403,7 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
  */
 export function formatFindings(report: JevReport): string {
   const lines = ["Calibrated Jev checks", `Execution: ${report.complete ? "complete" : "incomplete"}.`,
+    ...(report.failure === undefined ? [] : [`Failure: ${safeText(report.failure)}`]),
     ...(report.notSent ?? []).map(document => `Not sent: ${safePathCode(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
     ...formatEvidence(report.evidence),
     "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",

@@ -116,6 +116,10 @@ Once a request fails, no new request starts, but up to three requests already st
 The audit then discards every Jev verdict.
 Retries may return different model answers; identical answers are not guaranteed.
 
+The line after "Execution: incomplete." gives the first failure in fixed words, and the JSON report holds the same words in `failure`.
+Separate words cover a rejected key or permission, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
+The words never include the service's reply or the key. An unexpected error prints a generic line instead of its own message.
+
 ## Boundaries
 
 - **Invoke explicitly:** Never activate this audit automatically or expand the selected path without asking.

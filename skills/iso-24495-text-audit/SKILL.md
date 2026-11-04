@@ -138,7 +138,10 @@ Changed payloads require renewed agreement, and retries preserve the captured by
 Mechanical findings and Jev results appear in separate report sections and JSON properties.
 Report each document's assessed, pass, fail, unsure and skipped counts for purpose and colour.
 Unsure asserts no fault, and colour passes appear only in counts.
+
 On terminal Jev failure, retain mechanical findings, discard Jev verdicts and report incomplete execution.
+Report the `Failure:` line that follows it, which names the first failure in fixed words.
+Those words never hold the service's reply, the key or an unexpected error's message.
 Report every skipped entry.
 
 JSON defaults to excerpts and state hashes.

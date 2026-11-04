@@ -294,6 +294,33 @@ describe("transport controls", () => {
       expect(calls, message).toBe(1);
     }
   });
+  // Six busy replies used to end in the words for six failed connections, and a
+  // rejected key in the words for any other refusal.
+  test("a refused key and six busy replies each end the request in words of their own", async () => {
+    for (const [status, message] of [[401, "Jev refused the request with HTTP status 401. The API key was not accepted or lacks permission."], [403, "Jev refused the request with HTTP status 403. The API key was not accepted or lacks permission."], [404, "Jev refused the request with HTTP status 404."]] as const) {
+      await expect(createAsk("key", { fetch: async () => new Response("secret", { status }), clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error(message));
+    }
+    for (const status of [429, 500, 503]) {
+      let sends = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        sends++;
+        return new Response("secret", { status });
+      }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev was rate limited or unavailable, with HTTP status 429 or 5xx, and six attempts gave no answer."));
+      expect(sends, String(status)).toBe(6);
+    }
+    // A busy reply outranks a failed connection, and a failed check outranks both.
+    let mixed = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      mixed++;
+      if (mixed === 1) return new Response("busy", { status: 503 });
+      throw new Error("secret");
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev was rate limited or unavailable, with HTTP status 429 or 5xx, and six attempts gave no answer."));
+    let both = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      both++;
+      return both === 1 ? new Response(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1')) : new Response("busy", { status: 503 });
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev did not give a valid answer after six attempts."));
+  });
   test("six attempts that mix failed transport with failed checks end in the words for an invalid answer", async () => {
     let sends = 0;
     await expect(createAsk("key", { fetch: async () => {
