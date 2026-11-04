@@ -3064,7 +3064,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "Unsure asserts no fault, and colour passes appear only in counts.",
     "",
     "On terminal Jev failure, retain mechanical findings, discard Jev verdicts and report incomplete execution.",
-    "Report the `Failure:` line that follows it, which names the first failure in fixed words.",
+    "Report the `Failure:` line after \"Execution: incomplete.\", which names the first failure in fixed words.",
     "Those words never hold the service's reply, the key or an unexpected error's message.",
     "Report every skipped entry.",
     "",
