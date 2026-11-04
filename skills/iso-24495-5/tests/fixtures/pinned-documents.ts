@@ -148,6 +148,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "- **The description check reads its file once.** `scripts/audit-pull-request-text.sh` read the description three times and started three programs, and each could fail in another program's words. It now starts one program that reads the file once, tests that text and audits it. A directory or a symbolic link is a wrong argument, with exit 2. A step summary that cannot be written is reported in fixed words, and the result stands.",
     "- **The description check no longer waits on a named pipe.** A named pipe put in place of the file just before the open held the check until something wrote to it. The check now opens without waiting, and refuses the pipe as no regular file.",
     "- **A state file holding `null` is refused.** `generate-report-cli.ts` took a state file that held the JSON text `null` for no state file at all. It skipped the shape check, replaced the file and overwrote the report. An existing state file of any wrong shape now exits 1, and leaves both files as they were.",
+    "- **Two link definition forms are read as CommonMark reads them.** In `[a\\]:b]: /url` the destination was taken from the `]:` inside the label, so `b]:` was recorded. It is now `/url`. A bare destination holding a control character from U+0001 to U+001F or U+007F, such as a form feed, hid a line that a reader sees. That line is now read as text.",
     "",
     "## [0.7.0] - 2026-09-20",
     "",

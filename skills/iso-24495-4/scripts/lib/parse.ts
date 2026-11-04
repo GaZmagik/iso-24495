@@ -157,6 +157,11 @@ function isLinkDefinition(line: string): boolean {
         index += 2;
         continue;
       }
+      // CommonMark refuses an ASCII control character here, so the line is a
+      // paragraph a reader sees. U+0000 is the exception: CommonMark replaces
+      // it with U+FFFD before reading, and U+FFFD may stand in a destination.
+      const code = line.charCodeAt(index);
+      if ((code >= 0x01 && code <= 0x1f) || code === 0x7f) return false;
       if (line[index] === "(") depth++;
       if (line[index] === ")") depth--;
       if (depth < 0 || depth > 32) return false;
