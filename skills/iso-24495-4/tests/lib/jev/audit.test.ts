@@ -660,9 +660,14 @@ async function sendFailing(cause: FailureCause, mode: "text" | "design"): Promis
       writeLog: () => {},
     };
     const argv = ["bun", "cli", file, "--project-dir", directory, ...(mode === "text" ? ["--jev"] : []), "--send", "--yes", "--json", reportFile];
-    // The text audit hands every Jev option to runAuditCli, so text mode is run there.
-    const code = mode === "text" ? await runAuditCli("text", argv, text => stdout.push(text), text => stderr.push(text), dependencies)
-      : await runDesignCli(argv, text => stdout.push(text), text => stderr.push(text), dependencies);
+    // Each command is called by its own name. A test that called runAuditCli in
+    // text mode let the text audit drop its Failure line unseen.
+    let code: number;
+    if (mode === "text") {
+      code = await runTextCli(argv, text => stdout.push(text), text => stderr.push(text), dependencies);
+    } else {
+      code = await runDesignCli(argv, text => stdout.push(text), text => stderr.push(text), dependencies);
+    }
     return { code, stdout: stdout.join("\n"), stderr, json: readFileSync(reportFile, "utf8") };
   } finally {
     rmSync(directory, { recursive: true, force: true });
