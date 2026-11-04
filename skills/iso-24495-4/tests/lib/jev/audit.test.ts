@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, type AuditDependencies, type JevReport, type Selection } from "../../../scripts/lib/jev/audit.ts";
+import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, DISCLOSURE_VERSION, type AuditDependencies, type JevReport, type Selection } from "../../../scripts/lib/jev/audit.ts";
 import { MODEL } from "../../../scripts/lib/jev/catalogue.ts";
 import { planDocument } from "../../../scripts/lib/jev/engine.ts";
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
@@ -577,4 +577,24 @@ test("a hole in the argument list is refused, and so is what follows it", async 
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("the preview says, after its totals, that a request may be sent up to six times and charged again", () => {
+  const selection: Selection = {
+    documents: [{ file: "doc.md", path: "p", plan: { candidates: [], findings: [] } }],
+    mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: ["doc.md"],
+  };
+  const lines = formatPlan(selection).split("\n");
+  const total = lines.indexOf("Total: 0 requests, 0 questions.");
+  expect(total).toBeGreaterThan(0);
+  expect(lines.slice(total + 1, total + 3)).toEqual([
+    "This preview counts requests, not attempts, and each request may be sent up to six times.",
+    "A request sent again after its answer fails a value check may be charged again.",
+  ]);
+});
+
+test("the disclosure version names the text that says a request may be sent again and charged again", () => {
+  expect(DISCLOSURE_VERSION).toBe("0.8.0-r2");
+  const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [] };
+  expect(formatPlan(selection).split("\n")[0]).toBe(`Transmission preview: TypeSafe, model ${MODEL}, disclosure 0.8.0-r2.`);
 });

@@ -329,12 +329,12 @@ That is deliberate. A plain language project that exempts itself has no claim on
 
 ## Roadmap
 
-All seven skills and the output style ship in v0.6.0. What remains:
+All eight skills, the output style and the Codex style skill ship in v0.8.0. What remains:
 
 - **When ISO publishes Part 4:** revise the provisional `iso-24495-4` skill against the published text. Its committee-draft text is not public, so the current maturity model is original guidance.
 - **When ISO publishes Part 5:** revise the provisional `iso-24495-5` skill against the published text.
 
-Plain-language checks on script comments were once planned for this release. That plan is cancelled. Comments are fragments, and checking them well would cost more machinery than the advice is worth.
+Plain-language checks on script comments were once planned for v0.5.0. That plan is cancelled. Comments are fragments, and checking them well would cost more machinery than the advice is worth.
 
 ## Licence
 
