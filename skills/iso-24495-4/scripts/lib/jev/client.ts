@@ -47,6 +47,17 @@ class TransportError extends Error {
     super("The transport attempt timed out.");
   }
 }
+/**
+ * A reply that is JSON from the pinned model, with an answer whose values
+ * fail their checks. Jev may answer the same request differently, so the
+ * client sends it again.
+ */
+class InvalidAnswerError extends JevError {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidAnswerError";
+  }
+}
 /** Sends one request and resolves with its checked answers. */
 export type Ask = (body: RequestBody) => Promise<ExactAnswers>;
 /**
@@ -69,8 +80,10 @@ export const systemClock: Clock = { schedule: (callback, ms) => {
  * at once, and the rest wait. An attempt is abandoned after `TIMEOUT_MS`. A
  * timeout, a connection failure, HTTP 429 and HTTP 5xx are tried again, up to
  * `MAX_ATTEMPTS` attempts, after a wait that starts at half a second and
- * doubles. An answer with a 2xx status is never asked for again, even where
- * it then fails its checks.
+ * doubles. A 2xx answer whose values fail their checks uses one of those
+ * attempts and is asked for again, as the calibration did. A 2xx reply that
+ * is not JSON, or names a model other than `MODEL`, ends the request at once.
+ * An accepted answer is never asked for again.
  *
  * The shared boundary checks the original key before trimming spaces.
  *
@@ -80,7 +93,8 @@ export const systemClock: Clock = { schedule: (callback, ms) => {
  *     are waiting or in flight.
  * @returns The sending function. Its promise rejects with a `JevError` whose
  *     exit code is 3 when the service refuses the request, when no attempt
- *     succeeds, when the answer fails `readAnswers`, or when `signal` aborts.
+ *     succeeds, when no answer passes its checks within `MAX_ATTEMPTS`, when
+ *     the reply is not JSON or names another model, or when `signal` aborts.
  * @throws A `JevError` with exit code 4 when the key is empty or holds a
  *     control character, and with exit code 3 when the calibration files fail
  *     their integrity check.
@@ -142,7 +156,7 @@ export function readAnswers(text: string, questions: RequestBody["questions"]): 
     const answer = payload.answers?.[id];
     const precise = exact.answers?.[id];
     if (question.type === "noul") {
-      if (answer?.type !== "noul" || !isProbability(answer.noul) || !isExactProbability(precise?.noul)) throw new JevError("Jev returned an invalid probability.");
+      if (answer?.type !== "noul" || !isProbability(answer.noul) || !isExactProbability(precise?.noul)) throw new InvalidAnswerError("Jev returned an invalid probability.");
       answers[id] = precise.noul as Decimal;
       continue;
     }
@@ -151,18 +165,19 @@ export function readAnswers(text: string, questions: RequestBody["questions"]): 
     const values = Object.values(given);
     if (!(precise !== undefined && answer?.type === "choice" && typeof answer.choice === "string" && options.includes(answer.choice)
       && isProbability(answer.confidence) && Object.keys(given).sort().join("\n") === options.join("\n")
-      && values.every(isProbability) && Math.abs((values as number[]).reduce((sum, value) => sum + value, 0) - 1) <= 0.01)) throw new JevError("Jev returned an invalid Choice distribution.");
+      && values.every(isProbability) && Math.abs((values as number[]).reduce((sum, value) => sum + value, 0) - 1) <= 0.01)) throw new InvalidAnswerError("Jev returned an invalid Choice distribution.");
     const probabilities = precise.probabilities as Record<string, Decimal>;
-    if (!isExactProbability(precise.confidence) || !Object.values(probabilities).every(isExactProbability)) throw new JevError("Jev returned an out-of-range exact Choice probability.");
+    if (!isExactProbability(precise.confidence) || !Object.values(probabilities).every(isExactProbability)) throw new InvalidAnswerError("Jev returned an out-of-range exact Choice probability.");
     const sum = Object.values(probabilities).reduce(add, ZERO);
     const distance = compare(sum, ONE) >= 0 ? subtract(sum, ONE) : subtract(ONE, sum);
-    if (compare(distance, parseDecimal("0.01")) > 0) throw new JevError("Jev returned an invalid exact Choice sum.");
+    if (compare(distance, parseDecimal("0.01")) > 0) throw new InvalidAnswerError("Jev returned an invalid exact Choice sum.");
     answers[id] = probabilities;
   }
   return answers;
 }
 
 async function askWithRetries(body: string, questions: RequestBody["questions"], key: string, send: Fetch, sleep: (ms: number) => Promise<void>, clock: Clock, signal?: AbortSignal): Promise<ExactAnswers> {
+  let answeredInvalid = false;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) throw new JevError("Jev execution was cancelled.");
     if (attempt > 1) await sleep(500 * 2 ** (attempt - 2));
@@ -174,10 +189,20 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
       if (error instanceof JevError) throw error;
       continue;
     }
-    if (result.status >= 200 && result.status <= 299) return readAnswers(result.text, questions);
+    if (result.status >= 200 && result.status <= 299) {
+      try {
+        return readAnswers(result.text, questions);
+      } catch (error) {
+        // Only an answer that fails a check on its values is sent again. readAnswers throws
+        // only Errors; the second test lets the type checker see that one is thrown on.
+        if (!(error instanceof InvalidAnswerError) && error instanceof Error) throw error;
+        answeredInvalid = true;
+        continue;
+      }
+    }
     if (result.status !== 429 && !(result.status >= 500 && result.status <= 599)) throw new JevError(`Jev refused the request with HTTP status ${result.status}.`);
   }
-  throw new JevError("Jev did not answer after six transport attempts.");
+  throw new JevError(answeredInvalid ? "Jev did not give a valid answer after six attempts." : "Jev did not answer after six transport attempts.");
 }
 
 async function transport(body: string, key: string, send: Fetch, clock: Clock, signal?: AbortSignal): Promise<{ status: number; text: string }> {

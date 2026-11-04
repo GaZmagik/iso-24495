@@ -233,6 +233,86 @@ describe("transport controls", () => {
       backoff.abort();
     } })(OPENING)).rejects.toThrow("cancelled");
   });
+  // A 2xx answer that failed its checks used to end the request, and the audit
+  // then discarded every verdict. The calibration sent such a request again, so
+  // its bounds assume a re-send. Three options at 0.33 sum to exactly 0.99, which
+  // floating-point addition puts 0.010000000000000009 from 1.
+  test("an answer that fails its checks is sent again, with the same bytes and the usual wait", async () => {
+    const refused = { ...VALID, answers: { ...VALID.answers, purpose: { type: "choice", choice: "both", confidence: 0.33, probabilities: { both: 0.33, task_only: 0.33, scope_only: 0.33, neither: 0 } } } };
+    expect(() => readAnswers(JSON.stringify(refused), OPENING.questions)).toThrow("Jev returned an invalid Choice distribution.");
+    const bodies: string[] = [];
+    const waits: number[] = [];
+    const request = structuredClone(OPENING);
+    const accepted = await createAsk("key", { fetch: async (url, init) => {
+      bodies.push(init.body);
+      request.state.opening = "changed";
+      return bodies.length === 1 ? Response.json(refused) : valid();
+    }, clock: idle, sleep: async ms => {
+      waits.push(ms);
+    } })(request);
+    expect(accepted.purpose).toEqual(readAnswers(JSON.stringify(VALID), OPENING.questions).purpose);
+    expect(bodies).toEqual([JSON.stringify(OPENING), JSON.stringify(OPENING)]);
+    expect(waits).toEqual([500]);
+  });
+  test("each check on an answer's values leads to a re-send, and six failures end the request in fixed words", async () => {
+    const failures = [
+      [JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'), "Jev returned an invalid probability."],
+      [JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.5'), "Jev returned an invalid Choice distribution."],
+      [JSON.stringify(VALID).replace('"confidence":0.9', '"confidence":1.00000000000000001'), "Jev returned an out-of-range exact Choice probability."],
+      // With 0.55 written as 0.54999999999999999, floating-point addition puts the four
+      // 0.009999999999999898 from 1, and read exactly they are 0.01000000000000001 from it.
+      [JSON.stringify({ ...VALID, answers: { ...VALID.answers, purpose: { ...VALID.answers.purpose, choice: "scope_only", probabilities: { both: 0.01, task_only: 0.33, scope_only: 0.55, neither: 0.1 } } } }).replace('"scope_only":0.55', '"scope_only":0.54999999999999999'), "Jev returned an invalid exact Choice sum."],
+    ];
+    for (const [text, message] of failures) {
+      expect(() => readAnswers(text, OPENING.questions), message).toThrow(message);
+      const waits: number[] = [];
+      let sends = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        sends++;
+        return new Response(text);
+      }, clock: idle, sleep: async ms => {
+        waits.push(ms);
+      } })(OPENING), message).rejects.toThrow(new Error("Jev did not give a valid answer after six attempts."));
+      expect(sends, message).toBe(6);
+      expect(waits, message).toEqual([500, 1000, 2000, 4000, 8000]);
+    }
+  });
+  test("an accepted answer is sent once, and a reply that is not JSON or names another model ends the request at once", async () => {
+    let sends = 0;
+    await createAsk("key", { fetch: async () => {
+      sends++;
+      return valid();
+    }, clock: idle, sleep: noWait })(OPENING);
+    expect(sends).toBe(1);
+    for (const [text, message] of [["not json", "Jev returned malformed JSON."], [JSON.stringify({ ...VALID, model: "jev-latest" }), "Jev returned a wrong or missing model. Expected jev-1.13.0."]]) {
+      let calls = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        calls++;
+        return new Response(text);
+      }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error(message));
+      expect(calls, message).toBe(1);
+    }
+  });
+  test("six attempts that mix failed transport with failed checks end in the words for an invalid answer", async () => {
+    let sends = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      sends++;
+      if (sends === 1) return new Response(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'));
+      throw new Error("secret");
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev did not give a valid answer after six attempts."));
+    expect(sends).toBe(6);
+  });
+  test("a cancel during the wait after an answer that failed its checks is honoured", async () => {
+    const controller = new AbortController();
+    let sends = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      sends++;
+      return new Response(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'));
+    }, clock: idle, signal: controller.signal, sleep: async () => {
+      controller.abort();
+    } })(OPENING)).rejects.toThrow(new Error("Jev execution was cancelled."));
+    expect(sends).toBe(1);
+  });
   test("limits all queued requests to four in flight", async () => {
     let active = 0;
     let maximum = 0;
