@@ -255,7 +255,7 @@ describe("transport controls", () => {
     expect(waits).toEqual([500]);
   });
   test("each check on an answer's values leads to a re-send, and six failures end the request in fixed words", async () => {
-    const failures = [
+    const failures: Array<[string, string]> = [
       [JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'), "Jev returned an invalid probability."],
       [JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.5'), "Jev returned an invalid Choice distribution."],
       [JSON.stringify(VALID).replace('"confidence":0.9', '"confidence":1.00000000000000001'), "Jev returned an out-of-range exact Choice probability."],

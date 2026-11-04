@@ -60,8 +60,10 @@ describe("calibrated engine", () => {
     const neitherGate = gates.get("purpose:diagnosis:neither");
     const neither = neitherGate?.cutOff ?? "";
     const atNeither = classify("opening", { purpose: openingAnswer(parseDecimal("0"), parseDecimal(neither)) });
-    expect([atNeither.band, atNeither.diagnosis, atNeither.diagnosisGate?.cutOff]).toEqual(["fail", "neither", neither]);
-    expect([atNeither.diagnosisGate?.prerequisite]).toEqual(neitherGate?.dependencies ?? []);
+    // The engine types its gate fields as the literals it writes; read as text, they can be compared with the catalogue's.
+    const diagnosisGate: { cutOff: string; prerequisite: string } | undefined = atNeither.diagnosisGate;
+    expect([atNeither.band, atNeither.diagnosis, diagnosisGate?.cutOff]).toEqual(["fail", "neither", neither]);
+    expect([diagnosisGate?.prerequisite]).toEqual(neitherGate?.dependencies ?? []);
     expect(classify("opening", { purpose: openingAnswer(parseDecimal("0"), subtract(parseDecimal(neither), step)) }).diagnosis).toBeUndefined();
   });
   test("an opening answer that lacks an option is refused by name", () => {
