@@ -214,6 +214,7 @@ Unsure asserts no fault, and colour passes appear only in counts.
 
 Preview names TypeSafe, the model, selected files, requests, companion questions and the five largest payload totals.
 Document text leaves the machine when sent, and charges may apply.
+
 The preview counts requests, not attempts, and each request may be sent up to six times.
 A request sent again after its answer fails a value check may be charged again.
 Pricing, retention and live transport behaviour have not been checked.
@@ -234,6 +235,7 @@ A local send log records transmission rather than proof of agreement.
 Sending requires Bun and a key in `TYPESAFE_API_KEY`.
 The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
 It retries connection failures, timeouts, 429, 5xx and answers that fail a value check, and never replaces an accepted answer.
+
 A reply that is not JSON, or that names another model, ends its request with no further attempt.
 Once a request fails, no new request starts, but up to three requests already started still finish.
 The audit then discards every Jev verdict and the report states incomplete execution.

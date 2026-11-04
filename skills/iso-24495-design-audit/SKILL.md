@@ -24,6 +24,7 @@ bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-
 Show the user the full disclosure printed by that command.
 It names TypeSafe, `jev-1.13.0`, selected files, eligible openings and blocks, request totals, companion questions and the five largest payload totals.
 Document text leaves the machine when sent, and charges may apply.
+
 The preview counts requests, not attempts, and each request may be sent up to six times.
 A request sent again after its answer fails a value check may be charged again.
 Pricing, retention and live transport behaviour have not been checked.
@@ -109,6 +110,7 @@ An incomplete execution discards all Jev verdicts.
 
 The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
 It retries connection failures, timeouts, 429, 5xx and answers that fail a value check, such as a Choice whose probabilities do not sum to 1 within 0.01.
+
 A reply that is not JSON, or that names another model, ends its request with no further attempt.
 Once a request fails, no new request starts, but up to three requests already started still finish.
 The audit then discards every Jev verdict.
