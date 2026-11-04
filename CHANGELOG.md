@@ -11,7 +11,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Scoped edition metadata advisory.** Only titled documents are checked; declared front-matter edition fields qualify at the top level or directly under `metadata`. Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension. Text audited with `--no-front-matter` is also exempt. The finding asks whether readers need edition metadata rather than requiring it.
 - **Declared front-matter edition fields.** Parse front matter once and resolve aliases. A non-empty trimmed string, finite number or date counts, including `version: banana`. This checks declarations without format validation because YAML can change number spelling. Visible opening fields retain their format checks.
 - **Opt-in calibrated Jev checks.** The text audit optionally uses the same purpose and colour engine as the focused design audit. Its default stays offline and free.
-- **Pinned calibration contract.** Arm A templates, manifest requests, corpus extraction states and exact decimal validation reproduce `results-r11` at commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`.
+- **Pinned calibration contract.** Arm A templates and exact decimal validation reproduce `results-r11` at commit `7359447c25e8030b3ecebe6bbdec2d0707a598ee`. Tests check the manifest requests and corpus extraction states against it only when the calibration documents are supplied.
 - **Three approved gates.** Purpose failure, colour pass and neither diagnosis carry the recorded cluster-level evidence. Reader and position remain companion questions whose judgements are discarded.
 - **Disclosure before agreement.** Preview names files, payloads, companions, model, privacy terms and possible charges. Interactive sending requires exact yes from the controlling terminal.
 - **Explicit non-interactive agreement.** A user-supplied `--yes` is required alongside `--send`. Agents must never add `--yes` or infer agreement from a delegated instruction.
@@ -23,6 +23,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Historical cluster evidence.** Bounds describe agreement for protocol cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability.
 - **Recognition remains unmeasured.** Raw HTML structure and custom anchors are unsupported. Badge alternative text can be stale, and external versioning can cause advisory false positives.
 - **Service details remain unverified.** Pricing, retention and live transport behaviour were not checked. Findings remain proxies rather than ISO judgements.
+- **The calibration documents are not shipped.** They are other people's text, so they are not in this repository. The four calibration tests read them from the folder named by `ISO_24495_CALIBRATION_FIXTURES`. Without them, those tests are skipped and shown as skipped, in GitHub Actions too.
 
 ### Changed
 

@@ -113,7 +113,7 @@ Read the standard rather than this project's reading of it.
 - **[The International Plain Language Federation's definition and framework](https://www.iplfederation.org/iso-standard/)**, freely published, and the source of the four governing principles used here.
 - **[Plain Language Association International on the ISO standard](https://plainlanguage.com/what-is-plain-language/iso-plain-language-standard/)**, background on how the standard was drafted and what it covers.
 
-The ISO texts are licensed, so the standards themselves cost money. Everything in this repository is built from the freely published material above.
+The ISO texts are licensed, so the standards themselves cost money. The guidance here is built from the freely published material above. Test documents that other people wrote are listed, with their licences, in `skills/iso-24495-4/tests/fixtures/known-good/SOURCES.md`.
 
 ## What the engine reads
 
@@ -249,6 +249,8 @@ Findings and unsure results never change a completed audit's exit code.
 Run `bash scripts/check.sh` before you push. That script is the whole gate, and GitHub Actions runs the same file on every pull request. A failure on the server therefore reproduces locally with one command. New checks belong in the script, never in the workflow.
 
 Run `bun install` once after you clone, and have Node on your path. The gate runs a type check and a linter before the tests, and both are development dependencies. The linter starts on Node. The gate installs exactly what `bun.lock` records, and stops when that file and `package.json` disagree.
+
+Four tests check the engine against the design audit's calibration, and they need the calibration documents. These are not in this repository, because they are other people's text. To run the four tests, set `ISO_24495_CALIBRATION_FIXTURES` to a folder holding `requests.json` and `extraction.json`. Without those files, the four tests are skipped, and the test run shows them as skipped.
 
 A user of the plugin installs none of this. So the gate copies the working tree to a place with nothing installed, and runs every shipped command there, in each documented mode that works offline. Bun is told not to fetch a missing package during that run.
 

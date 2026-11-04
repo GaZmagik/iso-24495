@@ -1,21 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildRequest, planDocument, classify } from "../../../scripts/lib/jev/engine.ts";
-import { calibrationEvidence } from "../../../scripts/lib/jev/catalogue.ts";
+import { calibrationEvidence, sha256 } from "../../../scripts/lib/jev/catalogue.ts";
 import { add, ONE, parseDecimal, subtract, type Decimal } from "../../../scripts/lib/jev/decimal.ts";
 
-const FIXTURES = join(import.meta.dir, "../../fixtures/jev");
+/**
+ * The environment variable that names the folder holding `requests.json` and
+ * `extraction.json`. They hold the calibration documents, which are other
+ * people's text, so this repository does not ship them. Without them, the two
+ * tests that read them are skipped and reported as skipped.
+ */
+const CALIBRATION_VARIABLE = "ISO_24495_CALIBRATION_FIXTURES";
+
+/** The digest results-r11.json records for each calibration file, by name. */
+const PINNED_HASHES: { requests: string; extraction: string } = JSON.parse(readFileSync(join(import.meta.dir, "../../../scripts/lib/jev/results-r11.json"), "utf8")).hashes;
+
 describe("calibrated engine", () => {
-  test("reproduces every manifest request byte for byte", () => {
-    const fixtures = JSON.parse(readFileSync(join(FIXTURES, "requests.json"), "utf8"));
+  test.skipIf(!hasCalibrationDocument("requests"))(calibrationTestName("reproduces every manifest request byte for byte", "requests"), () => {
+    const bytes = readCalibrationDocument("requests");
+    expect(sha256(bytes), "requests.json is not the pinned file").toBe(PINNED_HASHES.requests);
+    const fixtures = JSON.parse(bytes.toString("utf8"));
     expect(fixtures.length).toBe(1613);
     for (const fixture of fixtures) {
       expect(JSON.stringify(buildRequest(fixture.kind, fixture.state))).toBe(fixture.body);
     }
   });
-  test("preserves all corpus extraction states and source locations", () => {
-    const fixtures = JSON.parse(readFileSync(join(FIXTURES, "extraction.json"), "utf8"));
+  test.skipIf(!hasCalibrationDocument("extraction"))(calibrationTestName("preserves all corpus extraction states and source locations", "extraction"), () => {
+    const bytes = readCalibrationDocument("extraction");
+    expect(sha256(bytes), "extraction.json is not the pinned file").toBe(PINNED_HASHES.extraction);
+    const fixtures = JSON.parse(bytes.toString("utf8"));
     expect(fixtures.length).toBe(840);
     let checked = 0;
     for (const fixture of fixtures) {
@@ -96,4 +110,39 @@ function purposeClassifier(probability: typeof parseDecimal): (both: string, tas
  */
 function openingAnswer(both: Decimal, neither: Decimal): Record<string, Decimal> {
   return { both, task_only: parseDecimal("0.01"), scope_only: parseDecimal("0.01"), neither };
+}
+
+/**
+ * Whether the folder named by CALIBRATION_VARIABLE holds the named
+ * calibration file. A file that is present but altered still counts, so its
+ * test runs and fails on the digest rather than being skipped.
+ *
+ * @returns False when the variable is unset or empty, or the file is absent.
+ */
+function hasCalibrationDocument(name: string): boolean {
+  const folder = process.env[CALIBRATION_VARIABLE];
+  return folder !== undefined && folder !== "" && existsSync(join(folder, `${name}.json`));
+}
+
+/**
+ * The name of a test that reads a calibration file. When the file cannot be
+ * found, the name also says what to set, so the skipped test explains itself.
+ *
+ * @returns The test name, with the setting to make when the file is absent.
+ */
+function calibrationTestName(title: string, name: string): string {
+  return hasCalibrationDocument(name) ? title : `${title} (skipped: set ${CALIBRATION_VARIABLE} to a folder holding ${name}.json)`;
+}
+
+/**
+ * Reads the named calibration file from the folder CALIBRATION_VARIABLE names.
+ *
+ * @returns The file's bytes, unchanged, so their digest can be checked.
+ * @throws Error when the variable is unset or empty. A test calls this only
+ *     after hasCalibrationDocument has found the file.
+ */
+function readCalibrationDocument(name: string): Buffer {
+  const folder = process.env[CALIBRATION_VARIABLE];
+  if (folder === undefined || folder === "") throw new Error(`${CALIBRATION_VARIABLE} is not set; set it to the folder holding ${name}.json.`);
+  return readFileSync(join(folder, `${name}.json`));
 }
