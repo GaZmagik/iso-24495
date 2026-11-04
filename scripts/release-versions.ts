@@ -1,8 +1,9 @@
 // Every place that carries the release version, and the check that they agree.
 //
-// Twelve places carry the version between them: both plugin manifests, the
-// marketplace entry's version and the `ref` in its source object, and every
-// skill's `metadata.version`. Moving some but not all of them has reached users.
+// Thirteen places carry the version between them: both plugin manifests, the
+// marketplace entry's version and the `ref` in its source object, and the
+// `metadata.version` of all nine skills, the Codex style skill included.
+// Moving some but not all of them has reached users.
 // The 0.6.1 release missed `.codex-plugin/plugin.json`, and a forgotten `ref`
 // once left users installing the previous release, because installs pin to the
 // tag the `ref` names.
