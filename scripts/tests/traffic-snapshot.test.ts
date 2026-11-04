@@ -655,8 +655,7 @@ describe("textIfPresent", () => {
   });
 
   // The review's own case, with a real lock. Windows alone can refuse a reader this way.
-  test("the shipped command leaves a table alone while another program holds it", async () => {
-    if (process.platform !== "win32") return;
+  test.skipIf(process.platform !== "win32")("the shipped command leaves a table alone while another program holds it", async () => {
     const root = join(import.meta.dir, "..", "..");
     const directory = mkdtempSync(join(tmpdir(), "iso-traffic-locked-"));
     try {

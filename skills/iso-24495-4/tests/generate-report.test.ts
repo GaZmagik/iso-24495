@@ -13,6 +13,8 @@ const evidence = auditEvidence(join(FIXTURES, "repo-level2"));
 const answers = await Bun.file(join(FIXTURES, "answers.sample.json")).json();
 const maturity = scoreMaturity(answers);
 const NOW = "2026-08-11T14:00:00.000Z";
+// A failed link probe registers a skip instead of passing a test that checked nothing.
+const CAN_MAKE_LINKS = canMakeSymbolicLink();
 
 /** Named in the failure, because a difference of 45 lines needs a reason. */
 const REPORT_MUST_MATCH =
@@ -236,16 +238,12 @@ describe("one file named for both the state and the report", () => {
   });
 
   // Where this account may make a symbolic link to a file. Where it may not, as on
-  // Windows without the right to, this case is passed over.
-  test("a path through a symbolic link to the file is the same file", () => {
+  // Windows without the right to, the runner counts this case as skipped.
+  test.skipIf(!CAN_MAKE_LINKS)("a path through a symbolic link to the file is the same file", () => {
     withInputs((directory, run) => {
       const target = join(directory, "audit.md");
       writeFileSync(target, "kept");
-      try {
-        symlinkSync(target, join(directory, "link.md"), "file");
-      } catch {
-        return;
-      }
+      symlinkSync(target, join(directory, "link.md"), "file");
       expect(run("--state", join(directory, "link.md"), "--out", target)).toEqual({ exit: 2, stdout: [], stderr: [oneFile] });
       expect(readFileSync(target, "utf8")).toBe("kept");
     });
@@ -281,6 +279,23 @@ describe("one file named for both the state and the report", () => {
     });
   });
 });
+
+/**
+ * Whether this account may make a symbolic link to a file, found by making one in a
+ * folder of its own and removing the folder.
+ */
+function canMakeSymbolicLink(): boolean {
+  const workspace = mkdtempSync(join(tmpdir(), "iso-24495-link-probe-"));
+  try {
+    writeFileSync(join(workspace, "file.md"), "");
+    symlinkSync(join(workspace, "file.md"), join(workspace, "link.md"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
 
 /** Runs the command on the three sample inputs, in a directory of its own, and removes it. */
 function withInputs(check: (directory: string, run: (...options: string[]) => { exit: number; stdout: string[]; stderr: string[] }) => void): void {
