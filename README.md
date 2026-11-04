@@ -250,6 +250,8 @@ Run `bash scripts/check.sh` before you push. That script is the whole gate, and 
 
 Run `bun install` once after you clone, and have Node on your path. The gate runs a type check and a linter before the tests, and both are development dependencies. The linter starts on Node. The gate installs exactly what `bun.lock` records, and stops when that file and `package.json` disagree.
 
+Four tests check the engine against the design audit's calibration, and they need the calibration documents. These are not in this repository, because they are other people's text. To run the four tests, set `ISO_24495_CALIBRATION_FIXTURES` to a folder holding `requests.json` and `extraction.json`. Without those files, the four tests are skipped, and the test run shows them as skipped.
+
 A user of the plugin installs none of this. So the gate copies the working tree to a place with nothing installed, and runs every shipped command there, in each documented mode that works offline. Bun is told not to fetch a missing package during that run.
 
 Each command there runs in an environment the gate builds, not the one in your shell. It holds the option above, and a home and a temporary directory of the gate's own. One thing is inherited: the path the system searches for programs, so that `bun`, `bash`, `git` and `env` are found. A different `bun` on that path is a different result.
