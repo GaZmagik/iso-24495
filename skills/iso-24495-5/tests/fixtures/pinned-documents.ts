@@ -573,7 +573,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "- **[The International Plain Language Federation's definition and framework](https://www.iplfederation.org/iso-standard/)**, freely published, and the source of the four governing principles used here.",
     "- **[Plain Language Association International on the ISO standard](https://plainlanguage.com/what-is-plain-language/iso-plain-language-standard/)**, background on how the standard was drafted and what it covers.",
     "",
-    "The ISO texts are licensed, so the standards themselves cost money. Everything in this repository is built from the freely published material above.",
+    "The ISO texts are licensed, so the standards themselves cost money. The guidance here is built from the freely published material above. Test documents that other people wrote are listed, with their licences, in `skills/iso-24495-4/tests/fixtures/known-good/SOURCES.md`.",
     "",
     "## What the engine reads",
     "",
