@@ -5,9 +5,12 @@
 # contributor can reproduce a result here with one local command.
 #
 # Findings are advice. They appear in the job's log and on its summary page,
-# and they never fail this job. It fails only when the description is empty or
-# holds only whitespace, or when the audit did not run. A pass therefore means
-# the audit ran, not that the description is clear.
+# and they never fail this job. It fails when the description is empty or the
+# audit did not run. Empty means the source holds only white space, control
+# characters, characters that Unicode says to leave undrawn, or the object
+# replacement character (U+FFFC). The check reads those characters and does not
+# render the description. A pass means the audit ran, not that the description
+# is clear.
 name: Pull request text
 
 on:
