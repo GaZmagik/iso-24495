@@ -13,7 +13,7 @@ import { safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryW
  * The version of the disclosure a preview shows before agreement. The send
  * log records it with each send.
  */
-export const DISCLOSURE_VERSION = "0.8.0-r2";
+export const DISCLOSURE_VERSION = "0.8.0-r3";
 /**
  * What a Jev result does not show. Every preview and every report prints
  * it.
@@ -21,8 +21,9 @@ export const DISCLOSURE_VERSION = "0.8.0-r2";
 export const LIMITATION = "Only purpose and colour receive calibrated decisions. Bounds are one-sided 95% lower bounds on agreement for the protocol's cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability. Correlated blocks do not extend that guarantee.";
 /**
  * One line of the local send log, written after a send. It holds the
- * digest of what was sent, the selected paths and the time, and never
- * document text. It records a transmission, not an agreement.
+ * disclosure version, a digest of the payloads sent, the selected paths, the
+ * time and whether execution completed, and never document text. It records
+ * a transmission, not an agreement.
  */
 export interface AuditLog { disclosureVersion: string; digest: string; paths: string[]; timestamp: string; complete: boolean }
 /**
@@ -349,7 +350,8 @@ function hasUnrecognisedFrontMatter(text: string): boolean {
  * The disclosure a user reads before agreeing to send: the recipient and
  * model, each selected path, the requests for each file, each document that
  * is refused for sending and why, that a request may be sent up to six times
- * and charged again, the five largest payloads, the privacy terms, the
+ * and that one sent again for any reason may be charged again, the five
+ * largest payloads, the privacy terms, what the send log records, the
  * limitation and the calibration evidence.
  *
  * @param selection What `selectDocuments` returned. An empty selection gives
@@ -377,12 +379,12 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
     ...(refused.length === 0 ? [] : [`Documents not sent: ${refused.length} of ${selection.documents.length}. A leading "---" block that is closed but lacks the shape of front matter may hold metadata, so nothing from such a document is sent. Correct the block or remove it to have the document assessed.`]),
     `Total: ${candidates.length} requests, ${candidates.length * 2} questions.`,
     "This preview counts requests, not attempts, and each request may be sent up to six times.",
-    "A request sent again after its answer fails a value check may be charged again.",
+    "A request sent again for any reason may be charged again.",
     "Purpose travels with the reader companion question; colour travels with the position companion question. Reader and position judgements are discarded.",
     "Five largest payload totals (UTF-8 bytes, including questions):",
     ...largest.map(document => `- ${safePath(document.file)}: ${payloadBytes(document.plan)} bytes.`),
     ...(includeText ? [`This export saves full judged document text locally to ${safePath(json as string)}.`] : ["JSON exports contain excerpts and state hashes by default."]),
-    "A local send log records the payload digest, selected paths and timestamp. It records transmission; it does not prove agreement.",
+    "A local send log records the disclosure version, a digest of the payloads sent, the selected paths, the timestamp and whether execution completed. It records transmission; it does not prove agreement.",
     LIMITATION,
     ...formatEvidence(calibrationEvidence()),
   ].join("\n");

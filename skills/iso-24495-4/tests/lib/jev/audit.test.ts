@@ -589,14 +589,50 @@ test("the preview says, after its totals, that a request may be sent up to six t
   expect(total).toBeGreaterThan(0);
   expect(lines.slice(total + 1, total + 3)).toEqual([
     "This preview counts requests, not attempts, and each request may be sent up to six times.",
-    "A request sent again after its answer fails a value check may be charged again.",
+    "A request sent again for any reason may be charged again.",
   ]);
 });
 
 test("the disclosure version names the text that says a request may be sent again and charged again", () => {
-  expect(DISCLOSURE_VERSION).toBe("0.8.0-r2");
+  expect(DISCLOSURE_VERSION).toBe("0.8.0-r3");
   const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [] };
-  expect(formatPlan(selection).split("\n")[0]).toBe(`Transmission preview: TypeSafe, model ${MODEL}, disclosure 0.8.0-r2.`);
+  expect(formatPlan(selection).split("\n")[0]).toBe(`Transmission preview: TypeSafe, model ${MODEL}, disclosure 0.8.0-r3.`);
+});
+
+// The preview said the send log held the digest, the paths and the time, and left out
+// the disclosure version and whether execution completed. The record a real send
+// writes decides the words, so a field added to the log fails this test until the
+// preview names it.
+test("the preview names every field a real send writes to the send log, and no other", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-log-fields-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, "# Title\n\nThe supplier shall act.\n");
+    const records: object[] = [];
+    const dependencies = recordingDependencies([]);
+    dependencies.env = { TYPESAFE_API_KEY: "sk-test-not-real" };
+    dependencies.writeLog = record => {
+      records.push(record);
+    };
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], () => {}, () => {}, dependencies)).toBe(0);
+    expect(records).toHaveLength(1);
+    const words: Record<string, string> = {
+      disclosureVersion: "the disclosure version",
+      digest: "a digest of the payloads sent",
+      paths: "the selected paths",
+      timestamp: "the timestamp",
+      complete: "whether execution completed",
+    };
+    expect(records.map(record => Object.keys(record).sort())).toEqual([Object.keys(words).sort()]);
+    const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [] };
+    const line = formatPlan(selection).split("\n").find(text => text.startsWith("A local send log records"));
+    expect(line).toBe("A local send log records the disclosure version, a digest of the payloads sent, the selected paths, the timestamp and whether execution completed. It records transmission; it does not prove agreement.");
+    for (const phrase of Object.values(words)) {
+      expect(line).toContain(phrase);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // A failed send printed only "Jev execution is incomplete", so a rejected key, a busy

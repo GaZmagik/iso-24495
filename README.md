@@ -216,7 +216,7 @@ Preview names TypeSafe, the model, selected files, requests, companion questions
 Document text leaves the machine when sent, and charges may apply.
 
 The preview counts requests, not attempts, and each request may be sent up to six times.
-A request sent again after its answer fails a value check may be charged again.
+A request sent again for any reason may be charged again.
 Pricing, retention and live transport behaviour have not been checked.
 Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing).
 
@@ -241,7 +241,7 @@ Once a request fails, no new request starts, but up to three requests already st
 The audit then discards every Jev verdict and the report states incomplete execution.
 
 The line after "Execution: incomplete." gives the first failure in fixed words, and the JSON report holds the same words in `failure`.
-Separate words cover a rejected key or permission, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
+Separate words cover a rejected key or permission, any other HTTP refusal, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
 The words never include the service's reply or the key. An unexpected error prints a generic line instead of its own message.
 
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
