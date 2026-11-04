@@ -13,7 +13,7 @@ import { safeCell, safePath, safePathCell, safePathCode, safeText, skippedEntryW
  * The version of the disclosure a preview shows before agreement. The send
  * log records it with each send.
  */
-export const DISCLOSURE_VERSION = "0.8.0-r1";
+export const DISCLOSURE_VERSION = "0.8.0-r2";
 /**
  * What a Jev result does not show. Every preview and every report prints
  * it.
@@ -342,8 +342,9 @@ function hasUnrecognisedFrontMatter(text: string): boolean {
 /**
  * The disclosure a user reads before agreeing to send: the recipient and
  * model, each selected path, the requests for each file, each document that
- * is refused for sending and why, the five largest payloads, the privacy
- * terms, the limitation and the calibration evidence.
+ * is refused for sending and why, that a request may be sent up to six times
+ * and charged again, the five largest payloads, the privacy terms, the
+ * limitation and the calibration evidence.
  *
  * @param selection What `selectDocuments` returned. An empty selection gives
  *     the same text with totals of zero.
@@ -369,6 +370,8 @@ export function formatPlan(selection: Selection, includeText = false, json?: str
       : `- ${safePath(document.file)}: ${document.plan.candidates.filter(candidate => candidate.kind === "opening").length} eligible openings, ${document.plan.candidates.filter(candidate => candidate.kind === "block").length} eligible blocks, ${document.plan.candidates.length} requests.`),
     ...(refused.length === 0 ? [] : [`Documents not sent: ${refused.length} of ${selection.documents.length}. A leading "---" block that is closed but lacks the shape of front matter may hold metadata, so nothing from such a document is sent. Correct the block or remove it to have the document assessed.`]),
     `Total: ${candidates.length} requests, ${candidates.length * 2} questions.`,
+    "This preview counts requests, not attempts, and each request may be sent up to six times.",
+    "A request sent again after its answer fails a value check may be charged again.",
     "Purpose travels with the reader companion question; colour travels with the position companion question. Reader and position judgements are discarded.",
     "Five largest payload totals (UTF-8 bytes, including questions):",
     ...largest.map(document => `- ${safePath(document.file)}: ${payloadBytes(document.plan)} bytes.`),
