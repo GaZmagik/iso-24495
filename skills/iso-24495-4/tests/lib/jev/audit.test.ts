@@ -462,6 +462,40 @@ test("once a reply fails, no request that is still queued is sent", async () => 
   }
 });
 
+// A reply whose Choice summed to exactly 0.99 failed the client's check and was never
+// sent again, so the run discarded every verdict and exited 3. The calibration left
+// such a request for a later run. The client now sends it again, up to six attempts.
+test("a request whose first reply fails its checks and whose second passes completes the run", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-resend-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, "# Title\n\n---\n");
+    expect(selectDocuments(file, directory).documents[0]?.plan.candidates).toHaveLength(1);
+    const bodies: string[] = [];
+    const dependencies: AuditDependencies = {
+      env: { TYPESAFE_API_KEY: "key" },
+      terminal: { inputIsTTY: false, outputIsTTY: false, prompt: async () => "no" },
+      client: { fetch: async (url, init) => {
+        bodies.push(init.body);
+        const probabilities = bodies.length === 1 ? { both: 0.33, task_only: 0.33, scope_only: 0.33, neither: 0 } : { both: 0.1, task_only: 0.02, scope_only: 0.02, neither: 0.86 };
+        return Response.json({ model: MODEL, answers: { purpose: { type: "choice", choice: "neither", confidence: 0.86, probabilities }, reader: { type: "noul", noul: 0.5 } } });
+      }, clock: { schedule: () => () => {} }, sleep: async () => {} },
+      writeLog: () => {},
+    };
+    const reportFile = join(directory, "report.json");
+    const out: string[] = [];
+    expect(await runAuditCli("design", ["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => out.push(text), text => out.push(text), dependencies)).toBe(0);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toBe(bodies[0]);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    expect(report.jev.complete).toBe(true);
+    expect(report.jev.results.map((result: { band: string; diagnosis?: string }) => [result.band, result.diagnosis])).toEqual([["fail", "neither"]]);
+    expect(out.join("\n")).not.toContain("incomplete");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 // A file name was cleaned like quoted wording: a control character became a space and
 // each run of spaces became one, so two files could share one printed name. Every line
 // below names a file, and each now prints it as a path.
