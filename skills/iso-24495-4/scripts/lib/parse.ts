@@ -157,6 +157,11 @@ function isLinkDefinition(line: string): boolean {
         index += 2;
         continue;
       }
+      // CommonMark refuses an ASCII control character here, so the line is a
+      // paragraph a reader sees. U+0000 is the exception: CommonMark replaces
+      // it with U+FFFD before reading, and U+FFFD may stand in a destination.
+      const code = line.charCodeAt(index);
+      if ((code >= 0x01 && code <= 0x1f) || code === 0x7f) return false;
       if (line[index] === "(") depth++;
       if (line[index] === ")") depth--;
       if (depth < 0 || depth > 32) return false;
@@ -616,8 +621,8 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
     if (paragraph === null && !source.includes("\t") && isLinkDefinition(text)) {
-      const label = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text)?.[1];
-      if (label !== undefined) {
+      const [labelAndColon, label] = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text) ?? [];
+      if (labelAndColon !== undefined && label !== undefined) {
         const name = normaliseReference(label);
         references.add(name);
         // Read the way isLinkDefinition read it: spaces lead up to the
@@ -626,7 +631,10 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         // has it. Trimming and matching on white space took those for space,
         // found no destination, and left the name free for a later duplicate.
         // The first definition of a name is the one that counts.
-        const destination = /^ *(?:<([^>]*)>|([^ \t]+))/.exec(text.slice(text.indexOf("]:") + 2));
+        // The destination starts after the label's own "]:". An escaped
+        // bracket lets "]:" sit inside the label, and reading from the first
+        // "]:" on the line recorded part of the label as the destination.
+        const destination = /^ *(?:<([^>]*)>|([^ \t]+))/.exec(text.slice(labelAndColon.length));
         if (!destinations.has(name)) destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
       }
       readable[i] = "";

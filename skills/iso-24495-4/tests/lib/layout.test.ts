@@ -227,12 +227,18 @@ describe("layout rules", () => {
   // space, U+FEFF and a form feed for space and found none. That first threw,
   // and once guarded it left the name free, so a later duplicate replaced the
   // first definition. Each character is built from its code, so that none
-  // sits unseen in this file.
+  // sits unseen in this file. A form feed is an ASCII control character, which
+  // CommonMark refuses in a destination outside angle brackets, so the bare
+  // form feed is a paragraph and is tested below with the other controls.
   test("the first definition of a name keeps it, whatever character its destination is", () => {
-    for (const code of [0xa0, 0xfeff, 0x0c, 0x2028, 0x3000]) {
+    for (const code of [0xa0, 0xfeff, 0x2028, 0x3000]) {
       const character = String.fromCharCode(code);
       const label = `U+${code.toString(16)}`;
       expect(structure(`[a]: ${character}\n[a]: #later\n`).destinations.get("a"), label).toBe(character);
+    }
+    for (const code of [0xa0, 0xfeff, 0x0c, 0x2028, 0x3000]) {
+      const character = String.fromCharCode(code);
+      const label = `U+${code.toString(16)}`;
       expect(structure(`[a]: <${character}>\n[a]: #later\n`).destinations.get("a"), label).toBe(character);
     }
     expect(structure("[a]: <>\n[a]: #later\n").destinations.get("a")).toBe("");
@@ -244,6 +250,50 @@ describe("layout rules", () => {
       + ["A", "B", "C", "D", "E", "F"].map(name => `## ${name}\n\nWords.`).join("\n\n");
     expect(auditText(document, { markdown: true }).map(finding => finding.rule))
       .toEqual(["contents-list", "overview-label"]);
+  });
+
+  // A label may hold an escaped bracket, so "]:" can sit inside it. The
+  // destination was read from the first "]:" on the line, and here that
+  // recorded "b]:" in place of "/url".
+  test("a destination is read from the end of the label, not from the first \"]:\" on the line", () => {
+    expect([...structure("[a\\]:b]: /url\n").destinations]).toEqual([["a]:b", "/url"]]);
+    expect([...structure("[a\\]:b]: <x y> \"t\"\n").destinations]).toEqual([["a]:b", "x y"]]);
+    expect([...structure("[a\\]: b]: /url\n").destinations]).toEqual([["a]: b", "/url"]]);
+  });
+
+  // CommonMark 0.31.2 refuses an ASCII control character, U+0000 to U+001F or
+  // U+007F, in a destination outside angle brackets. Such a line is a
+  // paragraph a reader sees, so it must stay in the text the audit reads.
+  // Between angle brackets only a line ending, "<" or ">" is refused, so there
+  // the line is still a definition. Characters are built from their codes, so
+  // that none sits unseen in this file.
+  test("a bare destination holding an ASCII control character is not a definition", () => {
+    for (const code of [0x01, 0x0b, 0x0c, 0x1f, 0x7f]) {
+      const character = String.fromCharCode(code);
+      const label = `U+${code.toString(16)}`;
+      for (const line of [`[a]: ${character}`, `[a]: x${character}y`, `[a]: x${character} "title"`]) {
+        const parsed = structure(`${line}\n`);
+        expect(parsed.lines[0], label).toBe(line);
+        expect(parsed.destinations.has("a"), label).toBe(false);
+      }
+      expect(structure(`[a]: <${character}>\n`).destinations.get("a"), label).toBe(character);
+      // The paragraph stays open, and a definition cannot interrupt one.
+      expect(structure(`[a]: ${character}\n[a]: #later\n`).destinations.has("a"), label).toBe(false);
+    }
+  });
+
+  // CommonMark replaces U+0000 with U+FFFD before it reads a line, and U+FFFD
+  // may stand in a bare destination. So a line whose destination is U+0000 is
+  // a definition there, and stays one here. The C1 controls, U+0080 to
+  // U+009F, are not ASCII control characters, so they may stand there too.
+  test("U+0000 and the C1 controls are still accepted in a bare destination", () => {
+    for (const code of [0x00, 0x80, 0x85, 0x9f]) {
+      const character = String.fromCharCode(code);
+      const label = `U+${code.toString(16)}`;
+      const parsed = structure(`[a]: ${character}\n`);
+      expect(parsed.lines[0], label).toBe("");
+      expect(parsed.destinations.get("a"), label).toBe(character);
+    }
   });
 });
 
