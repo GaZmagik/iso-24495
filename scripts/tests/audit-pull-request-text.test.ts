@@ -67,7 +67,7 @@ describe("the file is read once, and that reading is what is judged", () => {
     expect(result.exit).toBe(1);
     expect(result.read).toHaveLength(1);
     expect(result.stdout).toEqual([
-      "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.",
+      "The description is empty for this check. It reads source characters and does not render the description. Write what the change does and why.",
     ]);
   });
 
@@ -103,11 +103,12 @@ describe("the file is read once, and that reading is what is judged", () => {
 });
 
 // A description of one zero width space passed as not empty: the test for emptiness
-// asked for white space, and that character is none. A description is empty when its
-// source holds only white space and characters that Unicode says to leave undrawn.
-// The check reads characters and renders nothing. Issues 47 and 53.
-describe("a description of only white space and characters Unicode leaves undrawn is empty", () => {
-  const empty = "The description is empty or holds only whitespace, so there is nothing to audit. Write one: a reader needs to know what the change does and why.";
+// asked for white space, and that character is none. Empty means the source holds
+// only white space, control or format characters, lone surrogates, characters marked
+// default ignorable by Unicode, or U+FFFC. U+FFFC is the object replacement character.
+// The check reads source characters and does not render the description. Issues 47 and 53.
+describe("a description made only of characters the source check removes is empty", () => {
+  const empty = "The description is empty for this check. It reads source characters and does not render the description. Write what the change does and why.";
   const unseen: Array<[name: string, text: string]> = [
     ["a zero width space", String.fromCodePoint(0x200b)],
     ["a word joiner", String.fromCodePoint(0x2060)],
