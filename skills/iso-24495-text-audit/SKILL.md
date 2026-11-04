@@ -152,6 +152,7 @@ Pricing, retention and live transport behaviour remain unverified.
 
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
 Code 3 covers service, response, model and calibration failures; code 4 covers a missing or invalid key.
+Code 3 also covers an unexpected error, whose message is deliberately not shown.
 Neither findings nor unsure results change a completed audit's exit code.
 
 ## Boundaries

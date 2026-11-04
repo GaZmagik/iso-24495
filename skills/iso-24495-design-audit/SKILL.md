@@ -105,7 +105,7 @@ An incomplete execution discards all Jev verdicts.
 | 0 | Completed or preview, including findings and unsure. |
 | 1 | Local execution or report failure. |
 | 2 | Invalid arguments or missing agreement. |
-| 3 | Rejection, exhausted retries, malformed response, wrong model or calibration integrity failure. |
+| 3 | Rejection, exhausted retries, malformed response, wrong model or calibration integrity failure. It also covers an unexpected error, whose message is deliberately not shown. |
 | 4 | Missing or locally invalid key. |
 
 The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
