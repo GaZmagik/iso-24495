@@ -245,6 +245,15 @@ describe("layout rules", () => {
     expect(auditText(document, { markdown: true }).map(finding => finding.rule))
       .toEqual(["contents-list", "overview-label"]);
   });
+
+  // A label may hold an escaped bracket, so "]:" can sit inside it. The
+  // destination was read from the first "]:" on the line, and here that
+  // recorded "b]:" in place of "/url".
+  test("a destination is read from the end of the label, not from the first \"]:\" on the line", () => {
+    expect([...structure("[a\\]:b]: /url\n").destinations]).toEqual([["a]:b", "/url"]]);
+    expect([...structure("[a\\]:b]: <x y> \"t\"\n").destinations]).toEqual([["a]:b", "x y"]]);
+    expect([...structure("[a\\]: b]: /url\n").destinations]).toEqual([["a]: b", "/url"]]);
+  });
 });
 
 describe("what a heading identifier keeps", () => {
