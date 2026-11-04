@@ -463,8 +463,8 @@ test("once a reply fails, no request that is still queued is sent", async () => 
 });
 
 // A reply whose Choice summed to exactly 0.99 failed the client's check and was never
-// sent again, so the run discarded every verdict and exited 3. The calibration sent
-// such a request again, and the client now does too.
+// sent again, so the run discarded every verdict and exited 3. The calibration left
+// such a request for a later run. The client now sends it again, up to six attempts.
 test("a request whose first reply fails its checks and whose second passes completes the run", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-resend-"));
   try {

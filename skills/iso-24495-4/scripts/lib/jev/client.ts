@@ -81,8 +81,11 @@ export const systemClock: Clock = { schedule: (callback, ms) => {
  * timeout, a connection failure, HTTP 429 and HTTP 5xx are tried again, up to
  * `MAX_ATTEMPTS` attempts, after a wait that starts at half a second and
  * doubles. A 2xx answer whose values fail their checks uses one of those
- * attempts and is asked for again, as the calibration did. A 2xx reply that
- * is not JSON, or names a model other than `MODEL`, ends the request at once.
+ * attempts and is asked for again. The calibration did not do this: it set
+ * such a reply aside and left the request for a later run, with no cap. So
+ * `MAX_ATTEMPTS` is this client's own limit, not a measured one. A 2xx reply
+ * that is not JSON, or names a model other than `MODEL`, ends the request at
+ * once.
  * An accepted answer is never asked for again.
  *
  * The shared boundary checks the original key before trimming spaces.

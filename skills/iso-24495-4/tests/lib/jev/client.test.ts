@@ -234,8 +234,9 @@ describe("transport controls", () => {
     } })(OPENING)).rejects.toThrow("cancelled");
   });
   // A 2xx answer that failed its checks used to end the request, and the audit
-  // then discarded every verdict. The calibration sent such a request again, so
-  // its bounds assume a re-send. Three options at 0.33 sum to exactly 0.99, which
+  // then discarded every verdict. The calibration set such a reply aside and left
+  // the request for a later run, so its bounds rest on answers it accepted in the
+  // end. Three options at 0.33 sum to exactly 0.99, which
   // floating-point addition puts 0.010000000000000009 from 1.
   test("an answer that fails its checks is sent again, with the same bytes and the usual wait", async () => {
     const refused = { ...VALID, answers: { ...VALID.answers, purpose: { type: "choice", choice: "both", confidence: 0.33, probabilities: { both: 0.33, task_only: 0.33, scope_only: 0.33, neither: 0 } } } };

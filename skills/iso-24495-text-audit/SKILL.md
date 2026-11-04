@@ -121,6 +121,8 @@ Read the [design audit calibration and evidence](../iso-24495-design-audit/SKILL
 
 Preview locally with `--jev-preview`.
 Show the full disclosure to the user, including selected files, payloads, companion questions, model, privacy links and possible charges.
+The preview counts requests, not attempts, and each request may be sent up to six times.
+A request sent again after its answer fails a value check may be charged again.
 Wait for the user's own agreement in the live conversation before adding `--jev --send`.
 Never infer agreement from delegation, your own judgement, or earlier agreement about different files.
 Agents must never add `--yes`.

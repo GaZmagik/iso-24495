@@ -214,6 +214,8 @@ Unsure asserts no fault, and colour passes appear only in counts.
 
 Preview names TypeSafe, the model, selected files, requests, companion questions and the five largest payload totals.
 Document text leaves the machine when sent, and charges may apply.
+The preview counts requests, not attempts, and each request may be sent up to six times.
+A request sent again after its answer fails a value check may be charged again.
 Pricing, retention and live transport behaviour have not been checked.
 Read the [privacy policy](https://typesafe.ai/legal/privacy-policy) and [Data Processing Agreement](https://typesafe.ai/legal/data-processing).
 
@@ -232,8 +234,9 @@ A local send log records transmission rather than proof of agreement.
 Sending requires Bun and a key in `TYPESAFE_API_KEY`.
 The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
 It retries connection failures, timeouts, 429, 5xx and answers that fail a value check, and never replaces an accepted answer.
-A reply that is not JSON, or that names another model, ends the run at once.
-On terminal failure, Jev verdicts are discarded and the report states incomplete execution.
+A reply that is not JSON, or that names another model, ends its request with no further attempt.
+Once a request fails, no new request starts, but up to three requests already started still finish.
+The audit then discards every Jev verdict and the report states incomplete execution.
 
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
 Code 3 covers service, response, model and calibration failures; code 4 covers a missing or locally invalid key.
