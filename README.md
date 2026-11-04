@@ -240,8 +240,13 @@ A reply that is not JSON, or that names another model, ends its request with no 
 Once a request fails, no new request starts, but up to three requests already started still finish.
 The audit then discards every Jev verdict and the report states incomplete execution.
 
+The line after "Execution: incomplete." gives the first failure in fixed words, and the JSON report holds the same words in `failure`.
+Separate words cover a rejected key or permission, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
+The words never include the service's reply or the key. An unexpected error prints a generic line instead of its own message.
+
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
 Code 3 covers service, response, model and calibration failures; code 4 covers a missing or locally invalid key.
+Code 3 also covers an unexpected error, whose message is deliberately not shown.
 Findings and unsure results never change a completed audit's exit code.
 
 ## Testing policy

@@ -17,6 +17,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Explicit non-interactive agreement.** A user-supplied `--yes` is required alongside `--send`. Agents must never add `--yes` or infer agreement from a delegated instruction.
 - **Separate report sections.** Mechanical findings and Jev results have separate JSON properties. Full judged state needs an explicitly requested export path and an extra option.
 - **Transport controls.** Four concurrent requests use at most six attempts each, with a 30-second timeout per attempt. A request whose answer fails a value check is sent again and may be charged again. Retries preserve bytes and never replace an accepted answer.
+- **A failed send says why.** The report names the first failure in fixed words, after "Execution: incomplete." and in the JSON property `failure`. The words never include the service's reply, the key or an unexpected error's message.
 
 ### Known limits
 

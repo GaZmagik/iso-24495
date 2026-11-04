@@ -138,7 +138,10 @@ Changed payloads require renewed agreement, and retries preserve the captured by
 Mechanical findings and Jev results appear in separate report sections and JSON properties.
 Report each document's assessed, pass, fail, unsure and skipped counts for purpose and colour.
 Unsure asserts no fault, and colour passes appear only in counts.
+
 On terminal Jev failure, retain mechanical findings, discard Jev verdicts and report incomplete execution.
+Report the `Failure:` line after "Execution: incomplete.", which names the first failure in fixed words.
+Those words never hold the service's reply, the key or an unexpected error's message.
 Report every skipped entry.
 
 JSON defaults to excerpts and state hashes.
@@ -149,6 +152,7 @@ Pricing, retention and live transport behaviour remain unverified.
 
 Exit codes are 0 for completed or preview, 1 for local failure, and 2 for invalid arguments or missing agreement.
 Code 3 covers service, response, model and calibration failures; code 4 covers a missing or invalid key.
+Code 3 also covers an unexpected error, whose message is deliberately not shown.
 Neither findings nor unsure results change a completed audit's exit code.
 
 ## Boundaries

@@ -105,7 +105,7 @@ An incomplete execution discards all Jev verdicts.
 | 0 | Completed or preview, including findings and unsure. |
 | 1 | Local execution or report failure. |
 | 2 | Invalid arguments or missing agreement. |
-| 3 | Rejection, exhausted retries, malformed response, wrong model or calibration integrity failure. |
+| 3 | Rejection, exhausted retries, malformed response, wrong model or calibration integrity failure. It also covers an unexpected error, whose message is deliberately not shown. |
 | 4 | Missing or locally invalid key. |
 
 The client permits four concurrent requests and six attempts for each request, with a 30-second timeout per attempt.
@@ -115,6 +115,10 @@ A reply that is not JSON, or that names another model, ends its request with no 
 Once a request fails, no new request starts, but up to three requests already started still finish.
 The audit then discards every Jev verdict.
 Retries may return different model answers; identical answers are not guaranteed.
+
+The line after "Execution: incomplete." gives the first failure in fixed words, and the JSON report holds the same words in `failure`.
+Separate words cover a rejected key or permission, a rate-limited or unavailable service, no answer, no valid answer, another model, a malformed reply and cancellation.
+The words never include the service's reply or the key. An unexpected error prints a generic line instead of its own message.
 
 ## Boundaries
 

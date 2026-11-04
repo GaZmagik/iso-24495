@@ -88,6 +88,10 @@ export const systemClock: Clock = { schedule: (callback, ms) => {
  * once.
  * An accepted answer is never asked for again.
  *
+ * When every attempt fails, one cause decides the words, in this order: an
+ * answer that failed its checks, then HTTP 429 or 5xx, then a timeout or a
+ * connection failure.
+ *
  * The shared boundary checks the original key before trimming spaces.
  *
  * @param key The TypeSafe API key. Spaces around it are trimmed.
@@ -98,6 +102,9 @@ export const systemClock: Clock = { schedule: (callback, ms) => {
  *     exit code is 3 when the service refuses the request, when no attempt
  *     succeeds, when no answer passes its checks within `MAX_ATTEMPTS`, when
  *     the reply is not JSON or names another model, or when `signal` aborts.
+ *     Each of those has its own fixed words, which hold at most an HTTP
+ *     status number and never the reply. A refusal with HTTP 401 or 403 says
+ *     the key was not accepted or lacks permission.
  * @throws A `JevError` with exit code 4 when the key is empty or holds a
  *     control character, and with exit code 3 when the calibration files fail
  *     their integrity check.
@@ -181,6 +188,7 @@ export function readAnswers(text: string, questions: RequestBody["questions"]): 
 
 async function askWithRetries(body: string, questions: RequestBody["questions"], key: string, send: Fetch, sleep: (ms: number) => Promise<void>, clock: Clock, signal?: AbortSignal): Promise<ExactAnswers> {
   let answeredInvalid = false;
+  let answeredBusy = false;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) throw new JevError("Jev execution was cancelled.");
     if (attempt > 1) await sleep(500 * 2 ** (attempt - 2));
@@ -203,9 +211,13 @@ async function askWithRetries(body: string, questions: RequestBody["questions"],
         continue;
       }
     }
+    if (result.status === 401 || result.status === 403) throw new JevError(`Jev refused the request with HTTP status ${result.status}. The API key was not accepted or lacks permission.`);
     if (result.status !== 429 && !(result.status >= 500 && result.status <= 599)) throw new JevError(`Jev refused the request with HTTP status ${result.status}.`);
+    answeredBusy = true;
   }
-  throw new JevError(answeredInvalid ? "Jev did not give a valid answer after six attempts." : "Jev did not answer after six transport attempts.");
+  if (answeredInvalid) throw new JevError("Jev did not give a valid answer after six attempts.");
+  if (answeredBusy) throw new JevError("Jev was rate limited or unavailable, with HTTP status 429 or 5xx, and six attempts gave no answer.");
+  throw new JevError("Jev did not answer after six transport attempts.");
 }
 
 async function transport(body: string, key: string, send: Fetch, clock: Clock, signal?: AbortSignal): Promise<{ status: number; text: string }> {
