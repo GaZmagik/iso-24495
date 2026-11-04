@@ -6,6 +6,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Added
 
+- **A design audit skill.** The plugin gains `iso-24495-design-audit`, a design audit that the user invokes and Jev powers. It shows what it would send, and sends nothing until the user agrees. The plugin now ships eight skills plus the Codex style skill.
 - **Four Markdown layout rules.** Contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail join the offline mechanical audit.
 - **Scoped edition metadata advisory.** Only titled documents are checked; declared front-matter edition fields qualify at the top level or directly under `metadata`. Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension. Text audited with `--no-front-matter` is also exempt. The finding asks whether readers need edition metadata rather than requiring it.
 - **Declared front-matter edition fields.** Parse front matter once and resolve aliases. A non-empty trimmed string, finite number or date counts, including `version: banana`. This checks declarations without format validation because YAML can change number spelling. Visible opening fields retain their format checks.
