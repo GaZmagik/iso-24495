@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { auditText } from "../../iso-24495-4/scripts/audit-corpus.ts";
 import { headings } from "../../iso-24495-4/scripts/lib/parse.ts";
+import { itemAt } from "../../iso-24495-4/scripts/lib/item-at.ts";
 
 const SKILL_DIR = join(import.meta.dir, "..");
 const ASSETS_DIR = join(SKILL_DIR, "assets");
@@ -37,7 +38,7 @@ describe("Part 5 document templates", () => {
     for (const name of TEMPLATE_NAMES) {
       const levels = readTemplate(name)
         .split(/\r?\n/)
-        .flatMap((line) => line.match(/^(#{1,6})\s/)?.[1].length ?? []);
+        .flatMap((line) => line.match(/^(#{1,6})\s/)?.[1]?.length ?? []);
       expect(Math.max(...levels)).toBeLessThanOrEqual(4);
       if (name === "design-doc-template.md") {
         expect(levels.filter((level) => level === 4)).toHaveLength(1);
@@ -49,13 +50,13 @@ describe("Part 5 document templates", () => {
     const lines = readTemplate("design-doc-template.md").split(/\r?\n/);
     const headings = new Map(
       lines.flatMap((line) => {
-        const match = /^## (.+)$/.exec(line);
-        return match && match[1] !== "Contents" ? [[githubSlug(match[1]), match[1]]] : [];
+        const title = /^## (.+)$/.exec(line)?.[1];
+        return title !== undefined && title !== "Contents" ? [[githubSlug(title), title]] : [];
       }),
     );
     const contents = lines.flatMap((line) => {
-      const match = /^- \[(.+)\]\(#([^)]+)\)$/.exec(line);
-      return match ? [{ text: match[1], anchor: match[2] }] : [];
+      const [, text, anchor] = /^- \[(.+)\]\(#([^)]+)\)$/.exec(line) ?? [];
+      return text !== undefined && anchor !== undefined ? [{ text, anchor }] : [];
     });
 
     expect(contents).toHaveLength(6);
@@ -84,7 +85,7 @@ describe("Part 5 document templates", () => {
       const purposeLines = lines.filter((line) => line.startsWith("- **Purpose:**"));
       expect(purposeLines, `${name} keeps purpose to one line`).toHaveLength(1);
       // A continuation line under the purpose would make it two lines in fact.
-      const after = lines[lines.indexOf(purposeLines[0] as string) + 1] ?? "";
+      const after = lines[lines.indexOf(itemAt(purposeLines, 0)) + 1] ?? "";
       expect(after === "" || after.startsWith("- "), `${name} does not continue purpose`).toBe(true);
     }
   });
@@ -132,37 +133,6 @@ describe("Part 5 document templates", () => {
     }
   });
 
-  // Round 17: asserting fragments let a line keep its label while losing its
-  // meaning. These are whole lines, so an edit to any part of one turns it red.
-  const REQUIRED_LINES: Record<string, string[]> = {
-    "adr-template.md": [
-      "- **Purpose:** [What the reader can decide or do with this record, and what it covers, in one sentence.]",
-      "- **For:** [Who needs this decision, and who must act on it.]",
-      "- **Version:** [Version or date.]",
-      "- **Status:** [Proposed or accepted. Where deprecated or superseded, name the decision that replaces this one.]",
-      "- **Instead of this:** [Link the decision that may suit the reader better and say when to read it, or delete this line.]",
-      "[Name the narrowest width this table must survive, then read it back at that width. Where no width is known, use labelled records instead.]",
-    ],
-    "runbook-template.md": [
-      "- **Purpose:** [What the reader will have done by the end, and what the task covers, in one sentence.]",
-      "- **For:** [Who runs this task, and when.]",
-      "- **Version:** [Version or date.]",
-      "- **Instead of this:** [Link the runbook that may suit the reader better and say when to use it, or delete this line.]",
-      "> [!CAUTION]",
-      "> [Critical risks or conditions, before any step runs.]",
-      "> [!NOTE]",
-      "> [Expected output for step 2. Where it differs, stop and do not run step 3.]",
-    ],
-    "design-doc-template.md": [
-      "- **Purpose:** [What the reader can build or review from this, and what it covers, in one sentence.]",
-      "- **For:** [Who this design is written for.]",
-      "- **Version:** [Version or date.]",
-      "- **Instead of this:** [Link the design that may suit the reader better and say when to read it, or delete this line.]",
-      "[Reviewers cite these sections by number, which is why they are numbered. Where nobody cites yours, delete the numbers from the headings and from this contents list together.]",
-      "[Name the narrowest width each table must survive, then read them back at that width. Where no width is known, use labelled records instead.]",
-    ],
-  };
-
   // Twenty-three rounds of adversarial review found the same lesson in eight
   // different disguises: a test that checks a fragment, a count, a label or a
   // position leaves everything it does not name unprotected. Fragments fell to
@@ -173,7 +143,7 @@ describe("Part 5 document templates", () => {
   // guarantee is that no change to them is accidental. The whole text is the
   // expectation. Editing a template means editing this list in the same commit,
   // which is the point rather than a cost.
-  const HEADING_SEQUENCE: Record<string, { level: number; text: string }[]> = {
+  const headingSequence: Record<string, Array<{ level: number; text: string }>> = {
     "adr-template.md": [
       { level: 1, text: "[Decision Title]" },
       { level: 2, text: "Context" },
@@ -210,7 +180,7 @@ describe("Part 5 document templates", () => {
     ],
   };
 
-  const TEMPLATE_SNAPSHOT: Record<string, string[]> = {
+  const templateSnapshot: Record<string, string[]> = {
     "adr-template.md": [
       "# [Decision Title]",
       "",
@@ -369,7 +339,7 @@ describe("Part 5 document templates", () => {
   test("no reader-visible template change happens without this test changing too", () => {
     for (const name of TEMPLATE_NAMES) {
       const actual = readTemplate(name).replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n");
-      expect(actual, `${name} matches its recorded text`).toEqual(TEMPLATE_SNAPSHOT[name] ?? []);
+      expect(actual, `${name} matches its recorded text`).toEqual(templateSnapshot[name] ?? []);
     }
   });
 
@@ -379,7 +349,7 @@ describe("Part 5 document templates", () => {
     for (const name of TEMPLATE_NAMES) {
       const found = headings(readTemplate(name))
         .map((heading) => ({ level: heading.level, text: heading.text.trim() }));
-      expect(found, `${name} heads its sections as expected`).toEqual(HEADING_SEQUENCE[name] ?? []);
+      expect(found, `${name} heads its sections as expected`).toEqual(headingSequence[name] ?? []);
     }
   });
 

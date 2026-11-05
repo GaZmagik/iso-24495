@@ -8,6 +8,7 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ import {
   ENGINE_THRESHOLDS,
   isAuditedDocument,
   listTextFiles,
+  runCli,
 } from "../scripts/audit-corpus.ts";
 import { classifyBoundary, mergedSentences, splitSentences } from "../scripts/lib/parse.ts";
 
@@ -44,10 +46,7 @@ describe("listTextFiles", () => {
       symlinkSync(target, dangling, "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      const inspectEntry: typeof lstatSync = (path) => {
-        if (path === blocked) throw new Error("entry vanished");
-        return lstatSync(path);
-      };
+      const inspectEntry = entryInspectorFailingAt(blocked);
       expect(listTextFiles(root, (path) => skipped.push(path), readdirSync, inspectEntry))
         .toEqual([join(root, "good.md")]);
       expect(skipped.sort()).toEqual([blocked, dangling].sort());
@@ -66,10 +65,7 @@ describe("listTextFiles", () => {
       const nested = join(root, "nested");
       mkdirSync(nested);
       const skipped: string[] = [];
-      const readDirectory: typeof readdirSync = (path) => {
-        if (path === nested) throw new Error("directory vanished");
-        return readdirSync(path);
-      };
+      const readDirectory = directoryReaderFailingAt(nested);
       expect(listTextFiles(root, (path) => skipped.push(path), readDirectory)).toEqual([]);
       expect(skipped).toEqual([nested]);
     } finally {
@@ -90,10 +86,7 @@ describe("auditCorpus skip reporting", () => {
       symlinkSync(target, join(root, "dangling"), "junction");
       rmSync(target, { recursive: true, force: true });
       const skipped: string[] = [];
-      const readText = (path: string): string => {
-        if (path === blocked) throw new Error("file became unreadable");
-        return readFileSync(path, "utf8");
-      };
+      const readText = textReaderFailingAt(blocked);
       const findings = auditCorpus(root, (path) => skipped.push(path), readText);
       expect(Object.keys(findings.files)).toEqual(["good.md"]);
       expect(skipped.sort()).toEqual([blocked, join(root, "dangling")].sort());
@@ -115,22 +108,22 @@ describe("auditCorpus", () => {
   });
 
   test("a proxy-clean file has zero violations", () => {
-    expect(findings.files["good-policy.md"].violations).toHaveLength(0);
+    expect(findings.files["good-policy.md"]?.violations).toHaveLength(0);
   });
 
   test("long-sentences.md flags only sentences over the 30-word cap", () => {
-    const v = findings.files["long-sentences.md"].violations;
+    const v = findings.files["long-sentences.md"]?.violations ?? [];
     expect(v.filter((x) => x.rule === "sentence-length")).toHaveLength(2);
     expect(v.filter((x) => x.rule !== "sentence-length")).toHaveLength(0);
   });
 
   test("a sustained high average is caught even with no single offender", () => {
-    const v = findings.files["average-heavy.md"].violations;
+    const v = findings.files["average-heavy.md"]?.violations ?? [];
     expect(v).toHaveLength(1);
-    expect(v[0].rule).toBe("sentence-average");
-    expect(v[0].detail).toContain("average 22.0");
-    expect(v[0].detail).toContain("12 sentences");
-    expect(v[0].detail).toContain("limit 20");
+    expect(v[0]?.rule).toBe("sentence-average");
+    expect(v[0]?.detail).toContain("average 22.0");
+    expect(v[0]?.detail).toContain("12 sentences");
+    expect(v[0]?.detail).toContain("limit 20");
   });
 
   test("indented list items are structure, not prose", () => {
@@ -146,42 +139,37 @@ describe("auditCorpus", () => {
     expect(auditText(nested)).toEqual([]);
   });
 
-  // A synthetic sentence of exactly n words; programmatic, so the count
-  // cannot be wrong by hand.
-  const sentenceOf = (n: number) =>
-    Array.from({ length: n }, (_, i) => `word${i}`).join(" ") + ".";
-
   test("the average fires at exactly ten sentences and not at 20.0 exactly", () => {
-    const tenAt21 = Array(10).fill(sentenceOf(21)).join(" ");
+    const tenAt21 = Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join(" ");
     const fired = auditText(tenAt21).filter((x) => x.rule === "sentence-average");
     expect(fired).toHaveLength(1);
-    expect(fired[0].detail).toContain("21.0");
-    expect(fired[0].detail).toContain("10 sentences");
+    expect(fired[0]?.detail).toContain("21.0");
+    expect(fired[0]?.detail).toContain("10 sentences");
 
-    const nineAt21 = Array(9).fill(sentenceOf(21)).join(" ");
+    const nineAt21 = Array.from<string>({ length: 9 }).fill(sentenceOf(21)).join(" ");
     expect(auditText(nineAt21).filter((x) => x.rule === "sentence-average")).toHaveLength(0);
 
-    const tenAt20 = Array(10).fill(sentenceOf(20)).join(" ");
+    const tenAt20 = Array.from<string>({ length: 10 }).fill(sentenceOf(20)).join(" ");
     expect(auditText(tenAt20).filter((x) => x.rule === "sentence-average")).toHaveLength(0);
   });
 
   test("the average accumulates across separate prose blocks", () => {
-    const spread = Array(10).fill(sentenceOf(21)).join("\n\n");
+    const spread = Array.from<string>({ length: 10 }).fill(sentenceOf(21)).join("\n\n");
     expect(auditText(spread).filter((x) => x.rule === "sentence-average")).toHaveLength(1);
   });
 
   test("short documents are exempt from the average rule", () => {
     // good-policy.md is clean and has fewer than ten sentences; the average
     // rule must not fire on samples too small to judge fairly.
-    expect(findings.files["good-policy.md"].violations).toHaveLength(0);
+    expect(findings.files["good-policy.md"]?.violations).toHaveLength(0);
   });
 
   test("fenced code is immune to every rule", () => {
-    expect(findings.files["code-fenced.md"].violations).toHaveLength(0);
+    expect(findings.files["code-fenced.md"]?.violations).toHaveLength(0);
   });
 
   test("legalese violations name the matched term", () => {
-    const terms = findings.files["legalese-sample.md"].violations
+    const terms = (findings.files["legalese-sample.md"]?.violations ?? [])
       .filter((x) => x.rule === "legalese")
       .map((x) => x.detail);
     expect(terms.filter((t) => t.includes("shall"))).toHaveLength(3);
@@ -202,14 +190,62 @@ function violationsFor(text: string, rule: string) {
   return auditText(text).filter((violation) => violation.rule === rule);
 }
 
+/**
+ * A synthetic sentence of exactly n words; programmatic, so the count
+ * cannot be wrong by hand.
+ */
+function sentenceOf(n: number): string {
+  return Array.from({ length: n }, (slot, i) => `word${i}`).join(" ") + ".";
+}
+
+/**
+ * Makes an entry inspector that reads an entry as `lstatSync` does, except at
+ * the one path given, where it throws an `Error` as if the entry had gone.
+ *
+ * @returns The inspector.
+ */
+function entryInspectorFailingAt(blocked: string): (path: string) => Stats {
+  return (path: string): Stats => {
+    if (path === blocked) throw new Error("entry vanished");
+    return lstatSync(path);
+  };
+}
+
+/**
+ * Makes a directory reader that lists a directory as `readdirSync` does,
+ * except at the one path given, where it throws an `Error` as if the
+ * directory had become unreadable.
+ *
+ * @returns The reader.
+ */
+function directoryReaderFailingAt(nested: string): (path: string) => string[] {
+  return (path: string): string[] => {
+    if (path === nested) throw new Error("directory vanished");
+    return readdirSync(path);
+  };
+}
+
+/**
+ * Makes a text reader that reads a file as UTF-8, except at the one path
+ * given, where it throws an `Error` as if the file had become unreadable.
+ *
+ * @returns The reader.
+ */
+function textReaderFailingAt(blocked: string): (path: string) => string {
+  return (path: string): string => {
+    if (path === blocked) throw new Error("file became unreadable");
+    return readFileSync(path, "utf8");
+  };
+}
+
 describe("lucid-inspired advisory rules", () => {
   test("heading-skip checks adjacent structural levels", () => {
     expect(violationsFor("### Initial heading\n", "heading-skip")).toEqual([]);
 
     const skipped = violationsFor("# First\nContent does not matter.\n### Third\n#### Fourth\n", "heading-skip");
     expect(skipped).toHaveLength(1);
-    expect(skipped[0].line).toBe(3);
-    expect(skipped[0].detail).toContain("level 1 to level 3");
+    expect(skipped[0]?.line).toBe(3);
+    expect(skipped[0]?.detail).toContain("level 1 to level 3");
 
     expect(violationsFor("# First\n## Second\n### Third\n", "heading-skip")).toEqual([]);
     expect(violationsFor("### Third\n# First\n", "heading-skip")).toEqual([]);
@@ -229,7 +265,7 @@ describe("lucid-inspired advisory rules", () => {
 
     const long = violationsFor(thirteen, "heading-style");
     expect(long).toHaveLength(1);
-    expect(long[0].detail).toContain("13 words");
+    expect(long[0]?.detail).toContain("13 words");
 
     expect(violationsFor("# Is this a question?", "heading-style")).toEqual([]);
     expect(violationsFor("# This is exciting!", "heading-style")).toEqual([]);
@@ -239,16 +275,16 @@ describe("lucid-inspired advisory rules", () => {
 
     const fullStop = violationsFor("# This is a statement.", "heading-style");
     expect(fullStop).toHaveLength(1);
-    expect(fullStop[0].detail).toContain("full stop");
+    expect(fullStop[0]?.detail).toContain("full stop");
 
     const multiple = violationsFor("# First statement. Second statement", "heading-style");
     expect(multiple).toHaveLength(1);
-    expect(multiple[0].detail).toContain("2 sentences");
+    expect(multiple[0]?.detail).toContain("2 sentences");
 
     const priority = violationsFor(`${thirteen}.`, "heading-style");
     expect(priority).toHaveLength(1);
-    expect(priority[0].detail).toContain("13 words");
-    expect(priority[0].detail).not.toContain("full stop");
+    expect(priority[0]?.detail).toContain("13 words");
+    expect(priority[0]?.detail).not.toContain("full stop");
     expect(violationsFor("This paragraph ends with a full stop.", "heading-style")).toEqual([]);
 
     // An abbreviation is not a sentence end. Splitting on every full stop made
@@ -264,7 +300,7 @@ describe("lucid-inspired advisory rules", () => {
   test("acronym-undefined applies definitions and false-positive guards", () => {
     const first = violationsFor("The ABC controls access. ABC appears again.", "acronym-undefined");
     expect(first).toHaveLength(1);
-    expect(first[0].detail).toContain('"ABC"');
+    expect(first[0]?.detail).toContain('"ABC"');
 
     expect(violationsFor("Application Binary Code (ABC) controls access. ABC continues.", "acronym-undefined")).toEqual([]);
     expect(violationsFor("ABC (Application Binary Code) controls access.", "acronym-undefined")).toEqual([]);
@@ -279,7 +315,7 @@ describe("lucid-inspired advisory rules", () => {
 
     const dotted = violationsFor("The U.A.E. appears here.", "acronym-undefined");
     expect(dotted).toHaveLength(1);
-    expect(dotted[0].detail).toContain('"U.A.E."');
+    expect(dotted[0]?.detail).toContain('"U.A.E."');
 
     // Two capitalised terms side by side is ordinary technical prose, not
     // shouting. Suppressing on a single neighbour hid the commonest real case
@@ -351,9 +387,9 @@ describe("lucid-inspired advisory rules", () => {
       "doublet",
     );
     expect(findings).toHaveLength(3);
-    expect(findings[0].detail).toContain('consider "void"');
-    expect(findings[1].detail).toContain('consider "result"');
-    expect(findings[2].detail).toContain('consider "revert"');
+    expect(findings[0]?.detail).toContain('consider "void"');
+    expect(findings[1]?.detail).toContain('consider "result"');
+    expect(findings[2]?.detail).toContain('consider "revert"');
 
     expect(violationsFor("This is null, and void.", "doublet")).toEqual([]);
     expect(violationsFor("This is null. And void remains.", "doublet")).toEqual([]);
@@ -362,8 +398,8 @@ describe("lucid-inspired advisory rules", () => {
     for (const phrase of ["cease and desist", "terms and conditions"]) {
       const legal = violationsFor(`These ${phrase} remain.`, "doublet");
       expect(legal).toHaveLength(1);
-      expect(legal[0].detail).toContain("legal-register phrase");
-      expect(legal[0].detail).not.toContain("consider");
+      expect(legal[0]?.detail).toContain("legal-register phrase");
+      expect(legal[0]?.detail).not.toContain("consider");
     }
   });
 
@@ -483,5 +519,24 @@ describe("audit configuration identity", () => {
       ...ENGINE_THRESHOLDS,
       sentenceWordLimit: ENGINE_THRESHOLDS.sentenceWordLimit + 1,
     })).not.toBe(current);
+  });
+});
+
+describe("an argument list with a hole", () => {
+  // Stopping at a hole ended the options early, so the command ran and exited 0
+  // with an option it would have refused still unread.
+  test("is refused, and so is what follows the hole", () => {
+    const holed: string[] = ["bun", "audit-corpus-cli.ts", CORPUS];
+    holed.length = 4;
+    const trailing = [...holed];
+    trailing.length = 4;
+    holed.push("--unknown");
+    for (const argv of [holed, trailing]) {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      expect(runCli(argv, (text) => stdout.push(text), (text) => stderr.push(text))).toBe(2);
+      expect(stderr).toEqual(["audit-corpus: argument 2 is missing; expected --json"]);
+      expect(stdout).toEqual([]);
+    }
   });
 });

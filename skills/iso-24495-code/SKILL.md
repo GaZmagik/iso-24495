@@ -2,7 +2,7 @@
 name: iso-24495-code
 description: "Plain language applied to source code (ISO 24495-1:2023 principles). Governs the parts of code a person reads: the order units appear in, their names, comments, and error messages. Applied when writing or restructuring code, not when explaining it."
 metadata:
-  version: "0.7.0"
+  version: "0.8.0"
   iso-standard: "ISO 24495-1:2023"
   iso-status: "published, applied by analogy to source code"
 ---
@@ -57,7 +57,7 @@ A comment earns its place when it records something a reader cannot recover from
 
 **Delete a comment that merely restates the line beneath it**, and delete commented-out code.
 
-This is not a rule against documentation. An interface comment tells a caller what a function returns, when it returns nothing, and what it throws. That is the reader's work being done for them, so it belongs there even when the body makes it obvious.
+This is not a rule against documentation, and it does not require a comment. An interface comment that exists must tell a caller what the function returns, when it returns nothing, and what it throws. That is the reader's work being done for them, so it says all three even when the body makes them obvious.
 
 ### 5. An error message serves the person who hits it
 
@@ -92,7 +92,7 @@ Where two constructions are equally correct, use the one a competent reader unde
 
 ## What this skill does not do
 
-- It does not require comments. A file with no comments and clear names is fine.
+- It does not require comments. A file with no comments and clear names is fine, but a project without code comments should have full documentation on its source files elsewhere.
 - It does not set a line count for a function. Use `iso-5055-code-quality` for size and complexity thresholds, which are measurable.
 - It does not apply to generated code, vendored code, or code whose layout a formatter owns.
 
