@@ -825,6 +825,34 @@ test("the design audit prints the full text audit's findings, exactly as the tex
   }
 });
 
+// The test above checks previews only. A successful send writes its report in
+// another place, and another test checks only that it names the file. So a send
+// could keep the file's name, drop its findings and totals, and no test fail.
+// The text audit's preview is the reference: its report is written apart from
+// the send, so it still holds the findings if the send's report loses them.
+test("a successful design send writes the same mechanical findings to its JSON as the text audit", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-design-send-mechanical-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, MIXED_DOCUMENT);
+    const designReport = join(directory, "design.json");
+    const textReport = join(directory, "text.json");
+    const bodies: string[] = [];
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", designReport], () => {}, () => {}, recordingDependencies(bodies))).toBe(0);
+    expect(bodies).toHaveLength(3);
+    expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview", "--json", textReport], () => {}, () => {}, { env: {} })).toBe(0);
+    const report = JSON.parse(readFileSync(designReport, "utf8"));
+    expect(report.jev.complete).toBe(true);
+    expect(report.mechanical.totals.legalese).toBe(1);
+    expect(report.mechanical.files["doc.md"].violations.length).toBeGreaterThan(0);
+    const reference = JSON.parse(readFileSync(textReport, "utf8")).mechanical;
+    expect(report.mechanical.files).toEqual(reference.files);
+    expect(report.mechanical.totals).toEqual(reference.totals);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 // Recorded from both audits at 5bfba04, before the design audit ran the text
 // audit: the digest of the sorted request bodies, and the send log's digest.
 const BODIES_BEFORE = "cc53a0c041d28f4deaee12e1979e0f36a347577d4c0ea9358777c8792563b171";
