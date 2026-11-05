@@ -17,7 +17,7 @@ This repository also packages them as a Claude Code plugin with an **ISO 24495 o
 | `iso-24495-5` | **Document design (provisional).** Extends the core skill for structuring complex documents: an opening block, visual hierarchy, navigation aids, layered detail, comparisons, consistent signalling, and a signpost for the reader who wanted a different document. Ships a decision record, a runbook and a design document template. Based on the unpublished ISO/WD 24495-5 working draft. |
 | `iso-24495-code` | **Plain language in code.** Applies the principles to what a person reads in source: the order units appear in, their names, what comments say, and what an error tells the reader who hits it. Measured to change how Claude structures a file, at no cost to correctness. |
 | `iso-24495-text-audit` | **User-invoked text audit.** Checks a selected `.md`, `.markdown`, or `.txt` file or directory. Reports mechanical findings with locations, without deciding validity or compliance. |
-| `iso-24495-design-audit` | **User-invoked design audit.** Previews calibrated purpose and colour checks for selected Markdown, with a local title check. Sending requires agreement and a TypeSafe API key. |
+| `iso-24495-design-audit` | **User-invoked design audit: purpose and colour.** Previews calibrated Jev purpose and colour checks for selected Markdown, with a local title check, and runs every offline check of the text audit. It is not a full Part 5 audit. Sending requires agreement and a TypeSafe API key. |
 
 The core skill activates the relevant writing skills automatically. It triggers `iso-24495-2` for legal content, `iso-24495-3` for technical content, and `iso-24495-5` for complex documents. A legal document always pairs with `iso-24495-5`, and a technical one does whenever its output is a document. The text audit never activates automatically.
 
@@ -188,10 +188,13 @@ The skill never runs automatically. It requires Bun and does not alter the selec
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
 
-## User-invoked design audit
+## User-invoked design audit: purpose and colour
 
-The design audit previews calibrated purpose and colour checks for selected Markdown.
-The text audit optionally adds these same checks with `--jev-preview` or `--jev --send`.
+The design audit makes two calibrated Jev decisions on selected Markdown: purpose in the opening and colour in prose blocks.
+It also checks for a title locally and runs every offline check of the text audit, so it prints the same mechanical findings.
+It is not a full Part 5 audit.
+
+The text audit optionally adds the same Jev checks with `--jev-preview` or `--jev --send`.
 Its default remains offline and free, and `.txt` files remain mechanical-only.
 
 Only purpose and colour receive calibrated decisions.
