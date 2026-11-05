@@ -95,8 +95,8 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  * `frontMatterRange` does not accept is refused: nothing from it is planned
  * or sent, whatever else is. The preview names it before agreement is asked
  * for, and the Jev findings and the report name it again. Its mechanical
- * findings are still printed in text mode. A refusal does not change the exit
- * code, so exit 0 can mean that every selected document was refused.
+ * findings are still printed. A refusal does not change the exit code, so
+ * exit 0 can mean that every selected document was refused.
  *
  * Exit codes:
  *
@@ -117,11 +117,15 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  * therefore mean that text was sent and only the log or the report failed.
  * A preview writes nothing but the `--json` report.
  *
- * @param mode "text" also prints the mechanical findings and accepts `.txt`
- *     files. "design" accepts Markdown alone.
+ * Both modes run the whole offline text audit, `auditText`, on every selected
+ * document, and print its findings before the disclosure. Those findings are
+ * never sent.
+ *
+ * @param mode "text" also accepts `.txt` files, and needs `--jev-preview`, or
+ *     `--jev` with `--send`. "design" accepts Markdown alone.
  * @param argv The whole command line.
- * @param stdout Receives the mechanical findings in text mode, then the
- *     disclosure, then the Jev findings after a send.
+ * @param stdout Receives the mechanical findings, then the disclosure, then
+ *     the Jev findings after a send.
  * @param stderr Receives a warning for each skipped entry and each refused
  *     document, and the reason for every exit code but 0.
  * @param dependencies Replacements for the environment, the terminal, the
@@ -155,7 +159,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   for (const document of selection.documents) {
     if (document.refusal !== undefined) stderr(`warning: not sent: ${safePath(document.file)}: ${document.refusal}`);
   }
-  if (mode === "text") stdout(formatMechanical(selection.mechanical));
+  stdout(formatMechanical(selection.mechanical));
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
     try {
@@ -264,9 +268,9 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
  *     directory. A directory is walked at any depth without following links.
  * @param projectDir Files are named by their path from it, with forward
  *     slashes, and its `.iso-24495-4/acronyms.json` supplies known acronyms.
- * @param mode "design", the default, takes Markdown alone and leaves
- *     `mechanical` without files. "text" also takes `.txt` files and runs the
- *     mechanical audit; a `.txt` file gets a plan with no requests.
+ * @param mode "design", the default, takes Markdown alone. "text" also takes
+ *     `.txt` files, and a `.txt` file gets a plan with no requests. Both
+ *     modes run the mechanical audit on every file read.
  * @param read Replaces the file reader.
  * @param frontMatter False makes the mechanical audit read a leading "---"
  *     block as text. The Jev plan reads it as front matter either way.
@@ -310,12 +314,10 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
     const file = relative(project, path).replaceAll("\\", "/");
     selection.paths.push(path);
     const markdown = /\.(?:md|markdown)$/i.test(path);
-    if (mode === "text") {
-      const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter, markdown });
-      selection.mechanical.files[file] = { violations };
-      for (const finding of violations) {
-        selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
-      }
+    const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter, markdown });
+    selection.mechanical.files[file] = { violations };
+    for (const finding of violations) {
+      selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
     }
     if (markdown && hasUnrecognisedFrontMatter(text)) {
       selection.documents.push({ file, path, plan: { candidates: [], findings: [] }, refusal: UNRECOGNISED_FRONT_MATTER });

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, DISCLOSURE_VERSION, type AuditDependencies, type JevReport, type Selection } from "../../../scripts/lib/jev/audit.ts";
-import { MODEL } from "../../../scripts/lib/jev/catalogue.ts";
+import { MODEL, sha256 } from "../../../scripts/lib/jev/catalogue.ts";
 import { planDocument } from "../../../scripts/lib/jev/engine.ts";
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
 import { runCli as runDesignCli } from "../../../../iso-24495-design-audit/scripts/design-audit.ts";
@@ -211,6 +211,8 @@ const TAB_BLOCK = "---\nversion: 1.0\napi_key:\tPRIVATE_SENTINEL\n\n---\n# Tab g
 const SPACE_BLOCK = "---\nversion: 1.0\napi_key: SPACE_SENTINEL\n\n---\n# Space guide\n\nSpace instructions.";
 const NO_BLOCK = "# Plain guide\n\nPlain instructions.";
 const REFUSAL = "front matter could not be recognised safely";
+/** The first lines of the mechanical findings table that both audits print. */
+const MECHANICAL_HEADING = "Mechanical findings\n| File | Line | Rule | Finding |\n";
 
 /** Dependencies whose transport keeps every request body and answers each one so that it passes. */
 function recordingDependencies(bodies: string[]): AuditDependencies {
@@ -317,10 +319,12 @@ test("a leading block the calibrated guard does not recognise is refused in the 
     expect(report.jev.complete).toBe(true);
     expect(out.join("\n")).toContain("Not sent: `tab.md`, because its " + `${REFUSAL}.`);
 
-    // The mechanical audit sends nothing, so it still reads the refused document.
-    out.length = 0;
-    expect(await run("text", ["--jev-preview"])).toBe(0);
-    expect(out.join("\n")).toContain("| `tab.md` | 8 | legalese | banned term \"shall\" |");
+    // The mechanical audit sends nothing, so both audits still read the refused document.
+    for (const mode of ["text", "design"] as const) {
+      out.length = 0;
+      expect(await run(mode, mode === "text" ? ["--jev-preview"] : [])).toBe(0);
+      expect(out.join("\n"), mode).toContain("| `tab.md` | 8 | legalese | banned term \"shall\" |");
+    }
     expect(bodies).toHaveLength(4);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -716,8 +720,11 @@ for (const cause of CAUSES) {
       const result = await sendFailing(cause, mode);
       expect(result.code, mode).toBe(3);
       expect(result.stdout, mode).toContain(`Execution: incomplete.\nFailure: ${cause.words}\n`);
+      // The stderr line below says the mechanical findings remain, so both audits print them.
+      expect(result.stdout, mode).toStartWith(MECHANICAL_HEADING);
       expect(result.stderr, mode).toEqual([`Jev execution is incomplete. ${cause.words} Jev verdicts were discarded; mechanical findings remain available.`]);
       const report = JSON.parse(result.json);
+      expect(report.mechanical.files["doc.md"], mode).toBeDefined();
       expect(report.jev.complete, mode).toBe(false);
       expect(report.jev.failure, mode).toBe(cause.words);
       expect(report.jev.results, mode).toEqual([]);
@@ -780,6 +787,96 @@ test("a complete report has no failure line and no failure in its JSON", async (
     expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", reportFile], text => out.push(text), text => out.push(text), recordingDependencies([]))).toBe(0);
     expect(out.join("\n")).not.toContain("Failure:");
     expect(JSON.parse(readFileSync(reportFile, "utf8")).jev).not.toHaveProperty("failure");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// The design audit printed no mechanical findings, so a document with a banned
+// term or a long sentence passed it silently. It now runs the whole text audit
+// first, through the same code as the text audit, and prints the same table.
+const MIXED_DOCUMENT = "# Title\n\nThe supplier shall act.\n\nA second paragraph for the reader.\n";
+const FINDING_ROW = "| `doc.md` | 3 | legalese | banned term \"shall\" |";
+
+test("the design audit prints the full text audit's findings, exactly as the text audit does", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-design-mechanical-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, MIXED_DOCUMENT);
+    const design: string[] = [];
+    const text: string[] = [];
+    // No key is given, so neither preview can send.
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory], line => design.push(line), line => design.push(line), { env: {} })).toBe(0);
+    expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview"], line => text.push(line), line => text.push(line), { env: {} })).toBe(0);
+    expect(design[0]).toStartWith(MECHANICAL_HEADING);
+    expect(design[0]).toContain(FINDING_ROW);
+    expect(design[0]).toBe(text[0]);
+
+    const designReport = join(directory, "design.json");
+    const textReport = join(directory, "text.json");
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--json", designReport], () => {}, () => {}, { env: {} })).toBe(0);
+    expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview", "--json", textReport], () => {}, () => {}, { env: {} })).toBe(0);
+    const mechanical = JSON.parse(readFileSync(designReport, "utf8")).mechanical;
+    expect(mechanical.totals.legalese).toBe(1);
+    expect(mechanical.files["doc.md"].violations.length).toBeGreaterThan(0);
+    expect(mechanical).toEqual(JSON.parse(readFileSync(textReport, "utf8")).mechanical);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// The test above checks previews only. A successful send writes its report in
+// another place, and another test checks only that it names the file. So a send
+// could keep the file's name, drop its findings and totals, and no test fail.
+// The text audit's preview is the reference: its report is written apart from
+// the send, so it still holds the findings if the send's report loses them.
+test("a successful design send writes the same mechanical findings to its JSON as the text audit", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-design-send-mechanical-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, MIXED_DOCUMENT);
+    const designReport = join(directory, "design.json");
+    const textReport = join(directory, "text.json");
+    const bodies: string[] = [];
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes", "--json", designReport], () => {}, () => {}, recordingDependencies(bodies))).toBe(0);
+    expect(bodies).toHaveLength(3);
+    expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview", "--json", textReport], () => {}, () => {}, { env: {} })).toBe(0);
+    const report = JSON.parse(readFileSync(designReport, "utf8"));
+    expect(report.jev.complete).toBe(true);
+    expect(report.mechanical.totals.legalese).toBe(1);
+    expect(report.mechanical.files["doc.md"].violations.length).toBeGreaterThan(0);
+    const reference = JSON.parse(readFileSync(textReport, "utf8")).mechanical;
+    expect(report.mechanical.files).toEqual(reference.files);
+    expect(report.mechanical.totals).toEqual(reference.totals);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// Recorded from both audits at 5bfba04, before the design audit ran the text
+// audit: the digest of the sorted request bodies, and the send log's digest.
+const BODIES_BEFORE = "cc53a0c041d28f4deaee12e1979e0f36a347577d4c0ea9358777c8792563b171";
+const LOG_DIGEST_BEFORE = "349811b2efdc7372f8c2cb884ababa763efcb6599139b51e293414eff9baf3eb";
+
+test("running the text audit inside the design audit changes nothing that is sent or logged", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-design-unchanged-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, MIXED_DOCUMENT);
+    for (const mode of ["design", "text"] as const) {
+      const bodies: string[] = [];
+      const digests: string[] = [];
+      const out: string[] = [];
+      const dependencies = recordingDependencies(bodies);
+      dependencies.writeLog = record => {
+        digests.push(record.digest);
+      };
+      expect(await runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...(mode === "text" ? ["--jev"] : []), "--send", "--yes"], line => out.push(line), line => out.push(line), dependencies), mode).toBe(0);
+      expect(bodies, mode).toHaveLength(3);
+      expect(sha256(JSON.stringify([...bodies].sort())), mode).toBe(BODIES_BEFORE);
+      expect(digests, mode).toEqual([LOG_DIGEST_BEFORE]);
+      expect(out[0], mode).toContain(FINDING_ROW);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

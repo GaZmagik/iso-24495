@@ -1,6 +1,6 @@
 ---
 name: iso-24495-design-audit
-description: Run calibrated Jev checks on selected Markdown openings and colour references, with a local title check. Requires agreement before sending. Invoke explicitly.
+description: Run calibrated Jev checks on selected Markdown openings and colour references, with a local title check and every offline check of the text audit. Not a full Part 5 audit. Requires agreement before sending. Invoke explicitly.
 disable-model-invocation: true
 argument-hint: "[file-or-directory]"
 metadata:
@@ -10,7 +10,8 @@ metadata:
 # ISO 24495 Design Audit
 
 Audit only the selected Markdown file or directory.
-This focused entry point checks purpose and colour through the shared calibrated Jev engine.
+It checks purpose and colour through the shared calibrated Jev engine, checks for a title locally, and runs every offline check of the text audit.
+It is not a full Part 5 audit.
 The user decides whether each finding matters to their readers.
 
 ## Preview and agreement
@@ -56,6 +57,10 @@ Code and recognised front matter remain excluded, and raw HTML structure is unsu
 A leading `---` block counts as front matter only when it is closed and every line has a plain YAML shape.
 A document whose closed leading block fails that test is not sent at all, and the preview names it.
 
+Every selected document also gets the whole offline [text audit](../iso-24495-text-audit/SKILL.md), including its four Markdown layout rules.
+Its findings print before the disclosure, fill the JSON `mechanical` property, and are never sent.
+A refused document still gets them.
+
 The opening request sends purpose Choice and reader together.
 The block request sends colour and position together.
 Reader and position judgements are validated, then discarded.
@@ -98,7 +103,7 @@ JSON exports contain excerpts and state hashes by default.
 Save full judged state only with `--include-judged-text --json <requested-report-path>`.
 The preview discloses that this saves document text locally.
 Never save credentials or raw service responses.
-An incomplete execution discards all Jev verdicts.
+An incomplete execution discards all Jev verdicts, and the mechanical findings stand.
 
 | Code | Meaning |
 |------|---------|
@@ -126,4 +131,5 @@ The words never include the service's reply or the key. An unexpected error prin
 - **Preserve the text:** Rewrite only when separately requested.
 - **Request report locations:** Create a report only when the user requests one and names its path.
 - **Keep decisions qualified:** Findings are proxies, not ISO judgements or document approval.
+- **State the scope:** The audit covers purpose, colour, a title and the text audit's offline rules. Never present it as a full Part 5 audit.
 - **Interpret with Part 5:** Use `iso-24495-5` when discussing document design.
