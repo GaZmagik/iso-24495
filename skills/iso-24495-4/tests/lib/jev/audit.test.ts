@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, DISCLOSURE_VERSION, type AuditDependencies, type JevReport, type Selection } from "../../../scripts/lib/jev/audit.ts";
 import { MODEL, sha256 } from "../../../scripts/lib/jev/catalogue.ts";
 import { planDocument } from "../../../scripts/lib/jev/engine.ts";
+import { safePath } from "../../../scripts/lib/safe-text.ts";
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
 import { runCli as runDesignCli } from "../../../../iso-24495-design-audit/scripts/design-audit.ts";
 
@@ -877,6 +878,147 @@ test("running the text audit inside the design audit changes nothing that is sen
       expect(digests, mode).toEqual([LOG_DIGEST_BEFORE]);
       expect(out[0], mode).toContain(FINDING_ROW);
     }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// A preview of a document with no title wrote the local opening-title finding to its
+// JSON report and printed it nowhere, so a user who only previewed never saw it. A
+// send printed it, with the Jev findings. The preview now prints it in a block of its
+// own, between the mechanical findings and the disclosure.
+const NO_TITLE = "Plain instructions for the reader.\n\nA second paragraph.\n";
+const LOCAL_BLOCK = [
+  "Local findings",
+  "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
+  "|------|------|------|-------|------|-------|---------|---------|",
+  "| `doc.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "Local findings are made on this machine and are never sent.",
+].join("\n");
+// Recorded at 785094f, before a preview printed local findings. Each stdout digest
+// is of the printed text with the file's path replaced by "<file>", because the
+// disclosure names the full path of each selected file.
+const TITLED_PREVIEW_BEFORE = "40440cc44d7d275feaaa1482e80aa3331e08d765df5cf83cd8a5196a9b78f1c3";
+const NO_TITLE_PREVIEW_BEFORE = "cda38615d7dfc37a28a12622d97cee996bff9c2b824b0437e3e6db57a8ea9344";
+const NO_TITLE_SEND_BEFORE = "f09d0c6f0eaba71a3289ba9c49adb715e52387469e344aa1fcd47543383e719e";
+const NO_TITLE_PREVIEW_JSON_BEFORE = "aaa36ebb767b04dc1b8078dfd2cfaf7c9a6ea5e19e4a83c3da20b3b6292c42b1";
+const NO_TITLE_BODIES_BEFORE = "a7cbaf21c2f26888b27b828be090bb7ce0eb7a996f6a8d1cc3d708805443f68c";
+const NO_TITLE_LOG_DIGEST_BEFORE = "bfca057c543a67dff65f26fce00ec30afde49d0d3ec36624a6e6c9e83a8bd491";
+
+/**
+ * What a command printed, joined by line breaks, with the file's full path
+ * replaced by "<file>".
+ *
+ * @returns The text. A test fails here when the path was never printed, so a
+ *     digest of the text cannot pass because nothing was replaced.
+ */
+function printedWithoutPath(out: string[], file: string): string {
+  const shown = safePath(resolve(file));
+  const joined = out.join("\n");
+  expect(joined).toContain(`Selected: ${shown}`);
+  return joined.replaceAll(shown, "<file>");
+}
+
+/** How many times `rule` appears in `text`. */
+function occurrences(text: string, rule: string): number {
+  return text.split(rule).length - 1;
+}
+
+test("a design preview of a document with no title prints its title finding once, between the mechanical findings and the disclosure", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-title-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, NO_TITLE);
+    const bodies: string[] = [];
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory], text => out.push(text), text => err.push(text), recordingDependencies(bodies))).toBe(0);
+    expect(bodies).toHaveLength(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toStartWith(MECHANICAL_HEADING);
+    expect(out[0]).toEndWith("Mechanical findings are proxies, not an ISO judgement.");
+    expect(out[1]).toBe(LOCAL_BLOCK);
+    expect(out[2]).toBe(formatPlan(selectDocuments(file, directory)));
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(1);
+    // Without the new block, the preview prints exactly what it printed before.
+    expect(sha256(printedWithoutPath(out.filter((chunk, index) => index !== 1), file))).toBe(NO_TITLE_PREVIEW_BEFORE);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a design preview of a titled document prints exactly what it printed before", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-titled-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, NO_BLOCK);
+    const out: string[] = [];
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory], text => out.push(text), text => out.push(text), { env: {} })).toBe(0);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toBe(formatPlan(selectDocuments(file, directory)));
+    expect(out.join("\n")).not.toContain("Local findings");
+    expect(sha256(printedWithoutPath(out, file))).toBe(TITLED_PREVIEW_BEFORE);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the text audit's Jev preview prints the title finding as the design preview does", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-text-preview-title-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, NO_TITLE);
+    const out: string[] = [];
+    expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => out.push(text), { env: {} })).toBe(0);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(LOCAL_BLOCK);
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(1);
+    writeFileSync(file, NO_BLOCK);
+    const titled: string[] = [];
+    expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview"], text => titled.push(text), text => titled.push(text), { env: {} })).toBe(0);
+    expect(titled).toHaveLength(2);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("printing the title finding leaves a preview's JSON report as it was", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-title-json-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, NO_TITLE);
+    const reportFile = join(directory, "report.json");
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--json", reportFile], () => {}, () => {}, { env: {} })).toBe(0);
+    const json = readFileSync(reportFile, "utf8");
+    expect(JSON.parse(json).jev.localFindings).toEqual([{ file: "doc.md", line: 1, rule: "opening-title", detail: "Add a level-1 document title. Purpose assessment is skipped without one." }]);
+    expect(sha256(json)).toBe(NO_TITLE_PREVIEW_JSON_BEFORE);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// A send already printed the title finding with the Jev findings. The preview's new
+// block is left out of a send, so the finding is not printed twice.
+test("a design send of a document with no title sends, logs and prints exactly what it did before", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-send-title-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, NO_TITLE);
+    const bodies: string[] = [];
+    const digests: string[] = [];
+    const out: string[] = [];
+    const dependencies = recordingDependencies(bodies);
+    dependencies.writeLog = record => {
+      digests.push(record.digest);
+    };
+    expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], text => out.push(text), text => out.push(text), dependencies)).toBe(0);
+    expect(bodies).toHaveLength(2);
+    expect(sha256(JSON.stringify([...bodies].sort()))).toBe(NO_TITLE_BODIES_BEFORE);
+    expect(digests).toEqual([NO_TITLE_LOG_DIGEST_BEFORE]);
+    expect(out.join("\n")).not.toContain("Local findings");
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(1);
+    expect(sha256(printedWithoutPath(out, file))).toBe(NO_TITLE_SEND_BEFORE);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
