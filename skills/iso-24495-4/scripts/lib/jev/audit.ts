@@ -57,6 +57,10 @@ export interface SelectedDocument {
  * paths as a preview names them.
  */
 export interface Selection { documents: SelectedDocument[]; mechanical: Findings; skipped: string[]; paths: string[] }
+/** One finding the engine made without asking Jev, with the document it is about. */
+type FileFinding = JevReport["localFindings"][number];
+// The header of the findings table that a send prints, and that a preview reuses for its local findings.
+const FINDINGS_HEADER = ["| File | Line | Item | Check | Band | Score | Cut-off | Finding |", "|------|------|------|-------|------|-------|---------|---------|"];
 interface Arguments { target: string; projectDir: string; send: boolean; yes: boolean; preview: boolean; json?: string; includeText: boolean; frontMatter: boolean }
 interface Counts { assessed: number; pass: number; fail: number; unsure: number; skipped: number }
 /**
@@ -121,11 +125,17 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  * document, and print its findings before the disclosure. Those findings are
  * never sent.
  *
+ * A preview also prints the local findings of the plan, such as a missing
+ * title, between those findings and the disclosure. With none it prints no
+ * block for them. A send prints them only with the Jev findings, after the
+ * requests have ended, so a send that stops before it sends prints none.
+ * They are never sent either.
+ *
  * @param mode "text" also accepts `.txt` files, and needs `--jev-preview`, or
  *     `--jev` with `--send`. "design" accepts Markdown alone.
  * @param argv The whole command line.
- * @param stdout Receives the mechanical findings, then the disclosure, then
- *     the Jev findings after a send.
+ * @param stdout Receives the mechanical findings, then in a preview any local
+ *     findings, then the disclosure, then the Jev findings after a send.
  * @param stderr Receives a warning for each skipped entry and each refused
  *     document, and the reason for every exit code but 0.
  * @param dependencies Replacements for the environment, the terminal, the
@@ -160,6 +170,9 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
     if (document.refusal !== undefined) stderr(`warning: not sent: ${safePath(document.file)}: ${document.refusal}`);
   }
   stdout(formatMechanical(selection.mechanical));
+  // A send prints the local findings with the Jev findings, so only a preview prints them here.
+  const local = localFindings(selection);
+  if (!args.send && local.length > 0) stdout(formatLocal(local));
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
     try {
@@ -410,11 +423,7 @@ export function formatFindings(report: JevReport): string {
     ...(report.failure === undefined ? [] : [`Failure: ${safeText(report.failure)}`]),
     ...(report.notSent ?? []).map(document => `Not sent: ${safePathCode(document.file)}, because its ${safeText(document.reason)}.`), LIMITATION,
     ...formatEvidence(report.evidence),
-    "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
-    "|------|------|------|-------|------|-------|---------|---------|"];
-  for (const finding of report.localFindings) {
-    lines.push(`| ${safePathCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`);
-  }
+    ...FINDINGS_HEADER, ...report.localFindings.map(localRow)];
   for (const result of report.results.filter(result => result.band !== "pass")) {
     const diagnosis = result.diagnosisGate;
     const refinement = diagnosis === undefined ? "" : ` neither score ${diagnosis.score}, cut-off ${diagnosis.cutOff}, prerequisite ${diagnosis.prerequisite}.`;
@@ -451,7 +460,7 @@ function writeAuditLog(record: AuditLog, path: string): void {
 function emptyReport(selection: Selection, complete: boolean): JevReport {
   return { complete, limitation: LIMITATION, evidence: calibrationEvidence(), results: [],
     notSent: selection.documents.flatMap(document => document.refusal === undefined ? [] : [{ file: document.file, reason: document.refusal }]),
-    localFindings: selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding }))),
+    localFindings: localFindings(selection),
     coverage: selection.documents.map(document => ({ file: document.file, eligibleOpenings: document.plan.candidates.filter(candidate => candidate.kind === "opening").length, eligibleBlocks: document.plan.candidates.filter(candidate => candidate.kind === "block").length, checks: { purpose: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: 1 }, colour: { assessed: 0, pass: 0, fail: 0, unsure: 0, skipped: document.plan.candidates.filter(candidate => candidate.kind === "block").length } } })) };
 }
 function fillCoverage(report: JevReport): void {
@@ -479,6 +488,24 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
 }
 function formatMechanical(findings: Findings): string {
   return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${safePathCell(file)} | ${finding.line} | ${finding.rule} | ${safeCell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
+}
+
+/** Every local finding of the selection, in document order, each with its file. */
+function localFindings(selection: Selection): FileFinding[] {
+  return selection.documents.flatMap(document => document.plan.findings.map(finding => ({ file: document.file, ...finding })));
+}
+
+/**
+ * The local findings a preview prints, in the rows and under the header that
+ * a send's findings table uses for them.
+ */
+function formatLocal(findings: readonly FileFinding[]): string {
+  return ["Local findings", ...FINDINGS_HEADER, ...findings.map(localRow), "Local findings are made on this machine and are never sent."].join("\n");
+}
+
+/** One local finding as a row of the findings table, with the file as a code span and the detail made safe. */
+function localRow(finding: FileFinding): string {
+  return `| ${safePathCell(finding.file)} | ${finding.line} | local | ${finding.rule} | local | | | ${safeCell(finding.detail)} |`;
 }
 function readArguments(mode: "text" | "design", argv: string[]): Arguments {
   if (!argv[2] || argv[2].startsWith("--")) throw new Error();

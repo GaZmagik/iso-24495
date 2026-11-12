@@ -23,6 +23,7 @@ bun <skill-directory>/scripts/design-audit-cli.ts <file-or-directory> --project-
 ```
 
 Show the user the full disclosure printed by that command.
+Also show any local findings, such as a missing title, which the preview prints just before it.
 It names TypeSafe, `jev-1.13.0`, selected files, eligible openings and blocks, request totals, companion questions and the five largest payload totals.
 Document text leaves the machine when sent, and charges may apply.
 
@@ -51,6 +52,7 @@ The log records transmission and does not prove agreement.
 
 Only purpose and colour receive calibrated decisions.
 Missing level-1 titles produce local `opening-title` findings and skip purpose assessment.
+A preview prints local findings between the mechanical findings and the disclosure, and a send prints them with the Jev findings.
 Colour assessment continues for every non-empty prose block, without keyword filtering.
 Code and recognised front matter remain excluded, and raw HTML structure is unsupported.
 

@@ -121,6 +121,7 @@ Read the [design audit calibration and evidence](../iso-24495-design-audit/SKILL
 
 Preview locally with `--jev-preview`.
 Show the full disclosure to the user, including selected files, payloads, companion questions, model, privacy links and possible charges.
+Also show any local findings, such as a missing title, which the preview prints just before it.
 
 The preview counts requests, not attempts, and each request may be sent up to six times.
 A request sent again for any reason may be charged again.
