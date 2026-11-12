@@ -150,7 +150,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "opening-title", kind: "offline" }], needs: ["markdown", "jev-route"],
     limits: [
       "It reports only a document with no level-1 heading anywhere. A title that does not come first is not reported.",
-      "A preview writes it to the `--json` report but does not print it. The report printed after a send does.",
+      "A preview of either audit prints it. A send that stops before it sends, such as one given no agreement, does not print it.",
     ],
   },
   { id: "15b", demand: "The purpose is one line.", state: "not-read", checks: [], needs: [], limits: [] },
@@ -544,8 +544,8 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "19b": [1, 1, 5],
 };
 
-/** The test that shows 15a's second limit, which runs the design audit and reads what it prints. */
-const PRINT_TEST = "a preview prints no opening-title finding, and the report printed after a send does";
+/** The test that shows 15a's second limit, which runs both audits and reads what they print. */
+const PRINT_TEST = "a preview of either audit prints the opening-title finding, and a send that stops before it sends does not";
 
 /**
  * The limits a test of their own shows instead of a limit specimen, by
@@ -761,6 +761,18 @@ async function runRoute(route: Route, directory: string, json: string, dependenc
 }
 
 /**
+ * What one run of an audit printed, both streams in the order written, and
+ * its exit code. The run has a stubbed transport that records each request
+ * in `requests`, and no terminal to agree on.
+ */
+async function printed(command: Route["command"], argv: readonly string[], requests: string[]): Promise<{ exit: number; text: string }> {
+  const out: string[] = [];
+  const dependencies = stubbedDependencies(requests);
+  if (command === "text") return { exit: await runTextCli([...argv], text => out.push(text), text => out.push(text), dependencies), text: out.join("\n") };
+  return { exit: await runDesignCli([...argv], text => out.push(text), text => out.push(text), dependencies), text: out.join("\n") };
+}
+
+/**
  * The needs a check was measured to have on its clause's specimen: Markdown
  * when no route names it on the `.txt` copy, the Jev route when the plain
  * text audit does not name it, and a send when no preview names it.
@@ -945,15 +957,27 @@ describe("the Part 5 checklist clause registry", () => {
   }, 60000);
 
   test(PRINT_TEST, async () => {
-    const out: string[] = [];
     const directory = mkdtempSync(join(tmpdir(), "checklist-print-"));
     try {
       const file = join(directory, "untitled.md");
       writeFileSync(file, SPECIMENS["15a"]?.text ?? "");
-      expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory], text => out.push(text), text => out.push(text), stubbedDependencies([]))).toBe(0);
-      expect(out.join("\n")).not.toContain("opening-title");
-      expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], text => out.push(text), text => out.push(text), stubbedDependencies([]))).toBe(0);
-      expect(out.join("\n")).toContain("| local | opening-title |");
+      const base = ["bun", "cli", file, "--project-dir", directory];
+      const designPreview = await printed("design", [...base], []);
+      expect(designPreview.exit).toBe(0);
+      expect(designPreview.text).toContain("| local | opening-title |");
+      const textPreview = await printed("text", [...base, "--jev-preview"], []);
+      expect(textPreview.exit).toBe(0);
+      expect(textPreview.text).toContain("| local | opening-title |");
+      const stoppedRequests: string[] = [];
+      const stopped = await printed("design", [...base, "--send"], stoppedRequests);
+      expect(stopped.exit).toBe(2);
+      expect(stoppedRequests).toEqual([]);
+      expect(stopped.text).not.toContain("opening-title");
+      const sentRequests: string[] = [];
+      const sent = await printed("design", [...base, "--send", "--yes"], sentRequests);
+      expect(sent.exit).toBe(0);
+      expect(sentRequests.length).toBeGreaterThan(0);
+      expect(sent.text).toContain("| local | opening-title |");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

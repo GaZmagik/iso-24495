@@ -226,7 +226,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "opening-title", kind: "offline" }], needs: ["markdown", "jev-route"],
         limits: [
           "It reports only a document with no level-1 heading anywhere. A title that does not come first is not reported.",
-          "A preview writes it to the `--json` report but does not print it. The report printed after a send does.",
+          "A preview of either audit prints it. A send that stops before it sends, such as one given no agreement, does not print it.",
         ],
       },
       { id: "15b", demand: "The purpose is one line.", state: "not-read", checks: [], needs: [], limits: [] },
