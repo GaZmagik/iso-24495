@@ -63,15 +63,15 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
           "It reads only a document with 6 or more level-2 headings outside any list or quotation, and counts those headings as its sections.",
-          "Under a heading worded Contents, Table of contents, TOC or Key sections, one list item or table row satisfies it, even one that is not a link. A paragraph there satisfies it only when it holds nothing but links, white space, commas, semicolons, vertical bars or slashes, and one of its links points to a fragment. A paragraph of prose does not, even one that names a section or links to one.",
-          "So do two or more links to fragments in the opening, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph of that kind. Two such links in a sentence of prose, or in two separate paragraphs, do not. It does not check that every section is listed.",
+          "Under a heading worded Contents, Table of contents, TOC or Key sections, one list item or table body row outside any quotation satisfies it, even one that is not a link. A paragraph there satisfies it only when it holds nothing but links, white space, commas, semicolons, vertical bars or slashes, and one of its links points to a fragment. A paragraph of prose does not, even one that names a section or links to one.",
+          "So do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph of that kind. Two such links in a sentence of prose, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
         ],
       },
       {
         id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
-          "It compares only links that reach a level-2 section by fragment. Such a link is compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
+          "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
           "It reads only a document with 6 or more level-2 headings outside any list or quotation.",
         ],
       },
@@ -170,7 +170,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "link-text", kind: "offline" }], needs: [],
         limits: [
           "It reports empty link text, a bare web address, and a fixed list of vague labels such as `click here`. Any other text is taken to name its destination, even when it names the wrong one.",
-          "A Markdown link whose destination or title runs onto a later line is not read, though it still renders as a link. A link whose text alone runs over a line is read.",
+          "A Markdown link whose destination or title runs onto a later line is not read, and nor is a reference link whose text runs over a line, though both still render as links. An inline link whose text alone runs over a line is read.",
         ],
       },
       {
@@ -255,7 +255,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         limits: [
           "It asks a question as an advisory, rather than stating a fault.",
           "It needs a level-1 title. README, CONTRIBUTING, SECURITY and PULL_REQUEST_TEMPLATE files are exempt, and it is off when front matter is read as text.",
-          "It recognises a version or date only in set forms, such as a Version or Date field, a title suffix or a front matter field. In front matter that begins on the first line, a key named version, date, updated or last_updated, in any letter case, silences it when its value is text that is not blank or a finite number, even `version: banana`. The key counts at the top level, or directly under a key named `metadata` in lower case, and under no other key, such as `release`. A value of true or false, a list or a nested map does not count.",
+          "It recognises a version or date only in set forms, such as a Version or Date field, a title suffix or a front matter field. In front matter that begins on the first line, a key named version, date, updated or last_updated, in any letter case, silences it when its value is a finite number or text that is not blank, even `version: banana`. The key counts at the top level, or directly under a key named `metadata` in lower case, and under no other key, such as `release`. A value of true or false, a list or a nested map does not count.",
         ],
       },
     ],
@@ -303,7 +303,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         limits: [
           "It reads link text only. It reports a link whose text is empty, a bare web address, or one of a fixed list of vague labels such as `here`. Any other text is taken to name its destination, even when it names the wrong one.",
           "It cannot tell a referral from any other link, and a referral written without a link is not read.",
-          "A Markdown link whose destination or title runs onto a later line is not read, though it still renders as a link. A link whose text alone runs over a line is read.",
+          "A Markdown link whose destination or title runs onto a later line is not read, and nor is a reference link whose text runs over a line, though both still render as links. An inline link whose text alone runs over a line is read.",
         ],
       },
       { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
