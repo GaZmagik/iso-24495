@@ -60,17 +60,17 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     id: "3a", demand: "A document with 6 or more sections carries a table of contents.", state: "fault",
     checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
     limits: [
-      "It reads a document only when it counts 6 or more level-2 headings outside any list or quotation, and takes those as its sections. It does not count an HTML heading such as `<h2>Six</h2>`, but it can count a `##` line that shows as text, such as one inside an HTML block like `<div>`.",
-      "Under a contents heading, such as Contents or Table of contents, a list item or table body row outside any quotation can satisfy it even when it is not a link, such as `- bananas`. Some entries that render do not, such as `- :` or the row `| - |`. A paragraph there can satisfy it when it holds a link to a fragment and little else, such as `[Install](#install)`, and text in square brackets can count as a link, as in `[Install](#install) [draft]`. Other words can stop it, as in `Install` or `Read [Install](#install).`, and so can a link whose title holds a parenthesis, such as `[Install](#install \"Step (1)\")`, or whose text runs over a line.",
-      "Two or more links to fragments in the opening, outside any quotation, can also satisfy it, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph that would count under a contents heading. Some are not counted, such as a link whose text runs over a line or one whose fragment holds a malformed escape such as `#%zz`. A link with a title in brackets, such as `[One](#one (Hint))`, can be counted in a list or in a table's body rows, but it can stop a whole paragraph counting, so `[One](#one (Hint)), [Two](#two), [Three](#three)` does not satisfy it. `Read [One](#one) and [Two](#two).` as a paragraph does not satisfy it, though the same sentence in a list item can. Two links in a table's header row do not, nor do `[One](#one)` and `[Two](#two)` as two separate paragraphs outside a list. In a reference link whose text runs over a line, such as `- [One` followed by `x][o]`, the second line's `[o]` can be read as a link of its own. It does not check that every section is listed.",
+      "It reads a document only when it counts 6 or more level-2 headings outside any Markdown list or quotation, and takes those as its sections. It does not count an HTML heading such as `<h2>Six</h2>`, but it can count a `##` line that shows as text, such as one inside an HTML block like `<div>`. It can also count a heading inside an HTML `<blockquote>`.",
+      "Under a contents heading, such as Contents or Table of contents, a list item or table body row outside any Markdown quotation can satisfy it even when it is not a link, such as `- bananas`. So can one inside an HTML `<blockquote>`. Some entries that render do not, such as `- :` or the row `| - |`. A paragraph there can satisfy it when it holds a link to a fragment and little else, such as `[Install](#install)`, and text in square brackets can count as a link, as in `[Install](#install) [draft]`. Other words can stop it, as in `Install` or `Read [Install](#install).`, and so can a link whose title holds a parenthesis, such as `[Install](#install \"Step (1)\")`, or whose text runs over a line.",
+      "Two or more links to fragments in the opening, outside any Markdown quotation, can also satisfy it, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph that would count under a contents heading. So can a list inside an HTML `<blockquote>`. Some are not counted, such as a link whose text runs over a line or one whose fragment holds a malformed escape such as `#%zz`. A link with a title in brackets, such as `[One](#one (Hint))`, can be counted in a list or in a table's body rows, but it can stop a whole paragraph counting, so `[One](#one (Hint)), [Two](#two), [Three](#three)` does not satisfy it. `Read [One](#one) and [Two](#two).` as a paragraph does not satisfy it, though the same sentence in a list item can. Two links in a table's header row do not, nor do `[One](#one)` and `[Two](#two)` as two separate paragraphs outside a list. In a reference link whose text runs over a line, such as `- [One` followed by `x][o]`, the second line's `[o]` can be read as a link of its own. It does not check that every section is listed.",
     ],
   },
   {
     id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
     checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
     limits: [
-      "It can compare links that reach a level-2 section by fragment, under a contents heading or among two or more links to fragments in one list, table or paragraph of the opening. Some such links are not compared, such as one with a title like `[Wrong](#one \"Step\")`, an inline link whose text runs over a line, or one in a quotation or a table's header row. A paragraph outside a list or table can be compared when, apart from what it reads as links, it holds little else. Some syntax does not stop it, such as the escaped full stop `\\.`, a code span holding `!` or an HTML comment, even one holding words, but other words can, so `See [Wrong](#one).` is not compared. Text in square brackets can count as a link for this, as in `[Wrong](#one) [draft]` or `[Begin](#two junk)`. In a reference link whose text runs over a line, such as `- [Wrong` followed by `x][w]`, the second line's `[w]` can be compared instead. An entry that is not a link, or a link to a fragment that matches none of its sections, such as `#missing`, is not compared.",
-      "It reads a document only when it counts 6 or more level-2 headings outside any list or quotation. It can count a `##` line that shows as text, such as one inside an HTML block like `<div>`.",
+      "It can compare links that reach a level-2 section by fragment, under a contents heading or among two or more links to fragments in one list, table or paragraph of the opening. Some such links are not compared, such as one with a title like `[Wrong](#one \"Step\")`, an inline link whose text runs over a line, or one in a Markdown quotation or a table's header row, though one inside an HTML `<blockquote>` can be compared. A paragraph outside a list or table can be compared when, apart from what it reads as links, it holds little else. Some syntax does not stop it, such as the escaped full stop `\\.`, a code span holding `!` or an HTML comment, even one holding words, but other words can, so `See [Wrong](#one).` is not compared. Text in square brackets can count as a link for this, as in `[Wrong](#one) [draft]` or `[Begin](#two junk)`. In a reference link whose text runs over a line, such as `- [Wrong` followed by `x][w]`, the second line's `[w]` can be compared instead. An entry that is not a link, or a link to a fragment that matches none of its sections, such as `#missing`, is not compared.",
+      "It reads a document only when it counts 6 or more level-2 headings outside any Markdown list or quotation. It can count a `##` line that shows as text, such as one inside an HTML block like `<div>`, and a heading inside an HTML `<blockquote>`.",
     ],
   },
   { id: "4a", demand: "Headings are numbered only where a reader must cite one by its identifier.", state: "not-read", checks: [], needs: [], limits: [] },
@@ -174,7 +174,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown"],
     limits: [
       "It asks a question as an advisory, rather than stating a fault.",
-      "It needs a Markdown level-1 title, though not every one counts, such as `> # Guide`. It does not read an HTML title such as `<h1>Guide</h1>`, but it can take a `#` line that shows as text, such as one inside an HTML block like `<div>`, as one. A file named README, CONTRIBUTING, SECURITY or PULL_REQUEST_TEMPLATE is exempt, with or without an extension, and so can be one in another letter case, such as `readme.MD`, but a longer name such as `README-fr.md` is not. It is off when front matter is read as text.",
+      "It needs a Markdown level-1 title, though not every one counts, such as `> # Guide`. It does not read an HTML title such as `<h1>Guide</h1>`, but it can take a `#` line that shows as text, such as one inside an HTML block like `<div>`, as one. A file named README, CONTRIBUTING, SECURITY or PULL_REQUEST_TEMPLATE is exempt, with or without an extension, even a two-part one such as `README.fr.md`. So can one in another letter case, such as `readme.MD`, but a longer name such as `README-fr.md` is not. It is off when front matter is read as text.",
       "It recognises a version or date in set forms, such as `Version: 1.2`, `Date: 3 March 2026`, a title suffix such as `(Version 1.2)`, or a front matter field. Some forms are not recognised, such as `Version: 2`, `Version: banana` or the title suffix `(2.0)`. In front matter that begins on the first line and parses as YAML, a key named version, date, updated or last_updated, in any letter case, can silence it when its value is a finite number or text that is not blank, even `version: banana` or the quoted `'true'`. The key counts at the top level, or directly under a key named `metadata` in lower case, but not under another key such as `release`. A value YAML reads as true or false, a list or a map does not count, and a block that does not parse, such as one holding `title: [unclosed`, does not silence it.",
     ],
   },
@@ -185,7 +185,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     id: "17a", demand: "The overview label is a heading, not bold text alone.", state: "fault",
     checks: [{ rule: "overview-label", kind: "offline" }], needs: ["markdown"],
     limits: [
-      "It reads a document only when it counts 6 or more level-2 headings outside any list or quotation. It can count a `##` line that shows as text, such as one inside an HTML block like `<div>`.",
+      "It reads a document only when it counts 6 or more level-2 headings outside any Markdown list or quotation. It can count a `##` line that shows as text, such as one inside an HTML block like `<div>`, and a heading inside an HTML `<blockquote>`.",
       "It asks for a heading worded Overview or Summary before the first content section, and fires on a document with no overview heading at all, though it can take a `## Overview` line that shows as text, such as one inside an HTML block like `<div>`, as one. It can accept other letter cases and a leading number, such as `## 1. OVERVIEW`, but not other wording, such as Executive overview, At a glance or `## 1) OVERVIEW`, nor an HTML heading such as `<h2>Overview</h2>`, nor a heading inside a Markdown list or quotation, such as `> ## Overview`.",
     ],
   },
@@ -411,6 +411,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3a", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}- ## Listed\n\n${FIVE_SECTIONS}`, found: [], control: { from: "- ## Listed", to: "## Listed", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}${FIVE_SECTIONS}\n<h2>Six</h2>\n`, found: [], control: { from: "<h2>Six</h2>", to: "## Six", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}${FIVE_SECTIONS}\n<div>\n## Six\n</div>\n`, found: [NO_CONTENTS], control: { from: "## Six", to: "Six", found: [] } },
+  { clause: "3a", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}${FIVE_SECTIONS}\n<blockquote>\n\n## Six\n\n</blockquote>\n`, found: [NO_CONTENTS], control: { from: "<blockquote>\n\n## Six\n\n</blockquote>", to: "> ## Six", found: [] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- bananas\n\n${SIX_SECTIONS}`, found: [], control: { from: "## Contents", to: "## Index", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n| Section |\n|---|\n| Install |\n\n${SIX_SECTIONS}`, found: [], control: { from: "## Contents", to: "## Index", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\nInstall\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "\nInstall\n", to: "\n- Install\n", found: [] } },
@@ -428,6 +429,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n| Part |\n|---|\n| &nbsp; |\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "&nbsp;", to: "One", found: [] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}> ## Contents\n>\n> - One\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "> ## Contents\n>\n> - One", to: "## Contents\n\n- One", found: [] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Install](#install) [x][nodef]\n\n${SIX_SECTIONS}`, found: [], control: { from: " [x][nodef]", to: " x", found: [NO_CONTENTS] } },
+  { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n<blockquote>\n- bananas\n</blockquote>\n\n${SIX_SECTIONS}`, found: [], control: { from: "<blockquote>\n- bananas\n</blockquote>", to: "> - bananas", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[red](#missing) [blue](#absent)\n\n${SIX_SECTIONS}`, found: [], control: { from: " [blue](#absent)", to: "", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}Read [One](#one) and [Two](#two).\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "Read [One](#one) and [Two](#two).", to: "[One](#one), [Two](#two)", found: [] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[One](#one) - [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: " - ", to: " | ", found: [] } },
@@ -448,6 +450,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}- [One](#one (Hint))\n- [Two](#two)\n\n${SIX_SECTIONS}`, found: [], control: { from: "(#one (Hint))", to: "(#%zz)", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}| A | B |\n|---|---|\n| [One](#one (Hint)) | [Two](#two) |\n\n${SIX_SECTIONS}`, found: [], control: { from: "(#one (Hint))", to: "(#%zz)", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[One](#one (Hint)), [Two](#two), [Three](#three)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: " (Hint)", to: "", found: [] } },
+  { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}<blockquote>\n- [One](#red)\n- [Two](#blue)\n</blockquote>\n\n${SIX_SECTIONS}`, found: [], control: { from: "<blockquote>\n- [One](#red)\n- [Two](#blue)\n</blockquote>", to: "> - [One](#red)\n> - [Two](#blue)", found: [NO_CONTENTS] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#missing)\n\n${SIX_SECTIONS}`, found: [], control: { from: "(#missing)", to: "(#one)", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#detail)\n\n${SIX_SECTIONS}\n### Detail\n\nText.\n`, found: [], control: { from: "### Detail", to: "## Detail", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- Wrong\n\n${SIX_SECTIONS}`, found: [], control: { from: "- Wrong", to: "- [Wrong](#one)", found: [CONTENTS_WORDING] } },
@@ -469,8 +472,10 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}[Wrong](#one) \\. [Two](#two)\n\n${SIX_SECTIONS}`, found: [NAVIGATION_WORDING], control: { from: "\\.", to: ".", found: [NO_CONTENTS] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Wrong](#one) <!-- Read these first. --> [Two](#two)\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "<!-- Read these first. -->", to: "Read these first.", found: [NO_CONTENTS] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Wrong](#one) \`!\` [Two](#two)\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "`!`", to: "`Read`", found: [NO_CONTENTS] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n<blockquote>\n- [Wrong](#one)\n</blockquote>\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "<blockquote>\n- [Wrong](#one)\n</blockquote>", to: "> - [Wrong](#one)", found: [NO_CONTENTS] } },
   { clause: "3b", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${FOUR_SECTIONS}`, found: [], control: { from: "## Four\n\nText.\n", to: "## Four\n\nText.\n\n## Five\n\nText.\n", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${FOUR_SECTIONS}\n<div>\n## Five\n</div>\n`, found: [CONTENTS_WORDING], control: { from: "## Five", to: "Five", found: [] } },
+  { clause: "3b", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}[Wrong](#one), [Two](#two)\n\n${FIVE_SECTIONS}\n<blockquote>\n\n## Six\n\n</blockquote>\n`, found: [NAVIGATION_WORDING], control: { from: "<blockquote>\n\n## Six\n\n</blockquote>", to: "> ## Six", found: [] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 1. open the box, 2. lift the lid, 3. read the note.\n", found: [PROSE_RANKS], control: { from: "1. open", to: "open", found: [] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Open the box, then lift the lid, then read the note.\n", found: [], control: { from: "Open the box, then lift the lid, then read", to: "First, open the box. Second, lift the lid. Third, read", found: [PROSE_RANKS] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "- First, open the box.\n- Second, lift the lid.\n- Third, read the note.\n", found: [], control: { from: "- First, open the box.\n- Second, lift the lid.\n- Third,", to: "First, open the box. Second, lift the lid. Third,", found: [PROSE_RANKS] } },
@@ -584,6 +589,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "15f", limit: 3, check: "opening-version-date", text: "---\ntitle: [unclosed\nversion: 1.0\n---\n# Guide\n\nOpen the box.\n", found: [NO_EDITION], control: { from: "[unclosed", to: "closed", found: [] } },
   { clause: "17a", limit: 1, check: "overview-label", text: `${GUIDE_OPENING}${FIVE_SECTIONS}`, found: [], control: { from: "## Five\n\nText.\n", to: "## Five\n\nText.\n\n## Six\n\nText.\n", found: [NO_OVERVIEW] } },
   { clause: "17a", limit: 1, check: "overview-label", text: `${GUIDE_OPENING}${FIVE_SECTIONS}\n<div>\n## Six\n</div>\n`, found: [NO_OVERVIEW], control: { from: "## Six", to: "Six", found: [] } },
+  { clause: "17a", limit: 1, check: "overview-label", text: `${GUIDE_OPENING}Open the box.\n\n${FIVE_SECTIONS}\n<blockquote>\n\n## Six\n\n</blockquote>\n`, found: [NO_OVERVIEW], control: { from: "<blockquote>\n\n## Six\n\n</blockquote>", to: "> ## Six", found: [] } },
   { clause: "17a", limit: 2, check: "overview-label", text: `${GUIDE_OPENING}## Executive overview\n\nOpen the box.\n\n${SIX_SECTIONS}`, found: [NO_OVERVIEW], control: { from: "Executive overview", to: "Overview", found: [] } },
   { clause: "17a", limit: 2, check: "overview-label", text: `${GUIDE_OPENING}## At a glance\n\nOpen the box.\n\n${SIX_SECTIONS}`, found: [NO_OVERVIEW], control: { from: "At a glance", to: "Summary", found: [] } },
   { clause: "17a", limit: 2, check: "overview-label", text: SIX_SECTION_GUIDE, found: [NO_OVERVIEW], control: { from: "Version: 1.0\n\n", to: "Version: 1.0\n\n## Overview\n\nOpen the box.\n\n", found: [] } },
@@ -615,8 +621,8 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
  */
 const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "1a": [4],
-  "3a": [5, 17, 20],
-  "3b": [21, 2],
+  "3a": [6, 18, 21],
+  "3b": [22, 3],
   "6a": [10, 1],
   "8c": [4],
   "10c": [3, 1],
@@ -628,7 +634,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "15c": [1, 1],
   "15d": [1, 1],
   "15f": [1, 12, 19],
-  "17a": [2, 11],
+  "17a": [3, 11],
   "19b": [4, 2, 5],
 };
 
@@ -650,8 +656,8 @@ const LIMITS_SHOWN_BY_A_TEST: Readonly<Record<string, string>> = { "15a.2": PRIN
  */
 const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "1a": ["05c161cc89c947e2"],
-  "3a": ["891e52073a6d41df", "7a80f80734a062fe", "9d18cc192df2aa32"],
-  "3b": ["02d1a2339ac401ec", "83be9494937e5f54"],
+  "3a": ["bec14fbb73268aeb", "19259afeef2d29c4", "18e740d0195e1360"],
+  "3b": ["a89a361732bfc545", "cb48ca7f8f73c2bf"],
   "6a": ["a0eca4bb5ee78b0b", "ac7780100b062b44"],
   "8c": ["1e7ef38789ed8e7f"],
   "10c": ["715422e93c74c160", "9136f07360ae2af1"],
@@ -663,7 +669,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "15c": ["371efd19a5ca4c2e", "1afc94d906a22e1b"],
   "15d": ["e5a917bc6401d872", "6b5bdba68c9c7dcb"],
   "15f": ["463bba50c60651a7", "72c02ad5ffca09f8", "cbe52aeab5b5f019"],
-  "17a": ["d9351c7bdeced047", "347357b868e06e98"],
+  "17a": ["cfc121eded58bd56", "347357b868e06e98"],
   "19b": ["8d7374144d4bb978", "8e3c4f0d60d846d8", "a2f3adc83db9c51d"],
 };
 
