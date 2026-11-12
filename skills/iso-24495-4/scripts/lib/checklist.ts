@@ -5,6 +5,22 @@
 // One rule decides what a clause is: a demand a document can fail while
 // meeting the rest of its line. An "or" stays one clause. A condition or an
 // exemption is written into the demand it limits, and is not a clause.
+//
+// A clause's needs name what a run must have for its checks to run:
+//
+// - markdown: the document is a Markdown file, ending in .md or .markdown.
+//   The text audit reads a .txt file as plain text, and the design audit
+//   does not read one.
+// - jev-route: the run takes the shared Jev audit route. The design audit
+//   always does. The text audit does only with --jev-preview, or with --jev
+//   and --send together. Without them it runs no Jev check and plans
+//   nothing, so it reports neither a missing title nor any Jev gate.
+// - send: the run sends the document to Jev after agreement: the design
+//   audit with --send, or the text audit with --jev and --send. A preview
+//   sends nothing and receives no answer.
+//
+// The test of this module measures each need by running those commands with
+// and without what the need names, with a stand-in for the transport.
 
 /**
  * Every item of the self-audit checklist in `skills/iso-24495-5/SKILL.md`, in
@@ -23,7 +39,9 @@ export const CHECKLIST: readonly ChecklistItem[] = [
       {
         id: "1a", demand: "The document has 3 or fewer heading levels below its title.", state: "fault",
         checks: [{ rule: "heading-depth", kind: "offline" }], needs: [],
-        limits: ["It reports a heading deeper than level 4. It counts the absolute level, not the levels below the title, so it is exact only where the title is a level-1 heading."],
+        limits: [
+          "It reports a heading deeper than level 4. It counts the absolute level, not the levels below the title, so it is exact only where the title is a level-1 heading. Under a level-2 title, a heading 3 levels below it is reported.",
+        ],
       },
     ],
   },
@@ -44,14 +62,17 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "3a", demand: "A document with 6 or more sections carries a table of contents.", state: "fault",
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
-          "It counts as sections the level-2 headings outside any list or quotation.",
-          "One contents entry, or two linked headings in one block of the opening, satisfies it. It does not check that every section is listed.",
+          "It reads only a document with 6 or more level-2 headings outside any list or quotation, and counts those headings as its sections.",
+          "One entry under a heading worded Contents, Table of contents, TOC or Key sections satisfies it, even an entry that is not a link. So do two fragment links in one block of the opening, even when neither reaches a heading. It does not check that every section is listed.",
         ],
       },
       {
         id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
-        limits: ["It compares only entries that link by fragment to a level-2 section, and only in a document with 6 or more such sections."],
+        limits: [
+          "It compares only links that reach a level-2 section by fragment, placed under a contents heading or among two or more links in one block of the opening. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
+          "It reads only a document with 6 or more level-2 headings outside any list or quotation.",
+        ],
       },
     ],
   },
@@ -78,7 +99,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "6a", demand: "Sequences are in ordered lists, except a legal document's clause identifiers.", state: "fault",
         checks: [{ rule: "prose-enumeration", kind: "offline" }], needs: [],
         limits: [
-          "It reports a prose block holding rank 1 and at least 3 ranks, written as ordinal words such as `first` or as the numbers 1 to 6. A sequence written any other way is not read.",
+          "It reports a prose block holding rank 1 and at least 3 ranks, written as ordinal words such as `first` or as the numbers 1 to 6 in forms such as `1.` or `(1)`. A sequence written any other way is not read, nor is one written as separate bullets.",
           "It has no exemption for a legal document's clause identifiers.",
         ],
       },
@@ -101,7 +122,8 @@ export const CHECKLIST: readonly ChecklistItem[] = [
       { id: "8b", demand: "Each bulleted item holds one idea.", state: "not-read", checks: [], needs: [], limits: [] },
       {
         id: "8c", demand: "Bulleted items are nested no deeper than 2 levels.", state: "fault",
-        checks: [{ rule: "bullet-depth", kind: "offline" }], needs: ["markdown"], limits: [],
+        checks: [{ rule: "bullet-depth", kind: "offline" }], needs: ["markdown"],
+        limits: ["It counts the unordered list items an item sits in, itself included, and reports a depth above 2. It counts across a quotation but not an ordered list, so a bullet beneath an ordered item beneath a bullet has depth 2 and passes."],
       },
       { id: "8d", demand: "Longer material is promoted to a subsection.", state: "not-read", checks: [], needs: [], limits: [] },
     ],
@@ -123,7 +145,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
       { id: "10b", demand: "No two devices carry the same meaning.", state: "not-read", checks: [], needs: [], limits: [] },
       {
         id: "10c", demand: "No meaning rides on a device alone.", state: "pass-only",
-        checks: [{ rule: "colour_only:pass", kind: "jev" }], needs: ["markdown", "design", "send"],
+        checks: [{ rule: "colour_only:pass", kind: "jev" }], needs: ["markdown", "jev-route", "send"],
         limits: [
           "It reads colour only. Position, shape and every other device are not read.",
           "It can pass a block or stay unsure, and never reports a fault. A pass appears only in the counts.",
@@ -145,17 +167,26 @@ export const CHECKLIST: readonly ChecklistItem[] = [
       {
         id: "12a", demand: "Link text names its destination.", state: "fault",
         checks: [{ rule: "link-text", kind: "offline" }], needs: [],
-        limits: ["It reports empty link text, a bare web address, and a fixed list of vague labels such as `click here`. Any other text is taken to name its destination."],
+        limits: [
+          "It reports empty link text, a bare web address, and a fixed list of vague labels such as `click here`. Any other text is taken to name its destination, even when it names the wrong one.",
+        ],
       },
       {
         id: "12b", demand: "A meaningful image says what it shows.", state: "fault",
         checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
-        limits: ["It reports an image with no alternative text. It cannot tell whether the text it finds says what the image shows."],
+        limits: [
+          "It reports a Markdown image with empty alternative text and an HTML image with no alt attribute. An HTML image with an empty alt attribute, or a Markdown image written inline with the title decorative, is taken as decorative and is not reported, even when it is meaningful.",
+          "It cannot tell whether the text it finds says what the image shows. Any alternative text passes.",
+        ],
       },
       {
         id: "12c", demand: "A decorative image is marked as decorative.", state: "fault",
         checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
-        limits: ["It reports a Markdown image with empty alternative text unless its title is the word decorative. An HTML image with an empty alt attribute is taken as marked."],
+        limits: [
+          "It reports a Markdown image with empty alternative text, unless the image is written inline with the title decorative. A reference image is reported even when its definition's title is decorative, so that way of marking it is not recognised.",
+          "An HTML image with an empty alt attribute is taken as marked.",
+          "An image with any alternative text is taken as meaningful, so a decorative image described in words passes.",
+        ],
       },
     ],
   },
@@ -167,7 +198,10 @@ export const CHECKLIST: readonly ChecklistItem[] = [
       {
         id: "13b", demand: "Each header identifies the values beneath it.", state: "fault",
         checks: [{ rule: "table-header", kind: "offline" }], needs: [],
-        limits: ["It reports a pipe table whose header has an empty column name. HTML tables are not read, and a header with any wording is taken to identify its values."],
+        limits: [
+          "It reports a pipe table whose header has an empty column name. A header with any wording is taken to identify its values, and HTML tables are not read.",
+          "It takes any line holding a pipe, followed by a line of dashes, as a table header, so it can report text that is not a table.",
+        ],
       },
     ],
   },
@@ -185,29 +219,28 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     clauses: [
       {
         id: "15a", demand: "The document opens with its title.", state: "fault",
-        checks: [{ rule: "opening-title", kind: "offline" }], needs: ["markdown", "design"],
+        checks: [{ rule: "opening-title", kind: "offline" }], needs: ["markdown", "jev-route"],
         limits: [
-          "The design audit reads it. The text audit does not.",
           "It reports only a document with no level-1 heading anywhere. A title that does not come first is not reported.",
-          "A preview does not print it. The report printed after a send does.",
+          "A preview writes it to the `--json` report but does not print it. The report printed after a send does.",
         ],
       },
       { id: "15b", demand: "The purpose is one line.", state: "not-read", checks: [], needs: [], limits: [] },
       {
         id: "15c", demand: "The purpose names the reader's task.", state: "fault",
         checks: [{ rule: "purpose:fail", kind: "jev" }, { rule: "purpose:diagnosis:neither", kind: "jev" }],
-        needs: ["markdown", "design", "send"],
+        needs: ["markdown", "jev-route", "send"],
         limits: [
-          "A fail says the opening does not name both the task and the scope. It does not say which is missing, unless the diagnosis is neither.",
+          "A fail says the opening does not name both the task and the scope. On its own it does not say which is missing, so it does not say whether 15c or 15d failed. A diagnosis of neither says both are missing.",
           "It can fail an opening or stay unsure, and never passes one.",
         ],
       },
       {
         id: "15d", demand: "The purpose names its scope.", state: "fault",
         checks: [{ rule: "purpose:fail", kind: "jev" }, { rule: "purpose:diagnosis:neither", kind: "jev" }],
-        needs: ["markdown", "design", "send"],
+        needs: ["markdown", "jev-route", "send"],
         limits: [
-          "A fail says the opening does not name both the task and the scope. It does not say which is missing, unless the diagnosis is neither.",
+          "A fail says the opening does not name both the task and the scope. On its own it does not say which is missing, so it does not say whether 15c or 15d failed. A diagnosis of neither says both are missing.",
           "It can fail an opening or stay unsure, and never passes one.",
         ],
       },
@@ -216,9 +249,9 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "15f", demand: "The opening gives a version or date.", state: "fault",
         checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown"],
         limits: [
-          "It asks a question rather than stating a fault.",
+          "It asks a question as an advisory, rather than stating a fault.",
           "It needs a level-1 title. README, CONTRIBUTING, SECURITY and PULL_REQUEST_TEMPLATE files are exempt, and it is off when front matter is read as text.",
-          "It recognises a version or date only in set forms, such as a Version or Date field, a title suffix or a front matter field.",
+          "It recognises a version or date only in set forms, such as a Version or Date field, a title suffix or a front matter field. Any non-empty version or date field in front matter silences it, even `version: banana`.",
         ],
       },
     ],
@@ -241,7 +274,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "overview-label", kind: "offline" }], needs: ["markdown"],
         limits: [
           "It reads only a document with 6 or more level-2 sections.",
-          "It asks for a heading worded Overview or Summary before the first content section. It also fires on a document with no overview at all, and does not recognise an overview under any other label.",
+          "It asks for a heading worded exactly Overview or Summary before the first content section. It does not recognise an overview under any other label, such as Executive overview or At a glance, and it also fires on a document with no overview at all.",
         ],
       },
       { id: "17b", demand: "The detail has moved to footnotes, an appendix or a collapsible block.", state: "not-read", checks: [], needs: [], limits: [] },
@@ -260,7 +293,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     line: "- [ ] **Signposting:** Is the referral near the top or ending the opening section, naming its destination and when to use it, and absent where nothing else exists?",
     clauses: [
       { id: "19a", demand: "The referral is near the top or ends the opening section.", state: "not-read", checks: [], needs: [], limits: [] },
-      { id: "19b", demand: "The referral names its destination.", state: "not-read", checks: [], needs: [], limits: [] },
+      {
+        id: "19b", demand: "The referral names its destination.", state: "fault",
+        checks: [{ rule: "link-text", kind: "offline" }], needs: [],
+        limits: [
+          "It reads link text only. It reports a link whose text is empty, a bare web address, or one of a fixed list of vague labels such as `here`. Any other text is taken to name its destination, even when it names the wrong one.",
+          "It cannot tell a referral from any other link, and a referral written without a link is not read.",
+        ],
+      },
       { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
       { id: "19d", demand: "There is no referral where nothing else exists.", state: "not-read", checks: [], needs: [], limits: [] },
     ],
@@ -363,7 +403,9 @@ export interface Check {
 }
 
 /**
- * One thing a run must have for a check to run: a Markdown file, the design
- * audit, a send to Jev, the original version, or a fact the author declared.
+ * One thing a run must have for a check to run: a Markdown file, the shared
+ * Jev audit route, a send to Jev, the original version, or a fact the author
+ * declared. The comment at the top of this module says which commands meet
+ * the first three.
  */
-export type Need = "markdown" | "design" | "send" | "before" | `fact:${string}`;
+export type Need = "markdown" | "jev-route" | "send" | "before" | `fact:${string}`;
