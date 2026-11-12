@@ -270,15 +270,17 @@ const NEED_ORDER: readonly Need[] = ["markdown", "jev-route", "send", "before"];
 type Check = Clause["checks"][number];
 
 /**
- * One way of running the audit, the needs that way meets beside Markdown,
- * and the endings of the files it reads. The design audit reads no `.txt`
- * file.
+ * One way of running the audit: the command, the options it is given
+ * besides the target, the project folder and `--json`, the needs it meets
+ * beside Markdown, and the endings of the files it reads. The design audit
+ * reads no `.txt` file.
  */
 interface Route {
   readonly name: string;
+  readonly command: "text" | "design";
+  readonly options: readonly string[];
   readonly meets: readonly Need[];
   readonly reads: readonly string[];
-  readonly run: (directory: string, json: string, dependencies: AuditDependencies) => number | Promise<number>;
 }
 
 /**
@@ -286,11 +288,11 @@ interface Route {
  * send routes reach a stubbed transport and never the network.
  */
 const ROUTES: readonly Route[] = [
-  { name: "text audit", meets: [], reads: ["md", "txt"], run: (directory, json) => runTextCli(["bun", "cli", directory, "--project-dir", directory, "--json", json], ignore, ignore) },
-  { name: "text audit --jev-preview", meets: ["jev-route"], reads: ["md", "txt"], run: (directory, json, dependencies) => runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview", "--json", json], ignore, ignore, dependencies) },
-  { name: "text audit --jev --send", meets: ["jev-route", "send"], reads: ["md", "txt"], run: (directory, json, dependencies) => runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev", "--send", "--yes", "--json", json], ignore, ignore, dependencies) },
-  { name: "design audit", meets: ["jev-route"], reads: ["md"], run: (directory, json, dependencies) => runDesignCli(["bun", "cli", directory, "--project-dir", directory, "--json", json], ignore, ignore, dependencies) },
-  { name: "design audit --send", meets: ["jev-route", "send"], reads: ["md"], run: (directory, json, dependencies) => runDesignCli(["bun", "cli", directory, "--project-dir", directory, "--send", "--yes", "--json", json], ignore, ignore, dependencies) },
+  { name: "text audit", command: "text", options: [], meets: [], reads: ["md", "txt"] },
+  { name: "text audit --jev-preview", command: "text", options: ["--jev-preview"], meets: ["jev-route"], reads: ["md", "txt"] },
+  { name: "text audit --jev --send", command: "text", options: ["--jev", "--send", "--yes"], meets: ["jev-route", "send"], reads: ["md", "txt"] },
+  { name: "design audit", command: "design", options: [], meets: ["jev-route"], reads: ["md"] },
+  { name: "design audit --send", command: "design", options: ["--send", "--yes"], meets: ["jev-route", "send"], reads: ["md"] },
 ];
 
 /** What one route named for each specimen file, and of which kind. */
@@ -467,7 +469,12 @@ function readRoutes(): Promise<RouteReading[]> {
   return routeReadings;
 }
 
-/** The runs `readRoutes` shares. It removes every file it writes. */
+/**
+ * The runs `readRoutes` shares. It removes every file it writes.
+ *
+ * @throws An `Error` when a route exits with anything but 0, when a route
+ *     that does not send makes a request, or when a send route makes none.
+ */
 async function measureRoutes(): Promise<RouteReading[]> {
   const directory = mkdtempSync(join(tmpdir(), "checklist-routes-"));
   try {
@@ -480,7 +487,7 @@ async function measureRoutes(): Promise<RouteReading[]> {
       const json = join(tmpdir(), `checklist-route-${process.pid}-${index}.json`);
       const requests: string[] = [];
       const dependencies = stubbedDependencies(requests);
-      const exit = await route.run(directory, json, dependencies);
+      const exit = await runRoute(route, directory, json, dependencies);
       if (exit !== 0) throw new Error(`${route.name} exited ${exit}.`);
       if (!route.meets.includes("send") && requests.length > 0) throw new Error(`${route.name} sent a request.`);
       if (route.meets.includes("send") && requests.length === 0) throw new Error(`${route.name} sent nothing.`);
@@ -491,6 +498,17 @@ async function measureRoutes(): Promise<RouteReading[]> {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+/**
+ * Runs one route over a directory, with its report written to `json`.
+ *
+ * @returns The command's exit code.
+ */
+async function runRoute(route: Route, directory: string, json: string, dependencies: AuditDependencies): Promise<number> {
+  const argv = ["bun", "cli", directory, "--project-dir", directory, ...route.options, "--json", json];
+  if (route.command === "text") return await runTextCli(argv, ignore, ignore, dependencies);
+  return await runDesignCli(argv, ignore, ignore, dependencies);
 }
 
 /**
