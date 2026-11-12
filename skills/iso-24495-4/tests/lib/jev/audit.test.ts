@@ -983,6 +983,62 @@ test("the text audit's Jev preview prints the title finding as the design previe
   }
 });
 
+// A preview of several documents must print the title finding of every titleless one,
+// not just the first. The documents are written out of order, and the titled one
+// sorts between the two titleless ones, so a preview that kept only the first one or
+// two documents, or kept creation order, prints a different block.
+const SEVERAL_LOCAL_BLOCK = [
+  "Local findings",
+  "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
+  "|------|------|------|-------|------|-------|---------|---------|",
+  "| `a.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "| `c.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "Local findings are made on this machine and are never sent.",
+].join("\n");
+
+/** Writes `c.md` and `a.md` with no title, then `b.md` with one, into `directory`. */
+function writeSeveralDocuments(directory: string): void {
+  writeFileSync(join(directory, "c.md"), NO_TITLE);
+  writeFileSync(join(directory, "a.md"), NO_TITLE);
+  writeFileSync(join(directory, "b.md"), NO_BLOCK);
+}
+
+test("a design preview of a directory prints the title finding of each titleless document, in file order", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-several-"));
+  try {
+    writeSeveralDocuments(directory);
+    expect(selectDocuments(directory, directory).documents.map(document => document.file)).toEqual(["a.md", "b.md", "c.md"]);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(SEVERAL_LOCAL_BLOCK);
+    expect(out[2]).toBe(formatPlan(selectDocuments(directory, directory)));
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(2);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the text audit's Jev preview of a directory prints the title finding of each titleless document, in file order", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-text-preview-several-"));
+  try {
+    writeSeveralDocuments(directory);
+    expect(selectDocuments(directory, directory, "text").documents.map(document => document.file)).toEqual(["a.md", "b.md", "c.md"]);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(SEVERAL_LOCAL_BLOCK);
+    expect(out[2]).toBe(formatPlan(selectDocuments(directory, directory, "text")));
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(2);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("printing the title finding leaves a preview's JSON report as it was", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-preview-title-json-"));
   try {
