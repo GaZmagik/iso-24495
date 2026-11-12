@@ -1039,6 +1039,158 @@ test("the text audit's Jev preview of a directory prints the title finding of ea
   }
 });
 
+// A file and a folder can share a name, as "a.md" and "a" do here. The audit sorts
+// the full paths it finds by UTF-16 code unit. "." (0x2E) comes before both "/"
+// (0x2F) and "\" (0x5C), so "a.md" comes before "a/z.md" on Windows and on Linux.
+// NTFS lists the folder "a" before the file "a.md", so a preview that did not sort
+// would print "a/z.md" first on Windows. The nested file also shows that the
+// block names a file by its path from the project, not by its name alone.
+const SHARED_NAME_LOCAL_BLOCK = [
+  "Local findings",
+  "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
+  "|------|------|------|-------|------|-------|---------|---------|",
+  "| `a.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "| `a/z.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "Local findings are made on this machine and are never sent.",
+].join("\n");
+
+/** Writes `a/z.md`, then `a.md`, both with no title, into `directory`. */
+function writeSharedNameDocuments(directory: string): void {
+  mkdirSync(join(directory, "a"));
+  writeFileSync(join(directory, "a", "z.md"), NO_TITLE);
+  writeFileSync(join(directory, "a.md"), NO_TITLE);
+}
+
+test("a design preview prints a file before the folder that shares its name", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-shared-name-"));
+  try {
+    writeSharedNameDocuments(directory);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(SHARED_NAME_LOCAL_BLOCK);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the text audit's Jev preview prints a file before the folder that shares its name", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-text-preview-shared-name-"));
+  try {
+    writeSharedNameDocuments(directory);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(SHARED_NAME_LOCAL_BLOCK);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// A refused document gets a plan with no findings, so it adds no row to the block,
+// even when it has no title. Its refusal is printed as a warning and in the
+// disclosure instead. The refused document sorts first, so a preview that stopped
+// at it would print no block at all.
+const AFTER_REFUSED_LOCAL_BLOCK = [
+  "Local findings",
+  "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
+  "|------|------|------|-------|------|-------|---------|---------|",
+  "| `b.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "Local findings are made on this machine and are never sent.",
+].join("\n");
+
+/** Writes `a.md`, refused for its leading block and with no title, then `b.md` with no title, into `directory`. */
+function writeRefusedThenTitleless(directory: string): void {
+  writeFileSync(join(directory, "a.md"), `---\nkey:\tprivate\n---\n${NO_TITLE}`);
+  writeFileSync(join(directory, "b.md"), NO_TITLE);
+}
+
+test("a design preview prints the title finding of a document that follows a refused one", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-after-refused-"));
+  try {
+    writeRefusedThenTitleless(directory);
+    expect(selectDocuments(directory, directory).documents.map(document => [document.file, document.refusal])).toEqual([["a.md", REFUSAL], ["b.md", undefined]]);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual(["warning: not sent: a.md: front matter could not be recognised safely"]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(AFTER_REFUSED_LOCAL_BLOCK);
+    expect(out[2]).toContain("\n- a.md: not sent, because its front matter could not be recognised safely.\n- b.md: 0 eligible openings, 2 eligible blocks, 2 requests.\n");
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the text audit's Jev preview prints the title finding of a document that follows a refused one", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-text-preview-after-refused-"));
+  try {
+    writeRefusedThenTitleless(directory);
+    expect(selectDocuments(directory, directory, "text").documents.map(document => [document.file, document.refusal])).toEqual([["a.md", REFUSAL], ["b.md", undefined]]);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual(["warning: not sent: a.md: front matter could not be recognised safely"]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(AFTER_REFUSED_LOCAL_BLOCK);
+    expect(out[2]).toContain("\n- a.md: not sent, because its front matter could not be recognised safely.\n- b.md: 0 eligible openings, 2 eligible blocks, 2 requests.\n");
+    expect(occurrences(out.join("\n"), "opening-title")).toBe(1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// The block names a file by its path from the project, with "/" between folders on
+// every host, as the mechanical findings table does.
+const NESTED_LOCAL_BLOCK = [
+  "Local findings",
+  "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
+  "|------|------|------|-------|------|-------|---------|---------|",
+  "| `sub/doc.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "Local findings are made on this machine and are never sent.",
+].join("\n");
+
+/** Writes `sub/doc.md`, with no title, into `directory`. */
+function writeNestedDocument(directory: string): void {
+  mkdirSync(join(directory, "sub"));
+  writeFileSync(join(directory, "sub", "doc.md"), NO_TITLE);
+}
+
+test("a design preview names a nested document by its path from the project", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-nested-"));
+  try {
+    writeNestedDocument(directory);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(NESTED_LOCAL_BLOCK);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the text audit's Jev preview names a nested document by its path from the project", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-text-preview-nested-"));
+  try {
+    writeNestedDocument(directory);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(NESTED_LOCAL_BLOCK);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("printing the title finding leaves a preview's JSON report as it was", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-preview-title-json-"));
   try {
