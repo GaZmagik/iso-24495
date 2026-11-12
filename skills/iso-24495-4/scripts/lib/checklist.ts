@@ -280,7 +280,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "overview-label", kind: "offline" }], needs: ["markdown"],
         limits: [
           "It reads a document only when it counts 6 or more level-2 headings outside any list or quotation. It can count a `##` line that shows as text, such as one inside an HTML block like `<div>`.",
-          "It asks for a heading worded Overview or Summary before the first content section, and fires on a document with no overview at all. It can accept other letter cases and a leading number, such as `## 1. OVERVIEW`, but not other wording, such as Executive overview, At a glance or `## 1) OVERVIEW`, nor an HTML heading such as `<h2>Overview</h2>`, nor a heading inside a Markdown list or quotation, such as `> ## Overview`.",
+          "It asks for a heading worded Overview or Summary before the first content section, and fires on a document with no overview heading at all, though it can take a `## Overview` line that shows as text, such as one inside an HTML block like `<div>`, as one. It can accept other letter cases and a leading number, such as `## 1. OVERVIEW`, but not other wording, such as Executive overview, At a glance or `## 1) OVERVIEW`, nor an HTML heading such as `<h2>Overview</h2>`, nor a heading inside a Markdown list or quotation, such as `> ## Overview`.",
         ],
       },
       { id: "17b", demand: "The detail has moved to footnotes, an appendix or a collapsible block.", state: "not-read", checks: [], needs: [], limits: [] },
