@@ -59,15 +59,15 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
     limits: [
       "It reads only a document with 6 or more level-2 headings outside any list or quotation, and counts those headings as its sections.",
-      "Under a heading worded Contents, Table of contents, TOC or Key sections, one list item or table body row outside any quotation satisfies it, even one that is not a link. A paragraph there satisfies it only when it holds nothing but links, white space, commas, semicolons, vertical bars or slashes, and one of its links points to a fragment. A paragraph of prose does not, even one that names a section or links to one.",
-      "So do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph of that kind. Two such links in a sentence of prose, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
+      "Under a heading worded Contents, Table of contents, TOC or Key sections, a list item or table body row outside any quotation can satisfy it even when it is not a link, such as `- bananas`. One holding only hyphens, colons, vertical bars or white space does not, such as the body row `| - |` or the item `- :`, though it still renders. A paragraph there usually satisfies it when it holds a link to a fragment and nothing else but links, white space, commas, semicolons, vertical bars or slashes, though a link whose title holds a closing parenthesis, such as `[Install](#install \"Step (1)\")`, often stops it. Links are read by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text: `[Install](#install) [draft]`, with no definition for `[draft]`, satisfies it, while `[Install](#install) draft` does not. A link whose text runs over a line is not taken as one. A paragraph such as `Install` or `Read [Install](#install).` does not satisfy it.",
+      "So, usually, do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph that would count under a contents heading. Links are read by their written shape on each line, not as they render: a paragraph such as `[One](#one), [Two](#two) [draft]`, with no definition for `[draft]`, satisfies it, while `[One](#one), [Two](#two) draft` does not, and a link whose text runs over a line, or whose fragment holds a malformed escape such as `#%zz`, is not counted. Two links in a sentence such as `Read [One](#one) and [Two](#two).`, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
     ],
   },
   {
     id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
     checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
     limits: [
-      "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
+      "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is usually compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening, but not when its text runs over a line, nor when it is an inline link with a title, such as `[Wrong](#one \"Step\")`. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. Links are read here by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text, such as `[draft]` with no definition or `[Begin](#two junk)`: under a contents heading, `[Wrong](#one) [draft]` is compared, while `[Wrong](#one) draft` is not. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
       "It reads only a document with 6 or more level-2 headings outside any list or quotation.",
     ],
   },
@@ -112,26 +112,26 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "link-text", kind: "offline" }], needs: [],
     limits: [
       "It reports empty link text, a bare web address, and a fixed list of vague labels such as `click here`. Any other text is taken to name its destination, even when it names the wrong one.",
-      "A Markdown link whose destination or title runs onto a later line is not read, and nor is a reference link whose text runs over a line, though both still render as links. An inline link whose text alone runs over a line is read.",
+      "A Markdown link whose destination starts on a later line is not read, though it still renders as a link. One whose title runs onto a later line is often not read either, but it can be read when a closing parenthesis follows on its first line, as `[click here](repair.md \"Repair (advanced)` is when `manual\")` ends the next line. A reference link whose text runs over a line is often not read, though in `[click` followed by `here][here]` the second line is read as the link `[here]`. An inline link whose text alone runs over a line is read.",
     ],
   },
   {
     id: "12b", demand: "A meaningful image says what it shows.", state: "fault",
     checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
     limits: [
-      "It reports a Markdown image with empty alternative text and an HTML image with no alt attribute. An HTML image with an empty alt attribute, or a Markdown image written inline with the title decorative, is taken as decorative and is not reported, even when it is meaningful.",
+      "It usually reports a Markdown image with empty alternative text and an HTML image with no alt attribute, though text elsewhere in an HTML image's tag can pass for one, such as `data-alt=\"\"`, and then the image is not reported. An HTML image with `alt=\"\"` is taken as decorative and is not reported, even when it is meaningful, but one with a bare `alt`, which HTML also reads as empty, is reported. A Markdown image written inline with the title decorative is usually taken as decorative and is not reported, but one whose destination or title holds a closing parenthesis, such as `![](chart(1).png \"decorative\")` or `![](chart.png (decorative))`, is often reported even so.",
       "It cannot tell whether the text it finds says what the image shows. Any alternative text passes.",
-      "A Markdown image whose destination runs onto a later line is not read, though it still renders as an image, so an image written that way with empty alternative text is not reported.",
+      "A Markdown image whose destination starts on a later line is not read, though it still renders as an image, so an image written that way with empty alternative text is not reported. One whose title runs onto a later line, such as `![](chart.png` followed by `\"Chart\")`, is often not reported either.",
     ],
   },
   {
     id: "12c", demand: "A decorative image is marked as decorative.", state: "fault",
     checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
     limits: [
-      "It reports a Markdown image with empty alternative text, unless the image is written inline with the title decorative. A reference image is reported even when its definition's title is decorative, so that way of marking it is not recognised.",
-      "An HTML image with an empty alt attribute is taken as marked.",
+      "It usually reports a Markdown image with empty alternative text, though usually not one written inline with the title decorative. One whose destination or title holds a closing parenthesis, such as `![](decoration(1).png \"decorative\")`, is often reported even with that title. A reference image is reported even when its definition's title is decorative, so that way of marking it is not recognised.",
+      "An HTML image with `alt=\"\"` is taken as marked, but one with a bare `alt`, which HTML also reads as empty, is reported.",
       "An image with any alternative text is taken as meaningful, so a decorative image described in words passes.",
-      "A Markdown image whose destination runs onto a later line is not read, so an unmarked decorative image written that way is not reported.",
+      "A Markdown image whose destination starts on a later line is not read, so an unmarked decorative image written that way is not reported. One whose title runs onto a later line, such as `![](decoration.png` followed by `\"Swirl\")`, is often not reported either.",
     ],
   },
   { id: "13a", demand: "Every table carries a header row.", state: "not-read", checks: [], needs: [], limits: [] },
@@ -195,7 +195,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     limits: [
       "It reads link text only. It reports a link whose text is empty, a bare web address, or one of a fixed list of vague labels such as `here`. Any other text is taken to name its destination, even when it names the wrong one.",
       "It cannot tell a referral from any other link, and a referral written without a link is not read.",
-      "A Markdown link whose destination or title runs onto a later line is not read, and nor is a reference link whose text runs over a line, though both still render as links. An inline link whose text alone runs over a line is read.",
+      "A Markdown link whose destination starts on a later line is not read, though it still renders as a link. One whose title runs onto a later line is often not read either, but it can be read when a closing parenthesis follows on its first line, as `[click here](repair.md \"Repair (advanced)` is when `manual\")` ends the next line. A reference link whose text runs over a line is often not read, though in `[click` followed by `here][here]` the second line is read as the link `[here]`. An inline link whose text alone runs over a line is read.",
     ],
   },
   { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
@@ -411,6 +411,11 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Red](#missing)\n\n${SIX_SECTIONS}`, found: [], control: { from: "(#missing)", to: "(missing.md)", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n| Install |\n|---|\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "| Install |\n|---|", to: "| Section |\n|---|\n| Install |", found: [] } },
   { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n> - Install\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "> - Install", to: "- Install", found: [] } },
+  { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n| Section |\n|---|\n| - |\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "| - |", to: "| Start |", found: [] } },
+  { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- :\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "- :", to: "- Start", found: [] } },
+  { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Install](#install "Step (1)")\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "(1)", to: "1", found: [] } },
+  { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Install](#install) [draft]\n\n${SIX_SECTIONS}`, found: [], control: { from: "[draft]", to: "draft", found: [NO_CONTENTS] } },
+  { clause: "3a", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Install\nguide](#install)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "[Install\nguide]", to: "[Install guide]", found: [] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[red](#missing) [blue](#absent)\n\n${SIX_SECTIONS}`, found: [], control: { from: " [blue](#absent)", to: "", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}Read [One](#one) and [Two](#two).\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "Read [One](#one) and [Two](#two).", to: "[One](#one), [Two](#two)", found: [] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[One](#one) - [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: " - ", to: " | ", found: [] } },
@@ -420,6 +425,9 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [One](#one)\n\n${SIX_SECTIONS}`, found: [], control: { from: "## Contents", to: "## Index", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}> - [One](#one)\n> - [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "> - [One](#one)\n> - [Two](#two)", to: "- [One](#one)\n- [Two](#two)", found: [] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}| [One](#one) | [Two](#two) |\n|---|---|\n| a | b |\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "| [One](#one) | [Two](#two) |\n|---|---|\n| a | b |", to: "| A | B |\n|---|---|\n| [One](#one) | [Two](#two) |", found: [] } },
+  { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[One](#one), [Two](#two) [draft]\n\n${SIX_SECTIONS}`, found: [], control: { from: "[draft]", to: "draft", found: [NO_CONTENTS] } },
+  { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}- [One\n  x](#one)\n- [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "[One\n  x]", to: "[One]", found: [] } },
+  { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}- [One](#%zz)\n- [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "#%zz", to: "#red", found: [] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#missing)\n\n${SIX_SECTIONS}`, found: [], control: { from: "(#missing)", to: "(#one)", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#detail)\n\n${SIX_SECTIONS}\n### Detail\n\nText.\n`, found: [], control: { from: "### Detail", to: "## Detail", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- Wrong\n\n${SIX_SECTIONS}`, found: [], control: { from: "- Wrong", to: "- [Wrong](#one)", found: [CONTENTS_WORDING] } },
@@ -429,6 +437,11 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- Install\n\n> [Wrong](#one)\n\n${SIX_SECTIONS}`, found: [], control: { from: "> [Wrong](#one)", to: "[Wrong](#one)", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}[Wrong](#one) [Two](#two)\n\n${SIX_SECTIONS}`, found: [NAVIGATION_WORDING], control: { from: "[Wrong](#one)", to: "[One](#one)", found: [] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}Read [Wrong](#one) and [Two](#two).\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "Read [Wrong](#one) and [Two](#two).", to: "[Wrong](#one) [Two](#two)", found: [NAVIGATION_WORDING] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Wrong](#one) [draft]\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "[draft]", to: "draft", found: [NO_CONTENTS] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}[Wrong](#one), [Two](#two) [draft]\n\n${SIX_SECTIONS}`, found: [NAVIGATION_WORDING], control: { from: "[draft]", to: "draft", found: [NO_CONTENTS] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Wrong](#one) [Begin](#two junk)\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "[Begin](#two junk)", to: "Begin junk", found: [NO_CONTENTS] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong\n  x](#one)\n\n${SIX_SECTIONS}`, found: [], control: { from: "[Wrong\n  x]", to: "[Wrong]", found: [CONTENTS_WORDING] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one "Step")\n\n${SIX_SECTIONS}`, found: [], control: { from: " \"Step\"", to: "", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${FOUR_SECTIONS}`, found: [], control: { from: "## Four\n\nText.\n", to: "## Four\n\nText.\n\n## Five\n\nText.\n", found: [CONTENTS_WORDING] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 1. open the box, 2. lift the lid, 3. read the note.\n", found: [PROSE_RANKS], control: { from: "1. open", to: "open", found: [] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Open the box, then lift the lid, then read the note.\n", found: [], control: { from: "Open the box, then lift the lid, then read", to: "First, open the box. Second, lift the lid. Third, read", found: [PROSE_RANKS] } },
@@ -444,16 +457,26 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "12a", limit: 2, check: "link-text", text: "Read [here](repair.md\n\"Repair\").\n", found: [], control: { from: "\n\"Repair\"", to: " \"Repair\"", found: ["link text \"here\" describes no destination (repair.md \"Repair\")"] } },
   { clause: "12a", limit: 2, check: "link-text", text: "Read [click\nhere](repair.md).\n", found: ["link text \"click here\" describes no destination (repair.md)"], control: { from: "(repair.md)", to: "(\nrepair.md\n)", found: [] } },
   { clause: "12a", limit: 2, check: "link-text", text: "Read [click\nhere][r].\n\n[r]: repair.md\n", found: [], control: { from: "[click\nhere]", to: "[click here]", found: ["link text \"click here\" describes no destination (r)"] } },
+  { clause: "12a", limit: 2, check: "link-text", text: "Read [click here](repair.md \"Repair (advanced)\nmanual\").\n", found: ["link text \"click here\" describes no destination (repair.md \"Repair (advanced)"], control: { from: "(advanced)", to: "advanced", found: [] } },
+  { clause: "12a", limit: 2, check: "link-text", text: "Read [click\nhere][here].\n\n[here]: repair.md\n", found: ["link text \"here\" describes no destination (here)"], control: { from: "here][here]", to: "here][r]", found: [] } },
   { clause: "12b", limit: 1, check: "image-alt", text: "<img src=\"chart.png\">\n", found: ["image has no alternative text (chart.png)"], control: { from: "\">", to: "\" alt=\"\">", found: [] } },
   { clause: "12b", limit: 1, check: "image-alt", text: "<img src=\"chart.png\" alt=\"\">\n", found: [], control: { from: " alt=\"\"", to: "", found: ["image has no alternative text (chart.png)"] } },
   { clause: "12b", limit: 1, check: "image-alt", text: "![](chart.png \"decorative\")\n", found: [], control: { from: " \"decorative\"", to: "", found: ["image has no alternative text (chart.png)"] } },
+  { clause: "12b", limit: 1, check: "image-alt", text: "<img src=\"chart.png\" data-alt=\"\">\n", found: [], control: { from: "data-alt", to: "title", found: ["image has no alternative text (chart.png)"] } },
+  { clause: "12b", limit: 1, check: "image-alt", text: "<img src=\"chart.png\" alt>\n", found: ["image has no alternative text (chart.png)"], control: { from: " alt>", to: " alt=\"\">", found: [] } },
+  { clause: "12b", limit: 1, check: "image-alt", text: "![](chart(1).png \"decorative\")\n", found: ["image has no alternative text (chart(1)"], control: { from: "chart(1).png", to: "chart.png", found: [] } },
+  { clause: "12b", limit: 1, check: "image-alt", text: "![](chart.png (decorative))\n", found: ["image has no alternative text (chart.png (decorative)"], control: { from: "(decorative))", to: "\"decorative\")", found: [] } },
   { clause: "12b", limit: 2, check: "image-alt", text: "![nonsense](chart.png)\n", found: [], control: { from: "nonsense", to: "", found: ["image has no alternative text (chart.png)"] } },
   { clause: "12b", limit: 3, check: "image-alt", text: "![](\nchart.png\n)\n", found: [], control: { from: "(\nchart.png\n)", to: "(chart.png)", found: ["image has no alternative text (chart.png)"] } },
+  { clause: "12b", limit: 3, check: "image-alt", text: "![](chart.png\n\"Chart\")\n", found: [], control: { from: "\n\"Chart\"", to: " \"Chart\"", found: ["image has no alternative text (chart.png \"Chart\")"] } },
   { clause: "12c", limit: 1, check: "image-alt", text: "![][dec]\n\n[dec]: decoration.png \"decorative\"\n", found: ["image has no alternative text (dec)"], control: { from: "![][dec]", to: "![](decoration.png \"decorative\")", found: [] } },
   { clause: "12c", limit: 1, check: "image-alt", text: "![](decoration.png \"decorative\")\n", found: [], control: { from: " \"decorative\"", to: "", found: ["image has no alternative text (decoration.png)"] } },
+  { clause: "12c", limit: 1, check: "image-alt", text: "![](decoration(1).png \"decorative\")\n", found: ["image has no alternative text (decoration(1)"], control: { from: "decoration(1).png", to: "decoration.png", found: [] } },
   { clause: "12c", limit: 2, check: "image-alt", text: "<img src=\"decoration.png\" alt=\"\">\n", found: [], control: { from: " alt=\"\"", to: "", found: ["image has no alternative text (decoration.png)"] } },
+  { clause: "12c", limit: 2, check: "image-alt", text: "<img src=\"decoration.png\" alt>\n", found: ["image has no alternative text (decoration.png)"], control: { from: " alt>", to: " alt=\"\">", found: [] } },
   { clause: "12c", limit: 3, check: "image-alt", text: "![Blue swirl](decoration.png)\n", found: [], control: { from: "Blue swirl", to: "", found: ["image has no alternative text (decoration.png)"] } },
   { clause: "12c", limit: 4, check: "image-alt", text: "![](\ndecoration.png\n)\n", found: [], control: { from: "(\ndecoration.png\n)", to: "(decoration.png)", found: ["image has no alternative text (decoration.png)"] } },
+  { clause: "12c", limit: 4, check: "image-alt", text: "![](decoration.png\n\"Swirl\")\n", found: [], control: { from: "\n\"Swirl\"", to: " \"Swirl\"", found: ["image has no alternative text (decoration.png \"Swirl\")"] } },
   { clause: "13b", limit: 1, check: "table-header", text: "| Thing | Stuff |\n|---|---|\n| Ann | 4 |\n", found: [], control: { from: " Stuff |", to: " |", found: [EMPTY_HEADER] } },
   { clause: "13b", limit: 1, check: "table-header", text: "<table><tr><th></th><th>Age</th></tr><tr><td>Ann</td><td>4</td></tr></table>\n", found: [], control: { from: "<table><tr><th></th><th>Age</th></tr><tr><td>Ann</td><td>4</td></tr></table>", to: "| | Age |\n|---|---|\n| Ann | 4 |", found: [EMPTY_HEADER] } },
   { clause: "13b", limit: 2, check: "table-header", text: "---\n\nplain text |\n---\n", found: [EMPTY_HEADER], control: { from: "plain text |", to: "plain text", found: [] } },
@@ -491,6 +514,8 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [here](\nrepair.md\n).\n", found: [], control: { from: "(\nrepair.md\n)", to: "(repair.md)", found: ["link text \"here\" describes no destination (repair.md)"] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere](repair.md).\n", found: ["link text \"click here\" describes no destination (repair.md)"], control: { from: "(repair.md)", to: "(\nrepair.md\n)", found: [] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][r].\n\n[r]: repair.md\n", found: [], control: { from: "[click\nhere]", to: "[click here]", found: ["link text \"click here\" describes no destination (r)"] } },
+  { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click here](repair.md \"Repair (advanced)\nmanual\").\n", found: ["link text \"click here\" describes no destination (repair.md \"Repair (advanced)"], control: { from: "(advanced)", to: "advanced", found: [] } },
+  { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][here].\n\n[here]: repair.md\n", found: ["link text \"here\" describes no destination (here)"], control: { from: "here][here]", to: "here][r]", found: [] } },
 ];
 
 /**
@@ -500,21 +525,21 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
  */
 const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "1a": [2],
-  "3a": [3, 8, 9],
-  "3b": [9, 1],
+  "3a": [3, 13, 12],
+  "3b": [14, 1],
   "6a": [3, 1],
   "8c": [2],
   "10c": [1, 1],
-  "12a": [2, 4],
-  "12b": [3, 1, 1],
-  "12c": [2, 1, 1, 1],
+  "12a": [2, 6],
+  "12b": [7, 1, 2],
+  "12c": [3, 2, 1, 2],
   "13b": [2, 1],
   "15a": [1, 0],
   "15c": [1, 1],
   "15d": [1, 1],
   "15f": [1, 3, 15],
   "17a": [1, 4],
-  "19b": [1, 1, 3],
+  "19b": [1, 1, 5],
 };
 
 /** The test that shows 15a's second limit, which runs the design audit and reads what it prints. */
@@ -535,21 +560,21 @@ const LIMITS_SHOWN_BY_A_TEST: Readonly<Record<string, string>> = { "15a.2": PRIN
  */
 const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "1a": ["4d57769e6336d4fc"],
-  "3a": ["f704791073cb3c6e", "d8039e6abe1b3b5e", "8ea23d763e6d3709"],
-  "3b": ["843e0ebfc474725a", "bee7ecf64ade7b39"],
+  "3a": ["f704791073cb3c6e", "9fb95cc5f6c87cdf", "77e55719158abb6b"],
+  "3b": ["7e3f28abc8507509", "bee7ecf64ade7b39"],
   "6a": ["fbee9c0b801c995a", "ac7780100b062b44"],
   "8c": ["78ea632b0f8a64b9"],
   "10c": ["b81c4742f0d8f982", "9136f07360ae2af1"],
-  "12a": ["c606e850e9278678", "b7369ad538a4cbf1"],
-  "12b": ["a96311eec8592116", "679a7d6818e8bdd7", "698c3b2390bda0a6"],
-  "12c": ["06f0c68380601aeb", "c150cdbb3c3da338", "c703fb9e206ab814", "7118d93d9b06217c"],
+  "12a": ["c606e850e9278678", "9f6fa856a0e58f17"],
+  "12b": ["719a33da71331d66", "679a7d6818e8bdd7", "9e19a2fb62bcb417"],
+  "12c": ["7ac2d3b085d94057", "bf869cb66a91d31c", "c703fb9e206ab814", "444769517fdfd5cd"],
   "13b": ["6371ae5b7e38fd61", "5fb1d9105f2463a0"],
   "15a": ["03789d4fd4a494cd", "4f53cda18c2baa0c"],
   "15c": ["371efd19a5ca4c2e", "1afc94d906a22e1b"],
   "15d": ["e5a917bc6401d872", "6b5bdba68c9c7dcb"],
   "15f": ["463bba50c60651a7", "cc84ef9d15d95adc", "280949aa35f838f9"],
   "17a": ["9073d4c311c31d62", "381b5755f90aaab5"],
-  "19b": ["197cd5994892ed5f", "84bf741990ff0280", "5da29354b8aece06"],
+  "19b": ["197cd5994892ed5f", "84bf741990ff0280", "a2f3adc83db9c51d"],
 };
 
 /** A digest of each clause specimen, text and reasons, keyed by the clause, as `digestOf` writes it. */
@@ -822,6 +847,34 @@ function skillChecklistLines(): string[] {
   return (end === -1 ? after : after.slice(0, end)).filter(line => line.startsWith("- [ ]"));
 }
 
+/**
+ * The name of each test this file declares, read from its own source: the
+ * first argument of each `test(` call that opens a line, written either as
+ * a quoted name or as a constant this file sets to one.
+ *
+ * @throws An `Error` when a call's name cannot be read, so that a test
+ *     declared some other way is never left out without notice.
+ */
+function declaredTestNames(): Set<string> {
+  const source = readFileSync(import.meta.path, "utf8");
+  const constants = new Map<string, string>();
+  for (const match of source.matchAll(/^const ([A-Z_]+) = ("(?:[^"\\]|\\.)*");\r?$/gm)) {
+    constants.set(match[1] ?? "", String(JSON.parse(match[2] ?? "")));
+  }
+  const names = new Set<string>();
+  let read = 0;
+  for (const match of source.matchAll(/^ *test\(("(?:[^"\\]|\\.)*"|[A-Z_]+),/gm)) {
+    const argument = match[1] ?? "";
+    const name = argument.startsWith("\"") ? String(JSON.parse(argument)) : constants.get(argument);
+    if (name === undefined) throw new Error(`No constant in this file gives the test name ${argument}.`);
+    names.add(name);
+    read++;
+  }
+  const calls = source.match(/^ *test\(/gm)?.length ?? 0;
+  if (read !== calls) throw new Error(`Read the names of ${read} of the ${calls} tests this file declares.`);
+  return names;
+}
+
 /** Whether a value holds only text, numbers, lists and plain objects, at any depth. */
 function isPlainData(value: unknown): boolean {
   if (typeof value === "string" || typeof value === "number") return true;
@@ -919,9 +972,11 @@ describe("the Part 5 checklist clause registry", () => {
         expect(count > 0, `${key} has ${count} limit specimens`).toBe(LIMITS_SHOWN_BY_A_TEST[key] === undefined);
       }
     }
-    for (const key of Object.keys(LIMITS_SHOWN_BY_A_TEST)) {
+    const declared = declaredTestNames();
+    for (const [key, name] of Object.entries(LIMITS_SHOWN_BY_A_TEST)) {
       const [id, limit] = key.split(".");
       expect(CLAUSES.find(clause => clause.id === id)?.limits[Number(limit) - 1], `${key} is a limit`).toBeString();
+      expect(declared.has(name), `${key} names a test this file declares: ${name}`).toBe(true);
     }
   });
 

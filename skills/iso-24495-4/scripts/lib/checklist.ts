@@ -63,15 +63,15 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
           "It reads only a document with 6 or more level-2 headings outside any list or quotation, and counts those headings as its sections.",
-          "Under a heading worded Contents, Table of contents, TOC or Key sections, one list item or table body row outside any quotation satisfies it, even one that is not a link. A paragraph there satisfies it only when it holds nothing but links, white space, commas, semicolons, vertical bars or slashes, and one of its links points to a fragment. A paragraph of prose does not, even one that names a section or links to one.",
-          "So do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph of that kind. Two such links in a sentence of prose, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
+          "Under a heading worded Contents, Table of contents, TOC or Key sections, a list item or table body row outside any quotation can satisfy it even when it is not a link, such as `- bananas`. One holding only hyphens, colons, vertical bars or white space does not, such as the body row `| - |` or the item `- :`, though it still renders. A paragraph there usually satisfies it when it holds a link to a fragment and nothing else but links, white space, commas, semicolons, vertical bars or slashes, though a link whose title holds a closing parenthesis, such as `[Install](#install \"Step (1)\")`, often stops it. Links are read by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text: `[Install](#install) [draft]`, with no definition for `[draft]`, satisfies it, while `[Install](#install) draft` does not. A link whose text runs over a line is not taken as one. A paragraph such as `Install` or `Read [Install](#install).` does not satisfy it.",
+          "So, usually, do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph that would count under a contents heading. Links are read by their written shape on each line, not as they render: a paragraph such as `[One](#one), [Two](#two) [draft]`, with no definition for `[draft]`, satisfies it, while `[One](#one), [Two](#two) draft` does not, and a link whose text runs over a line, or whose fragment holds a malformed escape such as `#%zz`, is not counted. Two links in a sentence such as `Read [One](#one) and [Two](#two).`, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
         ],
       },
       {
         id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
-          "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
+          "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is usually compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening, but not when its text runs over a line, nor when it is an inline link with a title, such as `[Wrong](#one \"Step\")`. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. Links are read here by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text, such as `[draft]` with no definition or `[Begin](#two junk)`: under a contents heading, `[Wrong](#one) [draft]` is compared, while `[Wrong](#one) draft` is not. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
           "It reads only a document with 6 or more level-2 headings outside any list or quotation.",
         ],
       },
@@ -170,26 +170,26 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "link-text", kind: "offline" }], needs: [],
         limits: [
           "It reports empty link text, a bare web address, and a fixed list of vague labels such as `click here`. Any other text is taken to name its destination, even when it names the wrong one.",
-          "A Markdown link whose destination or title runs onto a later line is not read, and nor is a reference link whose text runs over a line, though both still render as links. An inline link whose text alone runs over a line is read.",
+          "A Markdown link whose destination starts on a later line is not read, though it still renders as a link. One whose title runs onto a later line is often not read either, but it can be read when a closing parenthesis follows on its first line, as `[click here](repair.md \"Repair (advanced)` is when `manual\")` ends the next line. A reference link whose text runs over a line is often not read, though in `[click` followed by `here][here]` the second line is read as the link `[here]`. An inline link whose text alone runs over a line is read.",
         ],
       },
       {
         id: "12b", demand: "A meaningful image says what it shows.", state: "fault",
         checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
         limits: [
-          "It reports a Markdown image with empty alternative text and an HTML image with no alt attribute. An HTML image with an empty alt attribute, or a Markdown image written inline with the title decorative, is taken as decorative and is not reported, even when it is meaningful.",
+          "It usually reports a Markdown image with empty alternative text and an HTML image with no alt attribute, though text elsewhere in an HTML image's tag can pass for one, such as `data-alt=\"\"`, and then the image is not reported. An HTML image with `alt=\"\"` is taken as decorative and is not reported, even when it is meaningful, but one with a bare `alt`, which HTML also reads as empty, is reported. A Markdown image written inline with the title decorative is usually taken as decorative and is not reported, but one whose destination or title holds a closing parenthesis, such as `![](chart(1).png \"decorative\")` or `![](chart.png (decorative))`, is often reported even so.",
           "It cannot tell whether the text it finds says what the image shows. Any alternative text passes.",
-          "A Markdown image whose destination runs onto a later line is not read, though it still renders as an image, so an image written that way with empty alternative text is not reported.",
+          "A Markdown image whose destination starts on a later line is not read, though it still renders as an image, so an image written that way with empty alternative text is not reported. One whose title runs onto a later line, such as `![](chart.png` followed by `\"Chart\")`, is often not reported either.",
         ],
       },
       {
         id: "12c", demand: "A decorative image is marked as decorative.", state: "fault",
         checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
         limits: [
-          "It reports a Markdown image with empty alternative text, unless the image is written inline with the title decorative. A reference image is reported even when its definition's title is decorative, so that way of marking it is not recognised.",
-          "An HTML image with an empty alt attribute is taken as marked.",
+          "It usually reports a Markdown image with empty alternative text, though usually not one written inline with the title decorative. One whose destination or title holds a closing parenthesis, such as `![](decoration(1).png \"decorative\")`, is often reported even with that title. A reference image is reported even when its definition's title is decorative, so that way of marking it is not recognised.",
+          "An HTML image with `alt=\"\"` is taken as marked, but one with a bare `alt`, which HTML also reads as empty, is reported.",
           "An image with any alternative text is taken as meaningful, so a decorative image described in words passes.",
-          "A Markdown image whose destination runs onto a later line is not read, so an unmarked decorative image written that way is not reported.",
+          "A Markdown image whose destination starts on a later line is not read, so an unmarked decorative image written that way is not reported. One whose title runs onto a later line, such as `![](decoration.png` followed by `\"Swirl\")`, is often not reported either.",
         ],
       },
     ],
@@ -303,7 +303,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         limits: [
           "It reads link text only. It reports a link whose text is empty, a bare web address, or one of a fixed list of vague labels such as `here`. Any other text is taken to name its destination, even when it names the wrong one.",
           "It cannot tell a referral from any other link, and a referral written without a link is not read.",
-          "A Markdown link whose destination or title runs onto a later line is not read, and nor is a reference link whose text runs over a line, though both still render as links. An inline link whose text alone runs over a line is read.",
+          "A Markdown link whose destination starts on a later line is not read, though it still renders as a link. One whose title runs onto a later line is often not read either, but it can be read when a closing parenthesis follows on its first line, as `[click here](repair.md \"Repair (advanced)` is when `manual\")` ends the next line. A reference link whose text runs over a line is often not read, though in `[click` followed by `here][here]` the second line is read as the link `[here]`. An inline link whose text alone runs over a line is read.",
         ],
       },
       { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
