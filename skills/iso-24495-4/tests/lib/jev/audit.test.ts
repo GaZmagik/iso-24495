@@ -1091,6 +1091,62 @@ test("the text audit's Jev preview prints a file before the folder that shares i
   }
 });
 
+// The audit sorts full paths by UTF-16 code unit, so a capital letter comes before
+// every small one. These three paths share the directory prefix and first differ
+// at their first letter: "C" (0x43), "a" (0x61), "b" (0x62). No separator is ever
+// compared, so the order is the same on Windows and on Linux. The names differ by
+// more than case, so they are three files on a case-insensitive file system too.
+// Each other plausible order prints differently. Comparing by locale gives "a/z.md",
+// "b.md", "C.md", as does NTFS when nothing sorts. Comparing names alone, or
+// listing files before folders, gives "C.md", "b.md", "a/z.md".
+const MIXED_CASE_LOCAL_BLOCK = [
+  "Local findings",
+  "| File | Line | Item | Check | Band | Score | Cut-off | Finding |",
+  "|------|------|------|-------|------|-------|---------|---------|",
+  "| `C.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "| `a/z.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "| `b.md` | 1 | local | opening-title | local | | | Add a level-1 document title. Purpose assessment is skipped without one. |",
+  "Local findings are made on this machine and are never sent.",
+].join("\n");
+
+/** Writes `b.md`, then `a/z.md`, then `C.md`, all with no title, into `directory`. */
+function writeMixedCaseDocuments(directory: string): void {
+  writeFileSync(join(directory, "b.md"), NO_TITLE);
+  mkdirSync(join(directory, "a"));
+  writeFileSync(join(directory, "a", "z.md"), NO_TITLE);
+  writeFileSync(join(directory, "C.md"), NO_TITLE);
+}
+
+test("a design preview orders title findings by the full path's character codes", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-preview-mixed-case-"));
+  try {
+    writeMixedCaseDocuments(directory);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(MIXED_CASE_LOCAL_BLOCK);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the text audit's Jev preview orders title findings by the full path's character codes", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-text-preview-mixed-case-"));
+  try {
+    writeMixedCaseDocuments(directory);
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toBe(MIXED_CASE_LOCAL_BLOCK);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 // A refused document gets a plan with no findings, so it adds no row to the block,
 // even when it has no title. Its refusal is printed as a warning and in the
 // disclosure instead. The refused document sorts first, so a preview that stopped
