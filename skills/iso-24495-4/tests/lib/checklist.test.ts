@@ -59,15 +59,15 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
     limits: [
       "It reads only a document with 6 or more level-2 headings outside any list or quotation, and counts those headings as its sections.",
-      "Under a heading worded Contents, Table of contents, TOC or Key sections, a list item or table body row outside any quotation can satisfy it even when it is not a link, such as `- bananas`. One holding only hyphens, colons, vertical bars or white space does not, such as the body row `| - |` or the item `- :`, though it still renders. A paragraph there usually satisfies it when it holds a link to a fragment and nothing else but links, white space, commas, semicolons, vertical bars or slashes, though a link whose title holds a closing parenthesis, such as `[Install](#install \"Step (1)\")`, often stops it. Links are read by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text: `[Install](#install) [draft]`, with no definition for `[draft]`, satisfies it, while `[Install](#install) draft` does not. A link whose text runs over a line is not taken as one. A paragraph such as `Install` or `Read [Install](#install).` does not satisfy it.",
-      "So, usually, do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph that would count under a contents heading. Links are read by their written shape on each line, not as they render: a paragraph such as `[One](#one), [Two](#two) [draft]`, with no definition for `[draft]`, satisfies it, while `[One](#one), [Two](#two) draft` does not, and a link whose text runs over a line, or whose fragment holds a malformed escape such as `#%zz`, is not counted. Two links in a sentence such as `Read [One](#one) and [Two](#two).`, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
+      "Under a heading worded Contents, Table of contents, TOC or Key sections, a list item or table body row outside any quotation can satisfy it even when it is not a link, such as `- bananas`. One holding only hyphens, colons, vertical bars or white space does not, such as the body row `| - |` or the item `- :`, though it still renders. A paragraph there usually satisfies it when it holds a link to a fragment and nothing else but links, white space, commas, semicolons, vertical bars or slashes, though a link whose title holds a closing parenthesis, such as `[Install](#install \"Step (1)\")`, often stops it. Links are read by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text: `[Install](#install) [draft]`, with no definition for `[draft]`, satisfies it, while `[Install](#install) draft` does not. An inline link whose text runs over a line is not taken as one. A paragraph such as `Install` or `Read [Install](#install).` does not satisfy it.",
+      "So, usually, do two or more links to fragments in the opening, outside any quotation, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph that would count under a contents heading. Links are read by their written shape on each line, not as they render: a paragraph such as `[One](#one), [Two](#two) [draft]`, with no definition for `[draft]`, satisfies it, while `[One](#one), [Two](#two) draft` does not, and an inline link whose text runs over a line, or a link whose fragment holds a malformed escape such as `#%zz`, is not counted. In a reference link whose text runs over a line, such as `- [One` followed by `x][o]`, the second line's `[o]` can be read as a link of its own. Two links in a sentence such as `Read [One](#one) and [Two](#two).`, in a table's header row, or in two separate paragraphs, do not. It does not check that every section is listed.",
     ],
   },
   {
     id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
     checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
     limits: [
-      "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is usually compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening, but not when its text runs over a line, nor when it is an inline link with a title, such as `[Wrong](#one \"Step\")`. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. Links are read here by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text, such as `[draft]` with no definition or `[Begin](#two junk)`: under a contents heading, `[Wrong](#one) [draft]` is compared, while `[Wrong](#one) draft` is not. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
+      "It compares only links that reach a level-2 section by fragment, outside any quotation and any table's header row. Such a link is usually compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening, but not when it is an inline link whose text runs over a line, nor when it is an inline link with a title, such as `[Wrong](#one \"Step\")`. In a reference link whose text runs over a line, such as `- [Wrong` followed by `x][w]`, the second line's `[w]` can be compared instead. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. Links are read here by their written shape on each line, not as they render, so text in square brackets often counts as a link even when it renders as plain text, such as `[draft]` with no definition or `[Begin](#two junk)`: under a contents heading, `[Wrong](#one) [draft]` is compared, while `[Wrong](#one) draft` is not. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
       "It reads only a document with 6 or more level-2 headings outside any list or quotation.",
     ],
   },
@@ -428,6 +428,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}[One](#one), [Two](#two) [draft]\n\n${SIX_SECTIONS}`, found: [], control: { from: "[draft]", to: "draft", found: [NO_CONTENTS] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}- [One\n  x](#one)\n- [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "[One\n  x]", to: "[One]", found: [] } },
   { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}- [One](#%zz)\n- [Two](#two)\n\n${SIX_SECTIONS}`, found: [NO_CONTENTS], control: { from: "#%zz", to: "#red", found: [] } },
+  { clause: "3a", limit: 3, check: "contents-list", text: `${GUIDE_OPENING}- [One\n  x][o]\n- [Two](#two)\n\n[o]: #one\n\n${SIX_SECTIONS}`, found: [NAVIGATION_WORDING], control: { from: "\n\n[o]: #one", to: "", found: [NO_CONTENTS] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#missing)\n\n${SIX_SECTIONS}`, found: [], control: { from: "(#missing)", to: "(#one)", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#detail)\n\n${SIX_SECTIONS}\n### Detail\n\nText.\n`, found: [], control: { from: "### Detail", to: "## Detail", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- Wrong\n\n${SIX_SECTIONS}`, found: [], control: { from: "- Wrong", to: "- [Wrong](#one)", found: [CONTENTS_WORDING] } },
@@ -442,6 +443,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n[Wrong](#one) [Begin](#two junk)\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "[Begin](#two junk)", to: "Begin junk", found: [NO_CONTENTS] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong\n  x](#one)\n\n${SIX_SECTIONS}`, found: [], control: { from: "[Wrong\n  x]", to: "[Wrong]", found: [CONTENTS_WORDING] } },
   { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one "Step")\n\n${SIX_SECTIONS}`, found: [], control: { from: " \"Step\"", to: "", found: [CONTENTS_WORDING] } },
+  { clause: "3b", limit: 1, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong\n  x][w]\n\n[w]: #one\n\n${SIX_SECTIONS}`, found: [CONTENTS_WORDING], control: { from: "\n\n[w]: #one", to: "", found: [] } },
   { clause: "3b", limit: 2, check: "contents-list", text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${FOUR_SECTIONS}`, found: [], control: { from: "## Four\n\nText.\n", to: "## Four\n\nText.\n\n## Five\n\nText.\n", found: [CONTENTS_WORDING] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 1. open the box, 2. lift the lid, 3. read the note.\n", found: [PROSE_RANKS], control: { from: "1. open", to: "open", found: [] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Open the box, then lift the lid, then read the note.\n", found: [], control: { from: "Open the box, then lift the lid, then read", to: "First, open the box. Second, lift the lid. Third, read", found: [PROSE_RANKS] } },
@@ -525,8 +527,8 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
  */
 const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "1a": [2],
-  "3a": [3, 13, 12],
-  "3b": [14, 1],
+  "3a": [3, 13, 13],
+  "3b": [15, 1],
   "6a": [3, 1],
   "8c": [2],
   "10c": [1, 1],
@@ -560,8 +562,8 @@ const LIMITS_SHOWN_BY_A_TEST: Readonly<Record<string, string>> = { "15a.2": PRIN
  */
 const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "1a": ["4d57769e6336d4fc"],
-  "3a": ["f704791073cb3c6e", "9fb95cc5f6c87cdf", "77e55719158abb6b"],
-  "3b": ["7e3f28abc8507509", "bee7ecf64ade7b39"],
+  "3a": ["f704791073cb3c6e", "9fb95cc5f6c87cdf", "e77324d77a4acca8"],
+  "3b": ["3ea39c80143b34b0", "bee7ecf64ade7b39"],
   "6a": ["fbee9c0b801c995a", "ac7780100b062b44"],
   "8c": ["78ea632b0f8a64b9"],
   "10c": ["b81c4742f0d8f982", "9136f07360ae2af1"],
