@@ -1013,6 +1013,10 @@ describe("the Part 5 checklist clause registry", () => {
       expect(stopped.exit).toBe(2);
       expect(stoppedRequests).toEqual([]);
       expect(stopped.text).not.toContain("opening-title");
+      const textStopped = await printed("text", [...base, "--jev", "--send"], stoppedRequests);
+      expect(textStopped.exit).toBe(2);
+      expect(stoppedRequests).toEqual([]);
+      expect(textStopped.text).not.toContain("opening-title");
       const sentRequests: string[] = [];
       const sent = await printed("design", [...base, "--send", "--yes"], sentRequests);
       expect(sent.exit).toBe(0);
