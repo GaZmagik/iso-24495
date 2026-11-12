@@ -63,14 +63,15 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
           "It reads only a document with 6 or more level-2 headings outside any list or quotation, and counts those headings as its sections.",
-          "One entry under a heading worded Contents, Table of contents, TOC or Key sections satisfies it, even an entry that is not a link. So do two fragment links in one block of the opening, even when neither reaches a heading. It does not check that every section is listed.",
+          "Under a heading worded Contents, Table of contents, TOC or Key sections, one list item or table row satisfies it, even one that is not a link. A paragraph there satisfies it only when it holds nothing but links, white space, commas, semicolons, vertical bars or slashes, and one of its links points to a fragment. A paragraph of prose does not, even one that names a section or links to one.",
+          "So do two or more links to fragments in the opening, even when neither reaches a heading, if they sit in one list, in the body rows of one table, or in one paragraph of that kind. Two such links in a sentence of prose, or in two separate paragraphs, do not. It does not check that every section is listed.",
         ],
       },
       {
         id: "3b", demand: "The table of contents is worded identically to the headings.", state: "fault",
         checks: [{ rule: "contents-list", kind: "offline" }], needs: ["markdown"],
         limits: [
-          "It compares only links that reach a level-2 section by fragment, placed under a contents heading or among two or more links in one block of the opening. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
+          "It compares only links that reach a level-2 section by fragment. Such a link is compared under a contents heading, or among two or more links to fragments in one list, table or paragraph of the opening. In a paragraph, in either place, it is compared only when the paragraph holds nothing but links, white space, commas, semicolons, vertical bars or slashes. An entry that is not a link, or a link that reaches no level-2 section, is not compared.",
           "It reads only a document with 6 or more level-2 headings outside any list or quotation.",
         ],
       },
@@ -169,6 +170,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "link-text", kind: "offline" }], needs: [],
         limits: [
           "It reports empty link text, a bare web address, and a fixed list of vague labels such as `click here`. Any other text is taken to name its destination, even when it names the wrong one.",
+          "A Markdown link whose destination or title runs onto a later line is not read, though it still renders as a link. A link whose text alone runs over a line is read.",
         ],
       },
       {
@@ -177,6 +179,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         limits: [
           "It reports a Markdown image with empty alternative text and an HTML image with no alt attribute. An HTML image with an empty alt attribute, or a Markdown image written inline with the title decorative, is taken as decorative and is not reported, even when it is meaningful.",
           "It cannot tell whether the text it finds says what the image shows. Any alternative text passes.",
+          "A Markdown image whose destination runs onto a later line is not read, though it still renders as an image, so an image written that way with empty alternative text is not reported.",
         ],
       },
       {
@@ -186,6 +189,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
           "It reports a Markdown image with empty alternative text, unless the image is written inline with the title decorative. A reference image is reported even when its definition's title is decorative, so that way of marking it is not recognised.",
           "An HTML image with an empty alt attribute is taken as marked.",
           "An image with any alternative text is taken as meaningful, so a decorative image described in words passes.",
+          "A Markdown image whose destination runs onto a later line is not read, so an unmarked decorative image written that way is not reported.",
         ],
       },
     ],
@@ -251,7 +255,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         limits: [
           "It asks a question as an advisory, rather than stating a fault.",
           "It needs a level-1 title. README, CONTRIBUTING, SECURITY and PULL_REQUEST_TEMPLATE files are exempt, and it is off when front matter is read as text.",
-          "It recognises a version or date only in set forms, such as a Version or Date field, a title suffix or a front matter field. Any non-empty version or date field in front matter silences it, even `version: banana`.",
+          "It recognises a version or date only in set forms, such as a Version or Date field, a title suffix or a front matter field. In front matter that begins on the first line, a key named version, date, updated or last_updated, in any letter case, silences it when its value is text that is not blank or a finite number, even `version: banana`. The key counts at the top level, or directly under a key named `metadata` in lower case, and under no other key, such as `release`. A value of true or false, a list or a nested map does not count.",
         ],
       },
     ],
@@ -299,6 +303,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         limits: [
           "It reads link text only. It reports a link whose text is empty, a bare web address, or one of a fixed list of vague labels such as `here`. Any other text is taken to name its destination, even when it names the wrong one.",
           "It cannot tell a referral from any other link, and a referral written without a link is not read.",
+          "A Markdown link whose destination or title runs onto a later line is not read, though it still renders as a link. A link whose text alone runs over a line is read.",
         ],
       },
       { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
