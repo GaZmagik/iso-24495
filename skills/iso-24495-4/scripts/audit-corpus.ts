@@ -1743,7 +1743,8 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
         // CommonMark separates a title from its destination with spaces and
         // tabs only. Other Unicode whitespace, such as U+00A0, belongs to the
         // destination, so an image written that way has no title. A line is
-        // read alone here, so no line ending can fall between the two.
+        // read alone here, so no line ending can fall between the two, and
+        // the reader has already turned its tabs into spaces.
         if (/[ \t]+(?:"decorative"|'decorative')\s*$/i.test(link.target)) continue;
         // The destination ends at the first ")", so a title in parentheses
         // arrives without its own ")". That ")" and the image's closing one
