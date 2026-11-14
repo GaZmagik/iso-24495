@@ -7,7 +7,8 @@
 // differently print the same reading. A run's facts are known before any
 // request is made.
 
-import type { ChecklistItem, Clause, Need } from "./checklist.ts";
+import type { ChecklistItem, ClauseState, Need } from "./checklist.ts";
+import { itemAt } from "./item-at.ts";
 
 /**
  * Reads the registry against the facts of one run.
@@ -41,11 +42,14 @@ export function checklistReading(registry: readonly ChecklistItem[], run: RunFac
   const used: string[] = [];
   const notUsed: Array<{ clause: string; needs: Need[] }> = [];
   for (const clause of clauses) {
-    tool[STATE_KEYS[clause.state]]++;
+    tool[stateKey(clause.state)]++;
     if (clause.state !== "fault") continue;
     const unmetNeeds = clause.needs.filter(need => !meets(need, run));
-    if (unmetNeeds.length === 0) used.push(clause.id);
-    else notUsed.push({ clause: clause.id, needs: unmetNeeds });
+    if (unmetNeeds.length === 0) {
+      used.push(clause.id);
+    } else {
+      notUsed.push({ clause: clause.id, needs: unmetNeeds });
+    }
   }
   return { clauses: clauses.length, reading: twoDecimals(tool.fault, clauses.length), tool, run: { used, notUsed } };
 }
@@ -110,14 +114,14 @@ export interface ChecklistReading {
 /** How many clauses are in each state, by the state's name in a JSON report. */
 export interface StateCounts { fault: number; passOnly: number; needsTwoVersions: number; notCheckable: number; notRead: number }
 
-/** The key of `StateCounts` that counts each state. */
-const STATE_KEYS: Readonly<Record<Clause["state"], keyof StateCounts>> = {
-  "fault": "fault",
-  "pass-only": "passOnly",
-  "needs-two-versions": "needsTwoVersions",
-  "not-checkable": "notCheckable",
-  "not-read": "notRead",
-};
+/** The key of `StateCounts` that counts a state. */
+function stateKey(state: ClauseState): keyof StateCounts {
+  if (state === "pass-only") return "passOnly";
+  if (state === "needs-two-versions") return "needsTwoVersions";
+  if (state === "not-checkable") return "notCheckable";
+  if (state === "not-read") return "notRead";
+  return "fault";
+}
 
 /** Whether the run meets one need, as `checklistReading` sets out. */
 function meets(need: Need, run: RunFacts): boolean {
@@ -163,6 +167,6 @@ function needWords(need: Need): string {
 
 /** Phrases joined as a list is read: "a", "a and b", "a, b and c". */
 function listed(phrases: readonly string[]): string {
-  if (phrases.length === 1) return phrases[0] as string;
+  if (phrases.length === 1) return itemAt(phrases, 0);
   return `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
 }

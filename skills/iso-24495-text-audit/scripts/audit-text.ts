@@ -7,6 +7,8 @@ import {
   listTextFiles,
   projectAcronyms,
 } from "../../iso-24495-4/scripts/audit-corpus.ts";
+import { CHECKLIST } from "../../iso-24495-4/scripts/lib/checklist.ts";
+import { checklistReading, formatChecklistReading } from "../../iso-24495-4/scripts/lib/checklist-reading.ts";
 import { pathFailure, writeTextFile } from "../../iso-24495-4/scripts/lib/failure.ts";
 import { safeCell, safePathCell, skippedEntryWarning } from "../../iso-24495-4/scripts/lib/safe-text.ts";
 import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
@@ -40,13 +42,15 @@ export class UnsupportedSelection extends Error {
  * mode, which can send document text to TypeSafe. Its arguments and its exit
  * codes, 0 to 4, then apply, and the result is a promise.
  *
- * Otherwise nothing leaves the machine and the result is a number. Exit 0
- * means the audit ran, whatever it found. Exit 1 means the path could not be
+ * Otherwise nothing leaves the machine and the result is a number. After
+ * the table of findings it prints the Part 5 checklist reading, and the
+ * `--json` report holds the same reading under a last key, `checklist`.
+ * Exit 0 means the audit ran, whatever it found. Exit 1 means the path could not be
  * read, the file has an unsupported ending, or the findings file could not
  * be written. Exit 2 means the arguments were wrong.
  *
  * @param argv The whole command line, so the path is at index 2.
- * @param stdout Receives the table of findings.
+ * @param stdout Receives the table of findings, then the checklist reading.
  * @param stderr Receives a warning for each skipped entry, and the reason for
  *     exit 1 or 2.
  * @param dependencies Passed to `runAuditCli`, and unused otherwise.
@@ -117,14 +121,27 @@ export function runCli(
     for (const path of findings.skipped) {
       stderr(skippedEntryWarning(path));
     }
+    // The plain audit takes no Jev route and sends nothing. Of what a run can
+    // meet, only the Markdown need depends on the files read.
+    const checklist = checklistReading(CHECKLIST, {
+      mode: "text",
+      markdown: Object.keys(findings.files).some(file => /\.(?:md|markdown)$/i.test(file)),
+      jevPreview: false,
+      jev: false,
+      send: false,
+      before: false,
+      facts: [],
+    });
     if (jsonPath !== undefined) {
-      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      const problem = writeTextFile(jsonPath, JSON.stringify({ ...findings, checklist }, null, 2), "--json");
       if (problem !== null) {
         stderr(`audit-text: ${problem}`);
         return 1;
       }
     }
     stdout(formatFindings(findings));
+    // Printed apart from the table: the pull request check reuses formatFindings, and prints no reading.
+    stdout(formatChecklistReading(checklist));
     return 0;
   } catch (error) {
     if (error instanceof UnsupportedSelection) {
