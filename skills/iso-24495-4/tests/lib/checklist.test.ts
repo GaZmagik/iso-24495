@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli as runDesignCli } from "../../../iso-24495-design-audit/scripts/design-audit.ts";
@@ -171,7 +171,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   { id: "15e", demand: "The opening names the primary audience.", state: "not-read", checks: [], needs: [], limits: [] },
   {
     id: "15f", demand: "The opening gives a version or date.", state: "fault",
-    checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown"],
+    checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown", "front-matter"],
     limits: [
       "It asks a question as an advisory, rather than stating a fault.",
       "It needs a Markdown level-1 title, though not every one counts, such as `> # Guide`. It does not read an HTML title such as `<h1>Guide</h1>`, but it can take a `#` line that shows as text, such as one inside an HTML block like `<div>`, as one. A file named README, CONTRIBUTING, SECURITY or PULL_REQUEST_TEMPLATE is exempt, with or without an extension, even a two-part one such as `README.fr.md`. So can one in another letter case, such as `readme.MD`, but a longer name such as `README-fr.md` is not. It is off when front matter is read as text.",
@@ -305,7 +305,10 @@ const QUESTION_OF_COVERAGE: Readonly<Record<string, string>> = { purpose: "purpo
 const KIND_OF_QUESTION: Readonly<Record<string, RequestKind>> = { purpose: "opening", colour_only: "block" };
 
 /** The order in which a clause's needs are written. */
-const NEED_ORDER: readonly Need[] = ["markdown", "jev-route", "send", "before"];
+const NEED_ORDER: readonly Need[] = ["markdown", "jev-route", "send", "front-matter", "before"];
+
+/** The needs a route meets or not by its options, in the order a clause writes them. */
+const ROUTE_NEEDS: readonly Need[] = ["jev-route", "send", "front-matter"];
 
 /** One check a clause names. */
 type Check = Clause["checks"][number];
@@ -314,7 +317,8 @@ type Check = Clause["checks"][number];
  * One way of running the audit: the command, the options it is given
  * besides the target, the project folder and `--json`, the needs it meets
  * beside Markdown, and the endings of the files it reads. The design audit
- * reads no `.txt` file.
+ * reads no `.txt` file, and only the plain text audit takes
+ * `--no-front-matter`.
  */
 interface Route {
   readonly name: string;
@@ -329,11 +333,12 @@ interface Route {
  * send routes reach a stubbed transport and never the network.
  */
 const ROUTES: readonly Route[] = [
-  { name: "text audit", command: "text", options: [], meets: [], reads: ["md", "txt"] },
-  { name: "text audit --jev-preview", command: "text", options: ["--jev-preview"], meets: ["jev-route"], reads: ["md", "txt"] },
-  { name: "text audit --jev --send", command: "text", options: ["--jev", "--send", "--yes"], meets: ["jev-route", "send"], reads: ["md", "txt"] },
-  { name: "design audit", command: "design", options: [], meets: ["jev-route"], reads: ["md"] },
-  { name: "design audit --send", command: "design", options: ["--send", "--yes"], meets: ["jev-route", "send"], reads: ["md"] },
+  { name: "text audit", command: "text", options: [], meets: ["front-matter"], reads: ["md", "txt"] },
+  { name: "text audit --no-front-matter", command: "text", options: ["--no-front-matter"], meets: [], reads: ["md", "txt"] },
+  { name: "text audit --jev-preview", command: "text", options: ["--jev-preview"], meets: ["jev-route", "front-matter"], reads: ["md", "txt"] },
+  { name: "text audit --jev --send", command: "text", options: ["--jev", "--send", "--yes"], meets: ["jev-route", "send", "front-matter"], reads: ["md", "txt"] },
+  { name: "design audit", command: "design", options: [], meets: ["jev-route", "front-matter"], reads: ["md"] },
+  { name: "design audit --send", command: "design", options: ["--send", "--yes"], meets: ["jev-route", "send", "front-matter"], reads: ["md"] },
 ];
 
 /**
@@ -868,20 +873,143 @@ async function printed(command: Route["command"], argv: readonly string[], reque
 
 /**
  * The needs a check was measured to have on its clause's specimen: Markdown
- * when no route names it on the `.txt` copy, the Jev route when the plain
- * text audit does not name it, and a send when no preview names it.
+ * when no route names it on the `.txt` copy. Then each other need in turn,
+ * judged only on the routes that do not meet it but meet every need found
+ * before it: it is a need when there is such a route and none of them names
+ * the check on either copy.
+ *
+ * So the Jev route is a need when neither plain text audit names it, a send
+ * when no preview names it, and front matter when the text audit with
+ * `--no-front-matter` does not name it. A Jev check is not judged for front
+ * matter, because no route that refuses it takes the Jev route.
  */
 function measuredNeeds(check: string, clause: string, readings: readonly RouteReading[]): Need[] {
   const needs: Need[] = [];
   if (!readings.some(reading => names(reading, `${clause}.txt`, check))) needs.push("markdown");
-  if (!readings.some(reading => reading.route.meets.length === 0 && (names(reading, `${clause}.md`, check) || names(reading, `${clause}.txt`, check)))) needs.push("jev-route");
-  if (!readings.some(reading => !reading.route.meets.includes("send") && (names(reading, `${clause}.md`, check) || names(reading, `${clause}.txt`, check)))) needs.push("send");
+  for (const need of ROUTE_NEEDS) {
+    const lacking = readings.filter(reading => !reading.route.meets.includes(need) && needs.every(found => found === "markdown" || reading.route.meets.includes(found)));
+    if (lacking.length > 0 && !lacking.some(reading => names(reading, `${clause}.md`, check) || names(reading, `${clause}.txt`, check))) needs.push(need);
+  }
   return needs;
 }
 
 /** Whether a route named a check for one specimen file. */
 function names(reading: RouteReading, file: string, check: string): boolean {
   return reading.named.get(file)?.has(check) ?? false;
+}
+
+/**
+ * Front matter put before each specimen for the option sweep. Its last line
+ * sits directly above the closing "---", so a run that reads the block as
+ * text reads its two lines as a heading, and reports its style.
+ */
+const SWEEP_FRONT_MATTER = "---\n"
+  + "summary: This summary line is written on purpose to be far longer than any single sentence that a careful reader should ever have to meet in one go here.\n"
+  + "title: Probe\n---\n\n";
+
+/** A document whose acronym only the project's acronym list defines. */
+const ACRONYM_PROBE = "# Probe\n\nThe QZXW tool runs every day.\n";
+
+/**
+ * One option of either audit, swept over every specimen: the command, the
+ * options it runs with beside the option and without it, and whether the
+ * run without it agrees at a terminal. `--project-dir` is swept by what it
+ * chooses, the project folder's acronym list, so both runs keep the same
+ * folder and the same file names.
+ */
+interface Sweep {
+  readonly name: string;
+  readonly command: Route["command"];
+  readonly without: readonly string[];
+  readonly with: readonly string[];
+  readonly acronyms?: boolean;
+  readonly agreesWithout?: boolean;
+}
+
+/**
+ * Every option either audit accepts that is not a route option. The route
+ * options, `--jev-preview`, `--jev` and `--send`, are measured as needs by
+ * the test of each clause's needs. `--json` is swept by what each audit
+ * prints, since the other runs read the report it writes.
+ */
+const SWEEPS: readonly Sweep[] = [
+  { name: "text audit --no-front-matter", command: "text", without: [], with: ["--no-front-matter"] },
+  { name: "text audit, acronym list of --project-dir", command: "text", without: [], with: [], acronyms: true },
+  { name: "text audit --jev-preview, acronym list of --project-dir", command: "text", without: ["--jev-preview"], with: ["--jev-preview"], acronyms: true },
+  { name: "text audit --jev-preview --include-judged-text", command: "text", without: ["--jev-preview"], with: ["--jev-preview", "--include-judged-text"] },
+  { name: "text audit --jev --send, acronym list of --project-dir", command: "text", without: ["--jev", "--send", "--yes"], with: ["--jev", "--send", "--yes"], acronyms: true },
+  { name: "text audit --jev --send --include-judged-text", command: "text", without: ["--jev", "--send", "--yes"], with: ["--jev", "--send", "--yes", "--include-judged-text"] },
+  { name: "text audit --jev --send --yes", command: "text", without: ["--jev", "--send"], with: ["--jev", "--send", "--yes"], agreesWithout: true },
+  { name: "design audit, acronym list of --project-dir", command: "design", without: [], with: [], acronyms: true },
+  { name: "design audit --include-judged-text", command: "design", without: [], with: ["--include-judged-text"] },
+  { name: "design audit --send, acronym list of --project-dir", command: "design", without: ["--send", "--yes"], with: ["--send", "--yes"], acronyms: true },
+  { name: "design audit --send --include-judged-text", command: "design", without: ["--send", "--yes"], with: ["--send", "--yes", "--include-judged-text"] },
+  { name: "design audit --send --yes", command: "design", without: ["--send"], with: ["--send", "--yes"], agreesWithout: true },
+];
+
+/**
+ * What each sweep changed, by fault clause: `off` lists the clauses with a
+ * check that one side named and the other did not, and `reads` the other
+ * clauses with an offline check whose findings differ between the sides.
+ * Only `--no-front-matter` changes anything, and only 15f.
+ */
+const SWEEP_CHANGES: Readonly<Record<string, { readonly off: readonly string[]; readonly reads: readonly string[] }>> = Object.fromEntries(
+  SWEEPS.map(sweep => [sweep.name, { off: sweep.name === "text audit --no-front-matter" ? ["15f"] : [], reads: [] }]),
+);
+
+/**
+ * What one side of a sweep named for each file. The project folder holds the
+ * acronym list only on the side with the option. A run that does not agree
+ * at a terminal is given one that agrees.
+ *
+ * @throws An `Error` when the run exits with anything but 0.
+ */
+async function sweepNamed(sweep: Sweep, withOption: boolean, directory: string): Promise<Omit<RouteReading, "route">> {
+  const list = join(directory, ".iso-24495-4", "acronyms.json");
+  rmSync(list, { force: true });
+  if (withOption && sweep.acronyms === true) {
+    mkdirSync(join(directory, ".iso-24495-4"), { recursive: true });
+    writeFileSync(list, JSON.stringify(["QZXW"]));
+  }
+  const json = join(tmpdir(), `checklist-sweep-${process.pid}.json`);
+  const dependencies = stubbedDependencies([]);
+  const agreeing: AuditDependencies = { ...dependencies, terminal: { inputIsTTY: true, outputIsTTY: true, prompt: async () => "yes" } };
+  const route: Route = { name: sweep.name, command: sweep.command, options: withOption ? sweep.with : sweep.without, meets: [], reads: [] };
+  const exit = await runRoute(route, directory, json, !withOption && sweep.agreesWithout === true ? agreeing : dependencies);
+  if (exit !== 0) throw new Error(`${sweep.name} exited ${exit}.`);
+  const report: ReportJson = JSON.parse(readFileSync(json, "utf8"));
+  rmSync(json, { force: true });
+  return { named: namedInReport(report), reasons: reasonsInReport(report) };
+}
+
+/** Whether two runs differ on whether they named a check for a file. */
+function namesDiffer(first: Omit<RouteReading, "route">, second: Omit<RouteReading, "route">, file: string, check: string): boolean {
+  return (first.named.get(file)?.has(check) ?? false) !== (second.named.get(file)?.has(check) ?? false);
+}
+
+/** Every rule either run gave a finding of for a file. */
+function rulesFound(first: Omit<RouteReading, "route">, second: Omit<RouteReading, "route">, file: string): string[] {
+  return [...new Set([...first.reasons.get(file)?.keys() ?? [], ...second.reasons.get(file)?.keys() ?? []])];
+}
+
+/** Whether two runs differ on the findings an offline check gave for a file. */
+function findingsDiffer(first: Omit<RouteReading, "route">, second: Omit<RouteReading, "route">, file: string, check: string): boolean {
+  return JSON.stringify(first.reasons.get(file)?.get(check) ?? []) !== JSON.stringify(second.reasons.get(file)?.get(check) ?? []);
+}
+
+/**
+ * What one run of an audit printed on standard output, block by block, with
+ * a stubbed transport and no terminal to agree on. The run must exit 0.
+ */
+async function printedBlocks(command: Route["command"], argv: readonly string[]): Promise<string[]> {
+  const out: string[] = [];
+  const dependencies = stubbedDependencies([]);
+  if (command === "text") {
+    expect(await runTextCli(["bun", "cli", ...argv], text => out.push(text), ignore, dependencies)).toBe(0);
+    return out;
+  }
+  expect(await runDesignCli(["bun", "cli", ...argv], text => out.push(text), ignore, dependencies)).toBe(0);
+  return out;
 }
 
 /**
@@ -1047,6 +1175,94 @@ describe("the Part 5 checklist clause registry", () => {
           }
         }
       }
+    }
+  }, 60000);
+
+  test("both Jev routes refuse --no-front-matter, so only the plain text audit can leave the front matter need unmet", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-front-matter-"));
+    try {
+      const file = join(directory, "dated.md");
+      writeFileSync(file, SPECIMENS["15f"]?.text ?? "");
+      const jevRoutes = ROUTES.filter(route => route.meets.includes("jev-route"));
+      expect(jevRoutes).toHaveLength(4);
+      for (const route of jevRoutes) {
+        const requests: string[] = [];
+        const run = await printed(route.command, ["bun", "cli", file, "--project-dir", directory, ...route.options, "--no-front-matter"], requests);
+        expect(run.exit, route.name).toBe(2);
+        expect(requests, route.name).toEqual([]);
+      }
+      expect(ROUTES.filter(route => !route.meets.includes("front-matter")).map(route => route.options)).toEqual([["--no-front-matter"]]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("no option of either audit changes what a fault check names, but --no-front-matter on 15f", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-sweep-"));
+    try {
+      for (const [id, specimen] of Object.entries(SPECIMENS)) {
+        for (const [ending, text] of [["", specimen.text], ["-fm", SWEEP_FRONT_MATTER + specimen.text]] as const) {
+          writeFileSync(join(directory, `${id}${ending}.md`), text);
+          writeFileSync(join(directory, `${id}${ending}.txt`), text);
+        }
+      }
+      writeFileSync(join(directory, "acronym-probe.md"), ACRONYM_PROBE);
+      const changes: Record<string, { readonly off: readonly string[]; readonly reads: readonly string[] }> = {};
+      let cells = 0;
+      for (const sweep of SWEEPS) {
+        const without = await sweepNamed(sweep, false, directory);
+        const withOption = await sweepNamed(sweep, true, directory);
+        const change = { off: [] as string[], reads: [] as string[] };
+        changes[sweep.name] = change;
+        for (const clause of CLAUSES.filter(found => found.state === "fault")) {
+          cells++;
+          const files = ["", "-fm"].flatMap(ending => [`${clause.id}${ending}.md`, `${clause.id}${ending}.txt`]);
+          if (clause.checks.some(check => files.some(file => namesDiffer(without, withOption, file, check.rule)))) {
+            change.off.push(clause.id);
+          } else if (clause.checks.some(check => check.kind === "offline" && files.some(file => findingsDiffer(without, withOption, file, check.rule)))) {
+            change.reads.push(clause.id);
+          }
+        }
+        // Front matter read as text acts on more than 15f: some other finding
+        // differs on a file that opens with front matter.
+        if (sweep.name === "text audit --no-front-matter") {
+          const fileNames = [...new Set([...without.reasons.keys(), ...withOption.reasons.keys()])].filter(file => file.includes("-fm."));
+          expect(fileNames.some(file => rulesFound(without, withOption, file).some(rule => rule !== "opening-version-date" && findingsDiffer(without, withOption, file, rule)))).toBe(true);
+        }
+        // The acronym list acts: it takes the probe's acronym finding away.
+        if (sweep.acronyms === true) {
+          expect([without.named.get("acronym-probe.md")?.has("acronym-undefined"), withOption.named.get("acronym-probe.md")?.has("acronym-undefined")], sweep.name).toEqual([true, false]);
+        }
+      }
+      expect(cells).toBe(SWEEPS.length * 15);
+      expect(changes).toEqual(SWEEP_CHANGES);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  test("--json changes nothing either audit prints but the disclosure's name for the report", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-sweep-json-"));
+    try {
+      for (const [id, specimen] of Object.entries(SPECIMENS)) {
+        writeFileSync(join(directory, `${id}.md`), specimen.text);
+        writeFileSync(join(directory, `${id}.txt`), specimen.text);
+      }
+      const json = join(directory, "report.json");
+      for (const options of [[], ["--jev-preview"], ["--jev", "--send", "--yes"]]) {
+        const without = await printedBlocks("text", [directory, "--project-dir", directory, ...options]);
+        const withJson = await printedBlocks("text", [directory, "--project-dir", directory, ...options, "--json", json]);
+        expect(withJson.length, options.join(" ")).toBe(without.length);
+        expect([withJson[0], withJson[1], withJson.at(-1)], options.join(" ")).toEqual([without[0], without[1], without.at(-1)]);
+      }
+      for (const options of [[], ["--send", "--yes"]]) {
+        const without = await printedBlocks("design", [directory, "--project-dir", directory, ...options]);
+        const withJson = await printedBlocks("design", [directory, "--project-dir", directory, ...options, "--json", json]);
+        expect(withJson.length, options.join(" ")).toBe(without.length);
+        expect([withJson[0], withJson[1], withJson.at(-1)], options.join(" ")).toEqual([without[0], without[1], without.at(-1)]);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
   }, 60000);
 

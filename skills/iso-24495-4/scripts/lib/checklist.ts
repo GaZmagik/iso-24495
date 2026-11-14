@@ -18,6 +18,9 @@
 // - send: the run sends the document to Jev after agreement: the design
 //   audit with --send, or the text audit with --jev and --send. A preview
 //   sends nothing and receives no answer.
+// - front-matter: a leading "---" block is read as front matter. Both
+//   audits read it so, except the plain text audit with --no-front-matter,
+//   which reads it as text. Both Jev routes refuse that option.
 //
 // The test of this module measures each need by running those commands with
 // and without what the need names, with a stand-in for the transport.
@@ -253,7 +256,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
       { id: "15e", demand: "The opening names the primary audience.", state: "not-read", checks: [], needs: [], limits: [] },
       {
         id: "15f", demand: "The opening gives a version or date.", state: "fault",
-        checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown"],
+        checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown", "front-matter"],
         limits: [
           "It asks a question as an advisory, rather than stating a fault.",
           "It needs a Markdown level-1 title, though not every one counts, such as `> # Guide`. It does not read an HTML title such as `<h1>Guide</h1>`, but it can take a `#` line that shows as text, such as one inside an HTML block like `<div>`, as one. A file named README, CONTRIBUTING, SECURITY or PULL_REQUEST_TEMPLATE is exempt, with or without an extension, even a two-part one such as `README.fr.md`. So can one in another letter case, such as `readme.MD`, but a longer name such as `README-fr.md` is not. It is off when front matter is read as text.",
@@ -411,8 +414,8 @@ export interface Check {
 
 /**
  * One thing a run must have for a check to run: a Markdown file, the shared
- * Jev audit route, a send to Jev, the original version, or a fact the author
- * declared. The comment at the top of this module says which commands meet
- * the first three.
+ * Jev audit route, a send to Jev, front matter read as front matter, the
+ * original version, or a fact the author declared. The comment at the top of
+ * this module says which commands meet the first four.
  */
-export type Need = "markdown" | "jev-route" | "send" | "before" | `fact:${string}`;
+export type Need = "markdown" | "jev-route" | "send" | "front-matter" | "before" | `fact:${string}`;
