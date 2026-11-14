@@ -93,6 +93,9 @@ Sending requires `TYPESAFE_API_KEY`; control characters are rejected before surr
 Get a key from [TypeSafe documentation](https://docs.typesafe.ai).
 Read only `.md` and `.markdown` files, and report every skipped link or unreadable entry.
 
+Show the Part 5 checklist reading printed after the mechanical findings.
+It marks what the audit can read, not how good the document is, and no Jev answer changes it.
+
 Report file, line, item identifier, excerpt, exact score and cut-off.
 Report per-document and per-check assessed, pass, fail, unsure and skipped counts.
 Human and JSON reports include every gate's cluster count, wrong count and recorded lower bound.

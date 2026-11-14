@@ -944,6 +944,9 @@ const LOCAL_BLOCK = [
 const TITLED_PREVIEW_BEFORE = "40440cc44d7d275feaaa1482e80aa3331e08d765df5cf83cd8a5196a9b78f1c3";
 const NO_TITLE_PREVIEW_BEFORE = "cda38615d7dfc37a28a12622d97cee996bff9c2b824b0437e3e6db57a8ea9344";
 const NO_TITLE_SEND_BEFORE = "f09d0c6f0eaba71a3289ba9c49adb715e52387469e344aa1fcd47543383e719e";
+// The preview's JSON report as written once the checklist reading was added,
+// with filesNotReached and documentsNotSent in its run.
+const NO_TITLE_PREVIEW_JSON = "51191c38b29aa5e87f162ae023012d670fda9f34b0ec381fcedb31bd13dc94a3";
 const NO_TITLE_PREVIEW_JSON_BEFORE = "aaa36ebb767b04dc1b8078dfd2cfaf7c9a6ea5e19e4a83c3da20b3b6292c42b1";
 const NO_TITLE_BODIES_BEFORE = "a7cbaf21c2f26888b27b828be090bb7ce0eb7a996f6a8d1cc3d708805443f68c";
 const NO_TITLE_LOG_DIGEST_BEFORE = "bfca057c543a67dff65f26fce00ec30afde49d0d3ec36624a6e6c9e83a8bd491";
@@ -967,6 +970,17 @@ function occurrences(text: string, rule: string): number {
   return text.split(rule).length - 1;
 }
 
+/**
+ * Checks that the Part 5 checklist reading follows the mechanical findings,
+ * as the second thing printed, and removes it from `out`. What is left is
+ * what the command printed before the reading was added.
+ */
+function dropReading(out: string[]): void {
+  expect(out[1]).toStartWith("Part 5 checklist reading: ");
+  expect(out[1]).toEndWith("This reading shows what the audit reads. It does not measure the document.");
+  out.splice(1, 1);
+}
+
 test("a design preview of a document with no title prints its title finding once, between the mechanical findings and the disclosure", async () => {
   const directory = mkdtempSync(join(tmpdir(), "jev-preview-title-"));
   try {
@@ -976,6 +990,7 @@ test("a design preview of a document with no title prints its title finding once
     const out: string[] = [];
     const err: string[] = [];
     expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory], text => out.push(text), text => err.push(text), recordingDependencies(bodies))).toBe(0);
+    dropReading(out);
     expect(bodies).toHaveLength(0);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
@@ -998,6 +1013,7 @@ test("a design preview of a titled document prints exactly what it printed befor
     writeFileSync(file, NO_BLOCK);
     const out: string[] = [];
     expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory], text => out.push(text), text => out.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(out).toHaveLength(2);
     expect(out[1]).toBe(formatPlan(selectDocuments(file, directory)));
     expect(out.join("\n")).not.toContain("Local findings");
@@ -1014,12 +1030,14 @@ test("the text audit's Jev preview prints the title finding as the design previe
     writeFileSync(file, NO_TITLE);
     const out: string[] = [];
     expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => out.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(LOCAL_BLOCK);
     expect(occurrences(out.join("\n"), "opening-title")).toBe(1);
     writeFileSync(file, NO_BLOCK);
     const titled: string[] = [];
     expect(await runTextCli(["bun", "cli", file, "--project-dir", directory, "--jev-preview"], text => titled.push(text), text => titled.push(text), { env: {} })).toBe(0);
+    dropReading(titled);
     expect(titled).toHaveLength(2);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -1054,6 +1072,7 @@ test("a design preview of a directory prints the title finding of each titleless
     const out: string[] = [];
     const err: string[] = [];
     expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(SEVERAL_LOCAL_BLOCK);
@@ -1072,6 +1091,7 @@ test("the text audit's Jev preview of a directory prints the title finding of ea
     const out: string[] = [];
     const err: string[] = [];
     expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(SEVERAL_LOCAL_BLOCK);
@@ -1111,6 +1131,7 @@ test("a design preview prints a file before the folder that shares its name", as
     const out: string[] = [];
     const err: string[] = [];
     expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(SHARED_NAME_LOCAL_BLOCK);
@@ -1126,6 +1147,7 @@ test("the text audit's Jev preview prints a file before the folder that shares i
     const out: string[] = [];
     const err: string[] = [];
     expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(SHARED_NAME_LOCAL_BLOCK);
@@ -1167,6 +1189,7 @@ test("a design preview orders title findings by the full path's character codes"
     const out: string[] = [];
     const err: string[] = [];
     expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(MIXED_CASE_LOCAL_BLOCK);
@@ -1182,6 +1205,7 @@ test("the text audit's Jev preview orders title findings by the full path's char
     const out: string[] = [];
     const err: string[] = [];
     expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(MIXED_CASE_LOCAL_BLOCK);
@@ -1216,6 +1240,7 @@ test("a design preview prints the title finding of a document that follows a ref
     const out: string[] = [];
     const err: string[] = [];
     expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual(["warning: not sent: a.md: front matter could not be recognised safely"]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(AFTER_REFUSED_LOCAL_BLOCK);
@@ -1234,6 +1259,7 @@ test("the text audit's Jev preview prints the title finding of a document that f
     const out: string[] = [];
     const err: string[] = [];
     expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual(["warning: not sent: a.md: front matter could not be recognised safely"]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(AFTER_REFUSED_LOCAL_BLOCK);
@@ -1267,6 +1293,7 @@ test("a design preview names a nested document by its path from the project", as
     const out: string[] = [];
     const err: string[] = [];
     expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(NESTED_LOCAL_BLOCK);
@@ -1282,6 +1309,7 @@ test("the text audit's Jev preview names a nested document by its path from the 
     const out: string[] = [];
     const err: string[] = [];
     expect(await runTextCli(["bun", "cli", directory, "--project-dir", directory, "--jev-preview"], text => out.push(text), text => err.push(text), { env: {} })).toBe(0);
+    dropReading(out);
     expect(err).toEqual([]);
     expect(out).toHaveLength(3);
     expect(out[1]).toBe(NESTED_LOCAL_BLOCK);
@@ -1297,7 +1325,15 @@ test("printing the title finding leaves a preview's JSON report as it was", asyn
     writeFileSync(file, NO_TITLE);
     const reportFile = join(directory, "report.json");
     expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--json", reportFile], () => {}, () => {}, { env: {} })).toBe(0);
-    const json = readFileSync(reportFile, "utf8");
+    const written = readFileSync(reportFile, "utf8");
+    // The bytes as written, so a change to how the report is written fails here.
+    expect(sha256(written)).toBe(NO_TITLE_PREVIEW_JSON);
+    const report = JSON.parse(written);
+    expect(Object.keys(report).at(-1)).toBe("checklist");
+    delete report.checklist;
+    // Without the checklist key, the report holds what it held before the
+    // reading, key for key and in the same order.
+    const json = JSON.stringify(report, null, 2);
     expect(JSON.parse(json).jev.localFindings).toEqual([{ file: "doc.md", line: 1, rule: "opening-title", detail: "Add a level-1 document title. Purpose assessment is skipped without one." }]);
     expect(sha256(json)).toBe(NO_TITLE_PREVIEW_JSON_BEFORE);
   } finally {
@@ -1320,6 +1356,7 @@ test("a design send of a document with no title sends, logs and prints exactly w
       digests.push(record.digest);
     };
     expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--send", "--yes"], text => out.push(text), text => out.push(text), dependencies)).toBe(0);
+    dropReading(out);
     expect(bodies).toHaveLength(2);
     expect(sha256(JSON.stringify([...bodies].sort()))).toBe(NO_TITLE_BODIES_BEFORE);
     expect(digests).toEqual([NO_TITLE_LOG_DIGEST_BEFORE]);

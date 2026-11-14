@@ -184,6 +184,30 @@ describe("a path that is not a file to read is a wrong argument", () => {
   });
 });
 
+// The text audit prints a Part 5 checklist reading after its table. That
+// reading is printed outside `formatFindings`, which this check reuses, so a
+// pull request check prints none of it. The expected output was measured on
+// `design-audit` at c9715a3, before the reading was added.
+describe("the check prints what it printed before the checklist reading was added", () => {
+  test("a description with three findings gives the same output, byte for byte", () => {
+    const text = "# Notes\n\nClick [here](x.md) to read the utilise guide.\n\n| Name | |\n|---|---|\n| a | b |\n";
+    const result = run("description.md", [text]);
+    expect(result.exit).toBe(0);
+    expect(result.stderr).toEqual([]);
+    expect(result.stdout).toEqual([
+      "| File | Line | Rule | Finding |\n|------|------|------|---------|\n"
+        + "| `description.md` | 3 | complex-word | \"utilise\" where \"use\" would do |\n"
+        + "| `description.md` | 5 | table-header | table header has an empty column name |\n"
+        + "| `description.md` | 3 | link-text | link text \"here\" describes no destination (x.md) |\n"
+        + "\nFinding count: 3. Files read: 1. Skipped entries: 0.\nMechanical findings are proxies, not an ISO judgement.\n"
+        + "The user decides whether the text suits its readers and purpose.",
+      "The audit reported 3 findings. They are advice, and do not block this pull request. Edit the text where a finding points at a real problem for its readers.",
+      "A pass means the audit ran on a description that is not empty. It is not a judgement that the description is clear, and a description holding only a comment or an image gives it little to read.",
+    ]);
+    expect(result.stdout.join("\n")).not.toContain("checklist");
+  });
+});
+
 describe("an audit that does not run has a code of its own", () => {
   test("a file with an ending the audit does not read", () => {
     const result = run("description.rst", ["Plain words.\n"]);
