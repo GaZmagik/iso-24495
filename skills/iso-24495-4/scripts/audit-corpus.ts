@@ -1721,10 +1721,10 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
 // title in parentheses is not read: the scan ends an image at its first ")",
 // which is the title's own, so the scan never holds the whole image.
 const DECORATIVE_TITLE = String.raw`(?:"decorative"|'decorative')`;
-// A destination that every renderer ends in the same place and a reader can
-// see: any characters but a space, angle bracket, parenthesis, quote or
-// backslash, and none that is whitespace, a separator, a control, a format
-// character or half a surrogate pair. The "u" flag reads an emoji as one
+// A destination that every renderer ends in the same place: any characters
+// but a space, angle bracket, parenthesis, quote or backslash, and none that
+// Unicode counts as whitespace, a separator, a control or a format character,
+// nor half a surrogate pair. The "u" flag reads an emoji as one
 // character and knows the categories. It never goes with the "i" flag, which
 // together with it would read the Kelvin sign as "k".
 const PLAIN_DESTINATION = /^[^ <>()"'\\\s\p{Z}\p{Cc}\p{Cf}\p{Cs}]+$/u;

@@ -573,7 +573,7 @@ const BEYOND_ASCII_DESTINATIONS = [
   `a${character(0xe000)}${character(0xfffe)}b`,
 ];
 
-// Every Unicode space and separator, which a reader cannot see in a destination.
+// Every Unicode space and separator but the ASCII ones, which are tested apart.
 const UNICODE_SPACES = [
   0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
   0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
@@ -730,7 +730,7 @@ describe("a decorative title on a reference image", () => {
     }
   });
 
-  test("is not honoured from a definition whose destination holds a character a reader cannot see", () => {
+  test("is not honoured from a definition whose destination holds a Unicode space, a control or a format character", () => {
     // The reader reads no definition with an ASCII control in it, so the image
     // is skipped as naming none. The controls beyond ASCII are tried instead.
     for (const code of [...UNICODE_SPACES, 0x85, 0x9f, ...FORMAT_CHARACTERS]) {
