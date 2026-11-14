@@ -740,6 +740,14 @@ describe("a decorative title on an image with no alternative text", () => {
     expect(altFindings(`[t](a) ![[x]](y.png) ![ ][dec]\n\n${definition}\n`)).toEqual([]);
   });
 
+  test("is read on an inline image after a code span holding a reference image", () => {
+    // Placing reference images must not stop the placing of inline ones.
+    const definitions = "[x]: y.png";
+    for (const code of ["`![][x]`", "`![ ][x]`"]) {
+      expect(honoured(`${code} ![](decoration.png "decorative")\n\n${definitions}\n`), code).toBe(true);
+    }
+  });
+
   test("is read where the text after an earlier link's \"(\" is no destination and title", () => {
     // CommonMark then reads no link, and the image is an image with its title.
     const image = "![](decoration.png (decorative))";
@@ -759,6 +767,8 @@ describe("a decorative title on an image with no alternative text", () => {
     const image = "![](decoration.png (decorative))";
     for (const text of [
       `[t]() ${image}`, `[t](a(b) ${image}`, `[t](a (x)) ${image}`, `[t](a\n'x') ${image}`,
+      // A "(" inside a title in parentheses, or a word that opens no title, ends the link unread.
+      `[t](a (x (y) ${image})`, `[t](a x) ${image}`,
     ]) {
       expect(honoured(`${text}\n`), text).toBe(true);
     }

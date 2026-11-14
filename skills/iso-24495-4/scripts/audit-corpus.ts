@@ -1732,46 +1732,59 @@ const DECORATIVE_TITLE = /^decorative$/i;
  * So each title is read from `source`, the line as written, and an image found
  * there counts only where the reader's own rewriting puts it in `line`.
  *
+ * An image inside an earlier link's destination or title is left out too.
+ *
  * @param line The line as the rule reads it, an entry of `lines`.
  * @param source The same line as written, its entry of `sourceLines`.
+ * @param inLinks Where `source` is inside an earlier link, from `linkTails`.
  * @returns Offsets in `line` of the "!" that starts each such image. An image
  *     the rewriting cannot place, such as one after inline markup that runs
  *     on from the line before, is left out, so the rule reports it.
  */
-function decorativeImageStarts(line: string, source: string, inLinks: readonly Span[]): LineImages {
-  const decorative = new Set<number>();
-  const outside = new Set<number>();
+function decorativeImageStarts(line: string, source: string, inLinks: readonly Span[]): Set<number> {
+  return placedImages(line, source, inLinks, (at) => decorativeImageEnd(source, at));
+}
+
+/**
+ * Where the images that name a reference start in one line, outside any
+ * earlier link's destination or title. Placed as `decorativeImageStarts`
+ * places images, but on its own, so that text which only looks like a
+ * reference image, as in a code span, cannot stop an inline image's placing.
+ */
+function referenceImageStarts(line: string, source: string, inLinks: readonly Span[]): Set<number> {
+  return placedImages(line, source, inLinks, (at) => (isReferenceImage(source, at) ? at : null));
+}
+
+/**
+ * Where some of the images in `source` start in `line`, by rewriting the text
+ * before each one as the reader does and checking it lands where `line` has it.
+ *
+ * @param endOf Where the image at an offset of `source` ends, or null to pass
+ *     it by. Its text up to there must be rewritten to what `line` holds.
+ * @returns Offsets in `line`, for the images placed outside `inLinks`.
+ */
+function placedImages(
+  line: string,
+  source: string,
+  inLinks: readonly Span[],
+  endOf: (at: number) => number | null,
+): Set<number> {
+  const starts = new Set<number>();
   // How much of `source` has been rewritten so far, and how long that is in `line`.
   let read = 0;
   let placed = 0;
   for (let at = source.indexOf("!["); at !== -1; at = source.indexOf("![", at + 1)) {
-    const end = decorativeImageEnd(source, at);
-    // Where no earlier link runs on in this line, only decorative images need placing.
-    if (end === null && (inLinks.length === 0 || !isReferenceImage(source, at))) continue;
+    const end = endOf(at);
+    if (end === null) continue;
     const before = readerInline(source.slice(read, at));
     // Once the two lines differ, nothing later in them can be placed.
     if (!line.startsWith(before, placed)) break;
     read = at;
     placed += before.length;
     if (inLinks.some(([from, to]) => from <= at && at < to)) continue;
-    outside.add(placed);
-    if (end !== null && line.startsWith(readerInline(source.slice(at, end)), placed)) decorative.add(placed);
+    if (line.startsWith(readerInline(source.slice(at, end)), placed)) starts.add(placed);
   }
-  return { decorative, outside };
-}
-
-/**
- * The images of one line that a decorative title may excuse, by where each
- * starts in the line as the rule reads it.
- *
- * `decorative` holds the inline images whose own title reads decorative.
- * `outside` holds every image placed outside an earlier link's destination
- * or title. It is filled only for a line where such a link runs, and is
- * otherwise empty.
- */
-interface LineImages {
-  decorative: Set<number>;
-  outside: Set<number>;
+  return starts;
 }
 
 // An image that names a reference, with a label of white space at most.
@@ -2008,8 +2021,9 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
     if (hidden(i)) continue;
     const line = itemAt(lines, i);
     const spans = itemAt(inLinks, i);
-    // Found once a line holds an image that needs it.
-    let images: LineImages | null = null;
+    // Each found once a line holds an image that needs it.
+    let decorative: Set<number> | null = null;
+    let outside: Set<number> | null = null;
     // One scan finds both image forms, filtered to the ones with no alternative text.
     for (const link of markdownLinks(line)) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
@@ -2017,16 +2031,16 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
       const target = link.target.trim();
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        images ??= decorativeImageStarts(line, itemAt(sourceLines, i), spans);
-        if (images.decorative.has(link.start)) continue;
+        decorative ??= decorativeImageStarts(line, itemAt(sourceLines, i), spans);
+        if (decorative.has(link.start)) continue;
       } else {
         const name = normaliseReference(target);
         if (!references.has(name)) continue;
         if (DECORATIVE_TITLE.test(titles.get(name) ?? "")) {
           if (spans.length === 0) continue;
           // An earlier link runs in this line, so the image must be placed outside it.
-          images ??= decorativeImageStarts(line, itemAt(sourceLines, i), spans);
-          if (images.outside.has(link.start)) continue;
+          outside ??= referenceImageStarts(line, itemAt(sourceLines, i), spans);
+          if (outside.has(link.start)) continue;
         }
       }
       violations.push({
