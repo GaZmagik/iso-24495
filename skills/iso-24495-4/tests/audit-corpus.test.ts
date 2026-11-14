@@ -620,6 +620,8 @@ describe("a decorative title on an image with no alternative text", () => {
     // The destination ends at the first ")", so this image has none of the title.
     expect(altFindings("![](decoration.png (decorative) x)\n")).toEqual([missingAlt("decoration.png (decorative")]);
     expect(altFindings("![](decoration(1).png (decorative))\n")).toEqual([missingAlt("decoration(1")]);
+    // With no destination before it, the text in parentheses is the destination.
+    expect(altFindings("![]( (decorative))\n")).toEqual([missingAlt(" (decorative")]);
   });
 
   test("changes nothing for an image whose reference has no definition", () => {

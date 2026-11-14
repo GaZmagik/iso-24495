@@ -1743,8 +1743,9 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
         if (/\s+(?:"decorative"|'decorative')\s*$/i.test(link.target)) continue;
         // The destination ends at the first ")", so a title in parentheses
         // arrives without its own ")". That ")" and the image's closing one
-        // follow, with nothing but spaces between them.
-        if (/\s\(decorative$/i.test(link.target) && /^[ \t]*\)/.test(line.slice(link.end))) continue;
+        // follow, with nothing but spaces between them. A destination must come
+        // first, or the parenthesised text is the destination and not a title.
+        if (/\S\s+\(decorative$/i.test(link.target) && /^[ \t]*\)/.test(line.slice(link.end))) continue;
       } else {
         const name = normaliseReference(target);
         if (!references.has(name)) continue;
