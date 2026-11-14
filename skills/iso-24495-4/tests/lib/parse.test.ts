@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readDocument } from "../../scripts/lib/parse.ts";
+import { readDocument, readerInline } from "../../scripts/lib/parse.ts";
+import { itemAt } from "../../scripts/lib/item-at.ts";
 
 /** The titles a document's reference definitions carry, as label and title pairs. */
 function titlesOf(text: string): Array<[string, string]> {
@@ -67,5 +68,64 @@ describe("readDocument titles", () => {
   test("reads a definition inside a quotation or list item the way references are read", () => {
     expect(titlesOf('> [a]: /u "t"\n')).toEqual([["a", "t"]]);
     expect(titlesOf('- [a]: /u "t"\n')).toEqual([["a", "t"]]);
+  });
+
+  test("reads no definition where a control character follows the destination", () => {
+    for (const code of [0x0b, 0x0c]) {
+      for (const title of ['"t"', "'t'", "(t)"]) {
+        const text = `[a]: /u${String.fromCharCode(code)}${title}\n`;
+        expect(titlesOf(text), code.toString(16)).toEqual([]);
+        expect(readDocument(text).references.has("a"), code.toString(16)).toBe(false);
+      }
+    }
+  });
+
+  test("reads no title from inside a destination in angle brackets", () => {
+    for (const title of ['"t"', "'t'", "(t)"]) {
+      const text = `[a]: <x.png ${title}>\n`;
+      expect(titlesOf(text), title).toEqual([]);
+      expect(readDocument(text).references.has("a"), title).toBe(true);
+    }
+    // An escaped ">" does not end the destination; the title follows the real one.
+    expect(titlesOf('[a]: <x\\> "t"> "u"\n')).toEqual([["a", "u"]]);
+  });
+
+  test("reads no title for a label once it could not read a line that may define it", () => {
+    // CommonMark takes a label's first definition, and these first lines are
+    // definitions to at least one renderer. The later title may not be the one
+    // that counts, so it is not read.
+    expect(titlesOf('[a]:\t/first\n\n[a]: /second "t"\n')).toEqual([]);
+    expect(titlesOf('[a]:\n/first\n\n[a]: /second "t"\n')).toEqual([]);
+    expect(titlesOf('[a]: /first "t\nu"\n\n[a]: /second "t"\n')).toEqual([]);
+    // The label itself is still read where a later line defines it, as before.
+    expect(readDocument('[a]:\n/first\n\n[a]: /second "t"\n').references.has("a")).toBe(true);
+    // Another label's line changes nothing.
+    expect(titlesOf('[b]:\t/first\n\n[a]: /second "t"\n')).toEqual([["a", "t"]]);
+    // A line after the first definition changes nothing either.
+    expect(titlesOf('[a]: /first "t"\n\n[a]:\t/second\n')).toEqual([["a", "t"]]);
+  });
+});
+
+describe("readDocument sourceLines", () => {
+  const slash = "\\";
+
+  test("holds each line as the reader took it from its block, before rewriting it", () => {
+    const text = `A ${slash}* b \`c\` <b>d</b>\n# H ${slash}*\n> - e ${slash}_\n`;
+    const document = readDocument(text);
+    expect(document.sourceLines).toEqual([`A ${slash}* b \`c\` <b>d</b>`, `# H ${slash}*`, `e ${slash}_`, ""]);
+    expect(document.lines).toEqual(["A    b  c   d ", "# H   ", "e   ", ""]);
+  });
+
+  test("is blank where lines is blank, for code and front matter", () => {
+    const document = readDocument("```\ncode\n```\n");
+    expect(document.sourceLines).toEqual(["", "", "", ""]);
+  });
+
+  test("gives lines back through readerInline, line by line, for one-line blocks", () => {
+    const text = `A ${slash}* b \`c\` <b>d</b> <!--e--> ![](x.png "t")\n\n# H ${slash}*\n\n| a ${slash}| | b |\n| - | - |\n`;
+    const document = readDocument(text);
+    for (const [index, line] of document.sourceLines.entries()) {
+      expect(readerInline(line), line).toBe(itemAt(document.lines, index));
+    }
   });
 });

@@ -22,8 +22,9 @@ import { itemAt } from "./item-at.ts";
  *     `markupLines` keeps HTML tags and `lines` does not. `hidden` takes such
  *     an index and is true for front matter and code. `references` holds
  *     each defined label as `normaliseReference` gives it, and `titles` the
- *     title of each label's first definition that has one. Empty text gives
- *     one empty line.
+ *     title of each label's first definition that has one. `sourceLines`
+ *     holds each line before its escapes, code spans and HTML were rewritten
+ *     for `lines`. Empty text gives one empty line.
  */
 export function readDocument(text: string, reading: Reading = {}): Document {
   const lines = toLines(text);
@@ -31,6 +32,7 @@ export function readDocument(text: string, reading: Reading = {}): Document {
   return {
     lines: parsed.readable.map((line) => visibleInline(line, false)),
     markupLines: parsed.markup,
+    sourceLines: parsed.source,
     references: parsed.references,
     titles: parsed.titles,
     hidden: (index) => parsed.hidden.has(index),
@@ -76,11 +78,19 @@ export interface Document {
   lines: string[];
   /** Reader-visible markup retained for rules about links and images. */
   markupLines: string[];
+  /**
+   * Each line as the reader took it from its block, with its container
+   * markers removed but its escapes, code spans and HTML as written.
+   * `readerInline` turns one into its entry in `lines`, wherever the block's
+   * inline markup does not cross a line ending.
+   */
+  sourceLines: string[];
   /** Normalised reference labels that have valid definitions. */
   references: ReadonlySet<string>;
   /**
    * The title of each label's first definition, keyed as `references` is.
-   * A definition with no title has no entry.
+   * A definition with no title has no entry, and neither does a label once
+   * the reader has met a line it could not read that may define it.
    */
   titles: ReadonlyMap<string, string>;
   /** True when the line is metadata or fenced code, excluded from prose checks. */
@@ -365,6 +375,8 @@ interface Parsed {
   references: Set<string>;
   destinations: Map<string, string>;
   titles: Map<string, string>;
+  /** Each line before its inline markup was rewritten, as `Document` has it. */
+  source: string[];
   rootLines: Set<number>;
   navigationLines: Set<number>;
   rootHeadingLines: Set<number>;
@@ -469,6 +481,8 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   const references = new Set<string>();
   const destinations = new Map<string, string>();
   const titles = new Map<string, string>();
+  // Labels with a line before their first definition that may define them.
+  const unread = new Set<string>();
   const rootLines = new Set<number>();
   const navigationLines = new Set<number>();
   const rootHeadingLines = new Set<number>();
@@ -660,12 +674,20 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         // pairs one definition's destination with another's title.
         if (!destinations.has(name)) {
           destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
-          if (definition.title !== null) titles.set(name, definition.title);
+          if (definition.title !== null && !unread.has(name)) titles.set(name, definition.title);
         }
       }
       readable[i] = "";
       markup[i] = "";
       continue;
+    }
+    // A line that starts like a definition but was not read as one may still
+    // be one to a renderer: a tab after the colon, or a destination on the
+    // next line. CommonMark takes a label's first definition, so a title on a
+    // later one may not be the title that counts.
+    const [, unreadLabel] = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text) ?? [];
+    if (unreadLabel !== undefined && !destinations.has(normaliseReference(unreadLabel))) {
+      unread.add(normaliseReference(unreadLabel));
     }
 
     const [, , opener, info] = FENCE_OPEN.exec(text) ?? [];
@@ -780,10 +802,15 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     paragraph.lines.push(text.trimStart());
   }
 
+  // Every line but a paragraph's reaches `lines` as `readable` holds it.
+  const source = [...readable];
   for (const block of paragraphs) {
-    const source = block.lines.join("\n");
-    const forLineRules = visibleInline(source, false).split("\n");
-    const withTags = visibleInline(source, false, true).split("\n");
+    for (const [offset, line] of block.lines.entries()) {
+      source[block.line - 1 + offset] = line;
+    }
+    const joined = block.lines.join("\n");
+    const forLineRules = visibleInline(joined, false).split("\n");
+    const withTags = visibleInline(joined, false, true).split("\n");
     // Both readings keep every line ending of the source, so they hold the same lines.
     for (const [offset, shown] of forLineRules.entries()) {
       readable[block.line - 1 + offset] = shown;
@@ -791,13 +818,13 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     for (const [offset, shown] of withTags.entries()) {
       markup[block.line - 1 + offset] = shown;
     }
-    block.lines = visibleInline(source).split("\n");
+    block.lines = visibleInline(joined).split("\n");
   }
   for (const heading of found) {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, titles, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, titles, source, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
 }
 
 /**
@@ -935,6 +962,17 @@ export function tickRun(text: string, start: number): number {
     end++;
   }
   return end - start;
+}
+
+/**
+ * Rewrite inline text the way `readDocument` rewrites each of its `lines`.
+ *
+ * @param text An entry of `sourceLines`, or part of one.
+ * @returns The text with each escape and the syntax of each code span as
+ *     spaces, and each HTML tag or comment as one space.
+ */
+export function readerInline(text: string): string {
+  return visibleInline(text, false);
 }
 
 /** Remove only inline markup that CommonMark keeps out of rendered text. */

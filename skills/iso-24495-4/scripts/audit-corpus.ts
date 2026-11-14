@@ -12,6 +12,7 @@ import {
   proseBlocks,
   readerProseBlocks,
   readDocument,
+  readerInline,
   toLines,
   type ProseBlock,
   type Reading,
@@ -1721,6 +1722,116 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
 // or parentheses. A filename containing the word does not express that decision.
 const DECORATIVE_TITLE = /^decorative$/i;
 
+/**
+ * Where the inline images that carry the title decorative start in one line.
+ *
+ * The rule finds images in `line`, where the reader has already turned each
+ * escape, code span and HTML tag into spaces. Those spaces are not in the
+ * image as written. Reading them as the gap before a title once took text in
+ * a destination for a title, and removed findings on images with no title.
+ * So each title is read from `source`, the line as written, and an image found
+ * there counts only where the reader's own rewriting puts it in `line`.
+ *
+ * @param line The line as the rule reads it, an entry of `lines`.
+ * @param source The same line as written, its entry of `sourceLines`.
+ * @returns Offsets in `line` of the "!" that starts each such image. An image
+ *     the rewriting cannot place, such as one after inline markup that runs
+ *     on from the line before, is left out, so the rule reports it.
+ */
+function decorativeImageStarts(line: string, source: string): Set<number> {
+  const starts = new Set<number>();
+  // How much of `source` has been rewritten so far, and how long that is in `line`.
+  let read = 0;
+  let placed = 0;
+  for (let at = source.indexOf("!["); at !== -1; at = source.indexOf("![", at + 1)) {
+    const end = decorativeImageEnd(source, at);
+    if (end === null) continue;
+    const before = readerInline(source.slice(read, at));
+    // Once the two lines differ, nothing later in them can be placed.
+    if (!line.startsWith(before, placed)) break;
+    read = at;
+    placed += before.length;
+    if (line.startsWith(readerInline(source.slice(at, end)), placed)) starts.add(placed);
+  }
+  return starts;
+}
+
+/**
+ * Where an inline image whose title reads decorative ends, read as CommonMark reads it.
+ *
+ * The destination comes first. One in angle brackets runs to its first
+ * unescaped ">". Any other runs to a space or a control character, and one
+ * holding an unescaped parenthesis is not read, since its ")" may close it.
+ * A space or a tab must then follow, then the title in its quotes or
+ * parentheses, then only spaces or tabs before the image's own ")".
+ *
+ * @param source A line as written, before the reader rewrote anything.
+ * @param at Where an image's "!" stands in it.
+ * @returns The offset just past the image's ")", or null when the text there
+ *     is not such an image, or not one this reading can be sure of.
+ */
+function decorativeImageEnd(source: string, at: number): number | null {
+  let index = at + 2;
+  // The rule has found the label empty, so only where it ends is needed.
+  while (index < source.length && source[index] !== "]") {
+    if (source[index] === "[") return null;
+    index += escapeLength(source, index);
+  }
+  if (source[index] !== "]" || source[index + 1] !== "(") return null;
+  index = pastSpacesAndTabs(source, index + 2);
+  if (source[index] === "<") {
+    index++;
+    while (index < source.length && source[index] !== ">") {
+      if (source[index] === "<") return null;
+      index += escapeLength(source, index);
+    }
+    if (source[index] !== ">") return null;
+    index++;
+  } else {
+    const destination = index;
+    while (index < source.length && source[index] !== " " && !isControlCharacter(source.charCodeAt(index))) {
+      if (source[index] === "(" || source[index] === ")") return null;
+      index += escapeLength(source, index);
+    }
+    if (index === destination) return null;
+  }
+  const gap = index;
+  index = pastSpacesAndTabs(source, index);
+  if (index === gap) return null;
+  const opening = source[index];
+  if (opening !== "\"" && opening !== "'" && opening !== "(") return null;
+  const closing = opening === "(" ? ")" : opening;
+  const title = ++index;
+  while (index < source.length && source[index] !== closing) {
+    if (opening === "(" && source[index] === "(") return null;
+    index += escapeLength(source, index);
+  }
+  if (source[index] !== closing) return null;
+  const words = source.slice(title, index);
+  index = pastSpacesAndTabs(source, index + 1);
+  if (source[index] !== ")") return null;
+  return DECORATIVE_TITLE.test(words) ? index + 1 : null;
+}
+
+/** Two for a backslash that escapes the punctuation after it, and one for any other character. */
+function escapeLength(source: string, index: number): number {
+  return source[index] === "\\" && ESCAPABLE_AFTER_BACKSLASH.test(source[index + 1] ?? "") ? 2 : 1;
+}
+
+/** The offset of the first character at or after `index` that is not a space or a tab. */
+function pastSpacesAndTabs(source: string, index: number): number {
+  let at = index;
+  while (source[at] === " " || source[at] === "\t") {
+    at++;
+  }
+  return at;
+}
+
+/** Whether a UTF-16 code unit is an ASCII control character, which ends a destination. */
+function isControlCharacter(code: number): boolean {
+  return code <= 0x1f || code === 0x7f;
+}
+
 // An image with no alternative text is silence to a reader who cannot see it.
 // An empty alt is legitimate for a purely decorative image, so the writer can
 // mark that intent explicitly rather than leaving the alt blank by accident.
@@ -1729,10 +1840,12 @@ const DECORATIVE_TITLE = /^decorative$/i;
 // Both spellings render the same image, so both get the same reading.
 function imageAltViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  const { lines, markupLines, references, titles, hidden } = readDocument(text, reading);
+  const { lines, markupLines, sourceLines, references, titles, hidden } = readDocument(text, reading);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     const line = itemAt(lines, i);
+    // Found once a line holds an inline image that needs it.
+    let decorative: Set<number> | null = null;
     // One scan finds both image forms, filtered to the ones with no alternative text.
     for (const link of markdownLinks(line)) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
@@ -1740,17 +1853,8 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
       const target = link.target.trim();
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        // CommonMark separates a title from its destination with spaces and
-        // tabs only. Other Unicode whitespace, such as U+00A0, belongs to the
-        // destination, so an image written that way has no title. A line is
-        // read alone here, so no line ending can fall between the two. The
-        // reader turns most tabs into spaces, but a heading keeps its tabs.
-        if (/[ \t]+(?:"decorative"|'decorative')\s*$/i.test(link.target)) continue;
-        // The destination ends at the first ")", so a title in parentheses
-        // arrives without its own ")". That ")" and the image's closing one
-        // follow, with only spaces or tabs between them. A destination must come
-        // first, or the parenthesised text is the destination and not a title.
-        if (/[^ \t][ \t]+\(decorative$/i.test(link.target) && /^[ \t]*\)/.test(line.slice(link.end))) continue;
+        decorative ??= decorativeImageStarts(line, itemAt(sourceLines, i));
+        if (decorative.has(link.start)) continue;
       } else {
         const name = normaliseReference(target);
         if (!references.has(name)) continue;

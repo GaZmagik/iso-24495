@@ -554,14 +554,18 @@ function missingAlt(name: string): string {
 }
 
 /**
- * Unicode whitespace that CommonMark does not count as a space between a
- * destination and a title. The first nineteen match JavaScript's \s.
+ * Whitespace that CommonMark does not count as a space between a destination
+ * and a title. The first nineteen match JavaScript's \s, and so do the last
+ * two, the vertical tab and the form feed, which are ASCII control characters.
  */
 const NOT_A_SEPARATOR = [
   0x00a0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009,
   0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff, 0x0085, 0x180e, 0x200b, 0x200c, 0x200d,
-  0x2060,
+  0x2060, 0x000b, 0x000c,
 ].map((code) => String.fromCharCode(code));
+
+/** The three ways Markdown quotes a title, each holding the word decorative. */
+const DECORATIVE_TITLES = ['"decorative"', "'decorative'", "(decorative)"];
 
 // A title of "decorative" marks an image that carries no meaning. The mark is
 // honoured wherever Markdown carries a title for the image: on an inline image,
@@ -649,11 +653,94 @@ describe("a decorative title on an image with no alternative text", () => {
   test("is not read across Unicode whitespace in a definition, which keeps it in the destination", () => {
     for (const space of NOT_A_SEPARATOR) {
       const name = `U+${space.charCodeAt(0).toString(16)}`;
-      for (const title of ['"decorative"', "'decorative'", "(decorative)"]) {
-        expect(altFindings(`![][dec]\n\n[dec]: decoration.png${space}${title}\n`), name)
-          .toEqual([missingAlt("dec")]);
+      // A control character, such as a vertical tab or a form feed, cannot
+      // stand in a destination at all. The line is then no definition, and an
+      // image that names nothing defined is left alone.
+      const expected = space.charCodeAt(0) < 0x20 ? [] : [missingAlt("dec")];
+      for (const title of DECORATIVE_TITLES) {
+        expect(altFindings(`![][dec]\n\n[dec]: decoration.png${space}${title}\n`), name).toEqual(expected);
       }
     }
+  });
+
+  test("is not read from inside a destination in angle brackets", () => {
+    // Such a destination runs to its first unescaped ">", so a title written
+    // before that ">" is part of the destination, and the image has no title.
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![](<decoration.png ${title}>)\n`), title).toHaveLength(1);
+      expect(altFindings(`![](<decoration.png ${title})>)\n`), title).toHaveLength(1);
+      expect(altFindings(`![](<decoration${"\\"}>.png ${title}>)\n`), title).toHaveLength(1);
+      // With no closing ">", nothing ends the destination, so no title follows it.
+      expect(altFindings(`![](<decoration.png ${title})\n`), title).toHaveLength(1);
+    }
+    expect(altFindings("![](<decoration.png (decorative))>)\n"))
+      .toEqual([missingAlt("<decoration.png (decorative")]);
+  });
+
+  test("is read after a destination in angle brackets", () => {
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![](<decoration.png> ${title})\n`), title).toEqual([]);
+      // The reader takes "<my decoration.png>" for an HTML tag and removes it
+      // from what the rule reads, so the title is found in the text as written.
+      expect(altFindings(`![](<my decoration.png> ${title})\n`), title).toEqual([]);
+      expect(altFindings(`![](<decoration(1).png> ${title})\n`), title).toEqual([]);
+      expect(altFindings(`![](<decoration${"\\"}>.png> ${title})\n`), title).toEqual([]);
+      expect(altFindings(`![](<> ${title})\n`), title).toEqual([]);
+    }
+  });
+
+  test("is not read where the reader rewrote the text between destination and title", () => {
+    // An escape, a code span, an HTML tag and a comment all reach the rule as
+    // spaces. In the text as written they belong to the destination, and the
+    // image has no title.
+    for (const between of ["\\\\", "\\_", "\\(", "<b>", "<!--c-->", "`a`"]) {
+      for (const title of DECORATIVE_TITLES) {
+        expect(altFindings(`![](decoration.png${between}${title})\n`), between + title).toHaveLength(1);
+      }
+    }
+  });
+
+  test("is read across an escaped parenthesis in a destination", () => {
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![](decoration${"\\"}).png ${title})\n`), title).toEqual([]);
+      expect(altFindings(`![](decoration${"\\"}(1${"\\"}).png ${title})\n`), title).toEqual([]);
+    }
+  });
+
+  test("is not read after a plain destination holding parentheses of its own", () => {
+    // CommonMark renders these with the title, but the rule does not follow
+    // the parentheses, and it reports the image rather than guess.
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![](decoration(1).png ${title})\n`), title).toHaveLength(1);
+    }
+  });
+
+  test("is read wherever an image can stand on a line", () => {
+    for (const title of DECORATIVE_TITLES) {
+      const image = `![](decoration.png ${title})`;
+      for (const text of [
+        `- ${image}`, `> ${image}`, `# ${image}`, `[${image}](page.md)`,
+        `Text <b>bold</b> ${image}`, `Text ${"\\"}* ${image}`, `Text \`code\` ${image}`,
+      ]) {
+        expect(altFindings(`${text}\n`), text).toEqual([]);
+      }
+    }
+  });
+
+  test("is not read from a definition whose title sits inside angle brackets", () => {
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![][dec]\n\n[dec]: <decoration.png ${title}>\n`), title).toEqual([missingAlt("dec")]);
+    }
+  });
+
+  test("is not read from a later definition when the reader could not read an earlier one", () => {
+    // CommonMark takes a label's first definition. These first ones are
+    // definitions to at least one renderer, and they carry no title.
+    const later = '[dec]: decoration.png "decorative"';
+    expect(altFindings(`![][dec]\n\n[dec]:\tother.png\n\n${later}\n`)).toEqual([missingAlt("dec")]);
+    expect(altFindings(`![][dec]\n\n[dec]:\nother.png\n\n${later}\n`)).toEqual([missingAlt("dec")]);
+    // A label the reader could not read changes nothing for another label.
+    expect(altFindings(`![][dec]\n\n[other]:\tother.png\n\n${later}\n`)).toEqual([]);
   });
 
   test("is read across spaces and tabs, the separators CommonMark names", () => {
