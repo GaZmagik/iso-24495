@@ -901,6 +901,9 @@ const LOCAL_BLOCK = [
 const TITLED_PREVIEW_BEFORE = "40440cc44d7d275feaaa1482e80aa3331e08d765df5cf83cd8a5196a9b78f1c3";
 const NO_TITLE_PREVIEW_BEFORE = "cda38615d7dfc37a28a12622d97cee996bff9c2b824b0437e3e6db57a8ea9344";
 const NO_TITLE_SEND_BEFORE = "f09d0c6f0eaba71a3289ba9c49adb715e52387469e344aa1fcd47543383e719e";
+// The preview's JSON report as written once the checklist reading was added,
+// with filesNotReached and documentsNotSent in its run.
+const NO_TITLE_PREVIEW_JSON = "51191c38b29aa5e87f162ae023012d670fda9f34b0ec381fcedb31bd13dc94a3";
 const NO_TITLE_PREVIEW_JSON_BEFORE = "aaa36ebb767b04dc1b8078dfd2cfaf7c9a6ea5e19e4a83c3da20b3b6292c42b1";
 const NO_TITLE_BODIES_BEFORE = "a7cbaf21c2f26888b27b828be090bb7ce0eb7a996f6a8d1cc3d708805443f68c";
 const NO_TITLE_LOG_DIGEST_BEFORE = "bfca057c543a67dff65f26fce00ec30afde49d0d3ec36624a6e6c9e83a8bd491";
@@ -1279,10 +1282,14 @@ test("printing the title finding leaves a preview's JSON report as it was", asyn
     writeFileSync(file, NO_TITLE);
     const reportFile = join(directory, "report.json");
     expect(await runDesignCli(["bun", "cli", file, "--project-dir", directory, "--json", reportFile], () => {}, () => {}, { env: {} })).toBe(0);
-    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    const written = readFileSync(reportFile, "utf8");
+    // The bytes as written, so a change to how the report is written fails here.
+    expect(sha256(written)).toBe(NO_TITLE_PREVIEW_JSON);
+    const report = JSON.parse(written);
     expect(Object.keys(report).at(-1)).toBe("checklist");
     delete report.checklist;
-    // Without the checklist key, the report is what it was before.
+    // Without the checklist key, the report holds what it held before the
+    // reading, key for key and in the same order.
     const json = JSON.stringify(report, null, 2);
     expect(JSON.parse(json).jev.localFindings).toEqual([{ file: "doc.md", line: 1, rule: "opening-title", detail: "Add a level-1 document title. Purpose assessment is skipped without one." }]);
     expect(sha256(json)).toBe(NO_TITLE_PREVIEW_JSON_BEFORE);
