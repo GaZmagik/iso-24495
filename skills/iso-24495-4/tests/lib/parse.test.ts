@@ -48,6 +48,22 @@ describe("readDocument titles", () => {
     expect(titlesOf('[a]: /u "t\nu"\n')).toEqual([]);
   });
 
+  test("reads Unicode whitespace after the destination as part of it, as CommonMark does", () => {
+    const codes = [
+      0x00a0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009,
+      0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff, 0x0085, 0x180e, 0x200b, 0x200c, 0x200d,
+      0x2060,
+    ];
+    for (const code of codes) {
+      const space = String.fromCharCode(code);
+      for (const title of ['"t"', "'t'", "(t)"]) {
+        const text = `[a]: /u${space}${title}\n`;
+        expect(titlesOf(text), code.toString(16)).toEqual([]);
+        expect(readDocument(text).references.has("a"), code.toString(16)).toBe(true);
+      }
+    }
+  });
+
   test("reads a definition inside a quotation or list item the way references are read", () => {
     expect(titlesOf('> [a]: /u "t"\n')).toEqual([["a", "t"]]);
     expect(titlesOf('- [a]: /u "t"\n')).toEqual([["a", "t"]]);

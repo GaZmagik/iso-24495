@@ -553,6 +553,16 @@ function missingAlt(name: string): string {
   return `image has no alternative text (${name})`;
 }
 
+/**
+ * Unicode whitespace that CommonMark does not count as a space between a
+ * destination and a title. The first nineteen match JavaScript's \s.
+ */
+const NOT_A_SEPARATOR = [
+  0x00a0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009,
+  0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff, 0x0085, 0x180e, 0x200b, 0x200c, 0x200d,
+  0x2060,
+].map((code) => String.fromCharCode(code));
+
 // A title of "decorative" marks an image that carries no meaning. The mark is
 // honoured wherever Markdown carries a title for the image: on an inline image,
 // or on the definition a reference image points to, in any of the three
@@ -622,6 +632,47 @@ describe("a decorative title on an image with no alternative text", () => {
     expect(altFindings("![](decoration(1).png (decorative))\n")).toEqual([missingAlt("decoration(1")]);
     // With no destination before it, the text in parentheses is the destination.
     expect(altFindings("![]( (decorative))\n")).toEqual([missingAlt(" (decorative")]);
+  });
+
+  test("is not read across Unicode whitespace, which CommonMark keeps in an inline destination", () => {
+    for (const space of NOT_A_SEPARATOR) {
+      const name = `U+${space.charCodeAt(0).toString(16)}`;
+      for (const title of ['"decorative"', "'decorative'"]) {
+        expect(altFindings(`![](decoration.png${space}${title})\n`), name)
+          .toEqual([missingAlt(`decoration.png${space}${title}`)]);
+      }
+      expect(altFindings(`![](decoration.png${space}(decorative))\n`), name)
+        .toEqual([missingAlt(`decoration.png${space}(decorative`)]);
+    }
+  });
+
+  test("is not read across Unicode whitespace in a definition, which keeps it in the destination", () => {
+    for (const space of NOT_A_SEPARATOR) {
+      const name = `U+${space.charCodeAt(0).toString(16)}`;
+      for (const title of ['"decorative"', "'decorative'", "(decorative)"]) {
+        expect(altFindings(`![][dec]\n\n[dec]: decoration.png${space}${title}\n`), name)
+          .toEqual([missingAlt("dec")]);
+      }
+    }
+  });
+
+  test("is read across spaces and tabs, the separators CommonMark names", () => {
+    // The CommonMark specification allows spaces and tabs here. Its reference
+    // parser, commonmark.js 0.31.2, renders no image after a tab, which leaves
+    // nothing to report either way.
+    for (const separator of ["\t", "  ", " \t ", "\t\t"]) {
+      for (const title of ['"decorative"', "'decorative'", "(decorative)"]) {
+        expect(altFindings(`![](decoration.png${separator}${title})\n`), JSON.stringify(separator)).toEqual([]);
+      }
+    }
+  });
+
+  test("is read when the destination itself ends in Unicode whitespace", () => {
+    const space = String.fromCharCode(0x00a0);
+    for (const title of ['"decorative"', "'decorative'", "(decorative)"]) {
+      expect(altFindings(`![](decoration.png${space} ${title})\n`), title).toEqual([]);
+      expect(altFindings(`![](${space} ${title})\n`), title).toEqual([]);
+    }
   });
 
   test("changes nothing for an image whose reference has no definition", () => {

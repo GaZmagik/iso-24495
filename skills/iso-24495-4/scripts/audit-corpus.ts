@@ -1740,12 +1740,16 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
       const target = link.target.trim();
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        if (/\s+(?:"decorative"|'decorative')\s*$/i.test(link.target)) continue;
+        // CommonMark separates a title from its destination with spaces and
+        // tabs only. Other Unicode whitespace, such as U+00A0, belongs to the
+        // destination, so an image written that way has no title. A line is
+        // read alone here, so no line ending can fall between the two.
+        if (/[ \t]+(?:"decorative"|'decorative')\s*$/i.test(link.target)) continue;
         // The destination ends at the first ")", so a title in parentheses
         // arrives without its own ")". That ")" and the image's closing one
         // follow, with nothing but spaces between them. A destination must come
         // first, or the parenthesised text is the destination and not a title.
-        if (/\S\s+\(decorative$/i.test(link.target) && /^[ \t]*\)/.test(line.slice(link.end))) continue;
+        if (/[^ \t][ \t]+\(decorative$/i.test(link.target) && /^[ \t]*\)/.test(line.slice(link.end))) continue;
       } else {
         const name = normaliseReference(target);
         if (!references.has(name)) continue;
