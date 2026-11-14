@@ -171,7 +171,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   { id: "15e", demand: "The opening names the primary audience.", state: "not-read", checks: [], needs: [], limits: [] },
   {
     id: "15f", demand: "The opening gives a version or date.", state: "fault",
-    checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown"],
+    checks: [{ rule: "opening-version-date", kind: "offline" }], needs: ["markdown", "front-matter"],
     limits: [
       "It asks a question as an advisory, rather than stating a fault.",
       "It needs a Markdown level-1 title, though not every one counts, such as `> # Guide`. It does not read an HTML title such as `<h1>Guide</h1>`, but it can take a `#` line that shows as text, such as one inside an HTML block like `<div>`, as one. A file named README, CONTRIBUTING, SECURITY or PULL_REQUEST_TEMPLATE is exempt, with or without an extension, even a two-part one such as `README.fr.md`. So can one in another letter case, such as `readme.MD`, but a longer name such as `README-fr.md` is not. It is off when front matter is read as text.",
@@ -305,7 +305,10 @@ const QUESTION_OF_COVERAGE: Readonly<Record<string, string>> = { purpose: "purpo
 const KIND_OF_QUESTION: Readonly<Record<string, RequestKind>> = { purpose: "opening", colour_only: "block" };
 
 /** The order in which a clause's needs are written. */
-const NEED_ORDER: readonly Need[] = ["markdown", "jev-route", "send", "before"];
+const NEED_ORDER: readonly Need[] = ["markdown", "jev-route", "send", "front-matter", "before"];
+
+/** The needs a route meets or not by its options, in the order a clause writes them. */
+const ROUTE_NEEDS: readonly Need[] = ["jev-route", "send", "front-matter"];
 
 /** One check a clause names. */
 type Check = Clause["checks"][number];
@@ -314,7 +317,8 @@ type Check = Clause["checks"][number];
  * One way of running the audit: the command, the options it is given
  * besides the target, the project folder and `--json`, the needs it meets
  * beside Markdown, and the endings of the files it reads. The design audit
- * reads no `.txt` file.
+ * reads no `.txt` file, and only the plain text audit takes
+ * `--no-front-matter`.
  */
 interface Route {
   readonly name: string;
@@ -329,11 +333,12 @@ interface Route {
  * send routes reach a stubbed transport and never the network.
  */
 const ROUTES: readonly Route[] = [
-  { name: "text audit", command: "text", options: [], meets: [], reads: ["md", "txt"] },
-  { name: "text audit --jev-preview", command: "text", options: ["--jev-preview"], meets: ["jev-route"], reads: ["md", "txt"] },
-  { name: "text audit --jev --send", command: "text", options: ["--jev", "--send", "--yes"], meets: ["jev-route", "send"], reads: ["md", "txt"] },
-  { name: "design audit", command: "design", options: [], meets: ["jev-route"], reads: ["md"] },
-  { name: "design audit --send", command: "design", options: ["--send", "--yes"], meets: ["jev-route", "send"], reads: ["md"] },
+  { name: "text audit", command: "text", options: [], meets: ["front-matter"], reads: ["md", "txt"] },
+  { name: "text audit --no-front-matter", command: "text", options: ["--no-front-matter"], meets: [], reads: ["md", "txt"] },
+  { name: "text audit --jev-preview", command: "text", options: ["--jev-preview"], meets: ["jev-route", "front-matter"], reads: ["md", "txt"] },
+  { name: "text audit --jev --send", command: "text", options: ["--jev", "--send", "--yes"], meets: ["jev-route", "send", "front-matter"], reads: ["md", "txt"] },
+  { name: "design audit", command: "design", options: [], meets: ["jev-route", "front-matter"], reads: ["md"] },
+  { name: "design audit --send", command: "design", options: ["--send", "--yes"], meets: ["jev-route", "send", "front-matter"], reads: ["md"] },
 ];
 
 /**
@@ -868,14 +873,23 @@ async function printed(command: Route["command"], argv: readonly string[], reque
 
 /**
  * The needs a check was measured to have on its clause's specimen: Markdown
- * when no route names it on the `.txt` copy, the Jev route when the plain
- * text audit does not name it, and a send when no preview names it.
+ * when no route names it on the `.txt` copy. Then each other need in turn,
+ * judged only on the routes that do not meet it but meet every need found
+ * before it: it is a need when there is such a route and none of them names
+ * the check on either copy.
+ *
+ * So the Jev route is a need when neither plain text audit names it, a send
+ * when no preview names it, and front matter when the text audit with
+ * `--no-front-matter` does not name it. A Jev check is not judged for front
+ * matter, because no route that refuses it takes the Jev route.
  */
 function measuredNeeds(check: string, clause: string, readings: readonly RouteReading[]): Need[] {
   const needs: Need[] = [];
   if (!readings.some(reading => names(reading, `${clause}.txt`, check))) needs.push("markdown");
-  if (!readings.some(reading => reading.route.meets.length === 0 && (names(reading, `${clause}.md`, check) || names(reading, `${clause}.txt`, check)))) needs.push("jev-route");
-  if (!readings.some(reading => !reading.route.meets.includes("send") && (names(reading, `${clause}.md`, check) || names(reading, `${clause}.txt`, check)))) needs.push("send");
+  for (const need of ROUTE_NEEDS) {
+    const lacking = readings.filter(reading => !reading.route.meets.includes(need) && needs.every(found => found === "markdown" || reading.route.meets.includes(found)));
+    if (lacking.length > 0 && !lacking.some(reading => names(reading, `${clause}.md`, check) || names(reading, `${clause}.txt`, check))) needs.push(need);
+  }
   return needs;
 }
 
@@ -1049,6 +1063,25 @@ describe("the Part 5 checklist clause registry", () => {
       }
     }
   }, 60000);
+
+  test("both Jev routes refuse --no-front-matter, so only the plain text audit can leave the front matter need unmet", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-front-matter-"));
+    try {
+      const file = join(directory, "dated.md");
+      writeFileSync(file, SPECIMENS["15f"]?.text ?? "");
+      const jevRoutes = ROUTES.filter(route => route.meets.includes("jev-route"));
+      expect(jevRoutes).toHaveLength(4);
+      for (const route of jevRoutes) {
+        const requests: string[] = [];
+        const run = await printed(route.command, ["bun", "cli", file, "--project-dir", directory, ...route.options, "--no-front-matter"], requests);
+        expect(run.exit, route.name).toBe(2);
+        expect(requests, route.name).toEqual([]);
+      }
+      expect(ROUTES.filter(route => !route.meets.includes("front-matter")).map(route => route.options)).toEqual([["--no-front-matter"]]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
   test(PRINT_TEST, async () => {
     const directory = mkdtempSync(join(tmpdir(), "checklist-print-"));

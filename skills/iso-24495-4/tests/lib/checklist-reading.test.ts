@@ -11,10 +11,10 @@ import { CHECKLIST, type ChecklistItem, type Clause, type ClauseState, type Need
 import { checklistReading, formatChecklistReading, type RunFacts } from "../../scripts/lib/checklist-reading.ts";
 
 /** A plain text audit of one Markdown file: no Jev option, no send. */
-const PLAIN_MARKDOWN: RunFacts = { mode: "text", markdown: true, jevPreview: false, jev: false, send: false, before: false, facts: [] };
+const PLAIN_MARKDOWN: RunFacts = { mode: "text", files: 1, markdownFiles: 1, refused: 0, frontMatter: true, jevPreview: false, jev: false, send: false, before: false, facts: [] };
 
 /** Every key a run fact may have. The function reads these and nothing else. */
-const RUN_FACT_KEYS = ["mode", "markdown", "jevPreview", "jev", "send", "before", "facts"];
+const RUN_FACT_KEYS = ["mode", "files", "markdownFiles", "refused", "frontMatter", "jevPreview", "jev", "send", "before", "facts"];
 
 /** The fault clauses of today's registry that need nothing, in order. */
 const NEED_NOTHING = ["1a", "6a", "12a", "12b", "12c", "13b", "19b"];
@@ -58,6 +58,11 @@ function run(changes: Partial<RunFacts>): RunFacts {
   return { ...PLAIN_MARKDOWN, ...changes };
 }
 
+/** The printed reading of a registry against one run's facts. */
+function formatted(checklist: readonly ChecklistItem[], facts: RunFacts): string {
+  return formatChecklistReading(checklistReading(checklist, facts), checklist);
+}
+
 /** The ids a reading did not use, each with the needs it names as unmet. */
 function unmet(facts: RunFacts): Array<[string, readonly Need[]]> {
   return checklistReading(CHECKLIST, facts).run.notUsed.map(entry => [entry.clause, entry.needs]);
@@ -74,8 +79,11 @@ describe("the tool reading counts every clause of the registry", () => {
   test("the tool reading is the same whatever the run", () => {
     const first = checklistReading(CHECKLIST, PLAIN_MARKDOWN);
     for (const mode of ["text", "design"] as const) {
-      for (const flags of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]) {
-        const facts: RunFacts = { mode, markdown: (flags & 1) > 0, jevPreview: (flags & 2) > 0, jev: (flags & 4) > 0, send: (flags & 8) > 0, before: (flags & 16) > 0, facts: ["any"] };
+      for (const flags of Array.from({ length: 128 }).keys()) {
+        const facts: RunFacts = {
+          mode, files: 2, markdownFiles: flags & 1, refused: (flags & 64) > 0 ? 1 : 0, frontMatter: (flags & 32) > 0,
+          jevPreview: (flags & 2) > 0, jev: (flags & 4) > 0, send: (flags & 8) > 0, before: (flags & 16) > 0, facts: ["any"],
+        };
         const reading = checklistReading(CHECKLIST, facts);
         expect([reading.clauses, reading.reading, reading.tool]).toEqual([first.clauses, first.reading, first.tool]);
         expect(reading.run.used.length + reading.run.notUsed.length).toBe(15);
@@ -113,7 +121,7 @@ describe("the this-run reading uses the fault clauses whose needs the run meets"
   });
 
   test("a .txt file meets no Markdown need", () => {
-    const facts = run({ markdown: false });
+    const facts = run({ markdownFiles: 0 });
     expect(checklistReading(CHECKLIST, facts).run.used).toEqual(NEED_NOTHING);
     expect(unmet(facts)).toEqual([
       ["3a", ["markdown"]], ["3b", ["markdown"]], ["8c", ["markdown"]], ["15a", ["markdown", "jev-route"]],
@@ -141,19 +149,73 @@ describe("the this-run reading uses the fault clauses whose needs the run meets"
 
   test("a clause that needs the original version is met only by --before", () => {
     const probe = registry([{ state: "fault", needs: ["before"] }]);
-    expect(checklistReading(probe, PLAIN_MARKDOWN).run).toEqual({ used: [], notUsed: [{ clause: "1a", needs: ["before"] }] });
-    expect(checklistReading(probe, run({ before: true })).run).toEqual({ used: ["1a"], notUsed: [] });
+    expect(checklistReading(probe, PLAIN_MARKDOWN).run).toEqual({ used: [], notUsed: [{ clause: "1a", needs: ["before"] }], filesNotReached: 0, documentsNotSent: 0 });
+    expect(checklistReading(probe, run({ before: true })).run).toEqual({ used: ["1a"], notUsed: [], filesNotReached: 0, documentsNotSent: 0 });
   });
 
   test("a clause that needs a declared fact is met only when that fact exists", () => {
     const probe = registry([{ state: "fault", needs: ["fact:audience"] }]);
-    expect(checklistReading(probe, run({ facts: ["date"] })).run).toEqual({ used: [], notUsed: [{ clause: "1a", needs: ["fact:audience"] }] });
-    expect(checklistReading(probe, run({ facts: ["date", "audience"] })).run).toEqual({ used: ["1a"], notUsed: [] });
+    expect(checklistReading(probe, run({ facts: ["date"] })).run).toEqual({ used: [], notUsed: [{ clause: "1a", needs: ["fact:audience"] }], filesNotReached: 0, documentsNotSent: 0 });
+    expect(checklistReading(probe, run({ facts: ["date", "audience"] })).run).toEqual({ used: ["1a"], notUsed: [], filesNotReached: 0, documentsNotSent: 0 });
   });
 
   test("a clause in another state is neither used nor listed as not used, whatever its needs", () => {
     const probe = registry([{ state: "pass-only", needs: ["send"] }, { state: "not-read" }, { state: "fault" }]);
-    expect(checklistReading(probe, PLAIN_MARKDOWN).run).toEqual({ used: ["1c"], notUsed: [] });
+    expect(checklistReading(probe, PLAIN_MARKDOWN).run).toEqual({ used: ["1c"], notUsed: [], filesNotReached: 0, documentsNotSent: 0 });
+  });
+});
+
+describe("front matter read as text, a mixed selection and a refused document each change line 2", () => {
+  test("front matter read as text leaves the version or date clause unused", () => {
+    expect(unmet(run({ frontMatter: false }))).toEqual([
+      ["15a", ["jev-route"]], ["15c", ["jev-route", "send"]], ["15d", ["jev-route", "send"]], ["15f", ["front-matter"]],
+    ]);
+    expect(unmet(run({ frontMatter: false, markdownFiles: 0 })).find(entry => entry[0] === "15f")).toEqual(["15f", ["markdown", "front-matter"]]);
+    expect(formatted(CHECKLIST, run({ frontMatter: false })).split("\n")[1])
+      .toBe("This run was set to use 11 of the 15. 1 needs the Jev route. 2 need the Jev route and --send. 1 needs front matter to be read.");
+  });
+
+  test("a selection of Markdown and other files names the files the Markdown clauses do not reach", () => {
+    const mixed = checklistReading(CHECKLIST, run({ files: 3, markdownFiles: 1 }));
+    expect(mixed.run.filesNotReached).toBe(2);
+    expect(mixed.run.used).toEqual(checklistReading(CHECKLIST, PLAIN_MARKDOWN).run.used);
+    expect(formatChecklistReading(mixed, CHECKLIST).split("\n")[1])
+      .toBe("This run was set to use 12 of the 15. 1 needs the Jev route. 2 need the Jev route and --send. 2 selected files are not Markdown, so the 5 that need a Markdown file do not reach them.");
+    expect(formatted(CHECKLIST, run({ mode: "design", send: true, files: 2, markdownFiles: 1 })).split("\n")[1])
+      .toBe("This run was set to use 15 of the 15. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it.");
+  });
+
+  test("a selection with no Markdown file, or no file, adds no sentence about the files not reached", () => {
+    const text = checklistReading(CHECKLIST, run({ files: 2, markdownFiles: 0 }));
+    expect(text.run.filesNotReached).toBe(2);
+    expect(formatChecklistReading(text, CHECKLIST).split("\n")[1]).toBe(formatted(CHECKLIST, run({ markdownFiles: 0 })).split("\n")[1]);
+    const empty = checklistReading(CHECKLIST, run({ files: 0, markdownFiles: 0 }));
+    expect([empty.run.filesNotReached, empty.run.documentsNotSent]).toEqual([0, 0]);
+    expect(formatChecklistReading(empty, CHECKLIST).split("\n")[1]).toBe(formatChecklistReading(text, CHECKLIST).split("\n")[1]);
+  });
+
+  test("a refused document names the files the Jev route clauses do not reach, and never says all", () => {
+    const preview = checklistReading(CHECKLIST, run({ mode: "design", refused: 1 }));
+    expect(preview.run.documentsNotSent).toBe(1);
+    expect(formatChecklistReading(preview, CHECKLIST).split("\n")[1])
+      .toBe("This run was set to use 13 of the 15. 2 need --send. 1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.");
+    expect(formatted(CHECKLIST, run({ mode: "design", send: true, files: 2, markdownFiles: 2, refused: 2 })).split("\n")[1])
+      .toBe("This run was set to use 15 of the 15. 2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.");
+  });
+
+  test("a refused document beside a .txt file in a text Jev run names both", () => {
+    expect(formatted(CHECKLIST, run({ jev: true, send: true, files: 3, markdownFiles: 2, refused: 1 })).split("\n")[1])
+      .toBe("This run was set to use 15 of the 15. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it. "
+        + "1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.");
+  });
+
+  test("no sentence names files that no used clause would reach", () => {
+    const probe = registry([{ state: "fault" }, { state: "fault", needs: ["send"] }]);
+    const reading = checklistReading(probe, run({ files: 3, markdownFiles: 1, refused: 1 }));
+    expect([reading.run.filesNotReached, reading.run.documentsNotSent]).toEqual([2, 1]);
+    expect(formatChecklistReading(reading, probe).split("\n")[1]).toBe("This run was set to use 1 of the 2. 1 needs --send.");
+    expect(formatted(registry([{ state: "fault" }]), run({ files: 3, markdownFiles: 1, refused: 1 })).split("\n")[1])
+      .toBe("This run was set to use all 1.");
   });
 });
 
@@ -167,13 +229,13 @@ describe("the function reads the registry and the run facts, and nothing else", 
     expect(takesTwo).toBe(true);
   });
 
-  test("it reads no key of the run facts but the seven named", () => {
+  test("it reads no key of the run facts but the ten named", () => {
     KEYS_READ.clear();
     const withVerdict = { ...PLAIN_MARKDOWN, verdict: "fail", results: [] };
     const watched = new Proxy<RunFacts>(withVerdict, { get: recordRead });
     const reading = checklistReading(CHECKLIST, watched);
     expect([...KEYS_READ].every(key => RUN_FACT_KEYS.includes(String(key)))).toBe(true);
-    expect(KEYS_READ.has("markdown")).toBe(true);
+    expect(KEYS_READ.has("markdownFiles")).toBe(true);
     expect(reading).toEqual(checklistReading(CHECKLIST, PLAIN_MARKDOWN));
   });
 
@@ -187,7 +249,7 @@ describe("the function reads the registry and the run facts, and nothing else", 
 
 describe("the printed reading is four lines in plain words", () => {
   test("a plain text audit of a Markdown file", () => {
-    expect(formatChecklistReading(checklistReading(CHECKLIST, PLAIN_MARKDOWN)).split("\n")).toEqual([
+    expect(formatted(CHECKLIST, PLAIN_MARKDOWN).split("\n")).toEqual([
       "Part 5 checklist reading: checks can report a fault on 15 of 64 clauses (0.23), each within recorded limits.",
       "This run was set to use 12 of the 15. 1 needs the Jev route. 2 need the Jev route and --send.",
       "Of the other 49 clauses: 1 can only pass, 14 need the original version, 1 is a judgement, 33 are not read.",
@@ -196,21 +258,22 @@ describe("the printed reading is four lines in plain words", () => {
   });
 
   test("a run that uses every fault clause says so", () => {
-    expect(formatChecklistReading(checklistReading(CHECKLIST, run({ mode: "design", send: true }))).split("\n")[1])
+    expect(formatted(CHECKLIST, run({ mode: "design", send: true })).split("\n")[1])
       .toBe("This run was set to use all 15.");
   });
 
   test("unused clauses are grouped by what they still need, in the order they first appear", () => {
-    expect(formatChecklistReading(checklistReading(CHECKLIST, run({ markdown: false }))).split("\n")[1])
+    expect(formatted(CHECKLIST, run({ markdownFiles: 0 })).split("\n")[1])
       .toBe("This run was set to use 7 of the 15. 5 need a Markdown file. 1 needs a Markdown file and the Jev route. 2 need a Markdown file, the Jev route and --send.");
     const probe = registry([{ state: "fault", needs: ["fact:audience", "before"] }, { state: "fault", needs: ["before"] }, { state: "fault", needs: ["before"] }]);
-    expect(formatChecklistReading(checklistReading(probe, PLAIN_MARKDOWN)).split("\n")[1])
+    expect(formatted(probe, PLAIN_MARKDOWN).split("\n")[1])
       .toBe("This run was set to use 0 of the 3. 1 needs the declared fact audience and the original version. 2 need the original version.");
   });
 
   test("a count of one takes the singular in every phrase", () => {
-    const reading = checklistReading(registry([{ state: "fault" }, { state: "pass-only" }, { state: "needs-two-versions" }, { state: "not-checkable" }, { state: "not-read" }]), PLAIN_MARKDOWN);
-    expect(formatChecklistReading(reading).split("\n")).toEqual([
+    const probe = registry([{ state: "fault" }, { state: "pass-only" }, { state: "needs-two-versions" }, { state: "not-checkable" }, { state: "not-read" }]);
+    const reading = checklistReading(probe, PLAIN_MARKDOWN);
+    expect(formatChecklistReading(reading, probe).split("\n")).toEqual([
       "Part 5 checklist reading: checks can report a fault on 1 of 5 clauses (0.20), each within recorded limits.",
       "This run was set to use all 1.",
       "Of the other 4 clauses: 1 can only pass, 1 needs the original version, 1 is a judgement, 1 is not read.",
@@ -219,11 +282,12 @@ describe("the printed reading is four lines in plain words", () => {
   });
 
   test("a count other than one takes the plural in every phrase", () => {
-    const reading = checklistReading(registry([
+    const probe = registry([
       { state: "pass-only" }, { state: "pass-only" }, { state: "needs-two-versions" }, { state: "needs-two-versions" },
       { state: "not-checkable" }, { state: "not-checkable" }, { state: "not-read" }, { state: "not-read" },
-    ]), PLAIN_MARKDOWN);
-    expect(formatChecklistReading(reading).split("\n").slice(0, 3)).toEqual([
+    ]);
+    const reading = checklistReading(probe, PLAIN_MARKDOWN);
+    expect(formatChecklistReading(reading, probe).split("\n").slice(0, 3)).toEqual([
       "Part 5 checklist reading: checks can report a fault on 0 of 8 clauses (0.00), each within recorded limits.",
       "This run was set to use all 0.",
       "Of the other 8 clauses: 2 can only pass, 2 need the original version, 2 are judgements, 2 are not read.",
@@ -231,7 +295,7 @@ describe("the printed reading is four lines in plain words", () => {
   });
 
   test("a registry of one clause is named in the singular", () => {
-    expect(formatChecklistReading(checklistReading(registry([{ state: "not-read" }]), PLAIN_MARKDOWN)).split("\n").slice(0, 3)).toEqual([
+    expect(formatted(registry([{ state: "not-read" }]), PLAIN_MARKDOWN).split("\n").slice(0, 3)).toEqual([
       "Part 5 checklist reading: checks can report a fault on 0 of 1 clause (0.00), each within recorded limits.",
       "This run was set to use all 0.",
       "Of the other 1 clause: 0 can only pass, 0 need the original version, 0 are judgements, 1 is not read.",
@@ -239,15 +303,19 @@ describe("the printed reading is four lines in plain words", () => {
   });
 
   test("every sentence printed for today's registry is under 30 words", () => {
-    for (const facts of [PLAIN_MARKDOWN, run({ markdown: false }), run({ jevPreview: true }), run({ mode: "design" }), run({ mode: "design", send: true })]) {
-      for (const sentence of formatChecklistReading(checklistReading(CHECKLIST, facts)).split(/(?<=\.)\s+|\n/)) {
+    for (const facts of [
+      PLAIN_MARKDOWN, run({ markdownFiles: 0 }), run({ jevPreview: true }), run({ mode: "design" }), run({ mode: "design", send: true }),
+      run({ frontMatter: false, markdownFiles: 0 }), run({ jev: true, send: true, files: 3, markdownFiles: 2, refused: 1 }),
+      run({ mode: "design", files: 2, markdownFiles: 2, refused: 2 }),
+    ]) {
+      for (const sentence of formatted(CHECKLIST, facts).split(/(?<=\.)\s+|\n/)) {
         expect(sentence.split(/\s+/).filter(word => word.length > 0).length).toBeLessThan(30);
       }
     }
   });
 
   test("the printed reading holds no clause id", () => {
-    const text = formatChecklistReading(checklistReading(CHECKLIST, run({ markdown: false })));
+    const text = formatted(CHECKLIST, run({ markdownFiles: 0 }));
     for (const id of [...NEED_NOTHING, ...NEED_MARKDOWN, "15a", "15c", "15d"]) {
       expect(text).not.toContain(id);
     }
@@ -264,6 +332,13 @@ const PLAIN_LINE_2 = "This run was set to use 12 of the 15. 1 needs the Jev rout
 const PREVIEW_LINE_2 = "This run was set to use 13 of the 15. 2 need --send.";
 const SEND_LINE_2 = "This run was set to use all 15.";
 const TEXT_FILE_LINE_2 = "This run was set to use 7 of the 15. 5 need a Markdown file. 1 needs a Markdown file and the Jev route. 2 need a Markdown file, the Jev route and --send.";
+const NO_FRONT_MATTER_LINE_2 = "This run was set to use 11 of the 15. 1 needs the Jev route. 2 need the Jev route and --send. 1 needs front matter to be read.";
+const MIXED_LINE_2 = "This run was set to use 12 of the 15. 1 needs the Jev route. 2 need the Jev route and --send. 1 selected file is not Markdown, so the 5 that need a Markdown file do not reach it.";
+const MIXED_PREVIEW_LINE_2 = "This run was set to use 13 of the 15. 2 need --send. 1 selected file is not Markdown, so the 6 that need a Markdown file do not reach it.";
+const REFUSED_PREVIEW_LINE_2 = "This run was set to use 13 of the 15. 2 need --send. 1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.";
+const REFUSED_SEND_LINE_2 = "This run was set to use 15 of the 15. 1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
+const REFUSED_MIXED_PREVIEW_LINE_2 = "This run was set to use 13 of the 15. 2 need --send. 1 selected file is not Markdown, so the 6 that need a Markdown file do not reach it. "
+  + "1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.";
 const TEXT_FILE_ROUTE_LINE_2 = "This run was set to use 7 of the 15. 6 need a Markdown file. 2 need a Markdown file and --send.";
 
 /** A Markdown document with a title, an opening and one block, so a send makes three requests. */
@@ -435,21 +510,63 @@ describe("both audits print the reading after the mechanical findings", () => {
     });
   });
 
-  // A refused document is still a Markdown file, and the design audit still
-  // takes the Jev route for the run. The reading is set by the run's
-  // arguments and files, so it does not change; the warning says that
-  // nothing from the document is sent.
-  test("a refused document gives the reading of any Markdown file", async () => {
+  // A refused document is still a Markdown file that the mechanical checks
+  // read, but nothing from it is sent. That is decided while the files are
+  // selected, before any request, so line 2 can say so.
+  test("a refused document is named as one the Jev route clauses do not reach", async () => {
     await inDirectory({ "tab.md": REFUSED }, async directory => {
       const preview = await designAudit([join(directory, "tab.md"), "--project-dir", directory], {});
       expect(preview.exit).toBe(0);
       expect(preview.err).toHaveLength(1);
-      expect(preview.out[1]).toBe(printedReading(PREVIEW_LINE_2));
+      expect(preview.out[1]).toBe(printedReading(REFUSED_PREVIEW_LINE_2));
+    });
+  });
+
+  test("a send of only refused documents makes no request and does not say all 15", async () => {
+    await inDirectory({ "tab.md": REFUSED }, async directory => {
+      const bodies: string[] = [];
+      const sent = await designAudit([join(directory, "tab.md"), "--project-dir", directory, "--send", "--yes"], stubbed(NEITHER, bodies, []));
+      expect(sent.exit).toBe(0);
+      expect(bodies).toEqual([]);
+      expect(sent.out[1]).toBe(printedReading(REFUSED_SEND_LINE_2));
+    });
+  });
+
+  test("the plain text audit with --no-front-matter says the version or date clause needs front matter to be read", async () => {
+    await inDirectory({ "doc.md": GUIDE }, async directory => {
+      const plain = await textAudit([join(directory, "doc.md"), "--project-dir", directory, "--no-front-matter"], {});
+      expect(plain.exit).toBe(0);
+      expect(plain.out[1]).toBe(printedReading(NO_FRONT_MATTER_LINE_2));
+    });
+  });
+
+  test("a folder of Markdown and .txt files names the file the Markdown clauses do not reach", async () => {
+    await inDirectory({ "doc.md": GUIDE, "notes.txt": GUIDE }, async directory => {
+      const plain = await textAudit([directory, "--project-dir", directory], {});
+      expect(plain.out[1]).toBe(printedReading(MIXED_LINE_2));
+      const preview = await textAudit([directory, "--project-dir", directory, "--jev-preview"], {});
+      expect(preview.out[1]).toBe(printedReading(MIXED_PREVIEW_LINE_2));
+    });
+  });
+
+  test("a text Jev preview of a folder with a refused document and a .txt file names both", async () => {
+    await inDirectory({ "doc.md": GUIDE, "notes.txt": GUIDE, "tab.md": REFUSED }, async directory => {
+      const preview = await textAudit([directory, "--project-dir", directory, "--jev-preview"], {});
+      expect(preview.exit).toBe(0);
+      expect(preview.out[1]).toBe(printedReading(REFUSED_MIXED_PREVIEW_LINE_2));
     });
   });
 });
 
-describe("a run that stops before the audit prints no reading, and keeps its exit code", () => {
+describe("a run that stops before its mechanical findings print prints no reading, and keeps its exit code", () => {
+  test("either audit with no argument prints its usage and no reading", async () => {
+    const text = await textAudit([], {});
+    expect([text.exit, text.out]).toEqual([2, []]);
+    expect(text.err[0]).toStartWith("Usage:");
+    const design = await designAudit([], {});
+    expect([design.exit, design.out]).toEqual([2, []]);
+  });
+
   test("the design audit refuses a .txt file with exit 1", async () => {
     await inDirectory({ "doc.txt": GUIDE }, async directory => {
       const refused = await designAudit([join(directory, "doc.txt"), "--project-dir", directory], {});
@@ -474,6 +591,32 @@ describe("a run that stops before the audit prints no reading, and keeps its exi
   });
 });
 
+// The Jev route prints the mechanical findings and the reading before it
+// writes a preview's report or asks for agreement, so these stops come after
+// the reading.
+describe("a Jev route run that stops after its mechanical findings print has already printed the reading", () => {
+  test("a send without agreement prints the reading, sends nothing and exits 2", async () => {
+    await inDirectory({ "doc.md": GUIDE }, async directory => {
+      const bodies: string[] = [];
+      const dependencies = stubbed(NEITHER, bodies, []);
+      const refused = await designAudit([join(directory, "doc.md"), "--project-dir", directory, "--send"], { ...dependencies, terminal: { inputIsTTY: true, outputIsTTY: true, prompt: async () => "no" } });
+      expect(refused.exit).toBe(2);
+      expect(refused.out[1]).toBe(printedReading(SEND_LINE_2));
+      expect(refused.err).toEqual(["Agreement was not yes. Nothing was sent."]);
+      expect(bodies).toEqual([]);
+    });
+  });
+
+  test("a preview whose report cannot be written prints the reading and exits 1", async () => {
+    await inDirectory({ "doc.md": GUIDE }, async directory => {
+      const preview = await textAudit([join(directory, "doc.md"), "--project-dir", directory, "--jev-preview", "--json", join(directory, "missing", "report.json")], {});
+      expect(preview.exit).toBe(1);
+      expect(preview.out[1]).toBe(printedReading(PREVIEW_LINE_2));
+      expect(preview.err).toEqual(["The preview report could not be written."]);
+    });
+  });
+});
+
 describe("the --json report of each audit gains a checklist key, and nothing else", () => {
   const plainChecklist = {
     clauses: 64,
@@ -482,6 +625,8 @@ describe("the --json report of each audit gains a checklist key, and nothing els
     run: {
       used: ["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b"],
       notUsed: [{ clause: "15a", needs: ["jev-route"] }, { clause: "15c", needs: ["jev-route", "send"] }, { clause: "15d", needs: ["jev-route", "send"] }],
+      filesNotReached: 0,
+      documentsNotSent: 0,
     },
   };
 
@@ -503,7 +648,10 @@ describe("the --json report of each audit gains a checklist key, and nothing els
       expect((await designAudit([join(directory, "doc.md"), "--project-dir", directory, "--json", json], {})).exit).toBe(0);
       const preview = JSON.parse(readFileSync(json, "utf8"));
       expect(Object.keys(preview)).toEqual(["mechanical", "jev", "preview", "checklist"]);
-      expect(preview.checklist.run).toEqual({ used: [...plainChecklist.run.used.slice(0, 9), "15a", "15f", "17a", "19b"], notUsed: [{ clause: "15c", needs: ["send"] }, { clause: "15d", needs: ["send"] }] });
+      expect(preview.checklist.run).toEqual({
+        used: [...plainChecklist.run.used.slice(0, 9), "15a", "15f", "17a", "19b"], notUsed: [{ clause: "15c", needs: ["send"] }, { clause: "15d", needs: ["send"] }],
+        filesNotReached: 0, documentsNotSent: 0,
+      });
       expect((await designAudit([join(directory, "doc.md"), "--project-dir", directory, "--send", "--yes", "--json", json], stubbed(NEITHER, [], []))).exit).toBe(0);
       const sent = JSON.parse(readFileSync(json, "utf8"));
       expect(Object.keys(sent)).toEqual(["mechanical", "jev", "checklist"]);
@@ -518,12 +666,38 @@ describe("the --json report of each audit gains a checklist key, and nothing els
       expect((await designAudit([join(directory, "tab.md"), "--project-dir", directory, "--json", json], {})).exit).toBe(0);
       const refused = JSON.parse(readFileSync(json, "utf8"));
       expect(refused.jev.notSent).toHaveLength(1);
+      expect(refused.checklist.run.documentsNotSent).toBe(refused.jev.notSent.length);
       expect(refused.checklist.run.notUsed).toEqual([{ clause: "15c", needs: ["send"] }, { clause: "15d", needs: ["send"] }]);
       rmSync(join(directory, "tab.md"));
       expect((await designAudit([directory, "--project-dir", directory, "--json", json], {})).exit).toBe(0);
       const empty = JSON.parse(readFileSync(json, "utf8"));
       expect(Object.keys(empty.mechanical.files)).toEqual([]);
       expect(empty.checklist.run.used).toEqual(NEED_NOTHING);
+      expect([empty.checklist.run.filesNotReached, empty.checklist.run.documentsNotSent]).toEqual([0, 0]);
+    });
+  });
+});
+
+describe("the --json report carries the files not reached and the documents not sent", () => {
+  test("a text Jev preview of a folder with a refused document and a .txt file counts each", async () => {
+    await inDirectory({ "doc.md": GUIDE, "notes.txt": GUIDE, "tab.md": REFUSED }, async directory => {
+      const json = join(directory, "report.json");
+      expect((await textAudit([directory, "--project-dir", directory, "--jev-preview", "--json", json], {})).exit).toBe(0);
+      const report = JSON.parse(readFileSync(json, "utf8"));
+      expect(Object.keys(report.checklist.run)).toEqual(["used", "notUsed", "filesNotReached", "documentsNotSent"]);
+      expect([report.checklist.run.filesNotReached, report.checklist.run.documentsNotSent]).toEqual([1, 1]);
+      expect(report.checklist.run.documentsNotSent).toBe(report.jev.notSent.length);
+    });
+  });
+
+  test("the plain text audit counts the .txt files of a mixed folder, and with --no-front-matter leaves 15f unused", async () => {
+    await inDirectory({ "doc.md": GUIDE, "notes.txt": GUIDE }, async directory => {
+      const json = join(directory, "report.json");
+      expect((await textAudit([directory, "--project-dir", directory, "--no-front-matter", "--json", json], {})).exit).toBe(0);
+      const run = JSON.parse(readFileSync(json, "utf8")).checklist.run;
+      expect([run.filesNotReached, run.documentsNotSent]).toEqual([1, 0]);
+      expect(run.used).not.toContain("15f");
+      expect(run.notUsed.at(-1)).toEqual({ clause: "15f", needs: ["front-matter"] });
     });
   });
 });

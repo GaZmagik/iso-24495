@@ -121,11 +121,16 @@ export function runCli(
     for (const path of findings.skipped) {
       stderr(skippedEntryWarning(path));
     }
-    // The plain audit takes no Jev route and sends nothing. Of what a run can
-    // meet, only the Markdown need depends on the files read.
+    // The plain audit takes no Jev route, sends nothing and refuses no
+    // document. Of what a run can meet, the Markdown need depends on the files
+    // read and the front matter need on --no-front-matter.
+    const files = Object.keys(findings.files);
     const checklist = checklistReading(CHECKLIST, {
       mode: "text",
-      markdown: Object.keys(findings.files).some(file => /\.(?:md|markdown)$/i.test(file)),
+      files: files.length,
+      markdownFiles: files.filter(file => /\.(?:md|markdown)$/i.test(file)).length,
+      refused: 0,
+      frontMatter,
       jevPreview: false,
       jev: false,
       send: false,
@@ -141,7 +146,7 @@ export function runCli(
     }
     stdout(formatFindings(findings));
     // Printed apart from the table: the pull request check reuses formatFindings, and prints no reading.
-    stdout(formatChecklistReading(checklist));
+    stdout(formatChecklistReading(checklist, CHECKLIST));
     return 0;
   } catch (error) {
     if (error instanceof UnsupportedSelection) {

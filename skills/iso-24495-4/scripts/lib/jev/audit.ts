@@ -177,7 +177,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   }
   const checklist = checklistReading(CHECKLIST, runFacts(mode, args, selection));
   stdout(formatMechanical(selection.mechanical));
-  stdout(formatChecklistReading(checklist));
+  stdout(formatChecklistReading(checklist, CHECKLIST));
   // A send prints the local findings with the Jev findings, so only a preview prints them here.
   const local = localFindings(selection);
   if (!args.send && local.length > 0) stdout(formatLocal(local));
@@ -497,13 +497,18 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
 /**
  * What a run is, for the checklist reading, from its arguments and the files
  * it read. Text mode reaches here with `--jev-preview`, or with `--jev` and
- * `--send` together, so a text run that is not a preview had `--jev`. No
- * option gives the original version, and no fact can be declared yet.
+ * `--send` together, so a text run that is not a preview had `--jev`. A
+ * document is refused while the files are selected, before any request. This
+ * route refuses `--no-front-matter`, so front matter is always read as such.
+ * No option gives the original version, and no fact can be declared yet.
  */
 function runFacts(mode: "text" | "design", args: Arguments, selection: Selection): RunFacts {
   return {
     mode,
-    markdown: selection.paths.some(path => /\.(?:md|markdown)$/i.test(path)),
+    files: selection.paths.length,
+    markdownFiles: selection.paths.filter(path => /\.(?:md|markdown)$/i.test(path)).length,
+    refused: selection.documents.filter(document => document.refusal !== undefined).length,
+    frontMatter: args.frontMatter,
     jevPreview: mode === "text" && args.preview,
     jev: mode === "text" && !args.preview,
     send: args.send,
