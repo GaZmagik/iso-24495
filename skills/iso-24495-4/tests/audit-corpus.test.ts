@@ -660,6 +660,9 @@ describe("a decorative title on a reference image", () => {
     for (const label of ["a.b", "a:b", "a/b"]) {
       expect(altFindings(`![][${label}]\n\n[${label}]: decoration.png "decorative"\n`), label).toHaveLength(1);
     }
+    // The Kelvin sign is "k" in lower case, but it is not ASCII, so the image is reported.
+    const kelvin = String.fromCharCode(0x212a);
+    expect(altFindings(`![][${kelvin}]\n\n[k]: decoration.png "decorative"\n`)).toEqual([missingAlt(kelvin)]);
   });
 
   test("is not honoured when another definition could be the one a renderer takes", () => {

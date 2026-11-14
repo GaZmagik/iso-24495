@@ -1851,7 +1851,7 @@ function decorativeLabels(written: readonly string[]): Set<string> {
     if (text[at] !== "]") continue;
     if (open !== -1 && text[at + 1] === ":") {
       const label = text.slice(open + 1, at);
-      if (/[\u0080-￿]/.test(label)) return new Set();
+      if (/[\u0080-\uffff]/.test(label)) return new Set();
       const key = labelKey(label);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
