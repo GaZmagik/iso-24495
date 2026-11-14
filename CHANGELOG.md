@@ -17,6 +17,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Explicit non-interactive agreement.** A user-supplied `--yes` is required alongside `--send`. Agents must never add `--yes` or infer agreement from a delegated instruction.
 - **Separate report sections.** Mechanical findings and Jev results have separate JSON properties. Full judged state needs an explicitly requested export path and an extra option.
 - **Transport controls.** Four concurrent requests use at most six attempts each, with a 30-second timeout per attempt. The client retries timeouts, connection failures, HTTP 429 and 5xx, and answers that fail a value check, and a request sent again for any reason may be charged again. Retries preserve bytes and never replace an accepted answer.
+- **A Part 5 checklist reading.** Both audits print how many checklist clauses their checks can report a fault on, and how many this run was set to use. It counts every clause, so it moves only when a check ships. It marks progress and does not measure the document. No Jev answer changes it, and the JSON report holds it under `checklist`.
 - **A failed send says why.** The report names the first failure in fixed words, after "Execution: incomplete." and in the JSON property `failure`. The words never include the service's reply, the key or an unexpected error's message.
 
 ### Known limits

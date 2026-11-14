@@ -1,6 +1,8 @@
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { auditText, configHash, isAuditedDocument, listTextFiles, projectAcronyms } from "../../audit-corpus.ts";
+import { CHECKLIST } from "../checklist.ts";
+import { checklistReading, formatChecklistReading, type RunFacts } from "../checklist-reading.ts";
 import { frontMatterRange, toLines } from "../parse.ts";
 import type { Findings } from "../types.ts";
 import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvidence } from "./catalogue.ts";
@@ -86,7 +88,8 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  * - `--yes` stands for agreement where input or output is not a terminal. At
  *   a terminal it is not enough: the user is still asked, and must type
  *   exactly "yes".
- * - `--json <file>` writes the report to that file, replacing it.
+ * - `--json <file>` writes the report to that file, replacing it. The Part 5
+ *   checklist reading is its last key, `checklist`.
  * - `--include-judged-text` adds the full judged text to that report, and is
  *   refused without `--json`.
  * - `--project-dir <directory>` sets where paths are reported from and where
@@ -123,7 +126,9 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  *
  * Both modes run the whole offline text audit, `auditText`, on every selected
  * document, and print its findings before the disclosure. Those findings are
- * never sent.
+ * never sent. The Part 5 checklist reading follows them. It is read from the
+ * arguments and the selected files before any request, so no Jev answer
+ * changes it.
  *
  * A preview also prints the local findings of the plan, such as a missing
  * title, between those findings and the disclosure. With none it prints no
@@ -134,8 +139,9 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  * @param mode "text" also accepts `.txt` files, and needs `--jev-preview`, or
  *     `--jev` with `--send`. "design" accepts Markdown alone.
  * @param argv The whole command line.
- * @param stdout Receives the mechanical findings, then in a preview any local
- *     findings, then the disclosure, then the Jev findings after a send.
+ * @param stdout Receives the mechanical findings, then the checklist reading,
+ *     then in a preview any local findings, then the disclosure, then the Jev
+ *     findings after a send.
  * @param stderr Receives a warning for each skipped entry and each refused
  *     document, and the reason for every exit code but 0.
  * @param dependencies Replacements for the environment, the terminal, the
@@ -169,14 +175,16 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   for (const document of selection.documents) {
     if (document.refusal !== undefined) stderr(`warning: not sent: ${safePath(document.file)}: ${document.refusal}`);
   }
+  const checklist = checklistReading(CHECKLIST, runFacts(mode, args, selection));
   stdout(formatMechanical(selection.mechanical));
+  stdout(formatChecklistReading(checklist));
   // A send prints the local findings with the Jev findings, so only a preview prints them here.
   const local = localFindings(selection);
   if (!args.send && local.length > 0) stdout(formatLocal(local));
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
     try {
-      if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true }, null, 2));
+      if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true, checklist }, null, 2));
     } catch {
       stderr("The preview report could not be written.");
       return 1;
@@ -236,7 +244,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   try {
     const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: queue.failure === undefined };
     (dependencies.writeLog ?? writeAuditLog)(record, join(args.projectDir, ".iso-24495-4", "jev-audit.jsonl"));
-    if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report }, null, 2));
+    if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report, checklist }, null, 2));
   } catch {
     stderr("The audit log or report could not be written. Execution is incomplete.");
     return 1;
@@ -485,6 +493,23 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
           : "Add an explicit reader's task and document scope in the opening." };
   if (includeText) result.state = candidate.body.state;
   return result;
+}
+/**
+ * What a run is, for the checklist reading, from its arguments and the files
+ * it read. Text mode reaches here with `--jev-preview`, or with `--jev` and
+ * `--send` together, so a text run that is not a preview had `--jev`. No
+ * option gives the original version, and no fact can be declared yet.
+ */
+function runFacts(mode: "text" | "design", args: Arguments, selection: Selection): RunFacts {
+  return {
+    mode,
+    markdown: selection.paths.some(path => /\.(?:md|markdown)$/i.test(path)),
+    jevPreview: mode === "text" && args.preview,
+    jev: mode === "text" && !args.preview,
+    send: args.send,
+    before: false,
+    facts: [],
+  };
 }
 function formatMechanical(findings: Findings): string {
   return ["Mechanical findings", "| File | Line | Rule | Finding |", "|------|------|------|---------|", ...Object.entries(findings.files).flatMap(([file, result]) => result.violations.map(finding => `| ${safePathCell(file)} | ${finding.line} | ${finding.rule} | ${safeCell(finding.detail)} |`)), "Mechanical findings are proxies, not an ISO judgement."].join("\n");
