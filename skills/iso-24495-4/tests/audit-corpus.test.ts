@@ -541,21 +541,24 @@ describe("an argument list with a hole", () => {
   });
 });
 
+/** What the alt-text rule says about the text, as its finding details. */
+function altFindings(text: string): string[] {
+  return auditText(text)
+    .filter((finding) => finding.rule === "image-alt")
+    .map((finding) => finding.detail);
+}
+
+/** The finding the alt-text rule gives for an image, named as the finding names it. */
+function missingAlt(name: string): string {
+  return `image has no alternative text (${name})`;
+}
+
 // A title of "decorative" marks an image that carries no meaning. The mark is
 // honoured wherever Markdown carries a title for the image: on an inline image,
 // or on the definition a reference image points to, in any of the three
 // quoting styles. The two spellings render the same image, so they get the
 // same reading.
 describe("a decorative title on an image with no alternative text", () => {
-  /** What the alt-text rule says about the text, as its finding details. */
-  function altFindings(text: string): string[] {
-    return auditText(text)
-      .filter((finding) => finding.rule === "image-alt")
-      .map((finding) => finding.detail);
-  }
-
-  const MISSING = (name: string) => `image has no alternative text (${name})`;
-
   test("is honoured on an inline image in each of the three quoting styles", () => {
     expect(altFindings('![](decoration.png "decorative")\n')).toEqual([]);
     expect(altFindings("![](decoration.png 'decorative')\n")).toEqual([]);
@@ -581,13 +584,13 @@ describe("a decorative title on an image with no alternative text", () => {
     expect(altFindings('![][the  Dec]\n\n[The dec]: decoration.png "decorative"\n')).toEqual([]);
     // The title belongs to the definition the image names, not to its neighbour.
     expect(altFindings('![][plain]\n\n[dec]: decoration.png "decorative"\n[plain]: plain.png\n'))
-      .toEqual([MISSING("plain")]);
+      .toEqual([missingAlt("plain")]);
   });
 
   test("counts only on the first definition of a label, as the destination does", () => {
     expect(altFindings('![][dec]\n\n[dec]: decoration.png "decorative"\n[dec]: other.png\n')).toEqual([]);
     expect(altFindings('![][dec]\n\n[dec]: other.png\n[dec]: decoration.png "decorative"\n'))
-      .toEqual([MISSING("dec")]);
+      .toEqual([missingAlt("dec")]);
   });
 
   test("ignores case in the word, on both kinds of image", () => {
@@ -598,25 +601,25 @@ describe("a decorative title on an image with no alternative text", () => {
 
   test("is not read into a title that says anything else, on either kind of image", () => {
     for (const title of ['"not decorative"', '"decorative image"', '" decorative"', '"&#100;ecorative"', '""']) {
-      expect(altFindings(`![][dec]\n\n[dec]: decoration.png ${title}\n`), title).toEqual([MISSING("dec")]);
-      expect(altFindings(`![](decoration.png ${title})\n`), title).toEqual([MISSING(`decoration.png ${title}`.slice(0, 40))]);
+      expect(altFindings(`![][dec]\n\n[dec]: decoration.png ${title}\n`), title).toEqual([missingAlt("dec")]);
+      expect(altFindings(`![](decoration.png ${title})\n`), title).toEqual([missingAlt(`decoration.png ${title}`.slice(0, 40))]);
     }
-    expect(altFindings("![](decoration.png (not decorative))\n")).toEqual([MISSING("decoration.png (not decorative")]);
+    expect(altFindings("![](decoration.png (not decorative))\n")).toEqual([missingAlt("decoration.png (not decorative")]);
   });
 
   test("is needed: a reference image whose definition has no title is reported", () => {
-    expect(altFindings("![][dec]\n\n[dec]: decoration.png\n")).toEqual([MISSING("dec")]);
-    expect(altFindings("![][dec]\n\n[dec]: decorative.png\n")).toEqual([MISSING("dec")]);
+    expect(altFindings("![][dec]\n\n[dec]: decoration.png\n")).toEqual([missingAlt("dec")]);
+    expect(altFindings("![][dec]\n\n[dec]: decorative.png\n")).toEqual([missingAlt("dec")]);
   });
 
   test("is not read from a title on the line below the definition", () => {
-    expect(altFindings('![][dec]\n\n[dec]: decoration.png\n"decorative"\n')).toEqual([MISSING("dec")]);
+    expect(altFindings('![][dec]\n\n[dec]: decoration.png\n"decorative"\n')).toEqual([missingAlt("dec")]);
   });
 
   test("is not read from text that follows a closed inline image", () => {
     // The destination ends at the first ")", so this image has none of the title.
-    expect(altFindings("![](decoration.png (decorative) x)\n")).toEqual([MISSING("decoration.png (decorative")]);
-    expect(altFindings("![](decoration(1).png (decorative))\n")).toEqual([MISSING("decoration(1")]);
+    expect(altFindings("![](decoration.png (decorative) x)\n")).toEqual([missingAlt("decoration.png (decorative")]);
+    expect(altFindings("![](decoration(1).png (decorative))\n")).toEqual([missingAlt("decoration(1")]);
   });
 
   test("changes nothing for an image whose reference has no definition", () => {
@@ -639,7 +642,7 @@ describe("a decorative title on an image with no alternative text", () => {
 
   test("leaves HTML images as they were", () => {
     expect(altFindings('<img src="decoration.png" alt="">\n')).toEqual([]);
-    expect(altFindings('<img src="decoration.png" alt>\n')).toEqual([MISSING("decoration.png")]);
-    expect(altFindings('<img src="decoration.png" title="decorative">\n')).toEqual([MISSING("decoration.png")]);
+    expect(altFindings('<img src="decoration.png" alt>\n')).toEqual([missingAlt("decoration.png")]);
+    expect(altFindings('<img src="decoration.png" title="decorative">\n')).toEqual([missingAlt("decoration.png")]);
   });
 });
