@@ -18,9 +18,9 @@
 // - send: the run sends the document to Jev after agreement: the design
 //   audit with --send, or the text audit with --jev and --send. A preview
 //   sends nothing and receives no answer.
-// - front-matter: a leading "---" block is read as front matter. Every run
-//   reads it so, except the plain text audit with --no-front-matter, which
-//   reads it as text. Both Jev routes refuse that option.
+// - front-matter: a leading "---" block is read as front matter. Both
+//   audits read it so, except the plain text audit with --no-front-matter,
+//   which reads it as text. Both Jev routes refuse that option.
 //
 // The test of this module measures each need by running those commands with
 // and without what the need names, with a stand-in for the transport.

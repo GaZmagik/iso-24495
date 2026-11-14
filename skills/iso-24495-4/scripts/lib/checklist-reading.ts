@@ -112,7 +112,7 @@ export interface RunFacts {
    * while the files were selected, so nothing from them is sent.
    */
   readonly refused: number;
-  /** A leading "---" block is read as front matter. Only the plain text audit with --no-front-matter reads it as text. */
+  /** A leading "---" block is read as front matter. Of the runs that print a reading, only the plain text audit with --no-front-matter reads it as text. */
   readonly frontMatter: boolean;
   readonly jevPreview: boolean;
   readonly jev: boolean;
