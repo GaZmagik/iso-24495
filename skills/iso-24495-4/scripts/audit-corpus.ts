@@ -1789,11 +1789,18 @@ function decorativeImageEnd(source: string, at: number): number | null {
     index++;
   } else {
     const destination = index;
+    // Whether the last character read is a backslash that escapes nothing.
+    let lone = false;
     while (index < source.length && source[index] !== " " && !isControlCharacter(source.charCodeAt(index))) {
       if (source[index] === "(" || source[index] === ")") return null;
-      index += escapeLength(source, index);
+      const length = escapeLength(source, index);
+      lone = length === 1 && source[index] === "\\";
+      index += length;
     }
     if (index === destination) return null;
+    // A backslash escapes punctuation alone, so CommonMark ends the destination
+    // at a space or a tab after one. Bun's renderer reads on, and shows no title.
+    if (lone) return null;
   }
   const gap = index;
   index = pastSpacesAndTabs(source, index);

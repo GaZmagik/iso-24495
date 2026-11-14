@@ -133,7 +133,8 @@ interface LinkDefinition {
  *
  * @returns Null when the line is not such a definition. Otherwise its title as
  *     written between the quotes or parentheses, with no entity or escape
- *     read, or null in `title` when the definition has none.
+ *     read, or null in `title` when the definition has none, or when its
+ *     destination ends in a backslash that a renderer may read on past.
  */
 function linkDefinition(line: string): LinkDefinition | null {
   const start = /^ {0,3}\[/.exec(line);
@@ -158,6 +159,10 @@ function linkDefinition(line: string): LinkDefinition | null {
     index++;
   }
 
+  // Whether the destination ends in a backslash that escapes nothing. CommonMark
+  // ends the destination at the space after it, but Bun's renderer reads on, so
+  // the title that follows is not one every renderer shows.
+  let loneBackslash = false;
   if (line[index] === "<") {
     index++;
     let closed = false;
@@ -181,8 +186,10 @@ function linkDefinition(line: string): LinkDefinition | null {
     while (index < line.length && line[index] !== " " && line[index] !== "\t") {
       if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line.charAt(index + 1))) {
         index += 2;
+        loneBackslash = false;
         continue;
       }
+      loneBackslash = line[index] === "\\";
       // CommonMark refuses an ASCII control character here, so the line is a
       // paragraph a reader sees. U+0000 is the exception: CommonMark replaces
       // it with U+FFFD before reading, and U+FFFD may stand in a destination.
@@ -217,7 +224,8 @@ function linkDefinition(line: string): LinkDefinition | null {
   while (line[index] === " ") {
     index++;
   }
-  return index === line.length ? { title } : null;
+  if (index !== line.length) return null;
+  return { title: loneBackslash ? null : title };
 }
 
 /**

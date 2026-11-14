@@ -90,6 +90,18 @@ describe("readDocument titles", () => {
     expect(titlesOf('[a]: <x\\> "t"> "u"\n')).toEqual([["a", "u"]]);
   });
 
+  test("reads no title after a destination that ends in a backslash escaping nothing", () => {
+    // CommonMark ends the destination at the space. Bun's renderer reads on.
+    for (const title of ['"t"', "'t'", "(t)"]) {
+      expect(titlesOf(`[a]: /u\\ ${title}\n`), title).toEqual([]);
+      expect(titlesOf(`[a]: /u\\\\\\ ${title}\n`), title).toEqual([]);
+      expect(readDocument(`[a]: /u\\ ${title}\n`).references.has("a"), title).toBe(true);
+      // An escaped backslash, or one before a letter, leaves the title as it was.
+      expect(titlesOf(`[a]: /u\\\\ ${title}\n`), title).toEqual([["a", "t"]]);
+      expect(titlesOf(`[a]: /u\\x ${title}\n`), title).toEqual([["a", "t"]]);
+    }
+  });
+
   test("reads no title for a label once it could not read a line that may define it", () => {
     // CommonMark takes a label's first definition, and these first lines are
     // definitions to at least one renderer. The later title may not be the one

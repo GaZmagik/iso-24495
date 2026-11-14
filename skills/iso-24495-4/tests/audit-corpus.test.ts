@@ -700,6 +700,26 @@ describe("a decorative title on an image with no alternative text", () => {
     }
   });
 
+  test("is not read after a backslash that ends a destination before a space or a tab", () => {
+    // CommonMark ends the destination at the space and reads the title. Bun's
+    // renderer keeps the space in the destination and shows no title, so the
+    // image is reported, as text one renderer shows untitled must be.
+    for (const between of ["\\ ", "\\\t"]) {
+      for (const title of DECORATIVE_TITLES) {
+        expect(altFindings(`![](decoration.png${between}${title})\n`), between + title).toHaveLength(1);
+        expect(altFindings(`![][dec]\n\n[dec]: decoration.png${between}${title}\n`), between + title)
+          .toEqual(between === "\\ " ? [missingAlt("dec")] : []);
+      }
+    }
+    // An escaped backslash escapes nothing after it, and an odd run ends in one that does.
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![](decoration.png\\\\ ${title})\n`), title).toEqual([]);
+      expect(altFindings(`![](decoration.png\\\\\\ ${title})\n`), title).toHaveLength(1);
+      expect(altFindings(`![][dec]\n\n[dec]: decoration.png\\\\ ${title}\n`), title).toEqual([]);
+      expect(altFindings(`![][dec]\n\n[dec]: decoration.png\\\\\\ ${title}\n`), title).toEqual([missingAlt("dec")]);
+    }
+  });
+
   test("is read across an escaped parenthesis in a destination", () => {
     for (const title of DECORATIVE_TITLES) {
       expect(altFindings(`![](decoration${"\\"}).png ${title})\n`), title).toEqual([]);
