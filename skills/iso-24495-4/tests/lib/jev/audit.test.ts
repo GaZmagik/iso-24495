@@ -883,6 +883,49 @@ test("running the text audit inside the design audit changes nothing that is sen
   }
 });
 
+// The alt-text rule reads a reference definition's title through the shared
+// parser, which also reads what is sent. Recorded from both audits at c9715a3,
+// before the title was read: the digest of the sorted request bodies, and the
+// send log's digest.
+const IMAGE_DOCUMENT = [
+  "# Title",
+  "",
+  "The supplier shall act.",
+  "",
+  "A second paragraph for the reader. ![][dec] and ![][plain] and ![](flourish.png (decorative)).",
+  "",
+  "See [the guide][guide] for more.",
+  "",
+  "[dec]: decoration.png \"decorative\"",
+  "[plain]: plain.png",
+  "[guide]: https://example.com/guide 'The guide'",
+  "",
+].join("\n");
+const IMAGE_BODIES_BEFORE = "770e8e0fba6e2213153461166a6c44b98ada5e56b885c18952cc34b396584007";
+const IMAGE_LOG_DIGEST_BEFORE = "5f368c7034390124f7884e7ec0cb088500ca7ddc619d18c94341f5f1c3e50f49";
+
+test("reading a reference definition's title changes nothing that is sent or logged", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-image-title-unchanged-"));
+  try {
+    const file = join(directory, "doc.md");
+    writeFileSync(file, IMAGE_DOCUMENT);
+    for (const mode of ["design", "text"] as const) {
+      const bodies: string[] = [];
+      const digests: string[] = [];
+      const dependencies = recordingDependencies(bodies);
+      dependencies.writeLog = record => {
+        digests.push(record.digest);
+      };
+      expect(await runAuditCli(mode, ["bun", "cli", file, "--project-dir", directory, ...(mode === "text" ? ["--jev"] : []), "--send", "--yes"], () => {}, () => {}, dependencies), mode).toBe(0);
+      expect(bodies, mode).toHaveLength(4);
+      expect(sha256(JSON.stringify([...bodies].sort())), mode).toBe(IMAGE_BODIES_BEFORE);
+      expect(digests, mode).toEqual([IMAGE_LOG_DIGEST_BEFORE]);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 // A preview of a document with no title wrote the local opening-title finding to its
 // JSON report and printed it nowhere, so a user who only previewed never saw it. A
 // send printed it, with the Jev findings. The preview now prints it in a block of its
