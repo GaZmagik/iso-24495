@@ -57,13 +57,13 @@ const BETWEEN: ReadonlyArray<[name: string, text: string]> = [
 ];
 
 /** Where the image stands. A definition context names the image by reference. */
-const PLACES: ReadonlyArray<[name: string, place: (image: string, tail: string) => string]> = [
-  ["a paragraph", (image) => `${image}\n`],
-  ["a heading", (image) => `# ${image}\n`],
-  ["a list item", (image) => `- ${image}\n`],
-  ["a quotation", (image) => `> ${image}\n`],
-  ["a link", (image) => `[${image}](page.md)\n`],
-  ["a reference definition", (_image, tail) => `![][dec]\n\n[dec]: ${tail}\n`],
+const PLACES: ReadonlyArray<[name: string, place: (parts: { image: string; tail: string }) => string]> = [
+  ["a paragraph", ({ image }) => `${image}\n`],
+  ["a heading", ({ image }) => `# ${image}\n`],
+  ["a list item", ({ image }) => `- ${image}\n`],
+  ["a quotation", ({ image }) => `> ${image}\n`],
+  ["a link", ({ image }) => `[${image}](page.md)\n`],
+  ["a reference definition", ({ tail }) => `![][dec]\n\n[dec]: ${tail}\n`],
 ];
 
 /** One generated document, with what it was built from. */
@@ -85,7 +85,7 @@ export function imageTitleDocuments(): ImageTitleDocument[] {
         const afterText = after === "" ? "" : text + after;
         const tail = written.replace("{in}", insideText) + afterText;
         for (const [place, placed] of PLACES) {
-          documents.push({ text: placed(`![](${tail})`, tail), destination, title, between, place });
+          documents.push({ text: placed({ image: `![](${tail})`, tail }), destination, title, between, place });
         }
       }
     }
@@ -96,4 +96,32 @@ export function imageTitleDocuments(): ImageTitleDocument[] {
 /** The same document with the title's word changed, so that no rule could honour it. */
 export function withOtherWord(text: string): string {
   return text.replaceAll("decorative", "ornamental");
+}
+
+/**
+ * How a renderer shows one document's image, as one letter: "n" for no image,
+ * "u" for an image with no title, "d" for the title decorative in any case,
+ * and "o" for any other title.
+ *
+ * @param titles The title of each image the renderer shows, null or empty
+ *     where it shows none.
+ * @throws When there is more than one image, since every document is built to
+ *     hold one and a second would hide behind the first.
+ */
+export function renderingOf(titles: ReadonlyArray<string | null>): string {
+  if (titles.length > 1) throw new Error(`expected one image, found ${titles.length}`);
+  const [title] = titles;
+  if (title === undefined) return "n";
+  if (title === null || title === "") return "u";
+  return /^decorative$/i.test(title) ? "d" : "o";
+}
+
+/** A digest of every document's text, so a recording can show which documents it is of. */
+export function documentsDigest(documents: readonly ImageTitleDocument[]): string {
+  const hash = new Bun.CryptoHasher("sha256");
+  for (const document of documents) {
+    hash.update(document.text);
+    hash.update("\u0000");
+  }
+  return hash.digest("hex");
 }

@@ -17,3 +17,11 @@ It prints the counts and rewrites the fixture in place. Nothing else is needed, 
 **A difference the engine cannot explain stops the run.** `reasonFor` decides whether this engine reads a document differently on purpose. It decides from what the document contains, not from a word in its name. An earlier version classified by name, which would have let an unrelated defect wear an unrelated excuse.
 
 One adjustment makes the comparison meaningful. The reference renders inline markup, while this engine keeps the source, because its rules read link syntax and code spans. The comparison flattens ours. Without that, 153 documents looked like disagreements and every one was the comparison's fault.
+
+## Image titles
+
+`build-image-titles.ts` records how the reference shows the one image in each document of `../fixtures/image-title-documents.ts`, in `../fixtures/image-title-renderings.ts`. `../image-title-renderer.test.ts` holds the image-alt rule against that record and against Bun's renderer. Install the reference outside the repository as above, then tell Bun where it is:
+
+```sh
+NODE_PATH="$PWD/node_modules" bun /path/to/skills/iso-24495-4/tests/reference/build-image-titles.ts
+```
