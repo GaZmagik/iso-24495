@@ -22,6 +22,15 @@ const NEED_NOTHING = ["1a", "6a", "12a", "12b", "12c", "13b", "19b"];
 /** The fault clauses of today's registry that need a Markdown file alone, in order. */
 const NEED_MARKDOWN = ["3a", "3b", "8c", "15f", "17a"];
 
+/**
+ * True only when `checklistReading` takes exactly two parameters, the second
+ * of them `RunFacts`. An extra parameter, optional or not, makes it false,
+ * and the type check then fails the test that assigns true to it.
+ */
+type TakesExactlyTwo = Parameters<typeof checklistReading>["length"] extends 2
+  ? [RunFacts] extends [Parameters<typeof checklistReading>[1]] ? true : false
+  : false;
+
 /** The keys of the run facts that `recordRead` has seen read. */
 const KEYS_READ = new Set<string | symbol>();
 
@@ -153,6 +162,9 @@ describe("the function reads the registry and the run facts, and nothing else", 
   // arguments, and reads only the named keys of the second.
   test("it takes two arguments", () => {
     expect(checklistReading.length).toBe(2);
+    // A third parameter with a default leaves the length at 2, so the type check holds the count too.
+    const takesTwo: TakesExactlyTwo = true;
+    expect(takesTwo).toBe(true);
   });
 
   test("it reads no key of the run facts but the seven named", () => {
