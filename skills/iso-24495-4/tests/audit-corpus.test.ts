@@ -693,6 +693,10 @@ describe("a decorative title on an image with no alternative text", () => {
       expect(altFindings(`Text \`code\nmore\` ![](decoration.png ${title})\n`), title).toHaveLength(1);
       expect(altFindings(`Text \`code more\` ![](decoration.png ${title})\n`), title).toEqual([]);
     }
+    // A comment opened in the destination ends after the image. Renderers show
+    // the title, but the reader rewrote the image's own text, so it is reported.
+    expect(altFindings('![](decoration.png<!-- "decorative") -->)\n')).toHaveLength(1);
+    expect(altFindings("![](decoration.png<!-- (decorative)) -->)\n")).toHaveLength(1);
   });
 
   test("is read after a destination in angle brackets", () => {
