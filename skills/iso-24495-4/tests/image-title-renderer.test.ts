@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { auditText } from "../scripts/audit-corpus.ts";
 import {
   documentsDigest,
@@ -31,6 +31,8 @@ interface Cell extends ImageTitleDocument {
   commonmark: string;
   bun: string;
   honoured: boolean;
+  /** Whether the rule reports the document with the word changed, so has a title to honour. */
+  reported: boolean;
 }
 
 /** The number of image-alt findings in a text. */
@@ -49,14 +51,21 @@ let built: Cell[] | null = null;
 
 /** Every cell, worked out once and shared by the tests. */
 function cells(): Cell[] {
-  built ??= imageTitleDocuments().map((document, index) => ({
-    ...document,
-    commonmark: COMMONMARK_RENDERINGS.charAt(index),
-    bun: bunRendering(document.text),
-    honoured: imageFindings(document.text) < imageFindings(withOtherWord(document.text)),
-  }));
+  built ??= imageTitleDocuments().map((document, index) => {
+    const other = imageFindings(withOtherWord(document.text));
+    return {
+      ...document,
+      commonmark: COMMONMARK_RENDERINGS.charAt(index),
+      bun: bunRendering(document.text),
+      honoured: imageFindings(document.text) < other,
+      reported: other > 0,
+    };
+  });
   return built;
 }
+
+// Auditing every document twice takes longer than one test is given.
+const BUILD_TIME_MS = 60_000;
 
 /** A cell as one line, for a failure message. */
 function named(cell: Cell): string {
@@ -64,6 +73,10 @@ function named(cell: Cell): string {
 }
 
 describe("the image-alt rule honours a decorative title only where a renderer shows one", () => {
+  beforeAll(() => {
+    cells();
+  }, BUILD_TIME_MS);
+
   test("the recorded renderings are of these documents", () => {
     const documents = imageTitleDocuments();
     expect(COMMONMARK_RENDERINGS).toHaveLength(documents.length);
@@ -83,9 +96,15 @@ describe("the image-alt rule honours a decorative title only where a renderer sh
   test("wherever both renderers show it, except after a plain destination holding parentheses", () => {
     // The rule does not follow parentheses in a plain destination, and the
     // checklist's limits say so.
-    const missed = cells().filter((cell) => !cell.honoured && cell.commonmark === "d" && cell.bun === "d");
+    const shown = cells().filter((cell) => !cell.honoured && cell.commonmark === "d" && cell.bun === "d");
+    const missed = shown.filter((cell) => cell.reported);
     expect(missed.filter((cell) => cell.destination !== "plain with parentheses").map(named)).toEqual([]);
-    expect(missed).toHaveLength(25);
+    expect(missed).toHaveLength(31);
+    // The rest the rule's scan does not take for an image even with the word
+    // changed, so there is no finding to remove. All of them sit in a link.
+    const unseen = shown.filter((cell) => !cell.reported);
+    expect(unseen.filter((cell) => !cell.place.startsWith("a link's")).map(named)).toEqual([]);
+    expect(unseen).toHaveLength(28);
   });
 
   test("sees every kind of cell it is meant to tell apart", () => {
@@ -94,10 +113,13 @@ describe("the image-alt rule honours a decorative title only where a renderer sh
     // the documents, the rule or Bun's renderer shows here rather than passing
     // quietly.
     const all = cells();
-    expect(all).toHaveLength(2880);
-    expect(all.filter((cell) => cell.honoured)).toHaveLength(274);
-    expect(all.filter((cell) => cell.commonmark === "u" || cell.bun === "u")).toHaveLength(1632);
-    expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(825);
-    expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(417);
+    expect(all).toHaveLength(5280);
+    expect(all.filter((cell) => cell.honoured)).toHaveLength(338);
+    expect(all.filter((cell) => cell.commonmark === "u" || cell.bun === "u")).toHaveLength(2202);
+    expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(2481);
+    expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(573);
+    // Text in an earlier link the scan takes for an image, though neither renderer shows one.
+    expect(all.filter((cell) => cell.place.startsWith("a link's") && cell.reported
+      && cell.commonmark === "n" && cell.bun === "n")).toHaveLength(652);
   });
 });

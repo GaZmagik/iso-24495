@@ -64,6 +64,13 @@ const PLACES: ReadonlyArray<[name: string, place: (parts: { image: string; tail:
   ["a quotation", ({ image }) => `> ${image}\n`],
   ["a link", ({ image }) => `[${image}](page.md)\n`],
   ["a reference definition", ({ tail }) => `![][dec]\n\n[dec]: ${tail}\n`],
+  // Text inside an earlier link's destination or title is no image, however
+  // much it looks like one. A title can open on the line before.
+  ["a link's destination in angle brackets", ({ image }) => `[t](<a ${image}>)\n`],
+  ["a link's title", ({ image }) => `[t](a "x ${image}")\n`],
+  ["a link's title opened on the line before", ({ image }) => `[t](a 'x\n${image}')\n`],
+  ["a link's title, by reference", ({ tail }) => `[t](a "x) ![][dec]")\n\n[dec]: ${tail}\n`],
+  ["after a closed link", ({ image }) => `[t](a "x") ${image}\n`],
 ];
 
 /** One generated document, with what it was built from. */

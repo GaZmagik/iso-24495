@@ -548,6 +548,15 @@ function altFindings(text: string): string[] {
     .map((finding) => finding.detail);
 }
 
+/**
+ * Whether the rule honours a decorative title in a text: it reports fewer
+ * findings there than in the same text with the word changed. Comparing the
+ * two leaves out whatever the scan finds that is no image at all.
+ */
+function honoured(text: string): boolean {
+  return altFindings(text).length < altFindings(text.replaceAll("decorative", "ornamental")).length;
+}
+
 /** The finding the alt-text rule gives for an image, named as the finding names it. */
 function missingAlt(name: string): string {
   return `image has no alternative text (${name})`;
@@ -697,6 +706,76 @@ describe("a decorative title on an image with no alternative text", () => {
     // the title, but the reader rewrote the image's own text, so it is reported.
     expect(altFindings('![](decoration.png<!-- "decorative") -->)\n')).toHaveLength(1);
     expect(altFindings("![](decoration.png<!-- (decorative)) -->)\n")).toHaveLength(1);
+  });
+
+  test("is not read on text inside an earlier link's destination or title", () => {
+    // The scan ends a link at its first ")", and reads on from there. CommonMark
+    // reads the link to its ">" or closing quote, so this text is no image.
+    for (const title of DECORATIVE_TITLES) {
+      const image = `![](decoration.png ${title})`;
+      expect(altFindings(`[t](<a) ${image}>)\n`), title).toHaveLength(1);
+      expect(altFindings(`[t](a "x) ${image.replaceAll("\"", "'")}")\n`), title).toHaveLength(1);
+      expect(altFindings(`[t](a 'x) ${image.replaceAll("'", "\"")}')\n`), title).toHaveLength(1);
+      // The title the image sits in may open on the line before.
+      expect(altFindings(`[t](a "x\ny) ${image.replaceAll("\"", "'")}")\n`), title).toHaveLength(1);
+      expect(altFindings(`[t](\n<a) ${image}>)\n`), title).toHaveLength(1);
+      // Once the earlier link has ended, the image is read as before.
+      expect(altFindings(`[t](a) ${image}\n`), title).toEqual([]);
+      expect(altFindings(`[t](<a b> "x") ${image}\n`), title).toEqual([]);
+      expect(altFindings(`[t](a "x\ny") ${image}\n`), title).toEqual([]);
+    }
+    // An image that is part of an earlier image's destination is no image either.
+    expect(altFindings("![](<a) ![](decoration.png (decorative))>)\n")).toHaveLength(2);
+  });
+
+  test("is not read on a reference image inside an earlier link's destination", () => {
+    const definition = '[dec]: decoration.png "decorative"';
+    expect(altFindings(`![](<a) ![][dec]>)\n\n${definition}\n`)).toHaveLength(2);
+    expect(altFindings(`[t](a "x) ![][dec]")\n\n${definition}\n`)).toHaveLength(1);
+    expect(altFindings(`[t](a) ![][dec]\n\n${definition}\n`)).toEqual([]);
+    // Each image on the line is placed on its own side of the link's end.
+    expect(altFindings(`[t](a "x) ![][dec]") ![][dec]\n\n${definition}\n`)).toHaveLength(1);
+    // A label of spaces is empty too, and an image with words in its label is no concern.
+    expect(altFindings(`[t](a "x) ![ ][dec]")\n\n${definition}\n`)).toHaveLength(1);
+    expect(altFindings(`[t](a) ![[x]](y.png) ![ ][dec]\n\n${definition}\n`)).toEqual([]);
+  });
+
+  test("is read where the text after an earlier link's \"(\" is no destination and title", () => {
+    // CommonMark then reads no link, and the image is an image with its title.
+    const image = "![](decoration.png (decorative))";
+    for (const text of [
+      `[t](a "x) ${image.replace("(decorative)", '"decorative"')}")`,
+      `[t](a "x"\n${image})`, `[t](a "x\n\n${image}")`, `[t](\n\n${image})`,
+      // A destination in angle brackets that never closes on its line, and a title that never closes.
+      `[t](<a) ${image}`, `[t](<a\n${image}>)`, `[t](a 'x) ${image}`,
+      // An escaped "]" ends no link text.
+      `x${"\\"}](<a ${image}>)`,
+    ]) {
+      expect(honoured(`${text}\n`), text).toBe(true);
+    }
+  });
+
+  test("is read once an earlier link has closed, however its destination is written", () => {
+    const image = "![](decoration.png (decorative))";
+    for (const text of [
+      `[t]() ${image}`, `[t](a(b) ${image}`, `[t](a (x)) ${image}`, `[t](a\n'x') ${image}`,
+    ]) {
+      expect(honoured(`${text}\n`), text).toBe(true);
+    }
+  });
+
+  test("is not read after an earlier link it cannot follow to its end", () => {
+    // Both renderers show these titles. The rule reports the image rather than guess.
+    const image = "![](decoration.png (decorative))";
+    const deep = `${"(".repeat(33)}a${")".repeat(33)}`;
+    for (const text of [`[t](${deep} ${image})`, `- [t](a "x\n- y ${image}")`, `[t](a "x\n# ${image}")`]) {
+      expect(honoured(`${text}\n`), text).toBe(false);
+    }
+    // With a "(" left open, CommonMark reads no link here, but Bun's renderer
+    // reads one whose title holds the image, so shows no image.
+    expect(honoured(`[t](a(b "x) ${image}")\n`)).toBe(false);
+    // So too with no space between a destination in angle brackets and a title.
+    expect(honoured(`[t](<a>"x) ${image}")\n`)).toBe(false);
   });
 
   test("is read after a destination in angle brackets", () => {

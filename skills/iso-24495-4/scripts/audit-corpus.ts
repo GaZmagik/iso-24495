@@ -1738,22 +1738,177 @@ const DECORATIVE_TITLE = /^decorative$/i;
  *     the rewriting cannot place, such as one after inline markup that runs
  *     on from the line before, is left out, so the rule reports it.
  */
-function decorativeImageStarts(line: string, source: string): Set<number> {
-  const starts = new Set<number>();
+function decorativeImageStarts(line: string, source: string, inLinks: readonly Span[]): LineImages {
+  const decorative = new Set<number>();
+  const outside = new Set<number>();
   // How much of `source` has been rewritten so far, and how long that is in `line`.
   let read = 0;
   let placed = 0;
   for (let at = source.indexOf("!["); at !== -1; at = source.indexOf("![", at + 1)) {
     const end = decorativeImageEnd(source, at);
-    if (end === null) continue;
+    // Where no earlier link runs on in this line, only decorative images need placing.
+    if (end === null && (inLinks.length === 0 || !isReferenceImage(source, at))) continue;
     const before = readerInline(source.slice(read, at));
     // Once the two lines differ, nothing later in them can be placed.
     if (!line.startsWith(before, placed)) break;
     read = at;
     placed += before.length;
-    if (line.startsWith(readerInline(source.slice(at, end)), placed)) starts.add(placed);
+    if (inLinks.some(([from, to]) => from <= at && at < to)) continue;
+    outside.add(placed);
+    if (end !== null && line.startsWith(readerInline(source.slice(at, end)), placed)) decorative.add(placed);
   }
-  return starts;
+  return { decorative, outside };
+}
+
+/**
+ * The images of one line that a decorative title may excuse, by where each
+ * starts in the line as the rule reads it.
+ *
+ * `decorative` holds the inline images whose own title reads decorative.
+ * `outside` holds every image placed outside an earlier link's destination
+ * or title. It is filled only for a line where such a link runs, and is
+ * otherwise empty.
+ */
+interface LineImages {
+  decorative: Set<number>;
+  outside: Set<number>;
+}
+
+// An image that names a reference, with a label of white space at most.
+const REFERENCE_IMAGE = /!\[\s*\]\[/y;
+
+/** Whether the image at `at` names a reference with an empty label. */
+function isReferenceImage(source: string, at: number): boolean {
+  REFERENCE_IMAGE.lastIndex = at;
+  return REFERENCE_IMAGE.test(source);
+}
+
+/** Where some text starts and ends in a line, end excluded. */
+type Span = [from: number, to: number];
+
+/**
+ * Where each line holds text inside an inline link's destination or title.
+ *
+ * The rule's scan ends a link at its first ")". CommonMark reads a link on to
+ * the ">" that ends its destination, or the quote that ends its title, which
+ * can be on a later line. An image the scan finds in that text is no image to
+ * a reader, and its title is no title. So the rule must not honour it.
+ *
+ * Every "](" counts as the start of a link, even one CommonMark would not read
+ * as one, such as in a code span. That only means more images are reported.
+ * Where the text after "(" cannot be a destination and title, CommonMark reads
+ * it as plain text, and so does this. Where it is not certain, the rest of the
+ * block counts as inside the link.
+ *
+ * @param sourceLines Each line as written, as `readDocument` gives them.
+ * @param hidden Whether a line is code or metadata, which no link runs through.
+ * @returns One list of spans for each line, in that line's offsets.
+ */
+function linkTails(sourceLines: readonly string[], hidden: (index: number) => boolean): Span[][] {
+  const spans: Span[][] = sourceLines.map(() => []);
+  let first = 0;
+  while (first < sourceLines.length) {
+    // A block runs to a blank or hidden line, which no title can cross.
+    let last = first;
+    while (last < sourceLines.length && !hidden(last) && itemAt(sourceLines, last).trim() !== "") {
+      last++;
+    }
+    if (last > first) addLinkTails(sourceLines, first, last, spans);
+    first = last + 1;
+  }
+  return spans;
+}
+
+/** Add the spans of the block of lines `first` to `last`, `last` excluded, to `spans`. */
+function addLinkTails(sourceLines: readonly string[], first: number, last: number, spans: Span[][]): void {
+  const block = sourceLines.slice(first, last).join("\n");
+  let after = 0;
+  for (let at = block.indexOf("]("); at !== -1; at = block.indexOf("](", at + 1)) {
+    if (at < after || isEscaped(block, at)) continue;
+    const end = linkTailEnd(block, at + 2);
+    if (end === null) continue;
+    after = end;
+    // Split the span over the lines it crosses.
+    let start = 0;
+    for (let line = first; line < last; line++) {
+      const length = itemAt(sourceLines, line).length;
+      const from = Math.max(at + 2, start);
+      const to = Math.min(end, start + length + 1);
+      if (from < to) itemAt(spans, line).push([from - start, to - start]);
+      start += length + 1;
+    }
+  }
+}
+
+// How deep commonmark.js follows parentheses in a plain destination.
+const MOST_NESTED_PARENTHESES = 32;
+
+/** Whether the character at `index` follows an odd number of backslashes. */
+function isEscaped(text: string, index: number): boolean {
+  let at = index;
+  while (at > 0 && text[at - 1] === "\\") {
+    at--;
+  }
+  return (index - at) % 2 === 1;
+}
+
+/**
+ * Where an inline link's destination and title end, read as CommonMark reads them.
+ *
+ * @param block The lines of one block, joined by line breaks.
+ * @param open The offset just past the "(" after a link's "]".
+ * @returns The offset of the link's closing ")", the end of the block where
+ *     the reading is not certain, or null where the text is no destination
+ *     and title, so CommonMark reads no link there.
+ */
+function linkTailEnd(block: string, open: number): number | null {
+  let index = pastLinkSpace(block, open);
+  if (block[index] === ")") return index;
+  if (block[index] === "<") {
+    index++;
+    while (index < block.length && block[index] !== ">") {
+      if (block[index] === "<" || block[index] === "\n") return null;
+      index += escapeLength(block, index);
+    }
+    if (index === block.length) return null;
+    index++;
+  } else {
+    // A plain destination holds parentheses only in balanced pairs.
+    let depth = 0;
+    while (index < block.length && block[index] !== " " && !isControlCharacter(block.charCodeAt(index))) {
+      if (block[index] === ")") {
+        if (depth === 0) break;
+        depth--;
+      }
+      if (block[index] === "(") depth++;
+      // Renderers may differ on a pair left open or nested deep, so read no further.
+      if (depth > MOST_NESTED_PARENTHESES) return block.length;
+      index += escapeLength(block, index);
+    }
+    if (depth > 0) return block.length;
+  }
+  // CommonMark needs a space before a title, but Bun's renderer reads one
+  // straight after a ">", so this reads it whether or not one stands between.
+  index = pastLinkSpace(block, index);
+  if (block[index] === ")") return index;
+  const opening = block[index];
+  if (opening !== "\"" && opening !== "'" && opening !== "(") return null;
+  const closing = opening === "(" ? ")" : opening;
+  index++;
+  while (index < block.length && block[index] !== closing) {
+    if (opening === "(" && block[index] === "(") return null;
+    index += escapeLength(block, index);
+  }
+  if (index === block.length) return null;
+  index = pastLinkSpace(block, index + 1);
+  return block[index] === ")" ? index : null;
+}
+
+/** Past spaces and tabs, and at most one line break, where CommonMark allows them in a link. */
+function pastLinkSpace(block: string, index: number): number {
+  let at = pastSpacesAndTabs(block, index);
+  if (block[at] === "\n") at = pastSpacesAndTabs(block, at + 1);
+  return at;
 }
 
 /**
@@ -1848,11 +2003,13 @@ function isControlCharacter(code: number): boolean {
 function imageAltViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   const { lines, markupLines, sourceLines, references, titles, hidden } = readDocument(text, reading);
+  const inLinks = linkTails(sourceLines, hidden);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
     const line = itemAt(lines, i);
-    // Found once a line holds an inline image that needs it.
-    let decorative: Set<number> | null = null;
+    const spans = itemAt(inLinks, i);
+    // Found once a line holds an image that needs it.
+    let images: LineImages | null = null;
     // One scan finds both image forms, filtered to the ones with no alternative text.
     for (const link of markdownLinks(line)) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
@@ -1860,12 +2017,17 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
       const target = link.target.trim();
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        decorative ??= decorativeImageStarts(line, itemAt(sourceLines, i));
-        if (decorative.has(link.start)) continue;
+        images ??= decorativeImageStarts(line, itemAt(sourceLines, i), spans);
+        if (images.decorative.has(link.start)) continue;
       } else {
         const name = normaliseReference(target);
         if (!references.has(name)) continue;
-        if (DECORATIVE_TITLE.test(titles.get(name) ?? "")) continue;
+        if (DECORATIVE_TITLE.test(titles.get(name) ?? "")) {
+          if (spans.length === 0) continue;
+          // An earlier link runs in this line, so the image must be placed outside it.
+          images ??= decorativeImageStarts(line, itemAt(sourceLines, i), spans);
+          if (images.outside.has(link.start)) continue;
+        }
       }
       violations.push({
         rule: "image-alt",
