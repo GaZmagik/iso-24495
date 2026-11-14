@@ -556,6 +556,35 @@ function missingAlt(name: string): string {
 const BACKSLASH = "\\";
 const DEFINITION = '[dec]: decoration.png "decorative"';
 
+/** A character from its code, which may be half a surrogate pair. */
+function character(code: number): string {
+  return code > 0xffff ? String.fromCodePoint(code) : String.fromCharCode(code);
+}
+
+// Destinations beyond ASCII that both renderers end in the same place: Latin,
+// Chinese, Arabic, a combining mark, an emoji outside the basic plane, private
+// use and a noncharacter.
+const BEYOND_ASCII_DESTINATIONS = [
+  `caf${character(0xe9)}.png`,
+  `${character(0x56fe)}${character(0x7247)}.png`,
+  `${character(0x635)}${character(0x648)}${character(0x631)}${character(0x629)}.png`,
+  `e${character(0x301)}.png`,
+  `a${character(0x1f600)}.png`,
+  `a${character(0xe000)}${character(0xfffe)}b`,
+];
+
+// Every Unicode space and separator, which a reader cannot see in a destination.
+const UNICODE_SPACES = [
+  0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+  0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+];
+
+// Control characters, including those that Unicode also counts as whitespace.
+const CONTROLS = [0x1, 0xb, 0xc, 0x1f, 0x7f, 0x85, 0x9f];
+
+// Format characters, which are invisible, and each half of a surrogate pair on its own.
+const FORMAT_CHARACTERS = [0xad, 0x180e, 0x200b, 0x200c, 0x200d, 0x202e, 0x2066, 0xfeff, 0xd800, 0xdc00];
+
 // The title decorative marks an image that carries no meaning. The rule
 // honours it only in one closed form, which both reference renderers read the
 // same way, and not in any other.
@@ -585,6 +614,45 @@ describe("a decorative title on an inline image", () => {
       const character = String.fromCharCode(code);
       const expected = `"'()<>${BACKSLASH}`.includes(character) ? 1 : 0;
       expect(altFindings(`![](a${character}b "decorative")\n`), character).toHaveLength(expected);
+    }
+  });
+
+  test("is honoured with a destination beyond ASCII, in any script and with emoji", () => {
+    for (const destination of BEYOND_ASCII_DESTINATIONS) {
+      expect(altFindings(`![](${destination} "decorative")\n`), destination).toEqual([]);
+    }
+  });
+
+  test("is not honoured with Unicode whitespace or a separator in the destination", () => {
+    for (const code of UNICODE_SPACES) {
+      expect(altFindings(`![](a${character(code)}b "decorative")\n`), code.toString(16)).toHaveLength(1);
+    }
+    // A tab is kept as written in a heading, so the rule reads it there.
+    expect(altFindings('# ![](a\tb "decorative")\n')).toHaveLength(1);
+  });
+
+  test("is not honoured with a control character in the destination", () => {
+    for (const code of CONTROLS) {
+      expect(altFindings(`![](a${character(code)}b "decorative")\n`), code.toString(16)).toHaveLength(1);
+    }
+  });
+
+  test("is not honoured with a format character or half a surrogate pair in the destination", () => {
+    for (const code of FORMAT_CHARACTERS) {
+      expect(altFindings(`![](a${character(code)}b "decorative")\n`), code.toString(16)).toHaveLength(1);
+    }
+  });
+
+  test("is not honoured with an excluded ASCII character in a destination beyond ASCII", () => {
+    for (const excluded of `"'()<>${BACKSLASH}`) {
+      expect(altFindings(`![](caf${character(0xe9)}${excluded}1 "decorative")\n`), excluded).toHaveLength(1);
+    }
+  });
+
+  test("is not honoured on a title spelt with a letter beyond ASCII", () => {
+    // A dotless i and a dotted capital I are not the ASCII letter.
+    for (const title of [`decorat${character(0x131)}ve`, `DECORAT${character(0x130)}VE`]) {
+      expect(altFindings(`![](decoration.png "${title}")\n`), title).toHaveLength(1);
     }
   });
 
@@ -654,6 +722,21 @@ describe("a decorative title on a reference image", () => {
     expect(altFindings(`![][dec]\n\n> ${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
     expect(altFindings(`![][dec]\n\n- ${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
     expect(altFindings('![][dec]\n\n[dec]: decoration.png\n"decorative"\n')).toEqual([missingAlt("dec")]);
+  });
+
+  test("is honoured from a definition whose destination is beyond ASCII", () => {
+    for (const destination of BEYOND_ASCII_DESTINATIONS) {
+      expect(altFindings(`![][dec]\n\n[dec]: ${destination} "decorative"\n`), destination).toEqual([]);
+    }
+  });
+
+  test("is not honoured from a definition whose destination holds a character a reader cannot see", () => {
+    // The reader reads no definition with an ASCII control in it, so the image
+    // is skipped as naming none. The controls beyond ASCII are tried instead.
+    for (const code of [...UNICODE_SPACES, 0x85, 0x9f, ...FORMAT_CHARACTERS]) {
+      const definition = `[dec]: a${character(code)}b "decorative"`;
+      expect(altFindings(`![][dec]\n\n${definition}\n`), code.toString(16)).toEqual([missingAlt("dec")]);
+    }
   });
 
   test("is not honoured on a label with anything but ASCII letters, digits, spaces, hyphens and underscores", () => {

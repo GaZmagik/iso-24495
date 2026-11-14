@@ -1721,18 +1721,23 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
 // title in parentheses is not read: the scan ends an image at its first ")",
 // which is the title's own, so the scan never holds the whole image.
 const DECORATIVE_TITLE = String.raw`(?:"decorative"|'decorative')`;
-// A destination that every renderer ends in the same place: printable ASCII
-// with no space, angle bracket, parenthesis, quote or backslash.
-const PLAIN_DESTINATION = String.raw`[!#-&*-;=?-[\]-~]+`;
+// A destination that every renderer ends in the same place and a reader can
+// see: any characters but a space, angle bracket, parenthesis, quote or
+// backslash, and none that is whitespace, a separator, a control, a format
+// character or half a surrogate pair. The "u" flag reads an emoji as one
+// character and knows the categories. It never goes with the "i" flag, which
+// together with it would read the Kelvin sign as "k".
+const PLAIN_DESTINATION = /^[^ <>()"'\\\s\p{Z}\p{Cc}\p{Cf}\p{Cs}]+$/u;
 // An inline image's destination and title, as the scan gives them, when the
-// title is decorative and both are written in the plainest way.
-const DECORATIVE_INLINE = new RegExp(`^${PLAIN_DESTINATION}[ \\t]${DECORATIVE_TITLE}$`, "i");
+// title is decorative: a destination with no space or tab, one space or tab,
+// then the title. `PLAIN_DESTINATION` then reads the destination.
+const DECORATIVE_INLINE = new RegExp(`^([^ \\t]+)[ \\t]${DECORATIVE_TITLE}$`, "i");
 // A reference label made only of ASCII letters, digits, spaces, hyphens and underscores.
 const PLAIN_LABEL = /^[A-Za-z0-9 _-]+$/;
-// A line that is nothing but a definition giving such a label a plain
-// destination and the decorative title.
+// A line that is nothing but a definition giving such a label a destination
+// and the decorative title, in the same form as `DECORATIVE_INLINE`.
 const DECORATIVE_DEFINITION = new RegExp(
-  `^\\[([A-Za-z0-9 _-]+)\\]: ${PLAIN_DESTINATION}[ \\t]${DECORATIVE_TITLE}$`,
+  `^\\[([A-Za-z0-9 _-]+)\\]: ([^ \\t]+)[ \\t]${DECORATIVE_TITLE}$`,
   "i",
 );
 
@@ -1769,7 +1774,7 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
       const plain = asWritten && link.label === "";
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        if (plain && DECORATIVE_INLINE.test(link.target)) continue;
+        if (plain && decorativeInline(link.target)) continue;
       } else {
         if (!references.has(normaliseReference(target))) continue;
         if (plain && PLAIN_LABEL.test(link.target)) {
@@ -1859,10 +1864,17 @@ function decorativeLabels(written: readonly string[]): Set<string> {
   }
   const labels = new Set<string>();
   for (const line of written) {
-    const [, label] = DECORATIVE_DEFINITION.exec(line) ?? [];
-    if (label !== undefined && counts.get(labelKey(label)) === 1) labels.add(plainLabel(label));
+    const [, label, destination = ""] = DECORATIVE_DEFINITION.exec(line) ?? [];
+    if (label === undefined || !PLAIN_DESTINATION.test(destination)) continue;
+    if (counts.get(labelKey(label)) === 1) labels.add(plainLabel(label));
   }
   return labels;
+}
+
+/** Whether an inline image's destination and title, as the scan gives them, are the decorative form. */
+function decorativeInline(target: string): boolean {
+  const [, destination = ""] = DECORATIVE_INLINE.exec(target) ?? [];
+  return PLAIN_DESTINATION.test(destination);
 }
 
 /** A label's ASCII letters and digits in lower case, the key two definitions are counted by. */
