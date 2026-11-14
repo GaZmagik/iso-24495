@@ -677,6 +677,24 @@ describe("a decorative title on an image with no alternative text", () => {
       .toEqual([missingAlt("<decoration.png (decorative")]);
   });
 
+  test("is not read straight after a destination in angle brackets, with no space between", () => {
+    // CommonMark needs a space or a tab here and shows no image. Bun's renderer
+    // shows the title, but GitHub shows the text as written.
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`![](<my decoration.png>${title})\n`), title).toHaveLength(1);
+      expect(altFindings(`![](<decoration.png>${title})\n`), title).toHaveLength(1);
+    }
+  });
+
+  test("is not read where inline markup from the line before runs on into the image's line", () => {
+    // The reader rewrites the code span across both lines, and the image cannot
+    // be placed from its own line alone, so it is reported rather than guessed.
+    for (const title of DECORATIVE_TITLES) {
+      expect(altFindings(`Text \`code\nmore\` ![](decoration.png ${title})\n`), title).toHaveLength(1);
+      expect(altFindings(`Text \`code more\` ![](decoration.png ${title})\n`), title).toEqual([]);
+    }
+  });
+
   test("is read after a destination in angle brackets", () => {
     for (const title of DECORATIVE_TITLES) {
       expect(altFindings(`![](<decoration.png> ${title})\n`), title).toEqual([]);
