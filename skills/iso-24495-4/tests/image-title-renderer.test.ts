@@ -13,10 +13,17 @@ import { COMMONMARK_RENDERINGS, IMAGE_TITLE_DOCUMENTS_DIGEST } from "./fixtures/
 // renderers show.
 //
 // The rule reports an image with no alternative text unless its title reads
-// decorative. Twice it read text inside a destination as that title, and took
-// findings away from images that have no title. So the rule must never honour
-// a title on an image that either renderer shows with no title, and must only
-// honour one that at least one renderer shows.
+// decorative. Three times it took a title from text that renders an image with
+// no title. So it honours the title only in one closed form, and this holds it
+// to three statements:
+//
+// - Where either renderer shows an image with no title, the rule honours nothing.
+// - Where a renderer shows the title decorative and neither shows an image
+//   without one, the rule honours the title if the image is in the closed form,
+//   and reports it otherwise. Those reports are misses, but safe ones, and they
+//   are counted.
+// - Where neither renderer shows an image, nothing is asserted: the rule cannot
+//   tell, and a removed finding there is on text alone.
 //
 // The rule honours a title in a document when it reports fewer findings there
 // than in the same document with the word changed. Each document holds one
@@ -47,6 +54,28 @@ function bunRendering(text: string): string {
   return renderingOf(titles);
 }
 
+// Places where another definition, or an enclosing image, decides what renders,
+// so the image is not in the closed form however it is written.
+const OPEN_PLACES = new Set([
+  "a definition before another of its label",
+  "a definition after another of its label",
+  "a definition after a label that folds to it",
+  "a definition after its label over two lines",
+  "an earlier image's text, by reference",
+  "an earlier image's destination, by reference",
+]);
+
+/**
+ * Whether a document's image is in the closed form: a plain destination, then
+ * one space, then the word in double or single quotes. A tab counts as the
+ * space only in a heading, the one place the reader keeps it as written.
+ */
+function closedForm(cell: Cell): boolean {
+  const quoted = ["double quotes", "single quotes", "double quotes inside the destination"].includes(cell.title);
+  const spaced = cell.between === "a space" || (cell.between === "a tab" && cell.place === "a heading");
+  return cell.destination === "plain" && quoted && spaced && !OPEN_PLACES.has(cell.place);
+}
+
 let built: Cell[] | null = null;
 
 /** Every cell, worked out once and shared by the tests. */
@@ -64,6 +93,16 @@ function cells(): Cell[] {
   return built;
 }
 
+/** Whether either renderer shows an image with no title. */
+function untitled(cell: Cell): boolean {
+  return cell.commonmark === "u" || cell.bun === "u";
+}
+
+/** Whether a renderer shows the title decorative and neither shows an image without one. */
+function decorative(cell: Cell): boolean {
+  return !untitled(cell) && (cell.commonmark === "d" || cell.bun === "d");
+}
+
 // Auditing every document twice takes longer than one test is given.
 const BUILD_TIME_MS = 60_000;
 
@@ -72,7 +111,7 @@ function named(cell: Cell): string {
   return `${JSON.stringify(cell.text)} (CommonMark ${cell.commonmark}, Bun ${cell.bun})`;
 }
 
-describe("the image-alt rule honours a decorative title only where a renderer shows one", () => {
+describe("the image-alt rule honours a decorative title only in the closed form", () => {
   beforeAll(() => {
     cells();
   }, BUILD_TIME_MS);
@@ -84,27 +123,17 @@ describe("the image-alt rule honours a decorative title only where a renderer sh
   });
 
   test("never on an image either renderer shows with no title", () => {
-    const wrong = cells().filter((cell) => cell.honoured && (cell.commonmark === "u" || cell.bun === "u"));
-    expect(wrong.map(named)).toEqual([]);
+    expect(cells().filter((cell) => cell.honoured && untitled(cell)).map(named)).toEqual([]);
   });
 
-  test("never where neither renderer shows the title decorative", () => {
-    const wrong = cells().filter((cell) => cell.honoured && cell.commonmark !== "d" && cell.bun !== "d");
-    expect(wrong.map(named)).toEqual([]);
-  });
-
-  test("wherever both renderers show it, except after a plain destination holding parentheses", () => {
-    // The rule does not follow parentheses in a plain destination, and the
-    // checklist's limits say so.
-    const shown = cells().filter((cell) => !cell.honoured && cell.commonmark === "d" && cell.bun === "d");
-    const missed = shown.filter((cell) => cell.reported);
-    expect(missed.filter((cell) => cell.destination !== "plain with parentheses").map(named)).toEqual([]);
-    expect(missed).toHaveLength(31);
-    // The rest the rule's scan does not take for an image even with the word
-    // changed, so there is no finding to remove. All of them sit in a link.
-    const unseen = shown.filter((cell) => !cell.reported);
-    expect(unseen.filter((cell) => !cell.place.startsWith("a link's")).map(named)).toEqual([]);
-    expect(unseen).toHaveLength(28);
+  test("wherever a renderer shows the title and the image is in the closed form", () => {
+    const shown = cells().filter((cell) => decorative(cell) && cell.reported);
+    expect(shown.filter((cell) => closedForm(cell) && !cell.honoured).map(named)).toEqual([]);
+    expect(shown.filter((cell) => !closedForm(cell) && cell.honoured).map(named)).toEqual([]);
+    // The rest are reported though a renderer shows the title: safe misses,
+    // which the checklist's limits name.
+    expect(shown.filter((cell) => cell.honoured)).toHaveLength(24);
+    expect(shown.filter((cell) => !cell.honoured)).toHaveLength(495);
   });
 
   test("sees every kind of cell it is meant to tell apart", () => {
@@ -113,13 +142,14 @@ describe("the image-alt rule honours a decorative title only where a renderer sh
     // the documents, the rule or Bun's renderer shows here rather than passing
     // quietly.
     const all = cells();
-    expect(all).toHaveLength(5280);
-    expect(all.filter((cell) => cell.honoured)).toHaveLength(338);
-    expect(all.filter((cell) => cell.commonmark === "u" || cell.bun === "u")).toHaveLength(2202);
-    expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(2481);
-    expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(573);
-    // Text in an earlier link the scan takes for an image, though neither renderer shows one.
-    expect(all.filter((cell) => cell.place.startsWith("a link's") && cell.reported
-      && cell.commonmark === "n" && cell.bun === "n")).toHaveLength(652);
+    expect(all).toHaveLength(9120);
+    expect(all.filter((cell) => cell.honoured)).toHaveLength(33);
+    expect(all.filter(untitled)).toHaveLength(4834);
+    expect(all.filter((cell) => untitled(cell) && cell.reported)).toHaveLength(3438);
+    expect(all.filter(decorative)).toHaveLength(645);
+    expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(3641);
+    expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(615);
+    // Honoured with no image under either renderer: text in a raw HTML block or an earlier link.
+    expect(all.filter((cell) => cell.honoured && cell.commonmark === "n" && cell.bun === "n")).toHaveLength(9);
   });
 });

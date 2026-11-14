@@ -26,8 +26,13 @@ let letters = "";
 for (const { text } of documents) {
   const walker = parser.parse(text).walker();
   const titles: Array<string | null> = [];
+  // An image inside another image's text renders as part of its alternative
+  // text, not as an image, so only the outermost images count.
+  let depth = 0;
   for (let event = walker.next(); event !== null; event = walker.next()) {
-    if (event.entering && event.node.type === "image") titles.push(event.node.title);
+    if (event.node.type !== "image") continue;
+    if (event.entering && depth === 0) titles.push(event.node.title);
+    depth += event.entering ? 1 : -1;
   }
   letters += renderingOf(titles);
 }

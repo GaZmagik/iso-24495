@@ -71,6 +71,18 @@ const PLACES: ReadonlyArray<[name: string, place: (parts: { image: string; tail:
   ["a link's title opened on the line before", ({ image }) => `[t](a 'x\n${image}')\n`],
   ["a link's title, by reference", ({ tail }) => `[t](a "x) ![][dec]")\n\n[dec]: ${tail}\n`],
   ["after a closed link", ({ image }) => `[t](a "x") ${image}\n`],
+  // Neither renderer shows an image inside a raw HTML block.
+  ["a raw HTML block", ({ image }) => `<div>\n${image}\n</div>\n`],
+  ["a raw HTML block, by reference", ({ tail }) => `<div>\n![][dec]\n</div>\n\n[dec]: ${tail}\n`],
+  // A renderer takes a label's first definition, matching labels by Unicode
+  // case folding and across line endings.
+  ["a definition before another of its label", ({ tail }) => `![][dec]\n\n[dec]: ${tail}\n[dec]: other.png\n`],
+  ["a definition after another of its label", ({ tail }) => `![][dec]\n\n[dec]: first.png\n[dec]: ${tail}\n`],
+  ["a definition after a label that folds to it", ({ tail }) => `![][SS]\n\n[ß]: first.png\n[SS]: ${tail}\n`],
+  ["a definition after its label over two lines", ({ tail }) => `![][d ec]\n\n[d\nec]: first.png\n\n[d ec]: ${tail}\n`],
+  // A reference image inside another image is part of that image.
+  ["an earlier image's text, by reference", ({ tail }) => `![![][dec]](\nx.png)\n\n[dec]: ${tail}\n`],
+  ["an earlier image's destination, by reference", ({ tail }) => `![](a![][dec]\n)\n\n[dec]: ${tail}\n`],
 ];
 
 /** One generated document, with what it was built from. */
