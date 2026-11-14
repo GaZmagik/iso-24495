@@ -558,7 +558,7 @@ const DEFINITION = '[dec]: decoration.png "decorative"';
 
 // The title decorative marks an image that carries no meaning. The rule
 // honours it only in one closed form, which both reference renderers read the
-// same way, and reports every other image with no alternative text.
+// same way, and not in any other.
 describe("a decorative title on an inline image", () => {
   test("is honoured after a plain destination and one space, in either quotes and any case", () => {
     expect(altFindings('![](decoration.png "decorative")\n')).toEqual([]);

@@ -63,6 +63,7 @@ const OPEN_PLACES = new Set([
   "a definition after its label over two lines",
   "an earlier image's text, by reference",
   "an earlier image's destination, by reference",
+  "an earlier image's destination from the line before, by reference",
 ]);
 
 /**
@@ -142,10 +143,10 @@ describe("the image-alt rule honours a decorative title only in the closed form"
     // the documents, the rule or Bun's renderer shows here rather than passing
     // quietly.
     const all = cells();
-    expect(all).toHaveLength(9120);
+    expect(all).toHaveLength(9600);
     expect(all.filter((cell) => cell.honoured)).toHaveLength(33);
-    expect(all.filter(untitled)).toHaveLength(4834);
-    expect(all.filter((cell) => untitled(cell) && cell.reported)).toHaveLength(3438);
+    expect(all.filter(untitled)).toHaveLength(5314);
+    expect(all.filter((cell) => untitled(cell) && cell.reported)).toHaveLength(3665);
     expect(all.filter(decorative)).toHaveLength(645);
     expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(3641);
     expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(615);

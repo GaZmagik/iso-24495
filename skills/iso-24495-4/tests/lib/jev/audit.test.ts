@@ -883,10 +883,10 @@ test("running the text audit inside the design audit changes nothing that is sen
   }
 });
 
-// The alt-text rule reads a reference definition's title through the shared
-// parser, which also reads what is sent. Recorded from both audits at c9715a3,
-// before the title was read: the digest of the sorted request bodies, and the
-// send log's digest.
+// The alt-text rule honours a decorative title on a reference definition, and
+// nothing it reads for that may change what is sent. Recorded from both audits
+// at c9715a3, before the title was read: the digest of the sorted request
+// bodies, and the send log's digest.
 const IMAGE_DOCUMENT = [
   "# Title",
   "",

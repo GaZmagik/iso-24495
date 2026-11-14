@@ -1744,9 +1744,9 @@ const DECORATIVE_DEFINITION = new RegExp(
 // one closed form, which both reference renderers read the same way:
 // `![](decoration.png "decorative")`, or `![][dec]` with one definition of
 // `dec`, written `[dec]: decoration.png "decorative"` on a line of its own.
-// Any other image with no alternative text is reported, even where a renderer
-// shows the title. Three times, reading more of Markdown's grammar here took a
-// title from text that renders an image with no title.
+// A title in any other form is not honoured, even where a renderer shows it.
+// Three times, reading more of Markdown's grammar here took a title from text
+// that renders an image with no title.
 function imageAltViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   const { lines, markupLines, references, hidden } = readDocument(text, reading);

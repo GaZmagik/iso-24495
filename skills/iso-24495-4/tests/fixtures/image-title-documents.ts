@@ -1,5 +1,6 @@
-// Documents that each hold one image with no alternative text, built to test
-// where the image-alt rule reads a title.
+// Documents that each render at most one image, with no alternative text,
+// built to test where the image-alt rule reads a title. In some, image syntax
+// sits inside that one image, which renders it as alternative text.
 //
 // Every document crosses four things: how the destination is written, what
 // title follows it, what stands between the two, and where the image stands.
@@ -83,6 +84,7 @@ const PLACES: ReadonlyArray<[name: string, place: (parts: { image: string; tail:
   // A reference image inside another image is part of that image.
   ["an earlier image's text, by reference", ({ tail }) => `![![][dec]](\nx.png)\n\n[dec]: ${tail}\n`],
   ["an earlier image's destination, by reference", ({ tail }) => `![](a![][dec]\n)\n\n[dec]: ${tail}\n`],
+  ["an earlier image's destination from the line before, by reference", ({ tail }) => `![](\na![][dec])\n\n[dec]: ${tail}\n`],
 ];
 
 /** One generated document, with what it was built from. */
