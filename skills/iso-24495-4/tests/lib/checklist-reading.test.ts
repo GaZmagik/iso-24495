@@ -8,7 +8,7 @@ import { runCli as runTextCli } from "../../../iso-24495-text-audit/scripts/audi
 import { DISCLOSURE_VERSION, formatPlan, selectDocuments, type AuditDependencies, type AuditLog } from "../../scripts/lib/jev/audit.ts";
 import { MODEL } from "../../scripts/lib/jev/catalogue.ts";
 import { CHECKLIST, type ChecklistItem, type Clause, type ClauseState, type Need } from "../../scripts/lib/checklist.ts";
-import { checklistReading, formatChecklistReading, type RunFacts } from "../../scripts/lib/checklist-reading.ts";
+import { checklistReading, formatChecklistReading, type ChecklistReading, type RunFacts } from "../../scripts/lib/checklist-reading.ts";
 
 /** A plain text audit of one Markdown file: no Jev option, no send. */
 const PLAIN_MARKDOWN: RunFacts = { mode: "text", files: 1, markdownFiles: 1, refused: 0, frontMatter: true, jevPreview: false, jev: false, send: false, before: false, facts: [] };
@@ -728,6 +728,177 @@ describe("no Jev answer reaches the reading", () => {
       expect(failed.out.at(-1)).toContain("Execution: incomplete.");
     });
   });
+});
+
+// The tests below send to a stand-in transport whose answers keep a
+// different number of results each time: none, one, three, many, or none
+// because the send failed. The report's reading must not follow that number.
+
+/** A Markdown document with no title, so a send asks only about its two blocks. */
+const UNTITLED = "Close the valve before you start.\n\nTurn the handle slowly to the left.\n";
+
+/** A Markdown document with a title, an opening and seven blocks, so a send makes eight requests. */
+const LONG_GUIDE = "# Pump guide\n\nThis guide helps you fix the pump.\n\n"
+  + ["Turn off the power.", "Close the inlet valve.", "Drain the pump.", "Remove the cover.", "Replace the seal.", "Refit the cover."]
+    .map(step => `${step} Check it twice before you go on.\n\n`).join("");
+
+/** A text file, which the text audit reads and sends nothing from. */
+const NOTES = "Plain words about the pump.\n";
+
+/** A block's answer that leaves it unsure, so the report keeps it. */
+const COLOUR_UNSURE = { type: "noul", noul: 0.5 };
+
+/** A block's answer that passes it, so the report drops it. */
+const COLOUR_PASSES = { type: "noul", noul: 0.05 };
+
+/**
+ * A block's answer that is not a probability, so the client rejects the
+ * response. It asks again until its six attempts are spent, so each request
+ * is sent six times.
+ */
+const COLOUR_INVALID = { type: "noul", noul: 7 };
+
+/** How the stand-in transport answers every request of one send. */
+type Answering = "keep every block" | "pass every block" | "refuse every request" | "answer out of range";
+
+/** The answer to each block's colour question, by how the transport answers. */
+const COLOUR_ANSWER: Readonly<Record<Exclude<Answering, "refuse every request">, unknown>> = {
+  "keep every block": COLOUR_UNSURE,
+  "pass every block": COLOUR_PASSES,
+  "answer out of range": COLOUR_INVALID,
+};
+
+/**
+ * One send and what it must give: the files in the selected folder, how
+ * the transport answers, the exit code, how many requests it made and
+ * results it kept, the facts of the run known before any request, and the
+ * line 2 it prints.
+ */
+interface SendCase {
+  readonly name: string;
+  readonly files: Readonly<Record<string, string>>;
+  readonly answering: Answering;
+  readonly exit: number;
+  readonly requests: number;
+  readonly results: number;
+  readonly facts: Pick<RunFacts, "files" | "markdownFiles" | "refused">;
+  readonly line2: string;
+}
+
+const TWO_REFUSED_SEND_LINE_2 = "This run was set to use 15 of the 15. 2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.";
+const ONE_TEXT_FILE_SEND_LINE_2 = "This run was set to use 15 of the 15. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it.";
+const TEXT_FILES_AND_REFUSED_SEND_LINE_2 = "This run was set to use 15 of the 15. 2 selected files are not Markdown, so the 8 that need a Markdown file do not reach them. "
+  + "1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
+const TEXT_FILE_AND_REFUSED_SEND_LINE_2 = "This run was set to use 15 of the 15. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it. "
+  + "1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
+const TEXT_FILE_AND_TWO_REFUSED_SEND_LINE_2 = "This run was set to use 15 of the 15. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it. "
+  + "2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.";
+const ONLY_TEXT_FILES_SEND_LINE_2 = "This run was set to use 7 of the 15. 8 need a Markdown file.";
+
+/** Design sends of a folder. The design audit reads no .txt file, so none is selected. */
+const DESIGN_SENDS: readonly SendCase[] = [
+  { name: "one document, none refused, three results kept", files: { "doc.md": GUIDE }, answering: "keep every block", exit: 0, requests: 3, results: 3, facts: { files: 1, markdownFiles: 1, refused: 0 }, line2: SEND_LINE_2 },
+  { name: "one document, none refused, one result kept", files: { "doc.md": GUIDE }, answering: "pass every block", exit: 0, requests: 3, results: 1, facts: { files: 1, markdownFiles: 1, refused: 0 }, line2: SEND_LINE_2 },
+  { name: "one refused beside a titled document, one result kept", files: { "doc.md": GUIDE, "tab.md": REFUSED }, answering: "pass every block", exit: 0, requests: 3, results: 1, facts: { files: 2, markdownFiles: 2, refused: 1 }, line2: REFUSED_SEND_LINE_2 },
+  { name: "one refused beside an untitled document, no result kept", files: { "doc.md": UNTITLED, "tab.md": REFUSED }, answering: "pass every block", exit: 0, requests: 2, results: 0, facts: { files: 2, markdownFiles: 2, refused: 1 }, line2: REFUSED_SEND_LINE_2 },
+  { name: "every document refused, no request made", files: { "tab.md": REFUSED, "old.md": REFUSED }, answering: "keep every block", exit: 0, requests: 0, results: 0, facts: { files: 2, markdownFiles: 2, refused: 2 }, line2: TWO_REFUSED_SEND_LINE_2 },
+  { name: "one refused beside two documents, many results kept", files: { "a.md": LONG_GUIDE, "b.md": GUIDE, "tab.md": REFUSED }, answering: "keep every block", exit: 0, requests: 11, results: 11, facts: { files: 3, markdownFiles: 3, refused: 1 }, line2: REFUSED_SEND_LINE_2 },
+  { name: "one refused beside a document, every request refused", files: { "doc.md": GUIDE, "tab.md": REFUSED }, answering: "refuse every request", exit: 3, requests: 3, results: 0, facts: { files: 2, markdownFiles: 2, refused: 1 }, line2: REFUSED_SEND_LINE_2 },
+  { name: "one document, none refused, answers out of range", files: { "doc.md": GUIDE }, answering: "answer out of range", exit: 3, requests: 18, results: 0, facts: { files: 1, markdownFiles: 1, refused: 0 }, line2: SEND_LINE_2 },
+];
+
+/** Text audit sends of a folder with --jev, --send and --yes. The text audit reads .txt files and sends nothing from them. */
+const TEXT_SENDS: readonly SendCase[] = [
+  { name: "one document, none refused, three results kept", files: { "doc.md": GUIDE }, answering: "keep every block", exit: 0, requests: 3, results: 3, facts: { files: 1, markdownFiles: 1, refused: 0 }, line2: SEND_LINE_2 },
+  { name: "a document and a text file, one result kept", files: { "doc.md": GUIDE, "notes.txt": NOTES }, answering: "pass every block", exit: 0, requests: 3, results: 1, facts: { files: 2, markdownFiles: 1, refused: 0 }, line2: ONE_TEXT_FILE_SEND_LINE_2 },
+  { name: "a document, two text files and one refused, three results kept", files: { "doc.md": GUIDE, "notes.txt": NOTES, "more.txt": NOTES, "tab.md": REFUSED }, answering: "keep every block", exit: 0, requests: 3, results: 3, facts: { files: 4, markdownFiles: 2, refused: 1 }, line2: TEXT_FILES_AND_REFUSED_SEND_LINE_2 },
+  { name: "an untitled document, a text file and one refused, no result kept", files: { "doc.md": UNTITLED, "notes.txt": NOTES, "tab.md": REFUSED }, answering: "pass every block", exit: 0, requests: 2, results: 0, facts: { files: 3, markdownFiles: 2, refused: 1 }, line2: TEXT_FILE_AND_REFUSED_SEND_LINE_2 },
+  { name: "a long document, a text file and two refused, many results kept", files: { "a.md": LONG_GUIDE, "notes.txt": NOTES, "tab.md": REFUSED, "old.md": REFUSED }, answering: "keep every block", exit: 0, requests: 8, results: 8, facts: { files: 4, markdownFiles: 3, refused: 2 }, line2: TEXT_FILE_AND_TWO_REFUSED_SEND_LINE_2 },
+  { name: "every document refused, no request made", files: { "tab.md": REFUSED, "old.md": REFUSED }, answering: "keep every block", exit: 0, requests: 0, results: 0, facts: { files: 2, markdownFiles: 2, refused: 2 }, line2: TWO_REFUSED_SEND_LINE_2 },
+  { name: "only text files, no request made", files: { "notes.txt": NOTES, "more.txt": NOTES }, answering: "keep every block", exit: 0, requests: 0, results: 0, facts: { files: 2, markdownFiles: 0, refused: 0 }, line2: ONLY_TEXT_FILES_SEND_LINE_2 },
+  { name: "a document, a text file and one refused, every request refused", files: { "doc.md": GUIDE, "notes.txt": NOTES, "tab.md": REFUSED }, answering: "refuse every request", exit: 3, requests: 3, results: 0, facts: { files: 3, markdownFiles: 2, refused: 1 }, line2: TEXT_FILE_AND_REFUSED_SEND_LINE_2 },
+  { name: "a document and a text file, answers out of range", files: { "doc.md": GUIDE, "notes.txt": NOTES }, answering: "answer out of range", exit: 3, requests: 18, results: 0, facts: { files: 2, markdownFiles: 1, refused: 0 }, line2: ONE_TEXT_FILE_SEND_LINE_2 },
+];
+
+/**
+ * Dependencies for a send that never leaves the machine, answering as
+ * `answering` says. Every opening is answered `NEITHER`, which an opening
+ * always keeps. Each request body is recorded in `bodies`.
+ */
+function answeredAs(answering: Answering, bodies: string[]): AuditDependencies {
+  if (answering === "refuse every request") return refusing(bodies, []);
+  const colour = COLOUR_ANSWER[answering];
+  const dependencies = stubbed(NEITHER, bodies, []);
+  return { ...dependencies, client: { ...dependencies.client, fetch: async (url, init) => {
+    bodies.push(init.body);
+    const questions = Object.keys(JSON.parse(init.body).questions);
+    return Response.json({ model: MODEL, answers: Object.fromEntries(questions.map(id => [id, id === "purpose" ? NEITHER : colour])) });
+  } } };
+}
+
+/** The facts of a send of `send.files`, known before any request. */
+function sendFacts(mode: RunFacts["mode"], send: SendCase): RunFacts {
+  return { ...send.facts, mode, frontMatter: true, jevPreview: false, jev: mode === "text", send: true, before: false, facts: [] };
+}
+
+/**
+ * Checks that what a send printed and wrote holds the reading of its facts,
+ * whatever the transport answered: the JSON reading is the one those facts
+ * give, line 2 is the one given, and line 2 is what the JSON reading prints.
+ * The counts of files not reached and documents not sent are the selected
+ * .txt files and the selected refusals.
+ */
+function expectReadingBeforeRequests(mode: RunFacts["mode"], send: SendCase, printed: Printed, report: { jev: { results: unknown[]; notSent: Array<{ file: string }> }; checklist: ChecklistReading }, bodies: readonly string[]): void {
+  expect(printed.exit).toBe(send.exit);
+  // The answers really kept this many results, and the send made this many requests.
+  expect([bodies.length, report.jev.results.length]).toEqual([send.requests, send.results]);
+  expect(report.checklist).toEqual(checklistReading(CHECKLIST, sendFacts(mode, send)));
+  expect(printed.out[1]).toBe(printedReading(send.line2));
+  expect(formatChecklistReading(report.checklist, CHECKLIST)).toBe(printed.out[1] ?? "no line 2");
+  const refused = Object.entries(send.files).filter(([, text]) => text === REFUSED).map(([name]) => name).sort();
+  expect(report.jev.notSent.map(entry => entry.file).sort()).toEqual(refused);
+  expect(printed.err.filter(line => line.startsWith("warning: not sent: ")).length).toBe(refused.length);
+  expect(report.checklist.run.documentsNotSent).toBe(refused.length);
+  expect(report.checklist.run.filesNotReached).toBe(Object.keys(send.files).filter(name => name.endsWith(".txt")).length);
+}
+
+describe("a send's --json reading is the reading taken before any request, however many results Jev's answers keep", () => {
+  test("the cases keep different numbers of results, so a reading that followed them would differ", () => {
+    for (const sends of [DESIGN_SENDS, TEXT_SENDS]) {
+      expect(new Set(sends.map(send => send.results)).size).toBeGreaterThanOrEqual(4);
+      expect(sends.some(send => send.facts.refused === 0) && sends.some(send => send.facts.refused === 1) && sends.some(send => send.facts.refused === send.facts.files)).toBe(true);
+    }
+  });
+
+  for (const send of DESIGN_SENDS) {
+    test(`design send, ${send.name}`, async () => {
+      await inDirectory(send.files, async directory => {
+        const bodies: string[] = [];
+        const json = `${directory}.json`;
+        try {
+          const printed = await designAudit([directory, "--project-dir", directory, "--send", "--yes", "--json", json], answeredAs(send.answering, bodies));
+          expectReadingBeforeRequests("design", send, printed, JSON.parse(readFileSync(json, "utf8")), bodies);
+        } finally {
+          rmSync(json, { force: true });
+        }
+      });
+    });
+  }
+
+  for (const send of TEXT_SENDS) {
+    test(`text send, ${send.name}`, async () => {
+      await inDirectory(send.files, async directory => {
+        const bodies: string[] = [];
+        const json = `${directory}.json`;
+        try {
+          const printed = await textAudit([directory, "--project-dir", directory, "--jev", "--send", "--yes", "--json", json], answeredAs(send.answering, bodies));
+          expectReadingBeforeRequests("text", send, printed, JSON.parse(readFileSync(json, "utf8")), bodies);
+        } finally {
+          rmSync(json, { force: true });
+        }
+      });
+    });
+  }
 });
 
 describe("the reading changes nothing that is sent or disclosed", () => {
