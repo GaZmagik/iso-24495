@@ -925,6 +925,34 @@ const SWEEP_FRONT_MATTER = "---\n"
 const ACRONYM_PROBE = "# Probe\n\nThe QZXW tool runs every day.\n";
 
 /**
+ * A document whose front matter holds a vague link. The plain text audit,
+ * reading the block as front matter, finds no link in it:
+ *
+ *     | `metadata.md` | 5 | opening-version-date | No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is? |
+ *
+ * With `--no-front-matter` it reads the block as text, so the link-text
+ * check of 12a and 19b reports the metadata, the heading check reports the
+ * block's last line, and the version or date check is off:
+ *
+ *     | `metadata.md` | 2 | heading-style | heading ends with a full stop |
+ *     | `metadata.md` | 2 | link-text | link text "here" describes no destination (metadata.md) |
+ *
+ * So `--no-front-matter` can change what a fault check other than 15f's
+ * finds. The option sweep does not see this, because it compares each
+ * clause's checks on that clause's own specimens, and no specimen holds a
+ * link in its front matter.
+ */
+const METADATA_PROBE = "---\nsummary: Read [here](metadata.md).\n---\n\n# Appliance\n\nClose the valve.\n";
+
+/** The rows of a printed table of findings that name `metadata.md`. */
+function metadataRows(text: string): string[] {
+  return text.split("\n").filter(line => line.startsWith("| `metadata.md` |"));
+}
+
+/** The finding of the version or date check when the opening has neither. */
+const NO_VERSION_OR_DATE = "No version or date was recognised in the opening. Would readers need one to identify the edition or judge how current it is?";
+
+/**
  * One option of either audit, swept over every specimen: the command, the
  * options it runs with beside the option and without it, and whether the
  * run without it agrees at a terminal. `--project-dir` is swept by what it
@@ -962,10 +990,12 @@ const SWEEPS: readonly Sweep[] = [
 ];
 
 /**
- * What each sweep changed, by fault clause: `off` lists the clauses with a
- * check that one side named and the other did not, and `reads` the other
- * clauses with an offline check whose findings differ between the sides.
- * Only `--no-front-matter` changes anything, and only 15f.
+ * What each sweep changed on the sweep's specimens, by fault clause: `off`
+ * lists the clauses with a check that one side named and the other did not,
+ * and `reads` the other clauses with an offline check whose findings differ
+ * between the sides. On those specimens only `--no-front-matter` changes a
+ * clause, and only 15f. `METADATA_PROBE` shows that on another input it
+ * changes the findings of 12a and 19b as well.
  */
 const SWEEP_CHANGES: Readonly<Record<string, { readonly off: readonly string[]; readonly reads: readonly string[] }>> = Object.fromEntries(
   SWEEPS.map(sweep => [sweep.name, { off: sweep.name === "text audit --no-front-matter" ? ["15f"] : [], reads: [] }]),
@@ -1211,7 +1241,22 @@ describe("the Part 5 checklist clause registry", () => {
     }
   });
 
-  test("no option of either audit changes what a fault check names, but --no-front-matter on 15f", async () => {
+  // What this sweep establishes: each of the 12 sweeps runs the audit over
+  // one folder with its option and without it. For each of the 15 fault
+  // clauses, 180 cells, it compares the two runs on that clause's own
+  // specimen, as written and behind front matter, each as a .md file and a
+  // .txt file. A cell changes when one run names a check of the clause on
+  // one of those four files and the other does not, or when an offline
+  // check's finding details differ there. Only the cell of 15f under
+  // --no-front-matter changes.
+  //
+  // What it does not establish: that the same holds on every input. It holds
+  // for these specimens only, and it compares neither line numbers nor Jev
+  // scores, only which Jev bands are named. On METADATA_PROBE,
+  // --no-front-matter also changes what the link-text check of 12a and 19b
+  // finds. The reading's claim of the clauses a run is set to use is about
+  // which checks run, not about what they find.
+  test("on each fault clause's own specimens, no option of either audit changes that clause's checks, but --no-front-matter on 15f", async () => {
     const directory = mkdtempSync(join(tmpdir(), "checklist-sweep-"));
     try {
       for (const [id, specimen] of Object.entries(SPECIMENS)) {
@@ -1221,6 +1266,7 @@ describe("the Part 5 checklist clause registry", () => {
         }
       }
       writeFileSync(join(directory, "acronym-probe.md"), ACRONYM_PROBE);
+      writeFileSync(join(directory, "metadata.md"), METADATA_PROBE);
       const changes: Record<string, { readonly off: readonly string[]; readonly reads: readonly string[] }> = {};
       let cells = 0;
       for (const sweep of SWEEPS) {
@@ -1242,6 +1288,16 @@ describe("the Part 5 checklist clause registry", () => {
         if (sweep.name === "text audit --no-front-matter") {
           const fileNames = [...new Set([...without.reasons.keys(), ...withOption.reasons.keys()])].filter(file => file.includes("-fm."));
           expect(fileNames.some(file => rulesFound(without, withOption, file).some(rule => rule !== "opening-version-date" && findingsDiffer(without, withOption, file, rule)))).toBe(true);
+          // It also changes a fault check other than 15f's, outside the
+          // specimens: the metadata's vague link is found only when the
+          // block is read as text.
+          expect([Object.fromEntries(without.reasons.get("metadata.md") ?? []), Object.fromEntries(withOption.reasons.get("metadata.md") ?? [])]).toEqual([
+            { "opening-version-date": [NO_VERSION_OR_DATE] },
+            { "heading-style": ["heading ends with a full stop"], "link-text": ["link text \"here\" describes no destination (metadata.md)"] },
+          ]);
+        } else {
+          // No other sweep changes the metadata probe's offline findings.
+          expect(rulesFound(without, withOption, "metadata.md").filter(rule => namesDiffer(without, withOption, "metadata.md", rule) || findingsDiffer(without, withOption, "metadata.md", rule)), sweep.name).toEqual([]);
         }
         // The acronym list acts: it takes the probe's acronym finding away.
         if (sweep.acronyms === true) {
@@ -1254,6 +1310,32 @@ describe("the Part 5 checklist clause registry", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   }, 120000);
+
+  test("--no-front-matter exposes the metadata probe's link to the link-text check, while the reading still has 12a and 19b in use on both sides", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-metadata-"));
+    try {
+      const file = join(directory, "metadata.md");
+      const json = join(directory, "report.json");
+      writeFileSync(file, METADATA_PROBE);
+      const base = ["bun", "cli", file, "--project-dir", directory, "--json", json];
+      const asFrontMatter = await printed("text", base, []);
+      const usedAsFrontMatter: string[] = JSON.parse(readFileSync(json, "utf8")).checklist.run.used;
+      const asText = await printed("text", [...base, "--no-front-matter"], []);
+      const usedAsText: string[] = JSON.parse(readFileSync(json, "utf8")).checklist.run.used;
+      expect([asFrontMatter.exit, asText.exit]).toEqual([0, 0]);
+      expect(metadataRows(asFrontMatter.text)).toEqual([`| \`metadata.md\` | 5 | opening-version-date | ${NO_VERSION_OR_DATE} |`]);
+      expect(metadataRows(asText.text)).toEqual([
+        "| `metadata.md` | 2 | heading-style | heading ends with a full stop |",
+        "| `metadata.md` | 2 | link-text | link text \"here\" describes no destination (metadata.md) |",
+      ]);
+      // The reading says which checks run. The link-text check runs on both
+      // sides, and only 15f's check is off when front matter is read as text.
+      expect(usedAsFrontMatter).toEqual(expect.arrayContaining(["12a", "19b", "15f"]));
+      expect(usedAsText).toEqual(usedAsFrontMatter.filter(id => id !== "15f"));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
   test("--json changes nothing either audit prints but the disclosure's name for the report", async () => {
     const directory = mkdtempSync(join(tmpdir(), "checklist-sweep-json-"));
