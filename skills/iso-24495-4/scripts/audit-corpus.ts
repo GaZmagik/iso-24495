@@ -1717,25 +1717,71 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
   return violations;
 }
 
+// The title that marks an image as decorative, in double or single quotes. A
+// title in parentheses is not read: the scan ends an image at its first ")",
+// which is the title's own, so the scan never holds the whole image.
+const DECORATIVE_TITLE = String.raw`(?:"decorative"|'decorative')`;
+// A destination that every renderer ends in the same place: printable ASCII
+// with no space, angle bracket, parenthesis, quote or backslash.
+const PLAIN_DESTINATION = String.raw`[!#-&*-;=?-[\]-~]+`;
+// An inline image's destination and title, as the scan gives them, when the
+// title is decorative and both are written in the plainest way.
+const DECORATIVE_INLINE = new RegExp(`^${PLAIN_DESTINATION}[ \\t]${DECORATIVE_TITLE}$`, "i");
+// A reference label made only of ASCII letters, digits, spaces, hyphens and underscores.
+const PLAIN_LABEL = /^[A-Za-z0-9 _-]+$/;
+// A line that is nothing but a definition giving such a label a plain
+// destination and the decorative title.
+const DECORATIVE_DEFINITION = new RegExp(
+  `^\\[([A-Za-z0-9 _-]+)\\]: ${PLAIN_DESTINATION}[ \\t]${DECORATIVE_TITLE}$`,
+  "i",
+);
+
 // An image with no alternative text is silence to a reader who cannot see it.
 // An empty alt is legitimate for a purely decorative image, so the writer can
 // mark that intent explicitly rather than leaving the alt blank by accident.
+//
+// The mark is the title decorative. It is honoured only on an image written in
+// one closed form, which both reference renderers read the same way:
+// `![](decoration.png "decorative")`, or `![][dec]` with one definition of
+// `dec`, written `[dec]: decoration.png "decorative"` on a line of its own.
+// A title in any other form is not honoured, even where a renderer shows it.
+// Three times, reading more of Markdown's grammar here took a title from text
+// that renders an image with no title.
 function imageAltViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   const { lines, markupLines, references, hidden } = readDocument(text, reading);
+  const written = toLines(text);
+  // Worked out once, and only for a document with an image that needs them.
+  let decorative: ReadonlySet<string> | null = null;
+  let imageEarlier: readonly boolean[] | null = null;
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
+    const line = itemAt(lines, i);
+    const source = itemAt(written, i);
+    // The reader turns escapes, code spans and HTML into spaces in what the
+    // scan reads. Where it changed nothing, the line as written ends in it.
+    const asWritten = source.endsWith(line);
     // One scan finds both image forms, filtered to the ones with no alternative text.
-    for (const link of markdownLinks(itemAt(lines, i))) {
+    for (const link of markdownLinks(line)) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
       if (link.label.trim().length > 0) continue;
       const target = link.target.trim();
+      const plain = asWritten && link.label === "";
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        // "decorative" as the title marks an image that carries no meaning.
-        // A filename containing the word does not express that decision.
-        if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(link.target)) continue;
-      } else if (!references.has(normaliseReference(target))) continue;
+        if (plain && DECORATIVE_INLINE.test(link.target)) continue;
+      } else {
+        if (!references.has(normaliseReference(target))) continue;
+        if (plain && PLAIN_LABEL.test(link.target)) {
+          decorative ??= decorativeLabels(written);
+          imageEarlier ??= imageSyntaxEarlier(written);
+          // The line as written ends in the line as read, so the image stands
+          // the same distance from the end of both.
+          const first = !itemAt(imageEarlier, i)
+            && source.indexOf("![") === source.length - line.length + link.start;
+          if (first && decorative.has(plainLabel(link.target))) continue;
+        }
+      }
       violations.push({
         rule: "image-alt",
         line: i + 1,
@@ -1756,6 +1802,77 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
     });
   }
   return violations;
+}
+
+/**
+ * For each line, whether image syntax, "![", stands on an earlier line of the
+ * same run of lines with no blank line between them.
+ *
+ * A reference image can sit inside an earlier image's alternative text or
+ * destination, and then a reader sees only that earlier image, with no title.
+ * Inline markup cannot cross a blank line, so an image with no "![" before it
+ * in its run sits inside no other image.
+ *
+ * @param written The document's lines as written.
+ */
+function imageSyntaxEarlier(written: readonly string[]): boolean[] {
+  const earlier: boolean[] = [];
+  let seen = false;
+  for (const line of written) {
+    // CommonMark counts a line of spaces and tabs as blank, and nothing else.
+    if (/^[ \t]*$/.test(line)) seen = false;
+    earlier.push(seen);
+    seen ||= line.includes("![");
+  }
+  return earlier;
+}
+
+/**
+ * The labels a reference image can be honoured for: each defined once, on a
+ * line that `DECORATIVE_DEFINITION` matches.
+ *
+ * A renderer takes a label's first definition, and matches labels by Unicode
+ * case folding, so "ß" matches "SS". Rather than follow either, this counts as
+ * a definition every "[" up to the next "]" that has a ":" straight after it,
+ * anywhere in the text, across lines and in code too. Each is keyed by its
+ * ASCII letters and digits alone, which can only count too many, and a label
+ * counted twice is not honoured. A label with a character beyond ASCII might
+ * fold to match one, so then no label is honoured at all.
+ *
+ * @param written The document's lines as written.
+ * @returns Each label in the form `plainLabel` gives.
+ */
+function decorativeLabels(written: readonly string[]): Set<string> {
+  const counts = new Map<string, number>();
+  const text = written.join("\n");
+  let open = -1;
+  for (let at = 0; at < text.length; at++) {
+    if (text[at] === "[") open = at;
+    if (text[at] !== "]") continue;
+    if (open !== -1 && text[at + 1] === ":") {
+      const label = text.slice(open + 1, at);
+      if (/[\u0080-\uffff]/.test(label)) return new Set();
+      const key = labelKey(label);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    open = -1;
+  }
+  const labels = new Set<string>();
+  for (const line of written) {
+    const [, label] = DECORATIVE_DEFINITION.exec(line) ?? [];
+    if (label !== undefined && counts.get(labelKey(label)) === 1) labels.add(plainLabel(label));
+  }
+  return labels;
+}
+
+/** A label's ASCII letters and digits in lower case, the key two definitions are counted by. */
+function labelKey(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** A label of ASCII characters as a renderer matches it: trimmed, its spaces collapsed, in lower case. */
+function plainLabel(label: string): string {
+  return label.trim().replace(/ +/g, " ").toLowerCase();
 }
 
 /**

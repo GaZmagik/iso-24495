@@ -1,5 +1,5 @@
 // The part of the CommonMark reference implementation that build-fixture.ts
-// uses, declared by hand.
+// and build-image-titles.ts use, declared by hand.
 //
 // The package is deliberately not installed: the fixture is rebuilt outside
 // this repository, and the README says the reference is not a dependency. So
@@ -18,6 +18,8 @@ declare module "commonmark" {
     level: number;
     /** The text of a text or code node, and null for a node that holds none. */
     literal: string | null;
+    /** The title of a link or image, empty when it has none. */
+    title: string | null;
     /** A walker that visits this node and everything below it. */
     walker(): NodeWalker;
   }

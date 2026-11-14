@@ -540,3 +540,257 @@ describe("an argument list with a hole", () => {
     }
   });
 });
+
+/** What the alt-text rule says about a text, as its finding details. */
+function altFindings(text: string): string[] {
+  return auditText(text)
+    .filter((finding) => finding.rule === "image-alt")
+    .map((finding) => finding.detail);
+}
+
+/** The finding the alt-text rule gives for an image, named as the finding names it. */
+function missingAlt(name: string): string {
+  return `image has no alternative text (${name})`;
+}
+
+const BACKSLASH = "\\";
+const DEFINITION = '[dec]: decoration.png "decorative"';
+
+// The title decorative marks an image that carries no meaning. The rule
+// honours it only in one closed form, which both reference renderers read the
+// same way, and not in any other.
+describe("a decorative title on an inline image", () => {
+  test("is honoured after a plain destination and one space, in either quotes and any case", () => {
+    expect(altFindings('![](decoration.png "decorative")\n')).toEqual([]);
+    expect(altFindings("![](decoration.png 'decorative')\n")).toEqual([]);
+    expect(altFindings('![](decoration.png "DecoRative")\n')).toEqual([]);
+    expect(altFindings('![](https://example.com/a-b_c?d=1&e=%20#f "decorative")\n')).toEqual([]);
+  });
+
+  test("is honoured wherever such an image stands on a line", () => {
+    const image = '![](decoration.png "decorative")';
+    for (const text of [`- ${image}`, `> ${image}`, `# ${image}`, `[${image}](page.md)`, `Text ${image} text.`, `[t](a "x") ${image}`]) {
+      expect(altFindings(`${text}\n`), text).toEqual([]);
+    }
+  });
+
+  test("is honoured after a tab where the reader keeps it, in a heading", () => {
+    expect(altFindings('# ![](decoration.png\t"decorative")\n')).toEqual([]);
+    // In a paragraph the reader turns the tab into spaces, so the rule reports it.
+    expect(altFindings('![](decoration.png\t"decorative")\n')).toHaveLength(1);
+  });
+
+  test("is honoured with every printable ASCII character in the destination but the excluded ones", () => {
+    for (let code = 0x21; code < 0x7f; code++) {
+      const character = String.fromCharCode(code);
+      const expected = `"'()<>${BACKSLASH}`.includes(character) ? 1 : 0;
+      expect(altFindings(`![](a${character}b "decorative")\n`), character).toHaveLength(expected);
+    }
+  });
+
+  test("is not honoured in parentheses, which the scan cuts at the title's own \")\"", () => {
+    expect(altFindings("![](decoration.png (decorative))\n")).toEqual([missingAlt("decoration.png (decorative")]);
+  });
+
+  test("is not honoured after any other destination or gap", () => {
+    for (const written of [
+      '<decoration.png> "decorative"', '<my decoration.png> "decorative"', 'decoration(1).png "decorative"',
+      `decoration${BACKSLASH}).png "decorative"`, `my${BACKSLASH} decoration.png "decorative"`,
+      'decoration.png  "decorative"', 'decoration.png"decorative"', ' "decorative"',
+      `decoration.png${String.fromCharCode(0xa0)}"decorative"`, 'decoration.png "decorative" ',
+      'decoration.png "decorative image"', 'decoration.png ""',
+    ]) {
+      // The reader takes "<my decoration.png>" for a tag, so only the count is compared.
+      expect(altFindings(`![](${written})\n`), written).toHaveLength(1);
+    }
+  });
+
+  test("is not honoured where the reader rewrote anything on the image's line", () => {
+    // An escape, a code span and a tag reach the rule as spaces, so what the
+    // rule reads is not what was written, and it reports rather than guess.
+    const image = '![](decoration.png "decorative")';
+    for (const text of [`${BACKSLASH}* ${image}`, `\`code\` ${image}`, `<b>bold</b> ${image}`]) {
+      expect(altFindings(`${text}\n`), text).toHaveLength(1);
+    }
+    // In the text as written, the tag is part of the destination and there is no title.
+    expect(altFindings('![](decoration.png<b>"decorative")\n')).toHaveLength(1);
+  });
+
+  test("is not honoured on an image with a label of spaces", () => {
+    expect(altFindings('![ ](decoration.png "decorative")\n')).toEqual([missingAlt('decoration.png "decorative"')]);
+  });
+});
+
+describe("a decorative title on a reference image", () => {
+  test("is honoured from one plain definition on a line of its own, before or after the image", () => {
+    expect(altFindings(`![][dec]\n\n${DEFINITION}\n`)).toEqual([]);
+    expect(altFindings(`${DEFINITION}\n\n![][dec]\n`)).toEqual([]);
+    expect(altFindings("![][dec]\n\n[dec]: decoration.png 'DECORATIVE'\n")).toEqual([]);
+    expect(altFindings(`![][dec]\r\n\r\n${DEFINITION}\r\n`)).toEqual([]);
+  });
+
+  test("matches the label as a renderer does, ignoring case and runs of space", () => {
+    expect(altFindings(`![][DEC]\n\n${DEFINITION}\n`)).toEqual([]);
+    expect(altFindings('![][the  Dec_1-x]\n\n[The dec_1-X]: decoration.png "decorative"\n')).toEqual([]);
+    // The title belongs to the definition the image names, not to its neighbour.
+    expect(altFindings(`![][plain]\n\n${DEFINITION}\n[plain]: plain.png\n`)).toEqual([missingAlt("plain")]);
+  });
+
+  test("is needed: a definition with no title, or another, leaves the image reported", () => {
+    for (const definition of ["[dec]: decoration.png", "[dec]: decorative.png", '[dec]: decoration.png "not decorative"']) {
+      expect(altFindings(`![][dec]\n\n${definition}\n`), definition).toEqual([missingAlt("dec")]);
+    }
+  });
+
+  test("is not honoured from a definition in any other form", () => {
+    for (const definition of [
+      "[dec]: decoration.png (decorative)", '[dec]: <decoration.png> "decorative"', '[dec]:  decoration.png "decorative"',
+      '[dec]: decoration.png  "decorative"', '[dec]: decoration.png "decorative" ', ' [dec]: decoration.png "decorative"',
+      `[dec]: decoration${BACKSLASH}_1.png "decorative"`, '[dec]: decoration(1).png "decorative"',
+    ]) {
+      expect(altFindings(`![][dec]\n\n${definition}\n`), definition).toEqual([missingAlt("dec")]);
+    }
+    // A definition in a quotation or a list item, or one whose title is on the next line.
+    expect(altFindings(`![][dec]\n\n> ${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+    expect(altFindings(`![][dec]\n\n- ${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+    expect(altFindings('![][dec]\n\n[dec]: decoration.png\n"decorative"\n')).toEqual([missingAlt("dec")]);
+  });
+
+  test("is not honoured on a label with anything but ASCII letters, digits, spaces, hyphens and underscores", () => {
+    for (const label of ["a.b", "a:b", "a/b"]) {
+      expect(altFindings(`![][${label}]\n\n[${label}]: decoration.png "decorative"\n`), label).toHaveLength(1);
+    }
+    // The Kelvin sign is "k" in lower case, but it is not ASCII, so the image is reported.
+    const kelvin = String.fromCharCode(0x212a);
+    expect(altFindings(`![][${kelvin}]\n\n[k]: decoration.png "decorative"\n`)).toEqual([missingAlt(kelvin)]);
+  });
+
+  test("is not honoured when another definition could be the one a renderer takes", () => {
+    const untitled = "[dec]: other.png";
+    expect(altFindings(`![][dec]\n\n${DEFINITION}\n${untitled}\n`)).toEqual([missingAlt("dec")]);
+    expect(altFindings(`![][dec]\n\n${untitled}\n${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+    // Labels that differ only in spaces, hyphens, underscores or escapes are counted as one.
+    for (const other of ["[d ec]: other.png", "[de-c]: other.png", "[d_ec]: other.png", `[de${BACKSLASH}c]: other.png`]) {
+      expect(altFindings(`![][dec]\n\n${DEFINITION}\n${other}\n`), other).toEqual([missingAlt("dec")]);
+    }
+    // A label written over two lines, which both renderers take as the first
+    // definition, though the reader does not read it as one.
+    expect(altFindings(`![][d ec]\n\n[d\nec]: first.png\n\n[d ec]: decoration.png "decorative"\n`)).toEqual([missingAlt("d ec")]);
+  });
+
+  test("is not honoured when any definition's label holds a character beyond ASCII", () => {
+    // Renderers fold case across Unicode, so these labels can match a plain one.
+    const folding: ReadonlyArray<[image: string, first: string]> = [
+      ["SS", "ß"], ["k", String.fromCharCode(0x212a)], ["i", String.fromCharCode(0x131)], ["a b", `a${String.fromCharCode(0xa0)}b`],
+    ];
+    for (const [image, first] of folding) {
+      const text = `![][${image}]\n\n[${first}]: first.png\n[${image}]: second.png "decorative"\n`;
+      expect(altFindings(text), image).toEqual([missingAlt(image)]);
+    }
+    // So does one that could not match, since the rule does not fold case itself.
+    expect(altFindings(`![][dec]\n\n${DEFINITION}\n[café]: cafe.png\n`)).toEqual([missingAlt("dec")]);
+  });
+
+  test("is not honoured on an image after other image syntax in its paragraph", () => {
+    // Each of these renders one image with no title, of which the reference is a part.
+    for (const text of ["![](a![][dec]\n)", "![](\na![][dec])", "![![](q)](<a) ![][dec]>)", "![![][dec]](\nx.png)"]) {
+      expect(altFindings(`${text}\n\n${DEFINITION}\n`), text).toHaveLength(1);
+    }
+    expect(altFindings(`![![][dec]][other\n]\n\n${DEFINITION}\n[other]: u.png\n`)).toHaveLength(1);
+    // Even after an image that the reference is not part of.
+    expect(altFindings(`\`![x]\` ![][dec]\n\n${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+    expect(altFindings(`![][dec] ![][dec]\n\n${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+    // A line of spaces is blank and ends the paragraph; a no-break space does not.
+    expect(altFindings(`![x](a.png)\n \t\n![][dec]\n\n${DEFINITION}\n`)).toEqual([]);
+    expect(altFindings(`![x](a.png)\n${String.fromCharCode(0xa0)}\n![][dec]\n\n${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+  });
+
+  test("is not honoured where the reader rewrote anything on the image's line", () => {
+    expect(altFindings(`<b>x</b> ![][dec]\n\n${DEFINITION}\n`)).toEqual([missingAlt("dec")]);
+    // The reader reads this label as "de c", whose definition is decorative, but
+    // both renderers take the definition written "de<b>c", which has no title.
+    expect(altFindings('![][de<b>c]\n\n[de c]: decoration.png "decorative"\n[de<b>c]: other.png\n'))
+      .toEqual([missingAlt("de c")]);
+  });
+
+  test("leaves alone what was never reported", () => {
+    // Collapsed and shortcut images carry their label as alternative text.
+    expect(altFindings(`![dec][]\n\n${DEFINITION}\n`)).toEqual([]);
+    expect(altFindings(`![dec]\n\n${DEFINITION}\n`)).toEqual([]);
+    // An image naming no definition renders as text, and a tab makes the reader skip a definition.
+    expect(altFindings(`![][missing]\n\n${DEFINITION}\n`)).toEqual([]);
+    expect(altFindings('![][dec]\n\n[dec]:\tdecoration.png "decorative"\n')).toEqual([]);
+  });
+});
+
+// One image's title must never stand for another's, so these hold two images.
+describe("two images with no alternative text, one marked decorative", () => {
+  const untitledInline = "![](plain.png)";
+  const decorativeInline = '![](decoration.png "decorative")';
+  const definitions = `${DEFINITION}\n[plain]: plain.png`;
+
+  test("report the untitled one and honour the decorative inline one, in either order", () => {
+    for (const between of [" ", "\n", "\n\n"]) {
+      expect(altFindings(`${untitledInline}${between}${decorativeInline}\n`)).toEqual([missingAlt("plain.png")]);
+      expect(altFindings(`${decorativeInline}${between}${untitledInline}\n`)).toEqual([missingAlt("plain.png")]);
+      expect(altFindings(`![][plain]${between}${decorativeInline}\n\n${definitions}\n`)).toEqual([missingAlt("plain")]);
+    }
+  });
+
+  test("honour a decorative reference image only when it comes first in its paragraph", () => {
+    for (const untitled of [untitledInline, "![][plain]"]) {
+      const named = missingAlt(untitled === untitledInline ? "plain.png" : "plain");
+      expect(altFindings(`![][dec] ${untitled}\n\n${definitions}\n`), untitled).toEqual([named]);
+      expect(altFindings(`![][dec]\n\n${untitled}\n\n${definitions}\n`), untitled).toEqual([named]);
+      expect(altFindings(`${untitled}\n\n![][dec]\n\n${definitions}\n`), untitled).toEqual([named]);
+      expect(altFindings(`${untitled} ![][dec]\n\n${definitions}\n`), untitled).toEqual([named, missingAlt("dec")]);
+    }
+  });
+
+  test("keep the finding on a real image whose destination holds text like a decorative image", () => {
+    // Both renderers show one image with no title, whose destination holds the
+    // second "image". The rule reports the real one, at the start of the line.
+    expect(altFindings(`![](<a) ${decorativeInline}>)\n`)).toEqual([missingAlt("<a")]);
+    expect(altFindings(`![](<a) ![][dec]>)\n\n${DEFINITION}\n`)).toEqual([missingAlt("<a"), missingAlt("dec")]);
+  });
+});
+
+// Neither renderer shows an image in raw HTML, so these findings are on text
+// alone. The rule cannot see the HTML block, and the checklist names this.
+describe("image syntax inside a raw HTML block", () => {
+  test("is reported unless it is written in the decorative form", () => {
+    expect(altFindings("<div>\n![](probe.png)\n</div>\n")).toHaveLength(1);
+    expect(altFindings("<div>\n![](probe.png (decorative))\n</div>\n")).toHaveLength(1);
+    expect(altFindings('<div>\n![](probe.png "decorative")\n</div>\n')).toEqual([]);
+    expect(altFindings(`<div>\n![][dec]\n</div>\n\n${DEFINITION}\n`)).toEqual([]);
+  });
+});
+
+// The third review of pull request 76 found these. Each renders an image with
+// no title under both renderers, except the raw HTML ones, which render none.
+describe("the third review's regressions", () => {
+  const space = String.fromCharCode(0xa0);
+  test("report an image whose label another definition matches first", () => {
+    for (const text of [
+      `![][a b]\n\n[a${space}b]: first.png "decorative"\n[a b]: second.png`,
+      `![][a!b]\n\n[a${BACKSLASH}!b]: first.png "decorative"\n[a!b]: second.png`,
+      '![][SS]\n\n[ß]: first.png\n[SS]: second.png "decorative"',
+      '![][σ]\n\n[ς]: first.png\n[σ]: second.png "decorative"',
+      `![][${String.fromCharCode(0x131)}]\n\n[i]: first.png\n[${String.fromCharCode(0x131)}]: second.png "decorative"`,
+    ]) {
+      expect(altFindings(text), text).toHaveLength(1);
+    }
+    expect(altFindings(`![][a b] ![](titled.png (decorative))\n\n[a${space}b]: first.png "decorative"\n[a b]: second.png`))
+      .toEqual([missingAlt("a b"), missingAlt("titled.png (decorative")]);
+  });
+
+  test("report image syntax in raw HTML written with a title in parentheses", () => {
+    expect(altFindings("<div>\n![](probe.png (decorative))\n</div>")).toHaveLength(1);
+  });
+
+  test("keep their controls", () => {
+    expect(altFindings("![](probe.png)")).toHaveLength(1);
+    expect(altFindings('![](probe.png "decorative")')).toEqual([]);
+    expect(altFindings('![][dec]\n\n[dec]: probe.png "decorative"')).toEqual([]);
+  });
+});
