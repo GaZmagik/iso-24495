@@ -36,6 +36,35 @@ const REMOVAL_TABLES_STARTED = new WeakMap<ts.TypeChecker, number>();
 
 const BACKSLASH = String.fromCharCode(92);
 
+/**
+ * A module that writes each shape of name the search for uses follows: a
+ * default import, an import and an export under other names, a private
+ * name, a shorthand property, and a key written as a literal that an
+ * element access reads. The tests of what is kept for a program read it.
+ */
+const NAME_SHAPES = [
+  "import ts from \"typescript\";",
+  "import { createSourceFile as parse } from \"typescript\";",
+  "export { parse as reparse };",
+  "class Box {",
+  "  #size = 1;",
+  "  /** The size. */",
+  "  read(): number {",
+  "    return this.#size;",
+  "  }",
+  "}",
+  "const table = { size: 1 };",
+  "const size = table[\"size\"];",
+  "const holder = { size, box: new Box() };",
+  "/** Entry. */",
+  "export function main(): number {",
+  "  void ts;",
+  "  void parse;",
+  "  return holder.size + holder.box.read() + size;",
+  "}",
+  "",
+].join("\n");
+
 /** How the name of a command shim ends. A shim runs one function of the module named without it. */
 const SHIM_ENDING = "-cli.ts";
 
@@ -316,6 +345,75 @@ describe("the code skill's rules for this repository's own code", () => {
     }
     expect(problems).toEqual([]);
     expect(read).toBeGreaterThanOrEqual(16);
+  });
+
+  test("the uses kept for each declaration are those a search that keeps none finds, and a second ask gives the same list", () => {
+    const { source, checker } = typedSource("probe.ts", NAME_SHAPES);
+    const declarations = new Set<ts.Declaration>();
+    for (const name of writtenNodes(source).filter(isNameRead)) {
+      for (const declaration of usedSymbol(name, checker)?.declarations ?? []) {
+        declarations.add(declaration);
+      }
+    }
+    const found = new Map<string, string[]>();
+    for (const declaration of declarations) {
+      const kept = usesOf(declaration, checker);
+      expect(usesOf(declaration, checker)).toBe(kept);
+      const searched = findUses(declaration, checker).map((use) => nodePlace(use));
+      expect(kept.map((use) => nodePlace(use))).toEqual(searched);
+      found.set(`${ts.SyntaxKind[declaration.kind]} ${ts.getNameOfDeclaration(declaration)?.getText() ?? "(no name)"}`, [...searched].sort());
+    }
+    // Each shape the search follows: a shorthand property, a private name, a key written as a literal, an import and an export under other names, and a default import.
+    expect(found.get("VariableDeclaration size")).toEqual(["size@12", "size@13", "size@18"]);
+    expect(found.get("ShorthandPropertyAssignment size")).toEqual(["size@18"]);
+    expect(found.get("PropertyDeclaration #size")).toEqual(["#size@5", "#size@8"]);
+    expect(found.get("PropertyAssignment size")).toEqual(["\"size\"@12", "size@11"]);
+    expect(found.get("FunctionDeclaration createSourceFile")).toEqual(["createSourceFile@2", "parse@17", "parse@2", "parse@3", "reparse@3"]);
+    expect(found.get("ModuleDeclaration ts")).toEqual(["ts@1", "ts@16"]);
+  });
+
+  test("the symbol kept for each name is the one a lookup that keeps none finds, for each kind of name", () => {
+    const { source, checker } = typedSource("probe.ts", NAME_SHAPES);
+    const kinds = new Map<string, number>();
+    for (const name of writtenNodes(source).filter(isNameRead)) {
+      if (ts.isIdentifier(name)) {
+        const referenced = referencedSymbol(name, checker);
+        expect(referencedSymbol(name, checker)).toBe(referenced);
+        expect(referenced).toBe(lookUpReferencedSymbol(name, checker));
+      }
+      const used = usedSymbol(name, checker);
+      expect(usedSymbol(name, checker)).toBe(used);
+      expect(used).toBe(lookUpUsedSymbol(name, checker));
+      const kind = ts.SyntaxKind[name.kind];
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+    // A walk that read no name of a kind would compare nothing for it.
+    expect(kinds.get("PrivateIdentifier")).toBe(2);
+    expect(kinds.get("StringLiteral")).toBe(1);
+    expect(kinds.get("Identifier")).toBe(24);
+  });
+
+  test("a file read again with other text is read as that text says, not as what was kept for the earlier text", () => {
+    // `boxing` gives back what it is given, so a helper it boxes is a function; `consuming` calls it and gives back a new object.
+    const wrappers = "\ntype Boxer = (reader: () => number) => object;\n"
+      + "function boxing(reader: () => number): object {\n  return reader;\n}\n"
+      + "function consuming(reader: () => number): object {\n  return { value: reader() };\n}\n"
+      + "function run(box: Boxer): number {\n  const helper = box((): number => 1);\n  void helper;\n  return 0;\n}\n";
+    const thrower = "/** Reads a size. TAG*/\nexport function size(text: string): number {\n  if (text === \"\") throw new RangeError(\"empty\");\n  return text.length;\n}\n";
+    const readings: Array<[callers: string, tag: string, helpers: string[], problems: string[], uses: number]> = [
+      ["run(boxing);", "", ["probe.ts / run / helper"], ["probe.ts:2: the comment on size does not say what it throws"], 2],
+      ["run(consuming);\n  run(consuming);", "@throws A RangeError when the text is empty. ", [], [], 3],
+      ["run(boxing);", "", ["probe.ts / run / helper"], ["probe.ts:2: the comment on size does not say what it throws"], 2],
+    ];
+    for (const [callers, tag, helpers, problems, uses] of readings) {
+      const text = `${thrower.replace("TAG", tag)}export function main(): number {\n  ${callers}\n  return 0;\n}\n${wrappers}`;
+      const { source, checker } = typedSource("probe.ts", text);
+      expect(boundHelpersIn("probe.ts", source, checker), callers).toEqual(helpers);
+      expect(undocumentedThrowsIn("probe.ts", source, checker).problems, callers).toEqual(problems);
+      const run = source.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "run");
+      expect(run, callers).toBeDefined();
+      expect(usesOf(run as ts.FunctionDeclaration, checker).length, callers).toBe(uses);
+    }
   });
 
   test("a module that leads with a function it does not export is reported", () => {
@@ -5077,8 +5175,7 @@ function writtenNames(file: ts.SourceFile): WrittenNames {
   const defaults: ts.Identifier[] = [];
   const pending: ts.Node[] = [file];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)
-      || (ts.isStringLiteralLike(node) && ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)) {
+    if (isNameRead(node)) {
       const same = byText.get(node.text);
       if (same === undefined) {
         byText.set(node.text, [node]);
@@ -5096,6 +5193,35 @@ function writtenNames(file: ts.SourceFile): WrittenNames {
   return names;
 }
 
+/** Whether a node is a name `writtenNames` keeps: a name, a private name, or a key written as a literal that an element access reads. */
+function isNameRead(node: ts.Node): node is ts.Identifier | ts.PrivateIdentifier | ts.StringLiteralLike {
+  return ts.isIdentifier(node) || ts.isPrivateIdentifier(node)
+    || (ts.isStringLiteralLike(node) && ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node);
+}
+
+/**
+ * The uses `findUses` found for each declaration, for each checker. A
+ * declaration's uses depend only on its program, which never changes, and
+ * not on any table being made, so each is searched for once.
+ */
+const USES = new WeakMap<ts.TypeChecker, Map<ts.Declaration, readonly ts.Node[]>>();
+
+/**
+ * Each node in the files of a declaration's program that refers to it, as
+ * `findUses` finds them, searched for once for each program and kept.
+ * Rules ask for the uses of the same declaration many times over, at least
+ * once for each time the table of changes is placed again.
+ */
+function usesOf(declaration: ts.Declaration, checker: ts.TypeChecker): readonly ts.Node[] {
+  const known = USES.get(checker) ?? new Map<ts.Declaration, readonly ts.Node[]>();
+  USES.set(checker, known);
+  const kept = known.get(declaration);
+  if (kept !== undefined) return kept;
+  const found = findUses(declaration, checker);
+  known.set(declaration, found);
+  return found;
+}
+
 /**
  * Each node in the files of a declaration's program that refers to it: a
  * name, a private name, or a key written as a literal that an element
@@ -5104,7 +5230,7 @@ function writtenNames(file: ts.SourceFile): WrittenNames {
  * included, is followed by that name too. The declaration's own name is one.
  * A program no check here made is searched in the declaration's own file.
  */
-function usesOf(declaration: ts.Declaration, checker: ts.TypeChecker): ts.Node[] {
+function findUses(declaration: ts.Declaration, checker: ts.TypeChecker): ts.Node[] {
   const name = ts.getNameOfDeclaration(declaration);
   if (name === undefined || !(ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name))) return [];
   const files = PROGRAM_SOURCES.get(checker) ?? [declaration.getSourceFile()];
@@ -5134,8 +5260,26 @@ function refersTo(node: ts.Node, declaration: ts.Declaration, checker: ts.TypeCh
   return (usedSymbol(node, checker)?.declarations ?? []).includes(declaration);
 }
 
-/** The symbol a name, a private name, or a key written as a literal refers to where it is used, through any import alias. */
+/** The symbol `lookUpUsedSymbol` found for each node, for each checker, undefined where it found none. */
+const USED_SYMBOLS = new WeakMap<ts.TypeChecker, Map<ts.Node, ts.Symbol | undefined>>();
+
+/**
+ * The symbol a node refers to where it is used, as `lookUpUsedSymbol` finds
+ * it, looked up once for each program and kept. The compiler keeps no
+ * answer of its own, and the search for uses asks again for every name of
+ * the same text in the program.
+ */
 function usedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
+  const known = USED_SYMBOLS.get(checker) ?? new Map<ts.Node, ts.Symbol | undefined>();
+  USED_SYMBOLS.set(checker, known);
+  if (known.has(node)) return known.get(node);
+  const found = lookUpUsedSymbol(node, checker);
+  known.set(node, found);
+  return found;
+}
+
+/** The symbol a name, a private name, or a key written as a literal refers to where it is used, through any import alias. */
+function lookUpUsedSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
   const found = ts.isIdentifier(node) ? referencedSymbol(node, checker) : checker.getSymbolAtLocation(node);
   return found !== undefined && (found.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(found) : found;
 }
@@ -8230,12 +8374,25 @@ function passesOn(declaration: ts.SignatureDeclaration, parameter: ts.ParameterD
   return false;
 }
 
+/** The symbol `lookUpReferencedSymbol` found for each name, for each checker, undefined where it found none. */
+const REFERENCED_SYMBOLS = new WeakMap<ts.TypeChecker, Map<ts.Identifier, ts.Symbol | undefined>>();
+
+/** The symbol a name refers to where it is used, as `lookUpReferencedSymbol` finds it, looked up once for each program and kept. */
+function referencedSymbol(name: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
+  const known = REFERENCED_SYMBOLS.get(checker) ?? new Map<ts.Identifier, ts.Symbol | undefined>();
+  REFERENCED_SYMBOLS.set(checker, known);
+  if (known.has(name)) return known.get(name);
+  const found = lookUpReferencedSymbol(name, checker);
+  known.set(name, found);
+  return found;
+}
+
 /**
  * The symbol a name refers to where it is used. The name of a shorthand
  * property, as in `{ reader }`, refers to the variable whose value it takes,
  * not to the property it makes.
  */
-function referencedSymbol(name: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
+function lookUpReferencedSymbol(name: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
   if (ts.isShorthandPropertyAssignment(name.parent) && name.parent.name === name) return checker.getShorthandAssignmentValueSymbol(name.parent);
   return checker.getSymbolAtLocation(name);
 }
@@ -10652,4 +10809,21 @@ function typescriptFiles(directory = ""): string[] {
     else if (path.endsWith(".ts")) files.push(path);
   }
   return files.sort();
+}
+
+/** Every node of a file, the file first, each node before the nodes it holds. */
+function writtenNodes(file: ts.SourceFile): ts.Node[] {
+  const found: ts.Node[] = [];
+  const pending: ts.Node[] = [file];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    found.push(node);
+    pending.push(...[...node.getChildren(file)].reverse());
+  }
+  return found;
+}
+
+/** Where a node is written, as its text and its line: `name@3`. */
+function nodePlace(node: ts.Node): string {
+  const file = node.getSourceFile();
+  return `${node.getText(file)}@${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
 }
