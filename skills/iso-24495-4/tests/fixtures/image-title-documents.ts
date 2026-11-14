@@ -14,10 +14,16 @@
 
 const SLASH = String.fromCharCode(92);
 const TICK = String.fromCharCode(96);
+// Letters beyond ASCII and an emoji outside the basic plane, which a
+// destination may hold, and a zero-width space, which it may not.
+const BEYOND_ASCII = String.fromCodePoint(0xe9, 0x56fe, 0x1f600);
+const ZERO_WIDTH_SPACE = String.fromCodePoint(0x200b);
 
 /** How a destination is written. "{in}" marks where a title written inside it goes. */
 const DESTINATIONS: ReadonlyArray<[name: string, written: string]> = [
   ["plain", "x.png{in}"],
+  ["plain beyond ASCII", `x${BEYOND_ASCII}.png{in}`],
+  ["plain with a zero-width space", `x${ZERO_WIDTH_SPACE}.png{in}`],
   ["plain with parentheses", "x(1).png{in}"],
   ["plain with an escaped parenthesis", `x${SLASH}).png{in}`],
   ["angle brackets with a space", "<x y.png{in}>"],
