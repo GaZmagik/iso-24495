@@ -1,4 +1,4 @@
-# Universal Credit
+# Universal Credit (Version: 1.0)
 
 Universal Credit is a payment to help with your living costs. It's paid monthly - or twice a month for some people in Scotland. You may be able to get it if you're on a low income, out of work or you cannot work.
 

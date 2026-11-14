@@ -1,0 +1,7 @@
+interface:
+  display_name: "ISO 24495 Design Audit"
+  short_description: "Run the text audit, preview purpose and colour checks; send with agreement"
+  default_prompt: "Use $iso-24495-design-audit to run the offline text audit and preview calibrated purpose and colour checks for selected Markdown. Show the full disclosure and wait for my own agreement before sending."
+
+policy:
+  allow_implicit_invocation: false

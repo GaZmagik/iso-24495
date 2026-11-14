@@ -1,4 +1,4 @@
-# Sample With Long Sentences
+# Sample With Long Sentences (Version: 1.0)
 
 This first sentence is deliberately stretched onward through clause after clause, padding word upon word without mercy, until it sails far beyond the thirty word ceiling that the recalibrated engine now enforces. Short sentences pass.
 

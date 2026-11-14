@@ -1,4 +1,4 @@
-# Where these documents come from
+# Where these documents come from (Version: 1.0)
 
 This corpus measures how much noise the engine makes on writing that was not produced for it. Two kinds of document sit here, and the difference matters when reading the result.
 
