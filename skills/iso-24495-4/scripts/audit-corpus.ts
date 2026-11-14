@@ -1717,25 +1717,40 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
   return violations;
 }
 
+// The title that marks an image as decorative, as written between its quotes
+// or parentheses. A filename containing the word does not express that decision.
+const DECORATIVE_TITLE = /^decorative$/i;
+
 // An image with no alternative text is silence to a reader who cannot see it.
 // An empty alt is legitimate for a purely decorative image, so the writer can
 // mark that intent explicitly rather than leaving the alt blank by accident.
+// The mark is the title "decorative", wherever Markdown carries a title for the
+// image: on the image itself, or on the definition a reference image names.
+// Both spellings render the same image, so both get the same reading.
 function imageAltViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
-  const { lines, markupLines, references, hidden } = readDocument(text, reading);
+  const { lines, markupLines, references, titles, hidden } = readDocument(text, reading);
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
+    const line = itemAt(lines, i);
     // One scan finds both image forms, filtered to the ones with no alternative text.
-    for (const link of markdownLinks(itemAt(lines, i))) {
+    for (const link of markdownLinks(line)) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
       if (link.label.trim().length > 0) continue;
       const target = link.target.trim();
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        // "decorative" as the title marks an image that carries no meaning.
-        // A filename containing the word does not express that decision.
-        if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(link.target)) continue;
-      } else if (!references.has(normaliseReference(target))) continue;
+        if (/\s+(?:"decorative"|'decorative')\s*$/i.test(link.target)) continue;
+        // The destination ends at the first ")", so a title in parentheses
+        // arrives without its own ")". That ")" and the image's closing one
+        // follow, with nothing but spaces between them. A destination must come
+        // first, or the parenthesised text is the destination and not a title.
+        if (/\S\s+\(decorative$/i.test(link.target) && /^[ \t]*\)/.test(line.slice(link.end))) continue;
+      } else {
+        const name = normaliseReference(target);
+        if (!references.has(name)) continue;
+        if (DECORATIVE_TITLE.test(titles.get(name) ?? "")) continue;
+      }
       violations.push({
         rule: "image-alt",
         line: i + 1,
