@@ -107,9 +107,10 @@ bun <skill-directory>/scripts/audit-text-cli.ts <file-or-directory> --project-di
    Add `--no-front-matter` for text that cannot carry metadata, such as a pull request description. A leading `---` block is then read as text, not set aside as front matter. The version or date rule is also disabled.
 
 7. Report every finding with its file, line, rule, and explanation.
-8. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
-9. Explain that findings are mechanical proxies, not an ISO judgement.
-10. Leave the final decision and any rewriting request to the user.
+8. Show the Part 5 checklist reading printed after the findings. It marks what the audit can read, not how good the document is.
+9. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
+10. Explain that findings are mechanical proxies, not an ISO judgement.
+11. Leave the final decision and any rewriting request to the user.
 
 ## Optional calibrated Jev checks
 
