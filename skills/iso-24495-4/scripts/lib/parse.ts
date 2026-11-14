@@ -21,10 +21,8 @@ import { itemAt } from "./item-at.ts";
  *     index 0 is line 1. A line a reader never sees is blank in both.
  *     `markupLines` keeps HTML tags and `lines` does not. `hidden` takes such
  *     an index and is true for front matter and code. `references` holds
- *     each defined label as `normaliseReference` gives it, and `titles` the
- *     title of each label's first definition that has one. `sourceLines`
- *     holds each line before its escapes, code spans and HTML were rewritten
- *     for `lines`. Empty text gives one empty line.
+ *     each defined label as `normaliseReference` gives it. Empty text gives
+ *     one empty line.
  */
 export function readDocument(text: string, reading: Reading = {}): Document {
   const lines = toLines(text);
@@ -32,9 +30,7 @@ export function readDocument(text: string, reading: Reading = {}): Document {
   return {
     lines: parsed.readable.map((line) => visibleInline(line, false)),
     markupLines: parsed.markup,
-    sourceLines: parsed.source,
     references: parsed.references,
-    titles: parsed.titles,
     hidden: (index) => parsed.hidden.has(index),
   };
 }
@@ -78,21 +74,8 @@ export interface Document {
   lines: string[];
   /** Reader-visible markup retained for rules about links and images. */
   markupLines: string[];
-  /**
-   * Each line as the reader took it from its block, with its container
-   * markers removed but its escapes, code spans and HTML as written.
-   * `readerInline` turns one into its entry in `lines`, wherever the block's
-   * inline markup does not cross a line ending.
-   */
-  sourceLines: string[];
   /** Normalised reference labels that have valid definitions. */
   references: ReadonlySet<string>;
-  /**
-   * The title of each label's first definition, keyed as `references` is.
-   * A definition with no title has no entry, and neither does a label once
-   * the reader has met a line it could not read that may define it.
-   */
-  titles: ReadonlyMap<string, string>;
   /** True when the line is metadata or fenced code, excluded from prose checks. */
   hidden: (index: number) => boolean;
 }
@@ -118,11 +101,6 @@ const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 
-/** What a link reference definition says beyond its label and destination. */
-interface LinkDefinition {
-  title: string | null;
-}
-
 /**
  * A conservative single-line link reference definition.
  *
@@ -130,15 +108,10 @@ interface LinkDefinition {
  * finding, while accepting a malformed definition removes a sentence without
  * telling its writer. This parser therefore recognises only forms whose label,
  * destination and optional title are complete on one line.
- *
- * @returns Null when the line is not such a definition. Otherwise its title as
- *     written between the quotes or parentheses, with no entity or escape
- *     read, or null in `title` when the definition has none, or when its
- *     destination ends in a backslash that a renderer may read on past.
  */
-function linkDefinition(line: string): LinkDefinition | null {
+function isLinkDefinition(line: string): boolean {
   const start = /^ {0,3}\[/.exec(line);
-  if (start === null) return null;
+  if (start === null) return false;
   let index = start[0].length;
   let label = "";
   while (index < line.length) {
@@ -148,21 +121,17 @@ function linkDefinition(line: string): LinkDefinition | null {
       continue;
     }
     if (line[index] === "]") break;
-    if (line[index] === "[") return null;
+    if (line[index] === "[") return false;
     label += line[index];
     index++;
   }
-  if (line[index] !== "]" || line[index + 1] !== ":") return null;
-  if (label.trim() === "" || label.startsWith("^") || label.length > 999) return null;
+  if (line[index] !== "]" || line[index + 1] !== ":") return false;
+  if (label.trim() === "" || label.startsWith("^") || label.length > 999) return false;
   index += 2;
   while (line[index] === " ") {
     index++;
   }
 
-  // Whether the destination ends in a backslash that escapes nothing. CommonMark
-  // ends the destination at the space after it, but Bun's renderer reads on, so
-  // the title that follows is not one every renderer shows.
-  let loneBackslash = false;
   if (line[index] === "<") {
     index++;
     let closed = false;
@@ -171,7 +140,7 @@ function linkDefinition(line: string): LinkDefinition | null {
         index += 2;
         continue;
       }
-      if (line[index] === "<") return null;
+      if (line[index] === "<") return false;
       if (line[index] === ">") {
         index++;
         closed = true;
@@ -179,53 +148,48 @@ function linkDefinition(line: string): LinkDefinition | null {
       }
       index++;
     }
-    if (!closed) return null;
+    if (!closed) return false;
   } else {
     const destinationStart = index;
     let depth = 0;
     while (index < line.length && line[index] !== " " && line[index] !== "\t") {
       if (line[index] === "\\" && index + 1 < line.length && ESCAPABLE.test(line.charAt(index + 1))) {
         index += 2;
-        loneBackslash = false;
         continue;
       }
-      loneBackslash = line[index] === "\\";
       // CommonMark refuses an ASCII control character here, so the line is a
       // paragraph a reader sees. U+0000 is the exception: CommonMark replaces
       // it with U+FFFD before reading, and U+FFFD may stand in a destination.
       const code = line.charCodeAt(index);
-      if ((code >= 0x01 && code <= 0x1f) || code === 0x7f) return null;
+      if ((code >= 0x01 && code <= 0x1f) || code === 0x7f) return false;
       if (line[index] === "(") depth++;
       if (line[index] === ")") depth--;
-      if (depth < 0 || depth > 32) return null;
+      if (depth < 0 || depth > 32) return false;
       index++;
     }
-    if (index === destinationStart || depth !== 0) return null;
+    if (index === destinationStart || depth !== 0) return false;
   }
 
-  if (index === line.length) return { title: null };
-  if (line[index] !== " ") return null;
+  if (index === line.length) return true;
+  if (line[index] !== " ") return false;
   while (line[index] === " ") {
     index++;
   }
-  if (index === line.length) return { title: null };
+  if (index === line.length) return true;
 
   const opening = line[index];
   const closing = opening === "(" ? ")" : opening;
-  if (opening !== "\"" && opening !== "'" && opening !== "(") return null;
+  if (opening !== "\"" && opening !== "'" && opening !== "(") return false;
   index++;
-  const titleStart = index;
   while (index < line.length && line[index] !== closing) {
     index++;
   }
-  if (line[index] !== closing) return null;
-  const title = line.slice(titleStart, index);
+  if (line[index] !== closing) return false;
   index++;
   while (line[index] === " ") {
     index++;
   }
-  if (index !== line.length) return null;
-  return { title: loneBackslash ? null : title };
+  return index === line.length;
 }
 
 /**
@@ -382,9 +346,6 @@ interface Parsed {
   /** Valid link reference labels in this document. */
   references: Set<string>;
   destinations: Map<string, string>;
-  titles: Map<string, string>;
-  /** Each line before its inline markup was rewritten, as `Document` has it. */
-  source: string[];
   rootLines: Set<number>;
   navigationLines: Set<number>;
   rootHeadingLines: Set<number>;
@@ -488,9 +449,6 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   const markup = [...lines];
   const references = new Set<string>();
   const destinations = new Map<string, string>();
-  const titles = new Map<string, string>();
-  // Labels with a line before their first definition that may define them.
-  const unread = new Set<string>();
   const rootLines = new Set<number>();
   const navigationLines = new Set<number>();
   const rootHeadingLines = new Set<number>();
@@ -662,13 +620,12 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     // A tab is structural indentation, not link-definition whitespace. The
     // expanded line cannot preserve that distinction, so the safe reading is
     // visible prose rather than silently accepting a lookalike.
-    const definition = paragraph === null && !source.includes("\t") ? linkDefinition(text) : null;
-    if (definition !== null) {
+    if (paragraph === null && !source.includes("\t") && isLinkDefinition(text)) {
       const [labelAndColon, label] = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text) ?? [];
       if (labelAndColon !== undefined && label !== undefined) {
         const name = normaliseReference(label);
         references.add(name);
-        // Read the way linkDefinition read it: spaces lead up to the
+        // Read the way isLinkDefinition read it: spaces lead up to the
         // destination, and a space or a tab ends it. Any other character is
         // part of it, a no-break space and U+FEFF among them, as CommonMark
         // has it. Trimming and matching on white space took those for space,
@@ -678,24 +635,11 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         // bracket lets "]:" sit inside the label, and reading from the first
         // "]:" on the line recorded part of the label as the destination.
         const destination = /^ *(?:<([^>]*)>|([^ \t]+))/.exec(text.slice(labelAndColon.length));
-        // The title comes from the same first definition, so a label never
-        // pairs one definition's destination with another's title.
-        if (!destinations.has(name)) {
-          destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
-          if (definition.title !== null && !unread.has(name)) titles.set(name, definition.title);
-        }
+        if (!destinations.has(name)) destinations.set(name, destination?.[1] ?? destination?.[2] ?? "");
       }
       readable[i] = "";
       markup[i] = "";
       continue;
-    }
-    // A line that starts like a definition but was not read as one may still
-    // be one to a renderer: a tab after the colon, or a destination on the
-    // next line. CommonMark takes a label's first definition, so a title on a
-    // later one may not be the title that counts.
-    const [, unreadLabel] = /^ {0,3}\[((?:\\.|[^\]])+)\]:/.exec(text) ?? [];
-    if (unreadLabel !== undefined && !destinations.has(normaliseReference(unreadLabel))) {
-      unread.add(normaliseReference(unreadLabel));
     }
 
     const [, , opener, info] = FENCE_OPEN.exec(text) ?? [];
@@ -810,15 +754,10 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     paragraph.lines.push(text.trimStart());
   }
 
-  // Every line but a paragraph's reaches `lines` as `readable` holds it.
-  const source = [...readable];
   for (const block of paragraphs) {
-    for (const [offset, line] of block.lines.entries()) {
-      source[block.line - 1 + offset] = line;
-    }
-    const joined = block.lines.join("\n");
-    const forLineRules = visibleInline(joined, false).split("\n");
-    const withTags = visibleInline(joined, false, true).split("\n");
+    const source = block.lines.join("\n");
+    const forLineRules = visibleInline(source, false).split("\n");
+    const withTags = visibleInline(source, false, true).split("\n");
     // Both readings keep every line ending of the source, so they hold the same lines.
     for (const [offset, shown] of forLineRules.entries()) {
       readable[block.line - 1 + offset] = shown;
@@ -826,13 +765,13 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     for (const [offset, shown] of withTags.entries()) {
       markup[block.line - 1 + offset] = shown;
     }
-    block.lines = visibleInline(joined).split("\n");
+    block.lines = visibleInline(source).split("\n");
   }
   for (const heading of found) {
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, titles, source, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
 }
 
 /**
@@ -970,17 +909,6 @@ export function tickRun(text: string, start: number): number {
     end++;
   }
   return end - start;
-}
-
-/**
- * Rewrite inline text the way `readDocument` rewrites each of its `lines`.
- *
- * @param text An entry of `sourceLines`, or part of one.
- * @returns The text with each escape and the syntax of each code span as
- *     spaces, and each HTML tag or comment as one space.
- */
-export function readerInline(text: string): string {
-  return visibleInline(text, false);
 }
 
 /** Remove only inline markup that CommonMark keeps out of rendered text. */
