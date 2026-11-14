@@ -667,6 +667,17 @@ describe("a decorative title on an image with no alternative text", () => {
     }
   });
 
+  test("is read across a tab in a heading, where the reader keeps the tab", () => {
+    // Most lines reach the check with their tabs already turned into spaces.
+    // A heading's text does not, so this is where a tab separator is tested.
+    expect(altFindings("# Heading ![](decoration.png)\n")).toEqual([missingAlt("decoration.png")]);
+    for (const title of ['"decorative"', "'decorative'", "(decorative)"]) {
+      expect(altFindings(`# Heading ![](decoration.png\t${title})\n`), title).toEqual([]);
+      expect(altFindings(`Heading ![](decoration.png\t${title})\n===\n`), title).toEqual([]);
+      expect(altFindings(`# Heading ![](decoration.png${NOT_A_SEPARATOR[0]}${title})\n`), title).toHaveLength(1);
+    }
+  });
+
   test("is read when the destination itself ends in Unicode whitespace", () => {
     const space = String.fromCharCode(0x00a0);
     for (const title of ['"decorative"', "'decorative'", "(decorative)"]) {
