@@ -677,7 +677,10 @@ describe("a decorative title on a reference image", () => {
 
   test("is not honoured when any definition's label holds a character beyond ASCII", () => {
     // Renderers fold case across Unicode, so these labels can match a plain one.
-    for (const [image, first] of [["SS", "ß"], ["k", String.fromCharCode(0x212a)], ["i", String.fromCharCode(0x131)], ["a b", `a${String.fromCharCode(0xa0)}b`]]) {
+    const folding: ReadonlyArray<[image: string, first: string]> = [
+      ["SS", "ß"], ["k", String.fromCharCode(0x212a)], ["i", String.fromCharCode(0x131)], ["a b", `a${String.fromCharCode(0xa0)}b`],
+    ];
+    for (const [image, first] of folding) {
       const text = `![][${image}]\n\n[${first}]: first.png\n[${image}]: second.png "decorative"\n`;
       expect(altFindings(text), image).toEqual([missingAlt(image)]);
     }
