@@ -6,12 +6,15 @@ import { lstatSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  inlineText,
   markdownLinks,
   mergedSentences,
   normaliseReference,
   proseBlocks,
   readerProseBlocks,
   readDocument,
+  structure,
+  tableCells,
   toLines,
   type ProseBlock,
   type Reading,
@@ -344,6 +347,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
+  violations.push(...provisionalLabelViolations(text, reading));
   if (options.markdown) {
     const fileName = options.fileName;
     violations.push(...layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
@@ -2014,6 +2018,102 @@ function tableHeaderViolations(text: string, reading: Reading): Violation[] {
     });
   }
   return violations;
+}
+
+// The number of Part 5, with no digit on either side. It is the one form every
+// citation here shares: ISO 24495-5, ISO/WD 24495-5 and the skill's name,
+// iso-24495-5. A name alone, such as "Part 5", is not read, because "Part 5"
+// of any other document would be read as well.
+const PART_5_CITATION = /(?<!\p{N})24495-5(?!\p{N})/u;
+
+// A word that says the standard is not yet published. A letter or digit on
+// either side makes another word, so "drafted" and "redraft" do not count, but
+// an underscore of emphasis does not, so "_draft_" does.
+const DRAFT_LABEL = /(?<![\p{L}\p{N}])(?:drafts?|provisional|unpublished)(?![\p{L}\p{N}])/iu;
+
+// Text in double quotation marks is a phrase being quoted, such as a
+// counter-example, not the document's own citation or its own label. A
+// curly quotation stops at the next opening mark, so an opener with no
+// closer reads on only to the next opener, not to the end of the text.
+const QUOTED_TEXT = /"[^"]*"|\u201c[^\u201c\u201d]*\u201d/g;
+
+/** One paragraph, list item, quotation, heading or table row, with the line it starts on. */
+interface CitingUnit {
+  readonly line: number;
+  readonly text: string;
+}
+
+/**
+ * Part 5 asks a document that cites its skill or ISO 24495-5 to say that the
+ * standard is an unpublished draft. It asks what the document says, once, so
+ * one paragraph that cites it and carries a draft word is enough. A label in a
+ * paragraph that does not cite it is not beside the citation a reader meets.
+ *
+ * Each paragraph, list item, quotation, heading and table row is read on its
+ * own. Code, front matter, comments and link destinations are not read, nor is
+ * text in double quotation marks.
+ *
+ * @returns One finding at the first citation, or none when the document cites
+ *     nothing or one citing paragraph carries the label.
+ */
+function provisionalLabelViolations(text: string, reading: Reading): Violation[] {
+  // Most documents never name the standard, so they are not parsed again.
+  if (!PART_5_CITATION.test(text)) return [];
+  const units: CitingUnit[] = [
+    ...readerProseBlocks(text, reading).map((block) => ({ line: block.line, text: block.lines.join("\n") })),
+    ...headings(text, reading).map((heading) => ({ line: heading.line, text: heading.text })),
+    ...readerTableRows(text, reading),
+  ];
+  // The earliest line is kept as the units are read. Spreading every citing
+  // line into one Math.min call threw a RangeError on a long table.
+  let first = Infinity;
+  for (const unit of units) {
+    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
+    if (!PART_5_CITATION.test(unquoted)) continue;
+    if (DRAFT_LABEL.test(unquoted)) return [];
+    if (unit.line < first) first = unit.line;
+  }
+  if (first === Infinity) return [];
+  return [{
+    rule: "provisional-label",
+    line: first,
+    detail: "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it",
+  }];
+}
+
+/**
+ * Each table row, its divider included, as a reader sees it.
+ *
+ * A row is split into cells first, as GitHub splits it, so a pipe inside
+ * what looks like a link ends the cell and the link with it. A cell past the
+ * header's last column is dropped, as GitHub drops it. Each cell then goes
+ * through `inlineText`, the reading that prose and headings get: a link or
+ * image becomes its label, a reference link only where its label is
+ * defined, and an HTML comment or tag becomes a space. The cells are joined
+ * by " | ", so two cells never make one word or one number.
+ *
+ * @returns One unit for each table line, at its 1-indexed line. Empty when the
+ *     text holds no table.
+ */
+function readerTableRows(text: string, reading: Reading): CitingUnit[] {
+  const { blocks, lines, destinations } = structure(text, reading);
+  // `destinations` has one key for each defined label, normalised, which is
+  // the set `inlineText` takes.
+  const defined = new Set(destinations.keys());
+  // The number of columns of each table, keyed by the index of its header line.
+  const columns = new Map<number, number>();
+  const rows: CitingUnit[] = [];
+  for (const [index, block] of blocks) {
+    if (block.kind !== "table") continue;
+    let width = columns.get(block.id);
+    if (width === undefined) {
+      width = tableCells(itemAt(lines, block.id).trim()).length;
+      columns.set(block.id, width);
+    }
+    const cells = tableCells(itemAt(lines, index).trim()).slice(0, width);
+    rows.push({ line: index + 1, text: cells.map((cell) => inlineText(cell, defined)).join(" | ") });
+  }
+  return rows;
 }
 
 function wordyPhraseViolations(text: string, reading: Reading): Violation[] {

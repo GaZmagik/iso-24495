@@ -612,14 +612,14 @@ describe("repository writing conventions", () => {
   // in the same commit, which is the point rather than a cost.
   const part2ScopeBoundary = [
     "3. **Document Design Applies Here Too:**",
-    "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
+    "   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5, an unpublished draft standard, governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
     "   - Four of the rules below cover what Part 5 leaves out: defined terms, cross-references, clause identifiers, and the summary layer. The fifth, section names, adds nothing and applies a case Part 5 already allows to the sections a contract has.",
     "   - Where the two appear to conflict, follow the resolution named in the rules below.",
   ];
 
   const part3ScopeBoundary = [
     "3. **Document Design Applies Here Too:**",
-    "   - A technical document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
+    "   - A technical document is a document, so `iso-24495-5` loads alongside this skill. Part 5, an unpublished draft standard, governs headings, navigation, chunking, signalling, and readers who cannot see the page.",
     "   - It loads for a document, not for every explanation. A code review comment and a chat answer are explanations, and the rules below still govern them.",
     "   - Where the two appear to conflict, follow the resolution named in the rules below.",
   ];

@@ -945,8 +945,9 @@ const TITLED_PREVIEW_BEFORE = "40440cc44d7d275feaaa1482e80aa3331e08d765df5cf83cd
 const NO_TITLE_PREVIEW_BEFORE = "cda38615d7dfc37a28a12622d97cee996bff9c2b824b0437e3e6db57a8ea9344";
 const NO_TITLE_SEND_BEFORE = "f09d0c6f0eaba71a3289ba9c49adb715e52387469e344aa1fcd47543383e719e";
 // The preview's JSON report as written once the checklist reading was added,
-// with filesNotReached and documentsNotSent in its run.
-const NO_TITLE_PREVIEW_JSON = "51191c38b29aa5e87f162ae023012d670fda9f34b0ec381fcedb31bd13dc94a3";
+// with filesNotReached and documentsNotSent in its run, and clause 25a a
+// fault check.
+const NO_TITLE_PREVIEW_JSON = "10c81d46e9850fa12af85c134bf307c33c699ea43224421d13218ad6ca89f755";
 const NO_TITLE_PREVIEW_JSON_BEFORE = "aaa36ebb767b04dc1b8078dfd2cfaf7c9a6ea5e19e4a83c3da20b3b6292c42b1";
 const NO_TITLE_BODIES_BEFORE = "a7cbaf21c2f26888b27b828be090bb7ce0eb7a996f6a8d1cc3d708805443f68c";
 const NO_TITLE_LOG_DIGEST_BEFORE = "bfca057c543a67dff65f26fce00ec30afde49d0d3ec36624a6e6c9e83a8bd491";
