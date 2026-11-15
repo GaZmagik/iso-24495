@@ -352,6 +352,14 @@ interface Parsed {
   items: Array<{ line: number; depth: number }>;
   blocks: Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
   tableRows: Map<number, string[]>;
+  /** Each code block and its contents. Filled only for the structural reading. */
+  code: CodeBlock[];
+}
+
+/** A fenced or indented code block: its first line, counted from 1, and its content lines. */
+interface CodeBlock {
+  line: number;
+  lines: string[];
 }
 
 /**
@@ -455,12 +463,18 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   const items: Array<{ line: number; depth: number }> = [];
   const blocks = new Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>();
   const tableRows = new Map<number, string[]>();
+  const code: CodeBlock[] = [];
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
   let paragraph: ProseBlock | null = null;
   let paragraphDepth = 0;
-  let fence: { char: string; length: number } | null = null;
+  // `indent` is how far the opening fence stands in, and `block` takes the
+  // content lines when the reading is structural.
+  let fence: { char: string; length: number; indent: number; block: CodeBlock | null } | null = null;
+  // The indented code block being read, the index of its last line and the
+  // containers it sits in. Blank lines between two of its lines belong to it.
+  let indented: { block: CodeBlock; last: number; depth: number } | null = null;
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
   let rawCode: { closing: RegExp; depth: number } | null = null;
@@ -527,6 +541,11 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
           && run.length >= fence.length
           && isBlank(after)) {
           fence = null;
+        } else if (i < lines.length - 1 || source !== "") {
+          // CommonMark takes off as many leading spaces as the opening fence
+          // stood in. An empty last entry is the end of the text after its
+          // final line break, not a line, so an unclosed block does not take it.
+          fence.block?.lines.push(rest.slice(Math.min(fence.indent, indentOf(rest))));
         }
         continue;
       }
@@ -642,11 +661,13 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       continue;
     }
 
-    const [, , opener, info] = FENCE_OPEN.exec(text) ?? [];
-    if (opener !== undefined && info !== undefined
+    const [, fenceIndent, opener, info] = FENCE_OPEN.exec(text) ?? [];
+    if (fenceIndent !== undefined && opener !== undefined && info !== undefined
       && !(opener.charAt(0) === "`" && info.includes("`"))) {
       paragraph = null;
-      fence = { char: opener.charAt(0), length: opener.length };
+      const block = structural ? { line: i + 1, lines: [] } : null;
+      if (block !== null) code.push(block);
+      fence = { char: opener.charAt(0), length: opener.length, indent: fenceIndent.length, block };
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
@@ -698,6 +719,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
+      if (structural) indented = indentedCode(lines, i, text.slice(4), stack, indented, code);
       continue;
     }
 
@@ -771,7 +793,37 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows, code };
+}
+
+/**
+ * Adds one line of indented code to the block it continues, or opens a new
+ * block for it.
+ *
+ * A line continues the block before it when it sits in the same containers
+ * and only blank lines stand between them. Those blank lines are content of
+ * the block, as CommonMark has it, so each is added as an empty line.
+ *
+ * @returns The block now being read, with this line as its last.
+ */
+function indentedCode(
+  lines: string[],
+  index: number,
+  content: string,
+  stack: Container[],
+  current: { block: CodeBlock; last: number; depth: number } | null,
+  code: CodeBlock[],
+): { block: CodeBlock; last: number; depth: number } {
+  const between = current === null ? [] : lines.slice(current.last + 1, index);
+  const continues = current !== null && current.depth === stack.length
+    && between.every(line => isBlank(matchOpen(expandTabs(line), stack).rest));
+  if (current !== null && continues) {
+    current.block.lines.push(...between.map(() => ""), content);
+    return { ...current, last: index };
+  }
+  const block = { line: index + 1, lines: [content] };
+  code.push(block);
+  return { block, last: index, depth: stack.length };
 }
 
 /**
@@ -800,6 +852,17 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
  *   belongs to. Lines of one block share an `id`. `data` is false for a
  *   table header and its divider.
  * - `tableRows`: the cells of each table row below the divider.
+ * - `code`: each fenced or indented code block, with the line it starts on
+ *   and its contents. A fenced block's line is its opening fence, and its
+ *   contents are the lines between the fences, without the fences or the
+ *   info string. Each line loses its container markers, and as many leading
+ *   spaces as the opening fence stood in, or four for indented code. A tab
+ *   is read as spaces to the next four-column stop. Nothing else changes.
+ *   A raw HTML block such as `<pre>` is not listed.
+ * - `paragraphs`: each block of prose, as `proseBlocks` gives it, but read
+ *   with the raw HTML code blocks above left out. So a paragraph that follows
+ *   `</pre>` with no blank line starts on its own line, and holds nothing of
+ *   the block above it.
  *
  * Empty text gives one empty line and nothing else.
  */
@@ -810,10 +873,13 @@ export function structure(text: string, reading: Reading = {}): {
   items: Array<{ line: number; depth: number }>;
   blocks: ReadonlyMap<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>;
   tableRows: ReadonlyMap<number, string[]>;
+  code: Array<{ line: number; text: string }>;
+  paragraphs: ProseBlock[];
 } {
   const parsed = parse(toLines(text), reading, true);
   return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
-    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows };
+    lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows,
+    code: parsed.code.map(block => ({ line: block.line, text: block.lines.join("\n") })), paragraphs: parsed.paragraphs };
 }
 
 /**
