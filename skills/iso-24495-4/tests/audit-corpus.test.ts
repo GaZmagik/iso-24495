@@ -1060,10 +1060,12 @@ describe("provisional-label", () => {
     // arguments passed and one of 700,000 threw a RangeError. The limit
     // depends on the stack size, so two million leaves a wide margin, though
     // a machine with a far larger stack could still pass the spread.
-    const units = Array.from({ length: 2_000_000 }, (_, index) => ({ line: 2_000_000 - index, text: "24495-5" }));
-    let first: number | null = null;
-    expect(() => { first = firstUnlabelledCitation(units); }).not.toThrow();
-    expect(first).toBe(1);
+    const units = Array.from({ length: 2_000_000 }, (unit, index) => ({ line: 2_000_000 - index, text: "24495-5" }));
+    const result: { first?: number | null } = {};
+    expect(() => {
+      result.first = firstUnlabelledCitation(units);
+    }).not.toThrow();
+    expect(result.first).toBe(1);
   });
 
   test("returns no line when nothing cites the standard, or a citing unit carries the label", () => {
