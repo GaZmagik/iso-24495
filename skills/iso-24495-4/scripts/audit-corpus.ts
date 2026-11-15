@@ -12,6 +12,7 @@ import {
   proseBlocks,
   readerProseBlocks,
   readDocument,
+  structure,
   toLines,
   type ProseBlock,
   type Reading,
@@ -344,6 +345,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
+  violations.push(...provisionalLabelViolations(text, reading));
   if (options.markdown) {
     const fileName = options.fileName;
     violations.push(...layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
@@ -2014,6 +2016,60 @@ function tableHeaderViolations(text: string, reading: Reading): Violation[] {
     });
   }
   return violations;
+}
+
+// The number of Part 5, with no digit on either side. It is the one form every
+// citation here shares: ISO 24495-5, ISO/WD 24495-5 and the skill's name,
+// iso-24495-5. A name alone, such as "Part 5", is not read, because "Part 5"
+// of any other document would be read as well.
+const PART_5_CITATION = /(?<!\p{N})24495-5(?!\p{N})/u;
+
+// A word that says the standard is not yet published. A letter or digit on
+// either side makes another word, so "drafted" and "redraft" do not count, but
+// an underscore of emphasis does not, so "_draft_" does.
+const DRAFT_LABEL = /(?<![\p{L}\p{N}])(?:drafts?|provisional|unpublished)(?![\p{L}\p{N}])/iu;
+
+// Text in double quotation marks is a phrase being quoted, such as a
+// counter-example, not the document's own citation or its own label.
+const QUOTED_TEXT = /"[^"]*"|“[^”]*”/g;
+
+/** One paragraph, list item, quotation, heading or table row, with the line it starts on. */
+interface CitingUnit {
+  readonly line: number;
+  readonly text: string;
+}
+
+/**
+ * Part 5 asks a document that cites its skill or ISO 24495-5 to say that the
+ * standard is an unpublished draft. It asks what the document says, once, so
+ * one paragraph that cites it and carries a draft word is enough. A label in a
+ * paragraph that does not cite it is not beside the citation a reader meets.
+ *
+ * Each paragraph, list item, quotation, heading and table row is read on its
+ * own. Code, front matter, comments and link destinations are not read, nor is
+ * text in double quotation marks.
+ *
+ * @returns One finding at the first citation, or none when the document cites
+ *     nothing or one citing paragraph carries the label.
+ */
+function provisionalLabelViolations(text: string, reading: Reading): Violation[] {
+  // Most documents never name the standard, so they are not parsed again.
+  if (!PART_5_CITATION.test(text)) return [];
+  const { blocks, lines } = structure(text, reading);
+  const units: CitingUnit[] = [
+    ...readerProseBlocks(text, reading).map((block) => ({ line: block.line, text: block.lines.join("\n") })),
+    ...headings(text, reading).map((heading) => ({ line: heading.line, text: heading.text })),
+    ...[...blocks].filter(([, block]) => block.kind === "table").map(([index]) => ({ line: index + 1, text: itemAt(lines, index) })),
+  ];
+  const citing = units
+    .map((unit) => ({ line: unit.line, text: unit.text.replace(QUOTED_TEXT, " ") }))
+    .filter((unit) => PART_5_CITATION.test(unit.text));
+  if (citing.length === 0 || citing.some((unit) => DRAFT_LABEL.test(unit.text))) return [];
+  return [{
+    rule: "provisional-label",
+    line: Math.min(...citing.map((unit) => unit.line)),
+    detail: "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it",
+  }];
 }
 
 function wordyPhraseViolations(text: string, reading: Reading): Violation[] {

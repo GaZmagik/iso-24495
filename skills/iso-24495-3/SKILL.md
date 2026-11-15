@@ -23,7 +23,7 @@ Extends ISO 24495-1:2023 for software architecture, technical documentation, alg
    - Code blocks, stack traces, abstract syntax tree (AST) dumps, terminal commands, and exact line quotes are **completely immune** to sentence length and simplification constraints. Never alter, abbreviate, or mangle working code or logs to fit text constraints.
 
 3. **Document Design Applies Here Too:**
-   - A technical document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.
+   - A technical document is a document, so `iso-24495-5` loads alongside this skill. Part 5, an unpublished draft standard, governs headings, navigation, chunking, signalling, and readers who cannot see the page.
    - It loads for a document, not for every explanation. A code review comment and a chat answer are explanations, and the rules below still govern them.
    - Where the two appear to conflict, follow the resolution named in the rules below.
 

@@ -877,3 +877,104 @@ describe("the third review's regressions", () => {
     expect(altFindings('![][dec]\n\n[dec]: probe.png "decorative"')).toEqual([]);
   });
 });
+
+/** What `provisional-label` says about a document that cites Part 5 with no draft label beside the citation. */
+const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it";
+
+/** Each `provisional-label` finding as its line and detail. */
+function labelFindings(text: string, frontMatter?: boolean): Array<{ line: number; detail: string }> {
+  return auditText(text, frontMatter === undefined ? {} : { frontMatter })
+    .filter((violation) => violation.rule === "provisional-label")
+    .map(({ line, detail }) => ({ line, detail }));
+}
+
+// Part 5 asks a document that cites the skill or ISO 24495-5 to say that the
+// standard is an unpublished draft. The rule asks it once: one paragraph that
+// cites it must carry the label. A label elsewhere in the file is not beside
+// the citation a reader meets, and a label in every citing paragraph is more
+// than the clause asks.
+describe("provisional-label", () => {
+  test("reports a citation in any of its forms when nothing beside it says draft", () => {
+    for (const text of [
+      "Our layout follows ISO 24495-5.\n",
+      "Our layout follows ISO/WD 24495-5.\n",
+      "Run `iso-24495-5` over the guide.\n",
+      "The skills/iso-24495-5/SKILL.md file sets the rules.\n",
+      "Our layout follows ISO 24495-5:2027.\n",
+    ]) {
+      expect(labelFindings(text), text).toEqual([{ line: 1, detail: UNLABELLED }]);
+    }
+  });
+
+  test("passes a citing paragraph that says draft, drafts, provisional or unpublished, in any letter case", () => {
+    for (const label of ["a draft", "one of the drafts", "provisional", "unpublished", "a DRAFT", "Provisional", "an _unpublished_ draft", "a **draft**"]) {
+      const text = `Our layout follows ISO 24495-5, which is ${label}.\n`;
+      expect(labelFindings(text), text).toEqual([]);
+    }
+  });
+
+  test("does not take a longer word or another number for the label or the citation", () => {
+    expect(labelFindings("The guide was drafted against ISO 24495-5.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("We will redraft it against ISO 24495-5.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("Our layout follows ISO 24495-50.\n")).toEqual([]);
+    expect(labelFindings("Our layout follows ISO 124495-5.\n")).toEqual([]);
+    expect(labelFindings("Our wording follows ISO 24495-1.\n")).toEqual([]);
+    expect(labelFindings("Our layout follows Part 5.\n")).toEqual([]);
+  });
+
+  test("needs the label in a paragraph that cites, not elsewhere in the file", () => {
+    expect(labelFindings("ISO 24495-5 shapes this guide.\n\nThis guide is a draft.\n"))
+      .toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("This guide is a draft.\n\nISO 24495-5 shapes this guide.\n"))
+      .toEqual([{ line: 3, detail: UNLABELLED }]);
+  });
+
+  test("needs the label in one citing paragraph, not in every one", () => {
+    expect(labelFindings("ISO 24495-5 is an unpublished draft.\n\nWe follow ISO 24495-5 throughout.\n")).toEqual([]);
+    expect(labelFindings("We follow ISO 24495-5 throughout.\n\nISO 24495-5 is an unpublished draft.\n")).toEqual([]);
+  });
+
+  test("reports a document once, at its first citation", () => {
+    expect(labelFindings("# Guide\n\nWe follow ISO 24495-5.\n\nRun `iso-24495-5` on it.\n"))
+      .toEqual([{ line: 3, detail: UNLABELLED }]);
+  });
+
+  test("reads each list item, quotation, heading and table row as a paragraph of its own", () => {
+    expect(labelFindings("- Uses ISO 24495-5\n- Is a draft\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("- Uses ISO 24495-5, a draft\n- Is long\n")).toEqual([]);
+    expect(labelFindings("> ISO 24495-5 is a working draft.\n")).toEqual([]);
+    expect(labelFindings("> ISO 24495-5 is a working paper.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("# ISO 24495-5 guide (draft)\n\nText.\n")).toEqual([]);
+    expect(labelFindings("# ISO 24495-5 guide\n\nIt is a draft.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("Guide to ISO 24495-5\n====\n\nText.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    const table = "| Skill | Status |\n|---|---|\n| `iso-24495-5` | provisional |\n| `iso-24495-1` | ready |\n";
+    expect(labelFindings(table)).toEqual([]);
+    expect(labelFindings(table.replace("provisional", "ready"))).toEqual([{ line: 3, detail: UNLABELLED }]);
+    const labelInAnotherRow = "| Skill | Status |\n|---|---|\n| `iso-24495-5` | ready |\n| `iso-24495-1` | draft |\n";
+    expect(labelFindings(labelInAnotherRow)).toEqual([{ line: 3, detail: UNLABELLED }]);
+    expect(labelFindings("| ISO 24495-5 | Status |\n|---|---|\n| a | b |\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+  });
+
+  test("skips code, front matter, comments, link destinations and quoted text", () => {
+    expect(labelFindings("```\nISO 24495-5\n```\n")).toEqual([]);
+    expect(labelFindings("Text.\n\n    ISO 24495-5\n")).toEqual([]);
+    expect(labelFindings("<!-- ISO 24495-5 -->\n\nText.\n")).toEqual([]);
+    expect(labelFindings("Read the [guide](iso-24495-5.md).\n")).toEqual([]);
+    expect(labelFindings("Never write \"follows ISO 24495-5\" alone.\n")).toEqual([]);
+    expect(labelFindings("Never write “follows ISO 24495-5” alone.\n")).toEqual([]);
+    expect(labelFindings("---\nsource: ISO 24495-5\n---\n\nText.\n")).toEqual([]);
+  });
+
+  test("keeps the controls of what it skips", () => {
+    expect(labelFindings("ISO 24495-5\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("Read the iso-24495-5 guide.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("Never write follows ISO 24495-5 alone.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("---\nsource: ISO 24495-5\n---\n\nText.\n", false)).toEqual([{ line: 2, detail: UNLABELLED }]);
+  });
+
+  test("does not count a draft word inside quotation marks as the label", () => {
+    expect(labelFindings("ISO 24495-5 is a \"draft\".\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("We follow ISO 24495-5. Avoid the phrase \"standard draft\".\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("ISO 24495-5 is a draft.\n")).toEqual([]);
+  });
+});

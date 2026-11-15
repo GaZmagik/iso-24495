@@ -19,6 +19,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 - **Transport controls.** Four concurrent requests use at most six attempts each, with a 30-second timeout per attempt. The client retries timeouts, connection failures, HTTP 429 and 5xx, and answers that fail a value check, and a request sent again for any reason may be charged again. Retries preserve bytes and never replace an accepted answer.
 - **A Part 5 checklist reading.** Both audits print how many checklist clauses their checks can report a fault on, how many this run used, and how many selected files some do not reach. It counts every clause, so it moves only when a check ships. It marks progress and does not measure the document. No Jev answer changes it, and the JSON report holds it under `checklist`.
 - **A failed send says why.** The report names the first failure in fixed words, after "Execution: incomplete." and in the JSON property `failure`. The words never include the service's reply, the key or an unexpected error's message.
+- **An offline check for the provisional label.** The new `provisional-label` rule reports a document that cites ISO 24495-5 or its skill without saying the standard is an unpublished draft. One paragraph, list item, heading or table row that cites it must carry a draft word, and code, front matter and quoted text are skipped. The Part 2, Part 3 and design audit skills gained that label. Checklist clause 25a now counts as a fault check.
 
 ### Known limits
 
