@@ -1461,6 +1461,30 @@ describe("the Part 5 checklist clause registry", () => {
     }
   });
 
+  test("the design audit and both Jev routes refuse --before and --author-text, so only the plain text audit meets the original-version need", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-before-"));
+    try {
+      const file = join(directory, "doc.md");
+      const original = join(directory, "original.md");
+      writeFileSync(file, SPECIMENS["20a"]?.text ?? "");
+      writeFileSync(original, SPECIMENS["20a"]?.before ?? "");
+      const refusing = ROUTES.filter(route => route.command === "design" || route.meets.includes("jev-route"));
+      expect(refusing).toHaveLength(4);
+      for (const route of refusing) {
+        for (const option of ["--before", "--author-text"]) {
+          const requests: string[] = [];
+          const run = await printed(route.command, ["bun", "cli", file, "--project-dir", directory, ...route.options, option, original], requests);
+          expect(run.exit, `${route.name} ${option}`).toBe(2);
+          expect(requests, `${route.name} ${option}`).toEqual([]);
+        }
+      }
+      expect(ROUTES.filter(route => route.meets.includes("before")).map(route => [route.command, ...route.options]))
+        .toEqual([["text", "--before"], ["text", "--before", "--no-front-matter"]]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   // What this sweep establishes: each of the 12 sweeps runs the audit over
   // one folder with its option and without it. For each of the 18 fault
   // clauses, 216 cells, it compares the two runs on that clause's own
