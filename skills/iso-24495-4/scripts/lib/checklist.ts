@@ -327,7 +327,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
         limits: [
           "It compares wording, not meaning. A passage reworded is reported as dropped, as one removed is, so a finding does not say whether 20a or 20b failed.",
-          "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.",
+          "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
           "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.",
         ],
       },
@@ -373,7 +373,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
         limits: [
           "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too.",
-          "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.",
+          "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
           "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.",
         ],
       },

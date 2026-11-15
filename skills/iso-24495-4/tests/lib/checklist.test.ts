@@ -41,7 +41,8 @@ const FAULT_CLAUSES = 18;
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
   + "It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. "
-  + "A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.";
+  + "A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. "
+  + "A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.";
 
 /** The limit 20a and 23b share on the words compared. */
 const WORDS_SEEN_LIMIT = "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. "

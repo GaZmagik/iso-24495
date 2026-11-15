@@ -686,6 +686,28 @@ describe("the two-version comparison, given --before", () => {
     }
   });
 
+  test("the file read is the file whose path was checked, even when a link and a parent step meet on the path", () => {
+    const project = makeProject();
+    try {
+      mkdirSync(join(project, "outside"));
+      mkdirSync(join(project, "selected"));
+      symlinkSync(join(project, "outside"), join(project, "selected", "linked"), "junction");
+      writeFileSync(join(project, "selected", "x.md"), "Inside the selected tree.\n");
+      writeFileSync(join(project, "x.md"), "At the project root.\n");
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      // Made absolute, the path is selected/x.md, which holds no link. On Linux the system would
+      // follow the link and then step up, reaching the root's x.md, a file the check never saw.
+      // Windows takes the step up before the link, so this tells the two apart only on Linux.
+      const output = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "selected", "linked", "..", "x.md"), "--project-dir", project], output.writeOut, output.writeErr)).toBe(0);
+      const printed = output.stdout.join("\n");
+      expect(printed).toContain("Inside the selected tree.");
+      expect(printed).not.toContain("At the project root.");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   test("a missing or unsupported --before or --author-text file is refused with exit 1", () => {
     const project = makeProject();
     try {
