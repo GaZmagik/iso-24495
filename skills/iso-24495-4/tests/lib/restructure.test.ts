@@ -217,6 +217,16 @@ describe("a bold label is read only when the whole unit has no match", () => {
     expect(sorted(compareVersions("**Aim:** Fix the pump.\n", "**Purpose**: Fix the pump.\n", null))).toEqual(only({ kept: ["Purpose: Fix the pump."], newLabels: ["Purpose:"], labelsGone: ["Aim:"] }));
   });
 
+  // Found in this repository's history: Part 3's example changed the label
+  // "Concurrency Control:", on a line of its own, to "System Purpose:".
+  test("a label on a line of its own, above its sentence, is read as a label", () => {
+    const before = "> **Concurrency Control:**\n> Acquire a lock before you write.\n";
+    const after = "> **System Purpose:**\n> Acquire a lock before you write.\n";
+    expect(sorted(compareVersions(before, after, null))).toEqual(only({
+      kept: ["System Purpose: Acquire a lock before you write."], newLabels: ["System Purpose:"], labelsGone: ["Concurrency Control:"],
+    }));
+  });
+
   test("the same label in plain text and in bold matches whole, so no label is counted", () => {
     expect(sorted(compareVersions("Purpose: Fix the pump.\n", "**Purpose:** Fix the pump.\n", null))).toEqual(only({ kept: ["Purpose: Fix the pump."] }));
   });

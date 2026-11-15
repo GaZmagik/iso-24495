@@ -23,9 +23,10 @@ const ONE_SLOT = /^\[Author needed:[^\]]*\]$/;
 
 /**
  * A bold label at the start of prose, ending in a colon inside the marks or
- * just after them, followed by a space: `**Purpose:** ` or `__Date__: `.
+ * just after them, followed by white space: `**Purpose:** ` or `__Date__: `,
+ * or a label on a line of its own above the words it labels.
  */
-const BOLD_LABEL = /^(\*\*|__)(?=\S)(.*?\S)\1(:?)[ \t]+(?=\S)/;
+const BOLD_LABEL = /^(\*\*|__)(?=\S)(.*?\S)\1(:?)\s+(?=\S)/;
 
 /** How many characters of a unit a report quotes. */
 const EXCERPT_LENGTH = 60;
