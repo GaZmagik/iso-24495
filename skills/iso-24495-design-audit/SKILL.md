@@ -137,4 +137,4 @@ The words never include the service's reply or the key. An unexpected error prin
 - **Request report locations:** Create a report only when the user requests one and names its path.
 - **Keep decisions qualified:** Findings are proxies, not ISO judgements or document approval.
 - **State the scope:** The audit covers purpose, colour, a title and the text audit's offline rules. Never present it as a full Part 5 audit.
-- **Interpret with Part 5:** Use `iso-24495-5` when discussing document design.
+- **Interpret with Part 5:** Use `iso-24495-5`, whose standard is an unpublished draft, when discussing document design.

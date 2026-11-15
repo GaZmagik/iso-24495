@@ -28,15 +28,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 18,
+  "fault": 19,
   "pass-only": 1,
-  "not-read": 33,
+  "not-read": 32,
   "needs-two-versions": 11,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 18;
+const FAULT_CLAUSES = 19;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -258,7 +258,15 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     ],
   },
   { id: "24a", demand: "Every design element serves a reader need.", state: "not-checkable", checks: [], needs: [], limits: [] },
-  { id: "25a", demand: "Where the document cites Part 5, it says the standard is an unpublished draft.", state: "not-read", checks: [], needs: [], limits: [] },
+  {
+    id: "25a", demand: "Where the document cites Part 5, it says the standard is an unpublished draft.", state: "fault",
+    checks: [{ rule: "provisional-label", kind: "offline" }], needs: [],
+    limits: [
+      "It reads a citation as the number 24495-5 with no digit beside it, in any form, such as `ISO 24495-5`, `ISO/WD 24495-5` or the skill's name `iso-24495-5`, in a code span or not. A citation by name alone, such as `Part 5`, is not read, nor one written with another hyphen, such as a non-breaking hyphen. Nor is one split by emphasis marks, such as `ISO **24495**-5`, or one only in a link's destination, such as `[guide](iso-24495-5.md)`, though one in a link's text is read. A table row is read cell by cell, as GitHub shows it: a pipe ends a cell and any link in it, and a cell past the header's last column is not read.",
+      "It passes a document when one paragraph, list item, quotation, heading or table row that cites the standard also holds the word draft, drafts, provisional or unpublished, in any letter case. It does not read what that word says, so `ISO 24495-5 is not a draft` passes, as does `iso-24495-5` followed by `(provisional)`, which labels the skill. A word in another paragraph does not count, even one beneath a heading that cites the standard. A longer word, such as `drafted`, does not count either, nor one split by emphasis marks, such as `pro**vision**al`, nor one only in a link's destination, such as `[guide](draft.md)`. It reports a document once, at its first citation.",
+      "It skips fenced and indented code, front matter, HTML comments, HTML tags with their attributes and text in double quotation marks, so `Never write \"ISO 24495-5\" alone.` passes. A draft word in quotation marks does not count either, so `ISO 24495-5 is a \"draft\".` is reported. Front matter read as text is read, and so is the text of a raw HTML block such as `<pre>`. A comment or tag in a table cell is skipped as well.",
+    ],
+  },
 ];
 
 /** Six level-2 sections, each holding one line of text. */
@@ -287,6 +295,10 @@ const HEADING_FIVE = "heading level 5 (limit 4)";
 const PROSE_RANKS = "enumeration ranks 1, 2, 3 in prose; consider a list";
 const BULLET_THREE = "Unordered bullet depth 3 (limit 2). Flatten this item.";
 const EMPTY_HEADER = "table header has an empty column name";
+const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it";
+
+/** A non-breaking hyphen, which looks like the hyphen in 24495-5 and is another character. */
+const NON_BREAKING_HYPHEN = String.fromCharCode(0x2011);
 
 /**
  * A specimen document for a clause that names a check, and the detail of
@@ -325,6 +337,7 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "20a": ONE_SENTENCE_DROPPED,
   "22a": { before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", reasons: { "restructure-added": ["The valve is new."] } },
   "23b": ONE_SENTENCE_DROPPED,
+  "25a": { text: "Our layout follows ISO 24495-5.\n", reasons: { "provisional-label": [UNLABELLED] } },
 };
 
 /**
@@ -771,6 +784,37 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "## Overview\n\nText.\n", found: [], control: { from: "## Overview", to: "Overview.", found: ["Overview."] } },
   { clause: "22a", limit: 2, check: "restructure-added", before: "Fix the pump.\n", text: "- **Purpose:** Fix the pump.\n", found: [], control: { from: "**Purpose:**", to: "Purpose", found: ["Purpose Fix the pump."] } },
   { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "Text.\n\n[Author needed: reader]\n", found: [], control: { from: "[Author needed: reader]", to: "Readers are fitters.", found: ["Readers are fitters."] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "Our layout follows Part 5.\n", found: [], control: { from: "Part 5", to: "ISO 24495-5", found: [UNLABELLED] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "Run `iso-24495-5` on it.\n", found: [UNLABELLED], control: { from: "iso-24495-5", to: "iso-24495-4", found: [] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "Our layout follows ISO 24495-50.\n", found: [], control: { from: "24495-50", to: "24495-5", found: [UNLABELLED] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: `Our layout follows ISO 24495${NON_BREAKING_HYPHEN}5.\n`, found: [], control: { from: NON_BREAKING_HYPHEN, to: "-", found: [UNLABELLED] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "Read the [guide](iso-24495-5.md).\n", found: [], control: { from: "[guide](iso-24495-5.md)", to: "[ISO 24495-5](guide.md)", found: [UNLABELLED] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "ISO **24495**-5.\n", found: [], control: { from: "**24495**", to: "24495", found: [UNLABELLED] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "| Guide |\n|---|\n| [guide](iso-24495-5.md) |\n", found: [], control: { from: "[guide](iso-24495-5.md)", to: "[ISO 24495-5](guide.md)", found: [UNLABELLED] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "| A | B |\n|---|---|\n| [a](x|iso-24495-5.md) |\n", found: [UNLABELLED], control: { from: "|iso", to: "/iso", found: [] } },
+  { clause: "25a", limit: 1, check: "provisional-label", text: "| A |\n|---|\n| a | ISO 24495-5 |\n", found: [], control: { from: "| A |\n|---|", to: "| A | B |\n|---|---|", found: [UNLABELLED] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "ISO 24495-5 is not a draft.\n", found: [], control: { from: "not a draft", to: "settled", found: [UNLABELLED] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "Run `iso-24495-5` (provisional) on it.\n", found: [], control: { from: " (provisional)", to: "", found: [UNLABELLED] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "# ISO 24495-5\n\nIt is a draft.\n", found: [UNLABELLED], control: { from: "\n\nIt is a draft.", to: " (draft)", found: [] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "We follow ISO 24495-5.\n\nThis guide is a draft.\n", found: [UNLABELLED], control: { from: "24495-5.\n\nThis", to: "24495-5. This", found: [] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "ISO 24495-5 is a draft.\n\nWe follow ISO 24495-5.\n", found: [], control: { from: "is a draft", to: "is long", found: [UNLABELLED] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "The guide was drafted against ISO 24495-5.\n", found: [UNLABELLED], control: { from: "drafted", to: "a draft", found: [] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "We follow ISO 24495-5.\n\nRun `iso-24495-5` on it.\n", found: [UNLABELLED], control: { from: "We follow ISO 24495-5.", to: "We follow ISO 24495-5, a draft.", found: [] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "| Skill | Status |\n|---|---|\n| `iso-24495-5` | provisional |\n", found: [], control: { from: "provisional", to: "ready", found: [UNLABELLED] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "ISO 24495-5 is pro**vision**al.\n", found: [UNLABELLED], control: { from: "pro**vision**al", to: "provisional", found: [] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "ISO 24495-5, see the [guide](draft.md).\n", found: [UNLABELLED], control: { from: "[guide](draft.md)", to: "[draft](guide.md)", found: [] } },
+  { clause: "25a", limit: 2, check: "provisional-label", text: "| Guide |\n|---|\n| ISO 24495-5 [guide](draft.md) |\n", found: [UNLABELLED], control: { from: "[guide](draft.md)", to: "[draft](guide.md)", found: [] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "```\nISO 24495-5\n```\n", found: [], control: { from: "```\nISO 24495-5\n```", to: "ISO 24495-5", found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "Text.\n\n    ISO 24495-5\n", found: [], control: { from: "    ISO", to: "ISO", found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "<!-- ISO 24495-5 -->\n\nText.\n", found: [], control: { from: "<!-- ISO 24495-5 -->", to: "ISO 24495-5", found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "Never write \"ISO 24495-5\" alone.\n", found: [], control: { from: "\"ISO 24495-5\"", to: "ISO 24495-5", found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "ISO 24495-5 is a \"draft\".\n", found: [UNLABELLED], control: { from: "\"draft\"", to: "draft", found: [] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "---\nsource: ISO 24495-5\n---\n\nText.\n", found: [], control: { frontMatter: false, found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "<pre>\nISO 24495-5\n</pre>\n", found: [UNLABELLED], control: { from: "<pre>\nISO 24495-5\n</pre>", to: "```\nISO 24495-5\n```", found: [] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "| Guide |\n|---|\n| <!-- ISO 24495-5 -->Guide |\n", found: [], control: { from: "<!-- ISO 24495-5 -->", to: "ISO 24495-5 ", found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "| Guide |\n|---|\n| ISO 24495-5 <!-- draft --> |\n", found: [UNLABELLED], control: { from: "<!-- draft -->", to: "draft", found: [] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "Read the <span title='ISO 24495-5'>guide</span>.\n", found: [], control: { from: "<span title='ISO 24495-5'>guide</span>", to: "ISO 24495-5 guide", found: [UNLABELLED] } },
+  { clause: "25a", limit: 3, check: "provisional-label", text: "| Guide |\n|---|\n| <span title='ISO 24495-5'>Guide</span> |\n", found: [], control: { from: "<span title='ISO 24495-5'>Guide</span>", to: "ISO 24495-5 Guide", found: [UNLABELLED] } },
 ];
 
 /**
@@ -798,6 +842,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "20a": [1, 4, 2],
   "22a": [2, 3],
   "23b": [1, 4, 2],
+  "25a": [9, 11, 11],
 };
 
 /** The test that shows 15a's second limit, which runs both audits and reads what they print. */
@@ -836,6 +881,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "20a": ["1d55b19365949e80", "694867c80cb848a9", "f2857480c3fb4e6d"],
   "22a": ["0e4f938974d2501c", "0952c5bbd5bcde05"],
   "23b": ["b9c14081a16f57c1", "22bbc5d504e85772", "9799b5f30bedb957"],
+  "25a": ["e2349adc4cce5065", "7868d82e12361114", "722af960a8b0ab98"],
 };
 
 /** A digest of each clause specimen, text and reasons, keyed by the clause, as `digestOf` writes it. */
@@ -859,6 +905,7 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "20a": "a146fb876a677b53",
   "22a": "0d7658fd5996b91b",
   "23b": "a146fb876a677b53",
+  "25a": "8147f5bfb7a185bc",
 };
 
 /** Receives what a command prints and keeps none of it. */
@@ -1488,8 +1535,8 @@ describe("the Part 5 checklist clause registry", () => {
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 18 fault
-  // clauses, 216 cells, it compares the two runs on that clause's own
+  // one folder with its option and without it. For each of the 19 fault
+  // clauses, 228 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline

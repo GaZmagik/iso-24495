@@ -47,6 +47,7 @@ const RULES = [
   "double-negative",
   "filler-opening",
   "table-header",
+  "provisional-label",
 ] as const;
 
 function rulesFor(text: string): string[] {
@@ -883,7 +884,7 @@ ${sentence}`)
   });
 
   // The isolated controls prove each rule can fire alone. This fixture adds
-  // the composition case: every rule must remain observable when all seventeen
+  // the composition case: every rule must remain observable when all eighteen
   // occur together in one realistic document.
   test("every rule fires together in one integrated document", () => {
     const text = readFileSync(join(DIFFICULT, "every-rule.md"), "utf8");
@@ -2180,6 +2181,9 @@ ${sentence}`)
         ["| Name | |", "|---|---|", "| a | b |"].join("\n"),
         ["| Name | Role |", "|---|---|", "| a | b |"].join("\n"),
       ],
+      // Part 5 asks a document that cites it to say that the standard is an
+      // unpublished draft, beside the citation.
+      "provisional-label": ["Our layout follows ISO 24495-5.", "Our layout follows ISO 24495-5, an unpublished draft."],
     };
     const empty = positiveAndNegative["link-text-empty"];
     if (empty === undefined) throw new Error("the table holds no link-text-empty pair");
@@ -2209,7 +2213,7 @@ ${sentence}`)
     }
 
     const readme = readFileSync(join(import.meta.dir, "..", "..", "..", "README.md"), "utf8");
-    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.";
+    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.";
     // The two rules for readers who cannot see the page must be explained, not
     // merely listed, or nobody knows why they exist.
     expect(readme).toContain("readers who hear or touch a document rather than look at it");

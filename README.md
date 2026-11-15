@@ -124,12 +124,12 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules and the five word rules named below.
+- headings, at any depth and in any container, through the heading rules, `provisional-label` and the five word rules named below.
 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
-- tables, whose cells belong to a grid, except that `table-header` reads them;
+- tables, whose cells belong to a grid, except that `table-header` and `provisional-label` read them;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
@@ -142,7 +142,7 @@ The `iso-24495-text-audit` skill audits a selected `.md`, `.markdown`, or `.txt`
 
 The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
 
-Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` looks for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` and `provisional-label` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
 
 Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
 
@@ -170,7 +170,9 @@ A non-empty trimmed string, finite number or date counts, including `version: ba
 The field's format is not validated, because YAML can change number spelling and resolve aliases.
 Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
 
-The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, and `table-header`.
+The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
+
+The `provisional-label` rule asks a document that cites ISO 24495-5 or its skill to say that the standard is an unpublished draft. One paragraph, list item, heading or table row that cites it must say so, and code and quoted text are skipped.
 
 The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
 
