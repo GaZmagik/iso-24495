@@ -373,11 +373,16 @@ function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, bloc
  * @param sentences Its sentences, as `locateSentences` gives them.
  */
 function wholeSlots(text: string, sentences: readonly LocatedSentence[]): LocatedSentence[] {
-  const slots = [...text.matchAll(SLOTS)].map(slot => ({ start: slot.index, end: slot.index + slot[0].length }));
+  // Slots and sentences both run in text order, so one pass over each finds every slot a sentence starts inside.
+  const slots = text.matchAll(SLOTS);
+  let slot = slots.next();
   const joined: LocatedSentence[] = [];
   for (const sentence of sentences) {
+    while (slot.done !== true && slot.value.index + slot.value[0].length <= sentence.start) {
+      slot = slots.next();
+    }
     const previous = joined.at(-1);
-    if (previous !== undefined && slots.some(slot => slot.start < sentence.start && sentence.start < slot.end)) {
+    if (previous !== undefined && slot.done !== true && slot.value.index < sentence.start) {
       joined[joined.length - 1] = { text: text.slice(previous.start, sentence.start + sentence.text.length), start: previous.start };
     } else {
       joined.push(sentence);

@@ -182,7 +182,8 @@ describe("a unit's text is its wording as a reader sees it", () => {
     expect(keys("- item\n\n  ```\n  a\tb\n  ```\n")).toEqual([["item", "item"], ["code", "a\tb"]]);
     expect(keys("> ```\n> a\tb\n> ```\n")).toEqual([["code", "a\tb"]]);
     expect(keys("> ```\n>\tx\n> ```\n")).toEqual([["code", "  x"]]);
-    // A character past the basic plane before a tab is kept with the tab after it.
+    // A character past the basic plane before a tab is copied with the tab after it. The columns taken
+    // off are only markers and spaces, so how such a character is counted cannot move where the cut falls.
     expect(keys("    \u{1F600}\tx\n")).toEqual([["code", "\u{1F600}\tx"]]);
   });
 
@@ -418,5 +419,15 @@ describe("matching takes time in proportion to the units", () => {
     const comparison = compareUnits(manyUnits("same"), [...manyUnits("same")].reverse(), manyUnits("author"));
     expect(performance.now() - start).toBeLessThan(2_000);
     expect(comparison.kept).toHaveLength(10_000);
+  });
+
+  test("a paragraph of 50,000 slots, each with a full stop inside, is read within a fixed budget", () => {
+    // Checking every slot for every sentence took 25 seconds here.
+    const start = performance.now();
+    const units = documentUnits("[Author needed: a. b] Then go. ".repeat(50_000));
+    expect(performance.now() - start).toBeLessThan(5_000);
+    // A slot and the wording after it, with no full stop between them, are one unit.
+    expect(units).toHaveLength(50_000);
+    expect(units[49_999]?.key).toBe("[Author needed: a. b] Then go.");
   });
 });
