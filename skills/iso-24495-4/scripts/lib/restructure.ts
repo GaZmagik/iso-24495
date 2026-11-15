@@ -15,11 +15,20 @@
 // meaning changed in its new place reads as kept.
 
 import { renderInline } from "./inline-wording.ts";
-import { inlineText, locateSentences, markdownLinks, normaliseReference, structure, tableCells, type MarkdownLink, type Reading } from "./parse.ts";
+import { inlineText, locateSentences, markdownLinks, normaliseReference, structure, tableCells, type LocatedSentence, type MarkdownLink, type Reading } from "./parse.ts";
 import { safeCell, safePathCode } from "./safe-text.ts";
 
 /** A unit that is one slot Part 5 tells a restructure to leave where nothing serves, and nothing else. */
 const ONE_SLOT = /^\[Author needed:[^\]]*\]$/;
+
+/** Every such slot in a text, wherever it stands. */
+const SLOTS = /\[Author needed:[^\]]*\]/g;
+
+/**
+ * Struck words are still on the page, and a screen reader says them with no
+ * sign of the strike, so the comparison reads them as wording.
+ */
+const STRIKE = { strike: true };
 
 /**
  * A bold label at the start of prose, ending in a colon inside the marks or
@@ -115,16 +124,19 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
  * - Prose: each sentence of a paragraph, a list item, a quotation or a table
  *   cell, and each heading, split into sentences in the same way.
  * - Code: the contents of each fenced or indented code block, whole and
- *   unchanged.
+ *   unchanged, a tab included.
  * - Image alternatives: the alternative text of each Markdown image outside a
  *   heading, taken out of the sentence it stood in.
  *
  * The text of a prose unit is its inline markup rendered as a reader sees
  * it: a link becomes its text, a reference link too where the document
- * defines it, emphasis and code span marks go, an escape and a character
- * reference become the character, and an HTML tag goes. Then each run of
- * white space becomes one space and the ends are trimmed. The text is split
- * into sentences only after that, so a line wrap cannot move a boundary.
+ * defines it, the marks of emphasis, a strike and a code span go, an escape
+ * and a character reference become the character, a backslash that makes a
+ * hard line break goes, and an HTML tag goes. Then each run of white space
+ * becomes one space and the ends are trimmed. The text is split into
+ * sentences only after that, so a line wrap cannot move a boundary. A
+ * sentence boundary inside a slot such as `[Author needed: reader. Confirm
+ * role]` is no boundary, so the slot stays one unit.
  *
  * Prose that opens with a bold label ending in a colon, such as
  * `**Purpose:** Fix the pump.`, gives its first sentence the label and the
@@ -154,7 +166,7 @@ export function documentUnits(text: string, reading: Reading = {}): Unit[] {
     }
   }
   for (const heading of read.allHeadings) {
-    units.push(...sentenceUnits(renderInline(heading.text), heading.line, "heading", -heading.line, null));
+    units.push(...sentenceUnits(renderInline(heading.text, STRIKE), heading.line, "heading", -heading.line, null));
   }
   for (const code of read.code) {
     if (code.text !== "") units.push({ kind: "code", line: code.line, key: code.text, block: -code.line });
@@ -169,8 +181,9 @@ export function documentUnits(text: string, reading: Reading = {}): Unit[] {
  * Each dropped unit is a row, in before order. Then come the after units
  * left over, in after order: each added unit, each unit from the author and
  * each marked gap. Added units of a list or a table that keeps no unit of
- * the original share one row, when there are two or more, with their count
- * and the first unit's text. Headings and labels are counted and not listed.
+ * the original share one row, when there are two or more, with how many units
+ * it stands for and the first unit's text. The count is of units, not of
+ * items or cells, so the rows add up to the count of added units. Headings and labels are counted and not listed.
  *
  * A unit is quoted by its first 60 characters, cleaned with `safeCell`, with
  * "..." where it was cut. A path is printed with `safePathCode`.
@@ -309,12 +322,12 @@ function proseUnits(source: string, firstLine: number, kind: UnitKind, block: nu
     // An image inside another's text is not rendered on its own, and goes with that text.
     if (!image.image || !image.rendered || !isShown(image, references)) continue;
     const line = firstLine + lineBreaks(source.slice(0, image.start));
-    units.push(...sentenceUnits(renderInline(inlineText(image.label, references)), line, "alternative", block, null));
+    units.push(...sentenceUnits(renderInline(inlineText(image.label, references), STRIKE), line, "alternative", block, null));
     prose += source.slice(from, image.start) + "\n".repeat(lineBreaks(source.slice(image.start, image.end)));
     from = image.end;
   }
   prose += source.slice(from);
-  return [...units, ...sentenceUnits(renderInline(inlineText(prose, references)), firstLine, kind, block, boldLabel(prose, references))];
+  return [...units, ...sentenceUnits(renderInline(inlineText(prose, references), STRIKE), firstLine, kind, block, boldLabel(prose, references))];
 }
 
 /** Whether a reader sees an image `markdownLinks` found: an inline one, or a reference one the document defines. */
@@ -330,7 +343,7 @@ function isShown(image: MarkdownLink, references: ReadonlySet<string>): boolean 
 function boldLabel(prose: string, references: ReadonlySet<string>): string | null {
   const match = BOLD_LABEL.exec(prose);
   if (match === null) return null;
-  const label = singleSpaced(renderInline(inlineText(match[2] ?? "", references))).text + (match[3] ?? "");
+  const label = singleSpaced(renderInline(inlineText(match[2] ?? "", references), STRIKE)).text + (match[3] ?? "");
   return label.endsWith(":") ? label : null;
 }
 
@@ -345,10 +358,32 @@ function boldLabel(prose: string, references: ReadonlySet<string>): string | nul
  */
 function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, block: number, label: string | null): Unit[] {
   const { text, lines } = singleSpaced(rendered);
-  return locateSentences(text).map((sentence, index) => {
+  return wholeSlots(text, locateSentences(text)).map((sentence, index) => {
     const unit = { kind, line: firstLine + (lines[sentence.start] ?? 0), key: sentence.text, block };
     return index === 0 && label !== null && sentence.text.startsWith(`${label} `) ? { ...unit, label } : unit;
   });
+}
+
+/**
+ * The sentences of a text, with any that a slot such as
+ * `[Author needed: reader. Confirm role]` runs across joined into one. A full
+ * stop inside a slot is part of its instructions, and ends no sentence.
+ *
+ * @param text The text the sentences were found in.
+ * @param sentences Its sentences, as `locateSentences` gives them.
+ */
+function wholeSlots(text: string, sentences: readonly LocatedSentence[]): LocatedSentence[] {
+  const slots = [...text.matchAll(SLOTS)].map(slot => ({ start: slot.index, end: slot.index + slot[0].length }));
+  const joined: LocatedSentence[] = [];
+  for (const sentence of sentences) {
+    const previous = joined.at(-1);
+    if (previous !== undefined && slots.some(slot => slot.start < sentence.start && sentence.start < slot.end)) {
+      joined[joined.length - 1] = { text: text.slice(previous.start, sentence.start + sentence.text.length), start: previous.start };
+    } else {
+      joined.push(sentence);
+    }
+  }
+  return joined;
 }
 
 /**
@@ -460,7 +495,8 @@ function afterRows(comparison: Comparison): string[] {
     if (group === undefined || group.length < 2) {
       rows.push({ line: unit.line, text: `| added | | ${unit.line} | Not in the original or the author's wording. Confirm its source: ${quoted(unit.key)} |` });
     } else if (group[0] === unit) {
-      const what = unit.kind === "cell" ? "cells in one new table" : "items in one new list";
+      // A unit is a sentence or a cell, so the count is of units and not of items or cells.
+      const what = unit.kind === "cell" ? "units in one new table" : "units in one new list";
       rows.push({ line: unit.line, text: `| added | | ${unit.line} | ${group.length} ${what} are not in the original or the author's wording. Confirm their source: ${quoted(unit.key)} |` });
     }
   }

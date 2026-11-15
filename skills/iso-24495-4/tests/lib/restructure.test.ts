@@ -98,7 +98,7 @@ describe("Part 5's own examples of a restructure read as kept", () => {
       ...HEAD,
       "| dropped | 1 | | No unchanged copy is in the new version: \"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
       "| added | | 1 | Not in the original or the author's wording. Confirm its source: \"Choose a plan:\" |",
-      "| added | | 3 | 4 cells in one new table are not in the original or the author's wording. Confirm their source: \"Plan\" |",
+      "| added | | 3 | 4 units in one new table are not in the original or the author's wording. Confirm their source: \"Plan\" |",
       counts(0, 1, 5, 0, 0, 0, 0, 0, 0),
       CLOSE,
     ]);
@@ -114,6 +114,28 @@ describe("a unit's text is its wording as a reader sees it", () => {
 
   test("an escape, a character reference and an HTML tag read as the text they show", () => {
     expect(keys("A \\*star\\* and &amp; and <b>bold</b> text.\n")).toEqual([["sentence", "A *star* and & and bold text."]]);
+  });
+
+  test("a hard line break, by a backslash, two spaces or a tag, keeps the unit and shows no backslash", () => {
+    for (const after of ["Read the\\\nguide.\n", "Read the  \nguide.\n", "Read the<br>guide.\n", "Read the\\\r\nguide.\r\n", "- Read the\\\n  guide.\n"]) {
+      expect(sorted(compareVersions("Read the guide.\n", after, null)), after).toEqual(only({ kept: ["Read the guide."] }));
+    }
+    expect(documentUnits("One.\n\nRead the\\\nguide.\n")[1]?.line).toBe(3);
+    // A backslash that is itself escaped, or that ends the paragraph, is a character a reader sees.
+    expect(keys("Read the\\\\\nguide.\n")).toEqual([["sentence", "Read the\\ guide."]]);
+    expect(keys("Read the guide.\\\n")).toEqual([["sentence", "Read the guide.\\"]]);
+  });
+
+  test("struck wording is still wording a reader sees, so a strike added or removed keeps the unit", () => {
+    expect(sorted(compareVersions("Close the valve.\n", "Close the ~~valve~~.\n", null))).toEqual(only({ kept: ["Close the valve."] }));
+    expect(sorted(compareVersions("Close the ~~old~~ valve.\n", "Close the old valve.\n", null))).toEqual(only({ kept: ["Close the old valve."] }));
+    // One tilde, three tildes and an unpaired pair are not a strike, and stay in the text.
+    expect(keys("Use ~one~ and ~~~three~~~ and ~~open.\n")).toEqual([["sentence", "Use ~one~ and ~~~three~~~ and ~~open."]]);
+  });
+
+  test("a hard line break inside a heading underlined on the next line is read as a backslash, and only counted", () => {
+    // A known limit: the parser joins the lines of such a heading with a space before the comparison reads it.
+    expect(sorted(compareVersions("Read the guide.\n===\n", "Read the\\\nguide.\n===\n", null))).toEqual(only({ newHeadings: ["Read the\\ guide."], headingsGone: ["Read the guide."] }));
   });
 
   test("a sentence moved into a list item, a table cell, a heading or a quotation is still kept", () => {
@@ -144,6 +166,24 @@ describe("a unit's text is its wording as a reader sees it", () => {
     expect(sorted(compareVersions("```\ncode  here\n```\n", "    code  here\n", null))).toEqual(only({ kept: ["code  here"] }));
     expect(sorted(compareVersions("```\ncode  here\n```\n", "```\ncode here\n```\n", null))).toEqual(only({ dropped: ["code  here"], added: ["code here"] }));
     expect(keys("```\n```\n")).toEqual([]);
+  });
+
+  test("a tab inside a code block is kept as a tab, and only the columns its block takes off become spaces", () => {
+    // Three spaces in place of a tab show differently in a code block, so the unit is not kept.
+    expect(sorted(compareVersions("```\nx\ty\n```\n", "```\nx   y\n```\n", null))).toEqual(only({ dropped: ["x\ty"], added: ["x   y"] }));
+    expect(keys("```\nx\ty\n```\n")).toEqual([["code", "x\ty"]]);
+    // Indented code takes four columns off. A leading tab is those four, so a second tab stays.
+    expect(keys("\tcode\tmore\n")).toEqual([["code", "code\tmore"]]);
+    expect(keys("\t\tdeep\n")).toEqual([["code", "\tdeep"]]);
+    expect(keys("  \tcode\n")).toEqual([["code", "code"]]);
+    // A fence two columns in takes two columns off a tab, and the other two stay as spaces.
+    expect(keys("  ```\n\tx\n  ```\n")).toEqual([["code", "  x"]]);
+    // In a list item or a quotation, the container's columns come off first.
+    expect(keys("- item\n\n  ```\n  a\tb\n  ```\n")).toEqual([["item", "item"], ["code", "a\tb"]]);
+    expect(keys("> ```\n> a\tb\n> ```\n")).toEqual([["code", "a\tb"]]);
+    expect(keys("> ```\n>\tx\n> ```\n")).toEqual([["code", "  x"]]);
+    // A character past the basic plane before a tab is kept with the tab after it.
+    expect(keys("    \u{1F600}\tx\n")).toEqual([["code", "\u{1F600}\tx"]]);
   });
 
   test("an image's alternative text is a unit of its own, taken out of its sentence", () => {
@@ -251,6 +291,25 @@ describe("an after unit left over is a gap, a heading, the author's or added", (
       .toEqual(only({ kept: ["Fix it."], gaps: ["[Author needed: purpose]", "Reader: [Author needed: reader]"], newLabels: ["Reader:"] }));
   });
 
+  test("a slot whose instructions hold a full stop, a question mark or an exclamation mark is still one slot", () => {
+    expect(sorted(compareVersions("", "[Author needed: reader. Confirm role]\n", null))).toEqual(only({ gaps: ["[Author needed: reader. Confirm role]"] }));
+    expect(sorted(compareVersions("Fix it.\n", "Fix it.\n\n[Author needed: who reads it? Confirm]\n\n[Author needed: check! Then confirm]\n", null)))
+      .toEqual(only({ kept: ["Fix it."], gaps: ["[Author needed: who reads it? Confirm]", "[Author needed: check! Then confirm]"] }));
+    expect(sorted(compareVersions("", "- **Reader:** [Author needed: reader. Confirm role]\n", null)))
+      .toEqual(only({ gaps: ["Reader: [Author needed: reader. Confirm role]"], newLabels: ["Reader:"] }));
+    // In a heading, a list item and a table cell too.
+    expect(sorted(compareVersions("", "## [Author needed: title. Keep it short]\n\n- [Author needed: step. One verb]\n\n| [Author needed: field. Name it] |\n|---|\n", null)))
+      .toEqual(only({ gaps: ["[Author needed: title. Keep it short]", "[Author needed: step. One verb]", "[Author needed: field. Name it]"] }));
+    // A sentence before the slot is its own unit, and the slot is still a gap.
+    expect(sorted(compareVersions("Then go.\n", "Then go. [Author needed: x. y]\n", null))).toEqual(only({ kept: ["Then go."], gaps: ["[Author needed: x. y]"] }));
+  });
+
+  test("a slot with a full stop inside it does not hide the wording after it, and two such slots are not one", () => {
+    expect(sorted(compareVersions("", "[Author needed: reader. Confirm role] Then go.\n\n[Author needed: a. b] [Author needed: c. d]\n", null)))
+      .toEqual(only({ added: ["[Author needed: reader. Confirm role] Then go.", "[Author needed: a. b] [Author needed: c. d]"] }));
+    expect(keys("[Author needed: a.] [Author needed: b.]\n")).toEqual([["sentence", "[Author needed: a.]"], ["sentence", "[Author needed: b.]"]]);
+  });
+
   test("a slot inside invented wording does not hide it, and two slots are not one", () => {
     expect(sorted(compareVersions("Fix it.\n", "Fix it.\n\nThe reader is [Author needed: reader] today.\n\n[Author needed: a] [Author needed: b]\n", null)))
       .toEqual(only({ kept: ["Fix it."], added: ["The reader is [Author needed: reader] today.", "[Author needed: a] [Author needed: b]"] }));
@@ -291,7 +350,7 @@ describe("the printed comparison", () => {
 
   test("added items of a new list share one row, and a list that keeps a unit lists each added item", () => {
     expect(printed("Keep.\n", "Keep.\n\n- One.\n- Two.\n- Three.\n").slice(3, -2)).toEqual([
-      "| added | | 3 | 3 items in one new list are not in the original or the author's wording. Confirm their source: \"One.\" |",
+      "| added | | 3 | 3 units in one new list are not in the original or the author's wording. Confirm their source: \"One.\" |",
     ]);
     expect(printed("Keep.\n", "- Keep.\n- One.\n- Two.\n").slice(3, -2)).toEqual([
       "| added | | 2 | Not in the original or the author's wording. Confirm its source: \"One.\" |",
@@ -300,6 +359,22 @@ describe("the printed comparison", () => {
     expect(printed("Keep.\n", "Keep.\n\n- One.\n").slice(3, -2)).toEqual([
       "| added | | 3 | Not in the original or the author's wording. Confirm its source: \"One.\" |",
     ]);
+  });
+
+  test("a shared row counts units, so two items of two sentences each are 4 units, and the rows add up to the count of added units", () => {
+    expect(printed("", "- First sentence. Second sentence.\n- Third sentence. Fourth sentence.\n").slice(3)).toEqual([
+      "| added | | 1 | 4 units in one new list are not in the original or the author's wording. Confirm their source: \"First sentence.\" |",
+      counts(0, 0, 4, 0, 0, 0, 0, 0, 0),
+      CLOSE,
+    ]);
+    expect(printed("", "| Header |\n|---|\n| First sentence. Second sentence. |\n").slice(3)).toEqual([
+      "| added | | 1 | 3 units in one new table are not in the original or the author's wording. Confirm their source: \"Header\" |",
+      counts(0, 0, 3, 0, 0, 0, 0, 0, 0),
+      CLOSE,
+    ]);
+    for (const text of ["items in one new list", "cells in one new table"]) {
+      expect(printed("", "- One. Two.\n- Three.\n\n| A | B |\n|---|---|\n| C. D. | E |\n").join("\n")).not.toContain(text);
+    }
   });
 
   test("a quoted unit is cut at 60 characters and made safe for a table cell, and a path is a code span", () => {

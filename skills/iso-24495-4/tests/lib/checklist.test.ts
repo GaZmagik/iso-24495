@@ -44,7 +44,8 @@ const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quot
   + "A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.";
 
 /** The limit 20a and 23b share on the words compared. */
-const WORDS_SEEN_LIMIT = "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`.";
+const WORDS_SEEN_LIMIT = "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. "
+  + "Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.";
 
 /** The limits 15c and 15d share, because one Jev gate reads both. */
 const PURPOSE_LIMITS = [

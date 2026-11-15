@@ -221,6 +221,32 @@ function expandTabs(line: string): string {
 }
 
 /**
+ * The source of a line from where some content of its expanded copy starts,
+ * so a tab inside a code block stays a tab.
+ *
+ * Container markers and indentation come off a line by columns, read with
+ * every tab expanded. What is left is the end of the expanded line, so it
+ * starts at a column. This gives the source from that column. A tab the
+ * column falls inside keeps only its columns past it, as spaces, which is
+ * how CommonMark reads a tab partly taken off.
+ *
+ * @param source The line as written.
+ * @param expanded The line as `expandTabs` gives it.
+ * @param content The end of `expanded` that is kept.
+ */
+function sourceFrom(source: string, expanded: string, content: string): string {
+  const column = expanded.length - content.length;
+  // Columns are counted as `expandTabs` counts them, one for each code unit.
+  let reached = 0;
+  for (let index = 0; index < source.length; index++) {
+    if (reached === column) return source.slice(index);
+    reached += source[index] === "\t" ? 4 - (reached % 4) : 1;
+    if (reached > column) return " ".repeat(reached - column) + source.slice(index + 1);
+  }
+  return "";
+}
+
+/**
  * The lines a document devotes to front matter, or none.
  *
  * The delimiter sits at column 0, because an indented "---" inside a YAML
@@ -545,7 +571,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
           // CommonMark takes off as many leading spaces as the opening fence
           // stood in. An empty last entry is the end of the text after its
           // final line break, not a line, so an unclosed block does not take it.
-          fence.block?.lines.push(rest.slice(Math.min(fence.indent, indentOf(rest))));
+          fence.block?.lines.push(sourceFrom(source, line, rest.slice(Math.min(fence.indent, indentOf(rest)))));
         }
         continue;
       }
@@ -719,7 +745,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
-      if (structural) indented = indentedCode(lines, i, text.slice(4), stack, indented, code);
+      if (structural) indented = indentedCode(lines, i, sourceFrom(source, line, text.slice(4)), stack, indented, code);
       continue;
     }
 
@@ -856,8 +882,10 @@ function indentedCode(
  *   and its contents. A fenced block's line is its opening fence, and its
  *   contents are the lines between the fences, without the fences or the
  *   info string. Each line loses its container markers, and as many leading
- *   spaces as the opening fence stood in, or four for indented code. A tab
- *   is read as spaces to the next four-column stop. Nothing else changes.
+ *   columns as the opening fence stood in, or four for indented code, with a
+ *   tab reaching to the next four-column stop. A tab that only part of is
+ *   taken off leaves the rest of its columns as spaces. Every other tab stays
+ *   a tab, and nothing else changes.
  *   A raw HTML block such as `<pre>` is not listed.
  * - `paragraphs`: each block of prose, as `proseBlocks` gives it, but read
  *   with the raw HTML code blocks above left out. So a paragraph that follows
