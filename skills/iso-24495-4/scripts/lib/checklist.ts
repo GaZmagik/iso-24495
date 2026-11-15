@@ -21,6 +21,9 @@
 // - front-matter: a leading "---" block is read as front matter. Both
 //   audits read it so, except the plain text audit with --no-front-matter,
 //   which reads it as text. Both Jev routes refuse that option.
+// - before: the run compares the document with its original. Only the plain
+//   text audit does, given --before and one file. The design audit and both
+//   Jev routes refuse that option.
 //
 // The test of this module measures each need by running those commands with
 // and without what the need names, with a stand-in for the transport.
@@ -319,7 +322,15 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     item: 20,
     line: "- [ ] **Preserved:** On a restructure, was every prose passage and content item kept, with no prose rewritten and no tone changed?",
     clauses: [
-      { id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "fault",
+        checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It compares wording, not meaning. A passage reworded is reported as dropped, as one removed is, so a finding does not say whether 20a or 20b failed.",
+          "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.",
+          "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`.",
+        ],
+      },
       { id: "20b", demand: "On a restructure, no prose is rewritten.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
       { id: "20c", demand: "On a restructure, the tone is unchanged.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
     ],
@@ -337,7 +348,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     item: 22,
     line: "- [ ] **Never invented:** Did every promoted sentence come unchanged from the document or the author, state its field directly, stay true and complete, with mismatches reported and gaps marked?",
     clauses: [
-      { id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "fault",
+        checks: [{ rule: "restructure-added", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. It compares wording, not meaning, so a promoted sentence that was reworded is reported, and a person must confirm its source.",
+          "A new heading is counted and not reported, and so is a bold label ending in a colon, such as `**Purpose:**`, before a sentence that is kept. A unit that is one slot such as `[Author needed: reader]` is listed as a marked gap and not reported.",
+        ],
+      },
       { id: "22b", demand: "Every promoted sentence states its field directly.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
       { id: "22c", demand: "Every promoted sentence stays true.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
       { id: "22d", demand: "Every promoted sentence stays complete.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
@@ -350,7 +368,15 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     line: "- [ ] **Content primacy:** Did accuracy and completeness survive every structural choice, with nothing cut or distorted to fit a layout?",
     clauses: [
       { id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-      { id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "fault",
+        checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too.",
+          "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.",
+          "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`.",
+        ],
+      },
     ],
   },
   {
@@ -397,14 +423,16 @@ export interface Clause {
  * - `fault`: a check can report that a document fails it.
  * - `pass-only`: a check can confirm it, and never reports a fault.
  * - `not-read`: no check looks at it.
- * - `needs-two-versions`: it can be read only against the original of a restructured document.
+ * - `needs-two-versions`: it can be read only against the original of a restructured document, and no check reads it yet.
  * - `not-checkable`: it is a judgement the document gives no means to check.
  */
 export type ClauseState = "fault" | "pass-only" | "not-read" | "needs-two-versions" | "not-checkable";
 
 /**
  * A rule or a Jev gate that can report on a clause. An offline rule is named
- * as its findings name it. A Jev gate is named by its identifier in the
+ * as its findings name it. The two-version comparison reports the units it
+ * dropped and those it added, named here `restructure-dropped` and
+ * `restructure-added`. A Jev gate is named by its identifier in the
  * calibration record.
  */
 export interface Check {
@@ -416,6 +444,6 @@ export interface Check {
  * One thing a run must have for a check to run: a Markdown file, the shared
  * Jev audit route, a send to Jev, front matter read as front matter, the
  * original version, or a fact the author declared. The comment at the top of
- * this module says which commands meet the first four.
+ * this module says which commands meet the first five.
  */
 export type Need = "markdown" | "jev-route" | "send" | "front-matter" | "before" | `fact:${string}`;

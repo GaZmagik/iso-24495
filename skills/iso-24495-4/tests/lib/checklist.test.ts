@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { runCli as runDesignCli } from "../../../iso-24495-design-audit/scripts/design-audit.ts";
 import { runCli as runTextCli } from "../../../iso-24495-text-audit/scripts/audit-text.ts";
 import { auditText } from "../../scripts/audit-corpus.ts";
+import { compareVersions } from "../../scripts/lib/restructure.ts";
 import { CHECKLIST, type Clause, type ClauseState, type Need } from "../../scripts/lib/checklist.ts";
 import type { AuditDependencies } from "../../scripts/lib/jev/audit.ts";
 import { calibrationEvidence, MODEL, type RequestKind } from "../../scripts/lib/jev/catalogue.ts";
@@ -27,12 +28,23 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 15,
+  "fault": 18,
   "pass-only": 1,
   "not-read": 33,
-  "needs-two-versions": 14,
+  "needs-two-versions": 11,
   "not-checkable": 1,
 };
+
+/** How many clauses are in the fault state, each of which the option sweep reads. */
+const FAULT_CLAUSES = 18;
+
+/** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
+const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
+  + "It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. "
+  + "A heading that is gone is counted, not reported, so wording held only in a heading can go unreported.";
+
+/** The limit 20a and 23b share on the words compared. */
+const WORDS_SEEN_LIMIT = "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`.";
 
 /** The limits 15c and 15d share, because one Jev gate reads both. */
 const PURPOSE_LIMITS = [
@@ -204,20 +216,45 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   },
   { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "19d", demand: "There is no referral where nothing else exists.", state: "not-read", checks: [], needs: [], limits: [] },
-  { id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+  {
+    id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "fault",
+    checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It compares wording, not meaning. A passage reworded is reported as dropped, as one removed is, so a finding does not say whether 20a or 20b failed.",
+      UNITS_READ_LIMIT,
+      WORDS_SEEN_LIMIT,
+    ],
+  },
   { id: "20b", demand: "On a restructure, no prose is rewritten.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "20c", demand: "On a restructure, the tone is unchanged.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "21a", demand: "Every moved sentence or block keeps its dependencies.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "21b", demand: "Every moved sentence or block keeps its order against neighbouring steps.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "21c", demand: "Every moved sentence or block keeps the claim it qualifies.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-  { id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+  {
+    id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "fault",
+    checks: [{ rule: "restructure-added", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. "
+        + "It compares wording, not meaning, so a promoted sentence that was reworded is reported, and a person must confirm its source.",
+      "A new heading is counted and not reported, and so is a bold label ending in a colon, such as `**Purpose:**`, before a sentence that is kept. "
+        + "A unit that is one slot such as `[Author needed: reader]` is listed as a marked gap and not reported.",
+    ],
+  },
   { id: "22b", demand: "Every promoted sentence states its field directly.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "22c", demand: "Every promoted sentence stays true.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "22d", demand: "Every promoted sentence stays complete.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "22e", demand: "Every mismatch is reported.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "22f", demand: "Every gap is marked.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-  { id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+  {
+    id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "fault",
+    checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too.",
+      UNITS_READ_LIMIT,
+      WORDS_SEEN_LIMIT,
+    ],
+  },
   { id: "24a", demand: "Every design element serves a reader need.", state: "not-checkable", checks: [], needs: [], limits: [] },
   { id: "25a", demand: "Where the document cites Part 5, it says the standard is an unpublished draft.", state: "not-read", checks: [], needs: [], limits: [] },
 ];
@@ -257,8 +294,13 @@ const EMPTY_HEADER = "table header has an empty column name";
  */
 interface ClauseSpecimen {
   readonly text: string;
+  /** The original of `text`, for a clause that needs one. A route given `--before` compares `text` with it. */
+  readonly before?: string;
   readonly reasons: Readonly<Record<string, readonly string[]>>;
 }
+
+/** The specimen 20a and 23b share: a restructure that keeps one sentence of two. */
+const ONE_SENTENCE_DROPPED: ClauseSpecimen = { before: "Close the valve. Open the vent.\n", text: "- Close the valve.\n", reasons: { "restructure-dropped": ["Open the vent."] } };
 
 /** A specimen for each clause that names a check, keyed by the clause. */
 const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
@@ -278,6 +320,9 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "15f": { text: "# Title\n\nText.\n", reasons: { "opening-version-date": [NO_EDITION] } },
   "17a": { text: `${GUIDE_OPENING}**Overview**\n\nOpen the box.\n\n${SIX_SECTIONS}`, reasons: { "overview-label": [NO_OVERVIEW] } },
   "19b": { text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [here](repair.md).\n", reasons: { "link-text": ["link text \"here\" describes no destination (repair.md)"] } },
+  "20a": ONE_SENTENCE_DROPPED,
+  "22a": { before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", reasons: { "restructure-added": ["The valve is new."] } },
+  "23b": ONE_SENTENCE_DROPPED,
 };
 
 /**
@@ -307,8 +352,12 @@ const KIND_OF_QUESTION: Readonly<Record<string, RequestKind>> = { purpose: "open
 /** The order in which a clause's needs are written. */
 const NEED_ORDER: readonly Need[] = ["markdown", "jev-route", "send", "front-matter", "before"];
 
-/** The needs a route meets or not by its options, in the order a clause writes them. */
-const ROUTE_NEEDS: readonly Need[] = ["jev-route", "send", "front-matter"];
+/**
+ * The needs a route meets or not by its options, in the order they are
+ * measured. The original version comes first, so the other needs of a check
+ * that needs it are judged on the routes that give it.
+ */
+const ROUTE_NEEDS: readonly Need[] = ["before", "jev-route", "send", "front-matter"];
 
 /** One check a clause names. */
 type Check = Clause["checks"][number];
@@ -318,7 +367,10 @@ type Check = Clause["checks"][number];
  * besides the target, the project folder and `--json`, the needs it meets
  * beside Markdown, and the endings of the files it reads. The design audit
  * reads no `.txt` file, and only the plain text audit takes
- * `--no-front-matter`.
+ * `--no-front-matter` and `--before`. A route given `--before` runs once for
+ * each file, because `--before` compares one file, and the option is followed
+ * by the file's original: the specimen's `before`, or its own text when it
+ * has none.
  */
 interface Route {
   readonly name: string;
@@ -339,6 +391,8 @@ const ROUTES: readonly Route[] = [
   { name: "text audit --jev --send", command: "text", options: ["--jev", "--send", "--yes"], meets: ["jev-route", "send", "front-matter"], reads: ["md", "txt"] },
   { name: "design audit", command: "design", options: [], meets: ["jev-route", "front-matter"], reads: ["md"] },
   { name: "design audit --send", command: "design", options: ["--send", "--yes"], meets: ["jev-route", "send", "front-matter"], reads: ["md"] },
+  { name: "text audit --before", command: "text", options: ["--before"], meets: ["front-matter", "before"], reads: ["md", "txt"] },
+  { name: "text audit --before --no-front-matter", command: "text", options: ["--before", "--no-front-matter"], meets: ["before"], reads: ["md", "txt"] },
 ];
 
 /**
@@ -364,6 +418,10 @@ interface Answers {
 interface LimitReading {
   readonly check: string;
   readonly text?: string;
+  /** For a check of the two-version comparison, the original `text` is compared with. */
+  readonly before?: string;
+  /** For a check of the two-version comparison, the author's wording. */
+  readonly authorText?: string;
   readonly fileName?: string;
   readonly frontMatter?: boolean;
   readonly answers?: Answers;
@@ -378,6 +436,8 @@ interface LimitReading {
 interface Control {
   readonly from?: string;
   readonly to?: string;
+  readonly before?: string;
+  readonly authorText?: string;
   readonly fileName?: string;
   readonly frontMatter?: boolean;
   readonly answers?: Answers;
@@ -695,6 +755,20 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][r].\n\n[r]: repair.md\n", found: [], control: { from: "[click\nhere]", to: "[click here]", found: ["link text \"click here\" describes no destination (r)"] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click here](repair.md \"Repair (advanced)\nmanual\").\n", found: ["link text \"click here\" describes no destination (repair.md \"Repair (advanced)"], control: { from: "(advanced)", to: "advanced", found: [] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][here].\n\n[here]: repair.md\n", found: ["link text \"here\" describes no destination (here)"], control: { from: "here][here]", to: "here][r]", found: [] } },
+  ...["20a", "23b"].flatMap(clause => [
+    { clause, limit: 1, check: "restructure-dropped", before: "Close the valve.\n", text: "Shut the valve.\n", found: ["Close the valve."], control: { from: "Shut", to: "Close", found: [] } },
+    { clause, limit: 2, check: "restructure-dropped", before: "## Keep below 5 bar\n\nText.\n", text: "Text.\n", found: [], control: { before: "Keep below 5 bar.\n\nText.\n", found: ["Keep below 5 bar."] } },
+    { clause, limit: 2, check: "restructure-dropped", before: "---\nsummary: Keep below 5 bar.\n---\n\nText.\n", text: "Text.\n", found: [], control: { before: "summary: Keep below 5 bar.\n\nText.\n", found: ["summary: Keep below 5 bar."] } },
+    { clause, limit: 2, check: "restructure-dropped", before: "<pre>\nkeep below 5 bar\n</pre>\n\nText.\n", text: "Text.\n", found: [], control: { before: "```\nkeep below 5 bar\n```\n\nText.\n", found: ["keep below 5 bar"] } },
+    { clause, limit: 2, check: "restructure-dropped", before: "<img src=\"c.png\" alt=\"Pressure chart\">\n\nText.\n", text: "Text.\n", found: [], control: { before: "![Pressure chart](c.png)\n\nText.\n", found: ["Pressure chart"] } },
+    { clause, limit: 3, check: "restructure-dropped", before: "Read [the guide](a.md).\n", text: "Read [the guide](b.md).\n", found: [], control: { from: "[the guide]", to: "[the manual]", found: ["Read the guide."] } },
+    { clause, limit: 3, check: "restructure-dropped", before: "![Chart](a.png)\n", text: "![Chart](b.png)\n", found: [], control: { from: "![Chart]", to: "![Graph]", found: ["Chart"] } },
+  ]),
+  { clause: "22a", limit: 1, check: "restructure-added", before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", found: ["The valve is new."], control: { authorText: "The valve is new.\n", found: [] } },
+  { clause: "22a", limit: 1, check: "restructure-added", before: "The valve is new and quiet.\n", text: "- **Purpose:** The valve is new.\n\nThe valve is new and quiet.\n", found: ["Purpose: The valve is new."], control: { before: "The valve is new.\n\nThe valve is new and quiet.\n", found: [] } },
+  { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "## Overview\n\nText.\n", found: [], control: { from: "## Overview", to: "Overview.", found: ["Overview."] } },
+  { clause: "22a", limit: 2, check: "restructure-added", before: "Fix the pump.\n", text: "- **Purpose:** Fix the pump.\n", found: [], control: { from: "**Purpose:**", to: "Purpose", found: ["Purpose Fix the pump."] } },
+  { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "Text.\n\n[Author needed: reader]\n", found: [], control: { from: "[Author needed: reader]", to: "Readers are fitters.", found: ["Readers are fitters."] } },
 ];
 
 /**
@@ -719,6 +793,9 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "15f": [1, 12, 19],
   "17a": [3, 11],
   "19b": [4, 2, 5],
+  "20a": [1, 4, 2],
+  "22a": [2, 3],
+  "23b": [1, 4, 2],
 };
 
 /** The test that shows 15a's second limit, which runs both audits and reads what they print. */
@@ -754,6 +831,9 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "15f": ["463bba50c60651a7", "72c02ad5ffca09f8", "cbe52aeab5b5f019"],
   "17a": ["cfc121eded58bd56", "347357b868e06e98"],
   "19b": ["8d7374144d4bb978", "8e3c4f0d60d846d8", "a2f3adc83db9c51d"],
+  "20a": ["1d55b19365949e80", "694867c80cb848a9", "f2857480c3fb4e6d"],
+  "22a": ["0e4f938974d2501c", "0952c5bbd5bcde05"],
+  "23b": ["b9c14081a16f57c1", "22bbc5d504e85772", "9799b5f30bedb957"],
 };
 
 /** A digest of each clause specimen, text and reasons, keyed by the clause, as `digestOf` writes it. */
@@ -774,6 +854,9 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "15f": "a110f40c437220f5",
   "17a": "6371233b39f075a5",
   "19b": "44fdcbd1ca38383e",
+  "20a": "a146fb876a677b53",
+  "22a": "0d7658fd5996b91b",
+  "23b": "a146fb876a677b53",
 };
 
 /** Receives what a command prints and keeps none of it. */
@@ -818,7 +901,9 @@ function stubAnswer(question: string): unknown {
  * offline whether the mechanical audit or the planner reports it. A Jev gate
  * is named as the calibration record names it: the question, a colon and the
  * band, or the identifier of a diagnosis gate. A pass is read from the
- * coverage counts, because a report lists no pass among its results.
+ * coverage counts, because a report lists no pass among its results. The
+ * two-version comparison names `restructure-dropped` for the file after
+ * when it drops a unit, and `restructure-added` when it adds one.
  */
 function namedInReport(report: ReportJson): Map<string, Map<string, Check["kind"]>> {
   const named = new Map<string, Map<string, Check["kind"]>>();
@@ -840,7 +925,20 @@ function namedInReport(report: ReportJson): Map<string, Map<string, Check["kind"
       if (counts.pass > 0) addName(named, coverage.file, `${QUESTION_OF_COVERAGE[count]}:pass`, "jev");
     }
   }
+  for (const [rule, units] of restructureFindings(report)) {
+    if (units.length > 0) addName(named, report.restructure?.after ?? "", rule, "offline");
+  }
   return named;
+}
+
+/**
+ * The units a report's two-version comparison gives for each of its checks:
+ * those dropped and those added, each as its excerpt.
+ */
+function restructureFindings(report: ReportJson): Array<[string, string[]]> {
+  const restructure = report.restructure;
+  if (restructure === undefined) return [];
+  return [["restructure-dropped", restructure.dropped.map(unit => unit.excerpt)], ["restructure-added", restructure.added.map(unit => unit.excerpt)]];
 }
 
 /** Records that a report named a check for a file, and of which kind. */
@@ -851,7 +949,8 @@ function addName(named: Map<string, Map<string, Check["kind"]>>, file: string, c
 /**
  * The detail of each offline finding a report gives each file, by rule and
  * in the order the report lists them: the mechanical findings, then the
- * planner's.
+ * planner's, then the excerpt of each unit the two-version comparison drops
+ * or adds.
  */
 function reasonsInReport(report: ReportJson): Map<string, Map<string, string[]>> {
   const reasons = new Map<string, Map<string, string[]>>();
@@ -860,6 +959,9 @@ function reasonsInReport(report: ReportJson): Map<string, Map<string, string[]>>
     ...Object.entries(mechanical.files ?? {}).flatMap(([file, result]) => result.violations.map(finding => ({ file, ...finding }))),
     ...report.jev?.localFindings ?? [],
   ];
+  for (const [rule, units] of restructureFindings(report)) {
+    findings.push(...units.map(detail => ({ file: report.restructure?.after ?? "", rule, detail })));
+  }
   for (const finding of findings) {
     const rules = reasons.get(finding.file) ?? new Map<string, string[]>();
     rules.set(finding.rule, [...rules.get(finding.rule) ?? [], finding.detail]);
@@ -877,14 +979,20 @@ interface ReportJson {
     readonly results: ReadonlyArray<{ readonly file: string; readonly rule: string; readonly band: string; readonly diagnosisGate?: { readonly id: string } }>;
     readonly coverage: ReadonlyArray<{ readonly file: string; readonly checks: Readonly<Record<string, { readonly pass: number }>> }>;
   };
+  readonly restructure?: {
+    readonly after: string;
+    readonly dropped: ReadonlyArray<{ readonly excerpt: string }>;
+    readonly added: ReadonlyArray<{ readonly excerpt: string }>;
+  };
 }
 
 let routeReadings: Promise<RouteReading[]> | undefined;
 
 /**
  * Runs every route once over one directory holding each specimen twice, as
- * `<clause>.md` and as `<clause>.txt`, and reads what each named. The runs
- * are made on the first call and shared after it.
+ * `<clause>.md` and as `<clause>.txt`, and reads what each named. A route
+ * given `--before` runs once for each of those files instead. The runs are
+ * made on the first call and shared after it.
  *
  * @throws An `Error` when a route exits with anything but 0, when a route
  *     that does not send makes a request, or when a send route makes none.
@@ -902,37 +1010,59 @@ function readRoutes(): Promise<RouteReading[]> {
  */
 async function measureRoutes(): Promise<RouteReading[]> {
   const directory = mkdtempSync(join(tmpdir(), "checklist-routes-"));
+  const originals = mkdtempSync(join(tmpdir(), "checklist-originals-"));
   try {
     for (const [id, specimen] of Object.entries(SPECIMENS)) {
       writeFileSync(join(directory, `${id}.md`), specimen.text);
       writeFileSync(join(directory, `${id}.txt`), specimen.text);
+      writeFileSync(join(originals, `${id}.md`), specimen.before ?? specimen.text);
     }
     const readings: RouteReading[] = [];
     for (const [index, route] of ROUTES.entries()) {
       const json = join(tmpdir(), `checklist-route-${process.pid}-${index}.json`);
       const requests: string[] = [];
       const dependencies = stubbedDependencies(requests);
-      const exit = await runRoute(route, directory, json, dependencies);
-      if (exit !== 0) throw new Error(`${route.name} exited ${exit}.`);
+      const named = new Map<string, Map<string, Check["kind"]>>();
+      const reasons = new Map<string, Map<string, string[]>>();
+      const runs = route.options.includes("--before")
+        ? Object.keys(SPECIMENS).flatMap(id => route.reads.map(extension => ({ target: join(directory, `${id}.${extension}`), original: join(originals, `${id}.md`) })))
+        : [{ target: directory, original: "" }];
+      for (const run of runs) {
+        const exit = await runRoute(route, run.target, json, dependencies, directory, run.original);
+        if (exit !== 0) throw new Error(`${route.name} exited ${exit}.`);
+        const report: ReportJson = JSON.parse(readFileSync(json, "utf8"));
+        for (const [file, checks] of namedInReport(report)) {
+          named.set(file, checks);
+        }
+        for (const [file, rules] of reasonsInReport(report)) {
+          reasons.set(file, rules);
+        }
+        rmSync(json, { force: true });
+      }
       if (!route.meets.includes("send") && requests.length > 0) throw new Error(`${route.name} sent a request.`);
       if (route.meets.includes("send") && requests.length === 0) throw new Error(`${route.name} sent nothing.`);
-      const report: ReportJson = JSON.parse(readFileSync(json, "utf8"));
-      readings.push({ route, named: namedInReport(report), reasons: reasonsInReport(report) });
-      rmSync(json, { force: true });
+      readings.push({ route, named, reasons });
     }
     return readings;
   } finally {
     rmSync(directory, { recursive: true, force: true });
+    rmSync(originals, { recursive: true, force: true });
   }
 }
 
 /**
- * Runs one route over a directory, with its report written to `json`.
+ * Runs one route over a target, with its report written to `json`.
  *
+ * @param target The directory of specimens, or one specimen for a route
+ *     given `--before`.
+ * @param projectDirectory The folder paths are named from. Left out, it is
+ *     the target.
+ * @param original The file `--before` names, for a route that takes it.
  * @returns The command's exit code.
  */
-async function runRoute(route: Route, directory: string, json: string, dependencies: AuditDependencies): Promise<number> {
-  const argv = ["bun", "cli", directory, "--project-dir", directory, ...route.options, "--json", json];
+async function runRoute(route: Route, target: string, json: string, dependencies: AuditDependencies, projectDirectory = target, original = ""): Promise<number> {
+  const options = route.options.flatMap(option => option === "--before" ? [option, original] : [option]);
+  const argv = ["bun", "cli", target, "--project-dir", projectDirectory, ...options, "--json", json];
   if (route.command === "text") return await runTextCli(argv, ignore, ignore, dependencies);
   return await runDesignCli(argv, ignore, ignore, dependencies);
 }
@@ -1007,6 +1137,21 @@ const ACRONYM_PROBE = "# Probe\n\nThe QZXW tool runs every day.\n";
  * link in its front matter.
  */
 const METADATA_PROBE = "---\nsummary: Read [here](metadata.md).\n---\n\n# Appliance\n\nClose the valve.\n";
+
+/**
+ * What one plain text audit named and found, read from its `--json` report.
+ * The report is written in `directory` and removed.
+ *
+ * @throws An `Error` when the run exits with anything but 0.
+ */
+async function reportOf(argv: readonly string[], directory: string): Promise<Omit<RouteReading, "route">> {
+  const json = join(directory, "author-sweep.json");
+  const run = await printed("text", ["bun", "cli", ...argv, "--json", json], []);
+  if (run.exit !== 0) throw new Error(`The text audit exited ${run.exit}.`);
+  const report: ReportJson = JSON.parse(readFileSync(json, "utf8"));
+  rmSync(json, { force: true });
+  return { named: namedInReport(report), reasons: reasonsInReport(report) };
+}
 
 /** The rows of a printed table of findings that name `metadata.md`. */
 function metadataRows(text: string): string[] {
@@ -1125,9 +1270,15 @@ async function printedBlocks(command: Route["command"], argv: readonly string[])
  * Markdown, with the file name and front matter setting given, and
  * `planDocument` plans it; the result is the detail of each finding of the
  * rule named, in that order. For answers, `classify` reads them; the result
- * is the question with the band, then any diagnosis gate.
+ * is the question with the band, then any diagnosis gate. For a check of the
+ * two-version comparison, the text is compared with its original and the
+ * author's wording; the result is the text of each unit dropped or added.
  */
 function limitFound(reading: LimitReading): string[] {
+  if (reading.check.startsWith("restructure-")) {
+    const comparison = compareVersions(reading.before ?? "", reading.text ?? "", reading.authorText ?? null, reading.frontMatter === undefined ? {} : { frontMatter: reading.frontMatter });
+    return (reading.check === "restructure-dropped" ? comparison.dropped : comparison.added).map(unit => unit.key);
+  }
   if (reading.answers !== undefined) {
     const decision = classify(reading.answers.kind, reading.answers.answers);
     return [`${reading.check}:${decision.band}`, ...(decision.diagnosisGate === undefined ? [] : [decision.diagnosisGate.id])];
@@ -1139,8 +1290,8 @@ function limitFound(reading: LimitReading): string[] {
 
 /**
  * A limit specimen with its control applied: each `from` in the text made
- * `to`, and the control's file name, front matter setting or answers in
- * place of the specimen's.
+ * `to`, and the control's original, author's wording, file name, front
+ * matter setting or answers in place of the specimen's.
  */
 function underControl(specimen: LimitSpecimen): LimitReading {
   const { control } = specimen;
@@ -1148,9 +1299,13 @@ function underControl(specimen: LimitSpecimen): LimitReading {
   const fileName = control.fileName ?? specimen.fileName;
   const frontMatter = control.frontMatter ?? specimen.frontMatter;
   const answers = control.answers ?? specimen.answers;
+  const before = control.before ?? specimen.before;
+  const authorText = control.authorText ?? specimen.authorText;
   return {
     check: specimen.check,
     ...(text === undefined ? {} : { text }),
+    ...(before === undefined ? {} : { before }),
+    ...(authorText === undefined ? {} : { authorText }),
     ...(fileName === undefined ? {} : { fileName }),
     ...(frontMatter === undefined ? {} : { frontMatter }),
     ...(answers === undefined ? {} : { answers }),
@@ -1254,8 +1409,9 @@ describe("the Part 5 checklist clause registry", () => {
     const withChecks = CLAUSES.filter(clause => clause.checks.length > 0).map(clause => clause.id);
     expect(Object.keys(SPECIMENS).sort()).toEqual([...withChecks].sort());
     const readings = await readRoutes();
-    const fullest = readings.find(reading => reading.route.name === "design audit --send");
     for (const clause of CLAUSES) {
+      // The design audit takes no --before, so a check that needs the original is read on the text audit given it.
+      const fullest = readings.find(reading => reading.route.name === (clause.needs.includes("before") ? "text audit --before" : "design audit --send"));
       for (const check of clause.checks) {
         expect(fullest?.named.get(`${clause.id}.md`)?.get(check.rule), `${clause.id} ${check.rule}`).toBe(check.kind);
       }
@@ -1299,15 +1455,15 @@ describe("the Part 5 checklist clause registry", () => {
         expect(run.exit, route.name).toBe(2);
         expect(requests, route.name).toEqual([]);
       }
-      expect(ROUTES.filter(route => !route.meets.includes("front-matter")).map(route => route.options)).toEqual([["--no-front-matter"]]);
+      expect(ROUTES.filter(route => !route.meets.includes("front-matter")).map(route => route.options)).toEqual([["--no-front-matter"], ["--before", "--no-front-matter"]]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 15 fault
-  // clauses, 180 cells, it compares the two runs on that clause's own
+  // one folder with its option and without it. For each of the 18 fault
+  // clauses, 216 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline
@@ -1316,7 +1472,9 @@ describe("the Part 5 checklist clause registry", () => {
   //
   // What it does not establish: that the same holds on every input. It holds
   // for these specimens only, and it compares neither line numbers nor Jev
-  // scores, only which Jev bands are named. On METADATA_PROBE,
+  // scores, only which Jev bands are named. No sweep gives --before, so the
+  // three clauses that need it are named on neither side; the sweep of
+  // --author-text has a test of its own. On METADATA_PROBE,
   // --no-front-matter also changes what the link-text check of 12a and 19b
   // finds. The reading's claim of the clauses a run is set to use is about
   // which checks run, not about what they find.
@@ -1368,7 +1526,7 @@ describe("the Part 5 checklist clause registry", () => {
           expect([without.named.get("acronym-probe.md")?.has("acronym-undefined"), withOption.named.get("acronym-probe.md")?.has("acronym-undefined")], sweep.name).toEqual([true, false]);
         }
       }
-      expect(cells).toBe(SWEEPS.length * 15);
+      expect(cells).toBe(SWEEPS.length * FAULT_CLAUSES);
       expect(changes).toEqual(SWEEP_CHANGES);
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -1425,6 +1583,38 @@ describe("the Part 5 checklist clause registry", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   }, 60000);
+
+  // --author-text is the one option left that no route or sweep above gives.
+  // It is swept here on each specimen, compared with its original, one file
+  // at a time: wording that matches no specimen changes no check, and the
+  // added sentence of 22a's specimen, given as the author's, takes 22a's
+  // finding away.
+  test("--author-text changes no check of any specimen unless it holds the wording that specimen added", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "checklist-author-"));
+    try {
+      const unrelated = join(directory, "unrelated.txt");
+      const added = join(directory, "added.txt");
+      writeFileSync(unrelated, "Nothing in any specimen says this.\n");
+      writeFileSync(added, "The valve is new.\n");
+      const changed: string[] = [];
+      for (const [id, specimen] of Object.entries(SPECIMENS)) {
+        writeFileSync(join(directory, `${id}.md`), specimen.text);
+        writeFileSync(join(directory, `${id}-before.md`), specimen.before ?? specimen.text);
+        const base = [join(directory, `${id}.md`), "--project-dir", directory, "--before", join(directory, `${id}-before.md`)];
+        const without = await reportOf(base, directory);
+        expect(await reportOf([...base, "--author-text", unrelated], directory), id).toEqual(without);
+        const withAdded = await reportOf([...base, "--author-text", added], directory);
+        // JSON.stringify writes every Map as {}, so the two readings are compared deeply.
+        if (!Bun.deepEquals(withAdded, without)) changed.push(id);
+      }
+      expect(changed).toEqual(["22a"]);
+      const base = [join(directory, "22a.md"), "--project-dir", directory, "--before", join(directory, "22a-before.md")];
+      expect([(await reportOf(base, directory)).named.get("22a.md")?.has("restructure-added"), (await reportOf([...base, "--author-text", added], directory)).named.get("22a.md")?.has("restructure-added")])
+        .toEqual([true, undefined]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
   test(PRINT_TEST, async () => {
     const directory = mkdtempSync(join(tmpdir(), "checklist-print-"));
@@ -1500,7 +1690,8 @@ describe("the Part 5 checklist clause registry", () => {
       expect(CLAUSES.find(clause => clause.id === specimen.clause)?.checks.some(check => check.rule.split(":")[0] === specimen.check), `${label} names no ${specimen.check} check`).toBe(true);
       expect(specimen.text === undefined, `${label} reads a text or answers`).toBe(specimen.answers !== undefined);
       expect(control.from === undefined, `${label} control gives both from and to`).toBe(control.to === undefined);
-      expect(control.from !== undefined || control.fileName !== undefined || control.frontMatter !== undefined || control.answers !== undefined, `${label} control changes something`).toBe(true);
+      expect(control.from !== undefined || control.before !== undefined || control.authorText !== undefined || control.fileName !== undefined
+        || control.frontMatter !== undefined || control.answers !== undefined, `${label} control changes something`).toBe(true);
       if (control.from !== undefined) expect(specimen.text?.split(control.from).length, `${label} holds the control's text once`).toBe(2);
       expect(limitFound(specimen), label).toEqual([...specimen.found]);
       expect(limitFound(underControl(specimen)), `${label} under its control`).toEqual([...control.found]);

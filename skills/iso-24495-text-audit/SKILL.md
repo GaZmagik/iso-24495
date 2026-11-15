@@ -106,11 +106,44 @@ bun <skill-directory>/scripts/audit-text-cli.ts <file-or-directory> --project-di
 
    Add `--no-front-matter` for text that cannot carry metadata, such as a pull request description. A leading `---` block is then read as text, not set aside as front matter. The version or date rule is also disabled.
 
+   Add `--before <original-file>` only when the user asks to check a restructured file against its original. The [two-version comparison](#two-version-comparison) says what it reads.
+
 7. Report every finding with its file, line, rule, and explanation.
 8. Show the Part 5 checklist reading printed after the findings. It marks what the audit can read, not how good the document is.
 9. Report skipped or unreadable entries. Never treat an incomplete audit as clean.
 10. Explain that findings are mechanical proxies, not an ISO judgement.
 11. Leave the final decision and any rewriting request to the user.
+
+### Two-version comparison
+
+Use this mode when the user asks whether a restructure kept the original's wording.
+
+```text
+bun <skill-directory>/scripts/audit-text-cli.ts <after-file> --before <before-file> [--author-text <file>] --project-dir <project-directory>
+```
+
+- The selected path must be one file. A directory selected with `--before` exits 2.
+- `--author-text` names wording the author gave for the restructure, such as a purpose line. It needs `--before`.
+- No file may be a symbolic link. The design audit and the Jev options do not take `--before`.
+
+The comparison reads each version as units: sentences of prose, list items, quotations, table cells and headings, code blocks, and the alternative text of Markdown images.
+It matches them by the wording a reader sees, so a line wrap, emphasis, a list marker or a table border makes no difference.
+Case, punctuation, numbers and the contents of code blocks do make a difference.
+
+It prints a row for each of these:
+
+- **Dropped:** a unit of the original with no unchanged copy in the new version.
+- **Added:** a unit of the new version found in neither the original nor the author's wording.
+- **From the author:** a unit that matches the author's wording.
+- **Marked gap:** a unit that is one `[Author needed: ...]` slot and nothing else.
+
+Headings and bold labels such as `**Purpose:**` that a restructure adds or removes are counted and not listed, because Part 5 lets a restructure change them.
+
+The comparison reads wording, not meaning.
+A reworded sentence reads as dropped and added, and a sentence kept word for word reads as kept wherever it went.
+It does not read front matter, a raw HTML block such as `<pre>`, or the alternative text of an HTML image, and it does not compare link destinations.
+Report every row to the user, and leave it to the user to decide what each one means.
+The JSON report holds the comparison under `restructure`.
 
 ## Optional calibrated Jev checks
 
