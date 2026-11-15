@@ -911,6 +911,9 @@ describe("provisional-label", () => {
       const text = `Our layout follows ISO 24495-5, which is ${label}.\n`;
       expect(labelFindings(text), text).toEqual([]);
     }
+    // An underscore of emphasis is not a letter, so the word inside it is still the label.
+    expect(labelFindings("Our layout follows ISO 24495-5, which is _provisional_.\n")).toEqual([]);
+    expect(labelFindings("Our layout follows ISO 24495-5, which is __unpublished__.\n")).toEqual([]);
   });
 
   test("does not take a longer word or another number for the label or the citation", () => {
@@ -935,6 +938,10 @@ describe("provisional-label", () => {
   });
 
   test("reports a document once, at its first citation", () => {
+    // Headings and table rows are read after the paragraphs, so the first
+    // citation is found by its line and not by the order of reading.
+    expect(labelFindings("# ISO 24495-5\n\nWe follow ISO 24495-5.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("| ISO 24495-5 | B |\n|---|---|\n| a | b |\n\nWe follow ISO 24495-5.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
     expect(labelFindings("# Guide\n\nWe follow ISO 24495-5.\n\nRun `iso-24495-5` on it.\n"))
       .toEqual([{ line: 3, detail: UNLABELLED }]);
   });
@@ -961,7 +968,7 @@ describe("provisional-label", () => {
     expect(labelFindings("<!-- ISO 24495-5 -->\n\nText.\n")).toEqual([]);
     expect(labelFindings("Read the [guide](iso-24495-5.md).\n")).toEqual([]);
     expect(labelFindings("Never write \"follows ISO 24495-5\" alone.\n")).toEqual([]);
-    expect(labelFindings("Never write “follows ISO 24495-5” alone.\n")).toEqual([]);
+    expect(labelFindings("Never write \u201cfollows ISO 24495-5\u201d alone.\n")).toEqual([]);
     expect(labelFindings("---\nsource: ISO 24495-5\n---\n\nText.\n")).toEqual([]);
   });
 
