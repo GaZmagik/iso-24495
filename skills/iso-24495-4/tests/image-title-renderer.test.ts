@@ -66,6 +66,10 @@ const OPEN_PLACES = new Set([
   "an earlier image's destination from the line before, by reference",
 ]);
 
+// Destinations in the closed form: with no space, angle bracket, parenthesis,
+// quote or backslash, and nothing a reader cannot see, such as a zero-width space.
+const PLAIN_DESTINATIONS = new Set(["plain", "plain beyond ASCII"]);
+
 /**
  * Whether a document's image is in the closed form: a plain destination, then
  * one space, then the word in double or single quotes. A tab counts as the
@@ -74,7 +78,7 @@ const OPEN_PLACES = new Set([
 function closedForm(cell: Cell): boolean {
   const quoted = ["double quotes", "single quotes", "double quotes inside the destination"].includes(cell.title);
   const spaced = cell.between === "a space" || (cell.between === "a tab" && cell.place === "a heading");
-  return cell.destination === "plain" && quoted && spaced && !OPEN_PLACES.has(cell.place);
+  return PLAIN_DESTINATIONS.has(cell.destination) && quoted && spaced && !OPEN_PLACES.has(cell.place);
 }
 
 let built: Cell[] | null = null;
@@ -133,8 +137,8 @@ describe("the image-alt rule honours a decorative title only in the closed form"
     expect(shown.filter((cell) => !closedForm(cell) && cell.honoured).map(named)).toEqual([]);
     // The rest are reported though a renderer shows the title: safe misses,
     // which the checklist's limits name.
-    expect(shown.filter((cell) => cell.honoured)).toHaveLength(24);
-    expect(shown.filter((cell) => !cell.honoured)).toHaveLength(495);
+    expect(shown.filter((cell) => cell.honoured)).toHaveLength(48);
+    expect(shown.filter((cell) => !cell.honoured)).toHaveLength(607);
   });
 
   test("sees every kind of cell it is meant to tell apart", () => {
@@ -143,14 +147,14 @@ describe("the image-alt rule honours a decorative title only in the closed form"
     // the documents, the rule or Bun's renderer shows here rather than passing
     // quietly.
     const all = cells();
-    expect(all).toHaveLength(9600);
-    expect(all.filter((cell) => cell.honoured)).toHaveLength(33);
-    expect(all.filter(untitled)).toHaveLength(5314);
-    expect(all.filter((cell) => untitled(cell) && cell.reported)).toHaveLength(3665);
-    expect(all.filter(decorative)).toHaveLength(645);
-    expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(3641);
-    expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(615);
+    expect(all).toHaveLength(12000);
+    expect(all.filter((cell) => cell.honoured)).toHaveLength(66);
+    expect(all.filter(untitled)).toHaveLength(6838);
+    expect(all.filter((cell) => untitled(cell) && cell.reported)).toHaveLength(4865);
+    expect(all.filter(decorative)).toHaveLength(801);
+    expect(all.filter((cell) => cell.commonmark === "n" && cell.bun === "n")).toHaveLength(4361);
+    expect(all.filter((cell) => cell.commonmark !== cell.bun)).toHaveLength(849);
     // Honoured with no image under either renderer: text in a raw HTML block or an earlier link.
-    expect(all.filter((cell) => cell.honoured && cell.commonmark === "n" && cell.bun === "n")).toHaveLength(9);
+    expect(all.filter((cell) => cell.honoured && cell.commonmark === "n" && cell.bun === "n")).toHaveLength(18);
   });
 });

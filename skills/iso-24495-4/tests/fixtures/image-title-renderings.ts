@@ -4,13 +4,43 @@
 // another title.
 //
 // Rebuild this file with `../reference/build-image-titles.ts`. Never edit it by hand.
-// 9600 documents: 4139, 5080, 381, 0 of n, u, d and o.
+// 12000 documents: 5015, 6448, 537, 0 of n, u, d and o.
 
 /** The digest of the documents these renderings are of, from `documentsDigest`. */
-export const IMAGE_TITLE_DOCUMENTS_DIGEST = "a04ae0e1ac07e6e6e9d74be13cc5915511dd883ec95ef21f563e26b6bb0c840a";
+export const IMAGE_TITLE_DOCUMENTS_DIGEST = "941ddcb589cfd76a64f43d3dd9b06e75c1b276eb05df915c19b6f9b5756c2b3c";
 
 /** One letter for each document, in the order `imageTitleDocuments` gives them. */
 export const COMMONMARK_RENDERINGS = [
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuddddddndnndnnduuuuuunnnnnnnnnnnnnnuuuuuu",
+  "uuuuuununnunnuuuuuuuuuuuuununnunnuuuuuuuuuuuuununnunnuuuuuuuddddddndnndnnduuuuuu",
+  "nnnnnnnnnnnnnnuuuuuuuuuuuuuunnunnuuuuuuuuuuuuuuunnunnuuuuuuuuuuuuununnunnuuuuuuu",
+  "ddddddnndndnnduuuuuunnnnnnnnnnnnnnuuuuuuuuuuuunnununnuuuuuuuuuuuuunnununnuuuuuuu",
+  "uuuuuunnununnuuuuuuuddddddnndndnnduuuuuunnnnnnnnnnnnnnuuuuuuuuuuuuunununnuuuuuuu",
+  "uuuuuuunununnuuuuuuuuuuuuunnununnuuuuuuuddddddnnnndnnduuuuuunnnnnnnnnnnnnnuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuddddddnnnndnnduuuuuu",
+  "nnnnnnnnnnnnnnuuuuuuuuuuuuunnnunnuuuuuuuuuuuuuunnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
+  "dddddnnnnndnnnuuuuuunnnnnnnnnnnnnnuuuuuuuuuuunnnnnunnnuuuuuuuuuuunnnnnunnnuuuuuu",
+  "uuuuunnnnnunnnuuuuuudddddnnnnndnnnuuuuuunnnnnnnnnnnnnnuuuuuuuuuuununnnunnnuuuuuu",
+  "uuuuununnnunnnuuuuuuuuuuunnnnnunnnuuuuuudddddnndnndnnnuuuuuunnnnnnnnnnnnnnuuuuuu",
+  "uuuuunnunnunnnuuuuuuuuuuunnunnunnnuuuuuuuuuuunnunnunnnuuuuuudddddnndnndnnnuuuuuu",
+  "nnnnnnnnnnnnnnuuuuuuuuuuunuunnunnnuuuuuuuuuuunuunnunnnuuuuuuuuuuunnunnunnnuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuddddddndnndnnduuuuuunnnnnnnnnnnnnnuuuuuu",
+  "uuuuuununnunnuuuuuuuuuuuuununnunnuuuuuuuuuuuuununnunnuuuuuuuddddddndnndnnduuuuuu",
+  "nnnnnnnnnnnnnnuuuuuuuuuuuuuunnunnuuuuuuuuuuuuuuunnunnuuuuuuuuuuuuununnunnuuuuuuu",
+  "ddddddnndndnnduuuuuunnnnnnnnnnnnnnuuuuuuuuuuuunnununnuuuuuuuuuuuuunnununnuuuuuuu",
+  "uuuuuunnununnuuuuuuuddddddnndndnnduuuuuunnnnnnnnnnnnnnuuuuuuuuuuuuunununnuuuuuuu",
+  "uuuuuuunununnuuuuuuuuuuuuunnununnuuuuuuuddddddnnnndnnduuuuuunnnnnnnnnnnnnnuuuuuu",
+  "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuddddddnnnndnnduuuuuu",
+  "nnnnnnnnnnnnnnuuuuuuuuuuuuunnnunnuuuuuuuuuuuuuunnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
+  "dddddnnnnndnnnuuuuuunnnnnnnnnnnnnnuuuuuuuuuuunnnnnunnnuuuuuuuuuuunnnnnunnnuuuuuu",
+  "uuuuunnnnnunnnuuuuuudddddnnnnndnnnuuuuuunnnnnnnnnnnnnnuuuuuuuuuuununnnunnnuuuuuu",
+  "uuuuununnnunnnuuuuuuuuuuunnnnnunnnuuuuuudddddnndnndnnnuuuuuunnnnnnnnnnnnnnuuuuuu",
+  "uuuuunnunnunnnuuuuuuuuuuunnunnunnnuuuuuuuuuuunnunnunnnuuuuuudddddnndnndnnnuuuuuu",
+  "nnnnnnnnnnnnnnuuuuuuuuuuunuunnunnnuuuuuuuuuuunuunnunnnuuuuuuuuuuunnunnunnnuuuuuu",
   "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
   "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuu",
   "uuuuuunnnnunnuuuuuuuuuuuuunnnnunnuuuuuuuddddddndnndnnduuuuuunnnnnnnnnnnnnnuuuuuu",
