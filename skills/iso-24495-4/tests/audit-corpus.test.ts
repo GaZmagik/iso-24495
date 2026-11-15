@@ -18,6 +18,9 @@ import {
   configHash,
   ENGINE_THRESHOLDS,
   firstUnlabelledCitation,
+  genericAltViolations,
+  HTML_IMAGE,
+  htmlImageTags,
   isAuditedDocument,
   listTextFiles,
   runCli,
@@ -1078,5 +1081,226 @@ describe("provisional-label", () => {
   test("reports a table of a thousand citing rows once, at its first row", () => {
     const text = `| Ref |\n|---|\n${"| 24495-5 |\n".repeat(1_000)}`;
     expect(labelFindings(text)).toEqual([{ line: 3, detail: UNLABELLED }]);
+  });
+});
+
+/** The words that name only the kind of image, each of which the rule reports alone. */
+const GENERIC_WORDS = ["image", "picture", "photo", "screenshot", "graphic", "figure", "diagram", "icon", "logo"];
+
+/** Each `generic-alt` finding as its line and detail. */
+function genericFindings(text: string, frontMatter?: boolean): Array<{ line: number; detail: string }> {
+  return auditText(text, frontMatter === undefined ? {} : { frontMatter })
+    .filter((violation) => violation.rule === "generic-alt")
+    .map(({ line, detail }) => ({ line, detail }));
+}
+
+/** The finding for alternative text that is one generic word. */
+function kindOnly(alt: string, line = 1): { line: number; detail: string } {
+  return { line, detail: `alternative text "${alt}" names the kind of image, not what it shows` };
+}
+
+/** The finding for alternative text that is a file name. */
+function fileOnly(alt: string, line = 1): { line: number; detail: string } {
+  return { line, detail: `alternative text "${alt}" is a file name, not what the image shows` };
+}
+
+// Part 5 asks a meaningful image to say what it shows. Alternative text that
+// is only the kind of image, or the image's file name, tells a listener that
+// an image is there and nothing about what it shows.
+describe("generic-alt", () => {
+  test("reports alternative text that is one generic word, in any letter case", () => {
+    for (const word of GENERIC_WORDS) {
+      expect(genericFindings(`![${word}](a.png)\n`), word).toEqual([kindOnly(word)]);
+      const shouted = word.toUpperCase();
+      expect(genericFindings(`![${shouted}](a.png)\n`), shouted).toEqual([kindOnly(shouted)]);
+    }
+    expect(genericFindings("![ Logo ](a.png)\n")).toEqual([kindOnly("Logo")]);
+  });
+
+  test("passes alternative text that says more than the kind of image", () => {
+    for (const alt of ["Acme logo", "an image", "Figure 1", "Screenshot of the settings page", "logos", "photography", "Image:"]) {
+      expect(genericFindings(`![${alt}](a.png)\n`), alt).toEqual([]);
+    }
+  });
+
+  test("reports alternative text that is an image's file name", () => {
+    for (const alt of ["diagram.png", "IMG_0042.jpg", "photo.JPEG", "chart.svg", "a.gif", "b.webp", "c.bmp", "d.ico", "e.tif", "f.tiff", "g.avif"]) {
+      expect(genericFindings(`![${alt}](x.png)\n`), alt).toEqual([fileOnly(alt)]);
+    }
+  });
+
+  test("passes a name that is not one image file", () => {
+    for (const alt of ["Node.js", "logo.txt", "images/diagram.png", "my diagram.png", "diagram.png.", ".png", "v1.2"]) {
+      expect(genericFindings(`![${alt}](x.png)\n`), alt).toEqual([]);
+    }
+  });
+
+  test("leaves an image with no alternative text to image-alt, and its decorative marking unchanged", () => {
+    expect(genericFindings("![](a.png)\n")).toEqual([]);
+    expect(genericFindings('![](a.png "decorative")\n')).toEqual([]);
+    expect(genericFindings('![][dec]\n\n[dec]: decoration.png "decorative"\n')).toEqual([]);
+    expect(altFindings("![](a.png)\n")).toEqual([missingAlt("a.png")]);
+    expect(altFindings('![](a.png "decorative")\n')).toEqual([]);
+    // A decorative title does not excuse alternative text a reader still hears.
+    expect(genericFindings('![logo](a.png "decorative")\n')).toEqual([kindOnly("logo")]);
+  });
+
+  test("reads full, collapsed and shortcut reference images only where the label is defined", () => {
+    expect(genericFindings("![logo][l]\n\n[l]: logo.png\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("![logo][]\n\n[logo]: logo.png\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("![logo]\n\n[logo]: logo.png\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("![logo][missing]\n")).toEqual([]);
+    expect(genericFindings("![logo]\n")).toEqual([]);
+    expect(genericFindings("![Acme logo][l]\n\n[l]: logo.png\n")).toEqual([]);
+  });
+
+  test("reads images inside tables, links, headings, list items and quotations", () => {
+    expect(genericFindings("| Mark | Name |\n|---|---|\n| ![icon](a.png) | Acme |\n")).toEqual([kindOnly("icon", 3)]);
+    expect(genericFindings("[![logo](logo.png)](https://acme.example)\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("# ![logo](logo.png) Acme\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("- ![screenshot](s.png)\n")).toEqual([kindOnly("screenshot")]);
+    expect(genericFindings("> ![diagram](d.png)\n")).toEqual([kindOnly("diagram")]);
+    expect(genericFindings("Intro.\n\nSee ![photo](p.png) and ![IMG_1.jpg](p.png).\n")).toEqual([kindOnly("photo", 3), fileOnly("IMG_1.jpg", 3)]);
+  });
+
+  test("reads the alt attribute of an HTML image", () => {
+    expect(genericFindings('<img src="a.png" alt="icon">\n')).toEqual([kindOnly("icon")]);
+    expect(genericFindings("<p>\n  <img src='a.png' alt='Logo' width=20>\n</p>\n")).toEqual([kindOnly("Logo", 2)]);
+    expect(genericFindings('<img src="a.png" alt="diagram.png">\n')).toEqual([fileOnly("diagram.png")]);
+    // No renderer reads a tag with a blank line inside it as one tag.
+    expect(genericFindings('Text <img alt="logo"\n\nsrc="a.png">\n')).toEqual([]);
+    expect(genericFindings('Text <img alt="logo"\nsrc="a.png">\n')).toEqual([kindOnly("logo")]);
+    expect(genericFindings('<img src="a.png" alt="Acme icon">\n')).toEqual([]);
+    expect(genericFindings('<img src="a.png" alt="">\n')).toEqual([]);
+    expect(genericFindings('<img src="a.png">\n')).toEqual([]);
+  });
+
+  test("reads the attribute named alt as HTML does, and no other", () => {
+    expect(genericFindings("<IMG SRC=a.png ALT=logo>\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings('<img src="a.png"alt="logo">\n')).toEqual([kindOnly("logo")]);
+    expect(genericFindings('<img alt = "logo" src="a.png">\n')).toEqual([kindOnly("logo")]);
+    expect(genericFindings('<img src="a.png" alt="logo" />\n')).toEqual([kindOnly("logo")]);
+    expect(genericFindings('<img src="a.png" / alt="logo">\n')).toEqual([kindOnly("logo")]);
+    expect(genericFindings('<img src="a.png" />\n')).toEqual([]);
+    // HTML keeps the first of two attributes with one name.
+    expect(genericFindings('<img alt="Acme logo" alt="logo">\n')).toEqual([]);
+    expect(genericFindings('<img alt="logo" alt="Acme logo">\n')).toEqual([kindOnly("logo")]);
+    // Text inside another attribute, or another attribute's name, is not the alt attribute.
+    for (const text of ['<img src="a.png" data-alt="logo">\n', '<img title="alt=logo" src="a.png">\n', "<img title='x alt=\"logo\"'>\n", "<img altx=logo>\n"]) {
+      expect(genericFindings(text), text).toEqual([]);
+    }
+  });
+
+  test("reads alternative text without its emphasis marks or HTML", () => {
+    expect(genericFindings("![**logo**](a.png)\n")).toEqual([kindOnly("**logo**")]);
+    expect(genericFindings("![<b>logo</b>](a.png)\n")).toHaveLength(1);
+    expect(genericFindings("![_IMG_0042.jpg_](a.png)\n")).toEqual([fileOnly("_IMG_0042.jpg_")]);
+  });
+
+  test("skips code, front matter and comments", () => {
+    expect(genericFindings("```\n![logo](a.png)\n```\n")).toEqual([]);
+    expect(genericFindings("Text.\n\n    ![logo](a.png)\n")).toEqual([]);
+    expect(genericFindings("Use `![logo](a.png)` here.\n")).toEqual([]);
+    expect(genericFindings("<!-- ![logo](a.png) -->\n\nText.\n")).toEqual([]);
+    expect(genericFindings("---\nbanner: ![logo](a.png)\n---\n\nText.\n")).toEqual([]);
+  });
+
+  test("keeps the controls of what it skips", () => {
+    expect(genericFindings("![logo](a.png)\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("---\nbanner: ![logo](a.png)\n---\n\nText.\n", false)).toEqual([kindOnly("logo", 2)]);
+  });
+
+  test("reads CRLF, tabs and text beyond ASCII", () => {
+    expect(genericFindings("Intro.\r\n\r\n![logo](a.png)\r\n")).toEqual([kindOnly("logo", 3)]);
+    expect(genericFindings("# ![\tlogo\t](a.png)\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("![café logo](a.png)\n")).toEqual([]);
+    expect(genericFindings("![café.png](a.png)\n")).toEqual([fileOnly("café.png")]);
+    // A letter beyond ASCII is not folded to an ASCII one, so these pass.
+    for (const alt of [`${String.fromCharCode(0x130)}mage`, `${String.fromCharCode(0xff4c)}ogo`]) {
+      expect(genericFindings(`![${alt}](a.png)\n`), alt).toEqual([]);
+    }
+  });
+
+  test("cuts long alternative text to 40 characters in its finding", () => {
+    expect(genericFindings(`![${"x".repeat(60)}.png](a.png)\n`)).toEqual([fileOnly("x".repeat(40))]);
+    expect(genericFindings(`<img src="a.png" alt="${"y".repeat(60)}.gif">\n`)).toEqual([fileOnly("y".repeat(40))]);
+  });
+
+  test("reads long and hostile text in time in proportion to its length", () => {
+    // One call of this rule alone against a fixed budget for each text. Each
+    // takes well under a second here. Reading HTML images with the pattern
+    // alone took over seven seconds on 20,000 unclosed tags.
+    const texts = [
+      `![${"logo ".repeat(100_000)}](a.png)\n`,
+      `![${"a".repeat(200_000)}.png](a.png)\n`,
+      `![${"<a ".repeat(100_000)}](a.png)\n`,
+      `${"<img ".repeat(50_000)}\n`,
+      `<img alt="${"<img ".repeat(50_000)}\n`,
+      `${"![logo](a.png) ".repeat(20_000)}\n`,
+    ];
+    for (const text of texts) {
+      const started = performance.now();
+      genericAltViolations(text);
+      expect(performance.now() - started, text.slice(0, 20)).toBeLessThan(3_000);
+    }
+  }, 120_000);
+});
+
+/** A generator of numbers from 0 up to `limit`, the same sequence every run. */
+function seededNumbers(seed: number): (limit: number) => number {
+  let state = seed;
+  return (limit) => {
+    state = (state * 48_271) % 2_147_483_647;
+    return state % limit;
+  };
+}
+
+/** What the image-alt rule's pattern finds, in the form `htmlImageTags` gives. */
+function byPattern(text: string): Array<{ start: number; end: number; attributes: string }> {
+  return [...text.matchAll(HTML_IMAGE)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    attributes: match[1] ?? "",
+  }));
+}
+
+// The generic-alt rule finds HTML image tags with its own scan, because the
+// pattern image-alt uses reads to the end of the text from each unclosed tag.
+// The scan must find exactly what the pattern finds.
+describe("htmlImageTags", () => {
+  test("finds what the pattern finds in chosen odd text", () => {
+    for (const text of [
+      "", "<img>", "<IMG src=a>", "<img", "<imgx>", "<img/>", "<img alt=\"a>b\">", "<img alt='a\"b'>",
+      "<img alt=\"x <img b>", "<img a=\"x\" <img b>", "<img a='> <img b='c'>", "<img <img>>",
+      "<img\nalt=\"a\"\n>", "<img alt=\"\n\n\">", "x<img>y<img a>z", "<img a=\"", "<img a=\"\">\"<img b>",
+    ]) {
+      expect(htmlImageTags(text), JSON.stringify(text)).toEqual(byPattern(text));
+    }
+  });
+
+  test("finds what the pattern finds in 5,000 texts built from tag pieces", () => {
+    const pieces = ["<img", "<IMG", "<imgs", ">", "\"", "'", "a", " ", "\n", "=", "<"];
+    const next = seededNumbers(24495);
+    // Texts holding a tag and an "<img" that the pattern could not close.
+    // There are 1,650 of them in this sequence.
+    let both = 0;
+    for (let run = 0; run < 5_000; run++) {
+      let text = "";
+      const length = next(30);
+      for (let piece = 0; piece < length; piece++) {
+        text += pieces[next(pieces.length)];
+      }
+      const expected = byPattern(text);
+      expect(htmlImageTags(text), JSON.stringify(text)).toEqual(expected);
+      if (expected.length > 0 && [...text.matchAll(/<img\b/gi)].length > expected.length) both++;
+    }
+    expect(both).toBeGreaterThan(1_000);
+  });
+
+  test("reads 200,000 unclosed tags in time in proportion to the text", () => {
+    const text = "<img ".repeat(200_000);
+    const started = performance.now();
+    expect(htmlImageTags(text)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });

@@ -142,7 +142,7 @@ The `iso-24495-text-audit` skill audits a selected `.md`, `.markdown`, or `.txt`
 
 The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
 
-Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` and `provisional-label` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text`, `provisional-label` and `generic-alt` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
 
 Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
 
@@ -170,11 +170,13 @@ A non-empty trimmed string, finite number or date counts, including `version: ba
 The field's format is not validated, because YAML can change number spelling and resolve aliases.
 Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
 
-The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
+The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 
 The `provisional-label` rule asks a document that cites ISO 24495-5 or its skill to say that the standard is an unpublished draft. One paragraph, list item, heading or table row that cites it must say so, and code and quoted text are skipped.
 
-The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
+The `generic-alt` rule reports alternative text that is only one word naming the kind of image, such as `image` or `logo`, or only a file name, such as `IMG_0042.jpg`. It reads Markdown images and the alt attribute of HTML images, and code is skipped.
+
+The `link-text`, `image-alt` and `generic-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence. Alternative text such as `image` tells them only that an image is there.
 
 The result reports zero findings when no implemented rule fires. That result does not prove the text suits its audience or purpose.
 

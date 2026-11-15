@@ -347,6 +347,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
+  violations.push(...genericAltViolations(text, reading));
   violations.push(...provisionalLabelViolations(text, reading));
   if (options.markdown) {
     const fileName = options.fileName;
@@ -1621,7 +1622,8 @@ function doubletViolations(text: string, reading: Reading): Violation[] {
 // about the destination.
 const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|more|more info|details|see more|learn more|go|page|website|download)$/i;
 const HTML_ANCHOR = /<a\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/a\s*>/gi;
-const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
+// Exported so a test can hold `htmlImageTags` to exactly what this pattern finds.
+export const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
 const HTML_TAG = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
 
 function spokenText(label: string): string {
@@ -1889,6 +1891,164 @@ function labelKey(label: string): string {
 /** A label of ASCII characters as a renderer matches it: trimmed, its spaces collapsed, in lower case. */
 function plainLabel(label: string): string {
   return label.trim().replace(/ +/g, " ").toLowerCase();
+}
+
+// Words that name only the kind of image. Alternative text that is one of
+// them tells a listener that an image is there, and nothing about what it
+// shows. "Acme logo" says whose logo it is, so only the word alone counts.
+const GENERIC_ALT_WORDS = new Set(["image", "picture", "photo", "screenshot", "graphic", "figure", "diagram", "icon", "logo"]);
+
+// One image file's name: no space, slash or backslash, and one of these
+// extensions. A closed list, so that "Node.js" or "v1.2" is not a file name.
+const IMAGE_FILE_NAME = /^[^\s/\\]+\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?|avif)$/i;
+
+/**
+ * Part 5 asks a meaningful image to say what it shows, not what it is.
+ * Alternative text that is one word naming the kind of image, or that is the
+ * image's file name, reads as the image's type and not its content.
+ *
+ * It reads a Markdown image of any form whose label a definition supplies
+ * where it needs one, and the alt attribute of an HTML image. The alternative
+ * text is read as the reader of the line gives it, with emphasis marks
+ * removed and its spaces trimmed. Empty alternative text belongs to
+ * `image-alt`, so this rule never reads it.
+ *
+ * Exported so a test can time this rule apart from the others.
+ */
+export function genericAltViolations(text: string, reading: Reading = {}): Violation[] {
+  const violations: Violation[] = [];
+  const { lines, markupLines, references } = readDocument(text, reading);
+  // The reader gives each line of code or front matter as an empty line, so none holds an image.
+  for (let i = 0; i < lines.length; i++) {
+    for (const link of markdownLinks(itemAt(lines, i))) {
+      if (!link.image || !link.rendered) continue;
+      if (link.kind === "inline") {
+        if (link.target.trim().length === 0) continue;
+      } else {
+        // A reference names its definition, and a bare label names its own.
+        const name = link.kind === "reference" ? link.target.trim() || link.label : link.label;
+        if (!references.has(normaliseReference(name))) continue;
+      }
+      const finding = genericAltFinding(link.label, i + 1);
+      if (finding !== null) violations.push(finding);
+    }
+  }
+  const markup = markupLines.join("\n");
+  for (const tag of htmlImageTags(markup)) {
+    if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
+    const alt = altAttribute(tag.attributes);
+    if (alt === null) continue;
+    const finding = genericAltFinding(alt, lineAtOffset(1, markup, tag.start));
+    if (finding !== null) violations.push(finding);
+  }
+  return violations;
+}
+
+// One attribute of an HTML tag, read from where the last one ended: the
+// spaces and slashes before it, its name, and any value. A name runs to a
+// space, a slash, ">" or "=", as HTML reads it.
+const HTML_ATTRIBUTE = /[\s/]*([^\s/>][^\s/>=]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?/y;
+
+/**
+ * The value of an image tag's alt attribute, read one attribute at a time
+ * from the start, as HTML reads it. `htmlAttribute` searches the text instead,
+ * so it took `data-alt` or text inside another attribute's value for alt.
+ *
+ * @param attributes The text between "<img" and its closing ">".
+ * @returns The first alt attribute's value, "" when it has none, or null
+ *     when the tag has no alt attribute.
+ */
+function altAttribute(attributes: string): string | null {
+  const pattern = new RegExp(HTML_ATTRIBUTE.source, "y");
+  let at = 0;
+  while (at < attributes.length) {
+    pattern.lastIndex = at;
+    const match = pattern.exec(attributes);
+    if (match === null) return null;
+    if (match[1]?.toLowerCase() === "alt") return match[2] ?? match[3] ?? match[4] ?? "";
+    at = pattern.lastIndex;
+  }
+  return null;
+}
+
+/** One HTML image tag: where it starts and ends, and the text between "<img" and its closing ">". */
+export interface HtmlImageTag {
+  readonly start: number;
+  readonly end: number;
+  readonly attributes: string;
+}
+
+/**
+ * Each HTML image tag in the text: the matches `HTML_IMAGE` finds, found in
+ * time in proportion to the text.
+ *
+ * The pattern alone reads on from every "<img" with no closing ">" to the end
+ * of the text, so 20,000 of them on one line took seven seconds. Here each
+ * position's closing ">" is worked out once, from the end of the text back.
+ *
+ * @returns The tags in order, none overlapping, as `matchAll` would give them.
+ */
+export function htmlImageTags(text: string): HtmlImageTag[] {
+  const tags: HtmlImageTag[] = [];
+  let closings: Int32Array | null = null;
+  let after = 0;
+  for (const match of text.matchAll(/<img\b/gi)) {
+    // A match of the pattern consumes its tag, so an "<img" inside one is not another.
+    if (match.index < after) continue;
+    closings ??= tagClosings(text);
+    const from = match.index + match[0].length;
+    const close = closings[from] ?? -1;
+    if (close === -1) continue;
+    tags.push({ start: match.index, end: close + 1, attributes: text.slice(from, close) });
+    after = close + 1;
+  }
+  return tags;
+}
+
+/**
+ * For each position, the ">" that `HTML_IMAGE` would end a tag at if its
+ * attributes began there, or -1 where it would find none. Outside quotation
+ * marks the first ">" ends the tag. A quotation mark skips to its partner,
+ * and one with no partner ends the search with none.
+ */
+function tagClosings(text: string): Int32Array {
+  const closings = new Int32Array(text.length + 1).fill(-1);
+  let nextDouble = -1;
+  let nextSingle = -1;
+  for (let at = text.length - 1; at >= 0; at--) {
+    const character = text[at];
+    if (character === ">") {
+      closings[at] = at;
+    } else if (character === "\"" || character === "'") {
+      const partner = character === "\"" ? nextDouble : nextSingle;
+      closings[at] = partner === -1 ? -1 : closings[partner + 1] ?? -1;
+      if (character === "\"") {
+        nextDouble = at;
+      } else {
+        nextSingle = at;
+      }
+    } else {
+      closings[at] = closings[at + 1] ?? -1;
+    }
+  }
+  return closings;
+}
+
+/**
+ * The finding for one image's alternative text, or null when it says more
+ * than the kind of image or its file. Each step is one pass over the text,
+ * so a long alternative text costs time in proportion to its length.
+ */
+function genericAltFinding(alt: string, line: number): Violation | null {
+  const shown = alt.trim().slice(0, 40);
+  const spoken = alt.replace(/[*_~`]/g, "").trim();
+  if (GENERIC_ALT_WORDS.has(spoken.toLowerCase())) {
+    return { rule: "generic-alt", line, detail: `alternative text "${shown}" names the kind of image, not what it shows` };
+  }
+  if (IMAGE_FILE_NAME.test(spoken)) {
+    return { rule: "generic-alt", line, detail: `alternative text "${shown}" is a file name, not what the image shows` };
+  }
+  return null;
 }
 
 /**
