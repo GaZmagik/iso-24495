@@ -6,6 +6,7 @@ import { lstatSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  inlineText,
   markdownLinks,
   mergedSentences,
   normaliseReference,
@@ -13,6 +14,7 @@ import {
   readerProseBlocks,
   readDocument,
   structure,
+  tableCells,
   toLines,
   type ProseBlock,
   type Reading,
@@ -2057,21 +2059,61 @@ interface CitingUnit {
 function provisionalLabelViolations(text: string, reading: Reading): Violation[] {
   // Most documents never name the standard, so they are not parsed again.
   if (!PART_5_CITATION.test(text)) return [];
-  const { blocks, lines } = structure(text, reading);
   const units: CitingUnit[] = [
     ...readerProseBlocks(text, reading).map((block) => ({ line: block.line, text: block.lines.join("\n") })),
     ...headings(text, reading).map((heading) => ({ line: heading.line, text: heading.text })),
-    ...[...blocks].filter(([, block]) => block.kind === "table").map(([index]) => ({ line: index + 1, text: itemAt(lines, index) })),
+    ...readerTableRows(text, reading),
   ];
-  const citing = units
-    .map((unit) => ({ line: unit.line, text: unit.text.replace(QUOTED_TEXT, " ") }))
-    .filter((unit) => PART_5_CITATION.test(unit.text));
-  if (citing.length === 0 || citing.some((unit) => DRAFT_LABEL.test(unit.text))) return [];
+  // The earliest line is kept as the units are read. Spreading every citing
+  // line into one Math.min call threw a RangeError on a long table.
+  let first = Infinity;
+  for (const unit of units) {
+    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
+    if (!PART_5_CITATION.test(unquoted)) continue;
+    if (DRAFT_LABEL.test(unquoted)) return [];
+    if (unit.line < first) first = unit.line;
+  }
+  if (first === Infinity) return [];
   return [{
     rule: "provisional-label",
-    line: Math.min(...citing.map((unit) => unit.line)),
+    line: first,
     detail: "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it",
   }];
+}
+
+/**
+ * Each table row, its divider included, as a reader sees it.
+ *
+ * A row is split into cells first, as GitHub splits it, so a pipe inside
+ * what looks like a link ends the cell and the link with it. A cell past the
+ * header's last column is dropped, as GitHub drops it. Each cell then goes
+ * through `inlineText`, the reading that prose and headings get: a link or
+ * image becomes its label, a reference link only where its label is
+ * defined, and an HTML comment or tag becomes a space. The cells are joined
+ * by " | ", so two cells never make one word or one number.
+ *
+ * @returns One unit for each table line, at its 1-indexed line. Empty when the
+ *     text holds no table.
+ */
+function readerTableRows(text: string, reading: Reading): CitingUnit[] {
+  const { blocks, lines, destinations } = structure(text, reading);
+  // `destinations` has one key for each defined label, normalised, which is
+  // the set `inlineText` takes.
+  const defined = new Set(destinations.keys());
+  // The number of columns of each table, keyed by the index of its header line.
+  const columns = new Map<number, number>();
+  const rows: CitingUnit[] = [];
+  for (const [index, block] of blocks) {
+    if (block.kind !== "table") continue;
+    let width = columns.get(block.id);
+    if (width === undefined) {
+      width = tableCells(itemAt(lines, block.id).trim()).length;
+      columns.set(block.id, width);
+    }
+    const cells = tableCells(itemAt(lines, index).trim()).slice(0, width);
+    rows.push({ line: index + 1, text: cells.map((cell) => inlineText(cell, defined)).join(" | ") });
+  }
+  return rows;
 }
 
 function wordyPhraseViolations(text: string, reading: Reading): Violation[] {

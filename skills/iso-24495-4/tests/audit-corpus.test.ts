@@ -979,6 +979,62 @@ describe("provisional-label", () => {
     expect(labelFindings("---\nsource: ISO 24495-5\n---\n\nText.\n", false)).toEqual([{ line: 2, detail: UNLABELLED }]);
   });
 
+  test("reads a table row as a reader sees it, without link destinations", () => {
+    // A citation only in a destination is not one the reader meets.
+    const destination = "| Guide |\n|---|\n| [guide](iso-24495-5.md) |\n";
+    expect(labelFindings(destination)).toEqual([]);
+    expect(labelFindings(destination.replace("[guide](iso-24495-5.md)", "[ISO 24495-5](guide.md)")))
+      .toEqual([{ line: 3, detail: UNLABELLED }]);
+    // Nor is a draft word only in a destination a label the reader meets.
+    const labelInDestination = "| Guide |\n|---|\n| ISO 24495-5 [guide](draft.md) |\n";
+    expect(labelFindings(labelInDestination)).toEqual([{ line: 3, detail: UNLABELLED }]);
+    expect(labelFindings(labelInDestination.replace("[guide](draft.md)", "[draft](guide.md)"))).toEqual([]);
+    // A reference link shows its text where its label is defined, and is
+    // read as written where it is not.
+    const reference = "| Guide |\n|---|\n| ISO 24495-5 [guide][draft] |\n\n[draft]: guide.md\n";
+    expect(labelFindings(reference)).toEqual([{ line: 3, detail: UNLABELLED }]);
+    expect(labelFindings(reference.replace("\n\n[draft]: guide.md", ""))).toEqual([]);
+    // The header row is read the same way.
+    const header = "| [Guide](iso-24495-5.md) |\n|---|\n| x |\n";
+    expect(labelFindings(header)).toEqual([]);
+    expect(labelFindings(header.replace("[Guide](iso-24495-5.md)", "ISO 24495-5"))).toEqual([{ line: 1, detail: UNLABELLED }]);
+  });
+
+  test("reads each table cell on its own, as a pipe ends a cell before a link is read", () => {
+    // The pipe splits the row, so no link holds the number and the reader sees it.
+    const split = "| A | B |\n|---|---|\n| [a](x|iso-24495-5.md) |\n";
+    expect(labelFindings(split)).toEqual([{ line: 3, detail: UNLABELLED }]);
+    expect(labelFindings(split.replace("|iso", "/iso"))).toEqual([]);
+    // Cells are joined so that two cells never make one word, even with no
+    // space inside either cell: "draf" and "t" are not the label.
+    const twoCells = "| A | B | C |\n|---|---|---|\n| ISO 24495-5 |draf|t|\n";
+    expect(labelFindings(twoCells)).toEqual([{ line: 3, detail: UNLABELLED }]);
+    expect(labelFindings(twoCells.replace("|draf|t|", "|draft|x|"))).toEqual([]);
+    // GitHub shows no cell past the header's last column.
+    const extra = "| A |\n|---|\n| a | ISO 24495-5 |\n";
+    expect(labelFindings(extra)).toEqual([]);
+    expect(labelFindings(extra.replace("| A |\n|---|", "| A | B |\n|---|---|"))).toEqual([{ line: 3, detail: UNLABELLED }]);
+  });
+
+  test("reads a table row without its HTML comments", () => {
+    const citation = "| Guide |\n|---|\n| <!-- ISO 24495-5 -->Guide |\n";
+    expect(labelFindings(citation)).toEqual([]);
+    expect(labelFindings(citation.replace("<!-- ISO 24495-5 -->", "ISO 24495-5 "))).toEqual([{ line: 3, detail: UNLABELLED }]);
+    const label = "| Guide |\n|---|\n| ISO 24495-5 <!-- draft --> |\n";
+    expect(labelFindings(label)).toEqual([{ line: 3, detail: UNLABELLED }]);
+    expect(labelFindings(label.replace("<!-- draft -->", "draft"))).toEqual([]);
+  });
+
+  test("does not read a citation or a label split by emphasis marks", () => {
+    // Recorded as a limit. A reader sees the number and the word, but the
+    // rule reads the marks as written.
+    expect(labelFindings("ISO **24495**-5.\n")).toEqual([]);
+    expect(labelFindings("ISO 24495-5.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("ISO 24495-5 is pro**vision**al.\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(labelFindings("ISO 24495-5 is provisional.\n")).toEqual([]);
+  });
+
+
   test("does not count a draft word inside quotation marks as the label", () => {
     expect(labelFindings("ISO 24495-5 is a \"draft\".\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
     expect(labelFindings("We follow ISO 24495-5. Avoid the phrase \"standard draft\".\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
@@ -995,4 +1051,14 @@ describe("provisional-label", () => {
     expect(labelFindings(text)).toEqual([{ line: 1, detail: UNLABELLED }]);
     expect(performance.now() - started).toBeLessThan(10_000);
   }, 60_000);
+
+  test("reports a table of a million citing rows once, at its first row", () => {
+    // The earliest line was once found by spreading every citing line into
+    // one Math.min call. On Windows with Bun 1.4.2 a spread of 600,000
+    // arguments passed and one of 700,000 threw a RangeError. On this text
+    // the audit ran for 53 seconds before it threw. The limit depends on the stack size, so another machine
+    // may throw at another size. No time is asserted, only the finding.
+    const text = `| Ref |\n|---|\n${"| 24495-5 |\n".repeat(1_000_000)}`;
+    expect(labelFindings(text)).toEqual([{ line: 3, detail: UNLABELLED }]);
+  }, 300_000);
 });
