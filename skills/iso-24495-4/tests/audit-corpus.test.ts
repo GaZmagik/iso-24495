@@ -984,4 +984,15 @@ describe("provisional-label", () => {
     expect(labelFindings("We follow ISO 24495-5. Avoid the phrase \"standard draft\".\n")).toEqual([{ line: 1, detail: UNLABELLED }]);
     expect(labelFindings("ISO 24495-5 is a draft.\n")).toEqual([]);
   });
+
+  test("reads opening curly quotes with no closer in time in proportion to the text", () => {
+    // One call against a fixed budget. The whole audit took about 5 seconds on this
+    // text. When a curly quotation could run past the next opener, each opener read on
+    // to the end of the text: quote removal alone took 1.4 seconds at a third of this
+    // size, and grows with the square of it.
+    const text = `ISO 24495-5 ${`${String.fromCharCode(0x201c)}a `.repeat(150_000)}\n`;
+    const started = performance.now();
+    expect(labelFindings(text)).toEqual([{ line: 1, detail: UNLABELLED }]);
+    expect(performance.now() - started).toBeLessThan(10_000);
+  }, 60_000);
 });

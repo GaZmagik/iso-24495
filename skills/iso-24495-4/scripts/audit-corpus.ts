@@ -2030,8 +2030,10 @@ const PART_5_CITATION = /(?<!\p{N})24495-5(?!\p{N})/u;
 const DRAFT_LABEL = /(?<![\p{L}\p{N}])(?:drafts?|provisional|unpublished)(?![\p{L}\p{N}])/iu;
 
 // Text in double quotation marks is a phrase being quoted, such as a
-// counter-example, not the document's own citation or its own label.
-const QUOTED_TEXT = /"[^"]*"|\u201c[^\u201d]*\u201d/g;
+// counter-example, not the document's own citation or its own label. A
+// curly quotation stops at the next opening mark, so an opener with no
+// closer reads on only to the next opener, not to the end of the text.
+const QUOTED_TEXT = /"[^"]*"|\u201c[^\u201c\u201d]*\u201d/g;
 
 /** One paragraph, list item, quotation, heading or table row, with the line it starts on. */
 interface CitingUnit {
