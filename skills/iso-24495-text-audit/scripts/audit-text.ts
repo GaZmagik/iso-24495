@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { join, parse, relative, resolve, sep } from "node:path";
 import {
   auditText,
   configHash,
@@ -231,24 +231,53 @@ function readComparison(
 
 /**
  * The text of one file of a comparison, or why it cannot be compared: it is
- * a symbolic link, it has an ending the audit does not read, or it cannot be
- * read. The selected file's ending is left for `auditTarget` to refuse.
+ * a symbolic link, a directory above it on its path is one, it has an ending
+ * the audit does not read, or it cannot be read. The selected file's ending
+ * is left for `auditTarget` to refuse.
+ *
+ * The path is made absolute first, and the file is read by that absolute
+ * path, so the file read is the file whose path was checked. A directory
+ * junction counts as a symbolic link.
  *
  * @param source The argument that named the file, as the usage line writes it.
  * @returns The text, or the problem in words safe to print.
  */
 function readComparedFile(path: string, source: string): { text: string } | string {
   try {
-    if (lstatSync(path).isSymbolicLink()) {
+    const absolute = resolve(path);
+    const link = linkOnPath(absolute);
+    if (link === "file") {
       return `${source} names a path of ${path.length} characters that is a symbolic link, which the comparison does not follow`;
     }
-    if (source !== "<file-or-directory>" && !isAuditedDocument(path)) {
+    if (link === "directory") {
+      return `${source} names a path of ${path.length} characters that runs through a symbolic link, which the comparison does not follow; name the file by a path with no link in it`;
+    }
+    if (source !== "<file-or-directory>" && !isAuditedDocument(absolute)) {
       return `${source} names a path of ${path.length} characters with another ending; select a file ending in .md, .markdown or .txt`;
     }
-    return { text: readFileSync(path, "utf8") };
+    return { text: readFileSync(absolute, "utf8") };
   } catch (error) {
     return pathFailure(error, path, source, "cannot be read");
   }
+}
+
+/**
+ * Where a symbolic link stands on an absolute path, looking at each name on
+ * it from the root down: the last name, a directory above it, or nowhere.
+ * The root itself, such as a drive or a network share, is not looked at.
+ *
+ * @throws The file system error when a name on the path cannot be looked at,
+ *     as when it does not exist.
+ */
+function linkOnPath(absolute: string): "file" | "directory" | null {
+  const { root } = parse(absolute);
+  const names = absolute.slice(root.length).split(sep).filter(name => name !== "");
+  let reached = root;
+  for (const [index, name] of names.entries()) {
+    reached = join(reached, name);
+    if (lstatSync(reached).isSymbolicLink()) return index === names.length - 1 ? "file" : "directory";
+  }
+  return null;
 }
 
 /**

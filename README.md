@@ -188,7 +188,7 @@ The skill never runs automatically. It requires Bun and does not alter the selec
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
 
-Given `--before`, the audit also compares one restructured file with its original, as the [two-version comparison](skills/iso-24495-text-audit/SKILL.md#two-version-comparison) describes. It lists the wording dropped and the wording added. It reads wording, not meaning, and the design audit does not take `--before`.
+Given `--before`, the audit also compares one restructured file with its original, as the [two-version comparison](skills/iso-24495-text-audit/SKILL.md#two-version-comparison) describes. It lists the wording dropped and the wording added. It reads wording, not meaning, and the design audit does not take `--before`. It refuses a file reached through a symbolic link or a directory junction anywhere on its path.
 
 ## User-invoked design audit: purpose and colour
 

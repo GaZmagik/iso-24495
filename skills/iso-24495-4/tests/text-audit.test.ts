@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,11 @@ import {
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), "iso-text-audit-"));
+}
+
+/** What the comparison prints when the path an argument names runs through a linked directory. */
+function linkedDirectoryRefusal(source: string, path: string): string {
+  return `audit-text: ${source} names a path of ${path.length} characters that runs through a symbolic link, which the comparison does not follow; name the file by a path with no link in it`;
 }
 
 function capture() {
@@ -632,6 +637,50 @@ describe("the two-version comparison, given --before", () => {
         expect(output.stderr).toEqual([message]);
         expect(output.stdout).toEqual([]);
       }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("a path that runs through a linked directory is refused in every position, and nothing is printed or written", () => {
+    const project = makeProject();
+    try {
+      const outside = join(project, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "secret.md"), "Secret outside selected tree.\n");
+      mkdirSync(join(project, "selected"));
+      // A junction needs no privilege on Windows, and is a symbolic link elsewhere.
+      symlinkSync(outside, join(project, "selected", "linked"), "junction");
+      const through = join(project, "selected", "linked", "secret.md");
+      writeFileSync(join(project, "old.md"), "Text.\n");
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      const cases: Array<[string[], string]> = [
+        [[through, "--before", join(project, "old.md")], linkedDirectoryRefusal("<file-or-directory>", through)],
+        [[join(project, "new.md"), "--before", through], linkedDirectoryRefusal("--before", through)],
+        [[join(project, "new.md"), "--before", join(project, "old.md"), "--author-text", through], linkedDirectoryRefusal("--author-text", through)],
+        // A relative path is resolved first, so its link is found the same way.
+        [[join(project, "new.md"), "--before", join("selected", "linked", "..", "linked", "secret.md")], ""],
+      ];
+      const previous = process.cwd();
+      process.chdir(project);
+      try {
+        for (const [index, [args, message]] of cases.entries()) {
+          const json = join(project, `report-${index}.json`);
+          const output = capture();
+          expect(runCli(["bun", "audit-text-cli.ts", ...args, "--project-dir", project, "--json", json], output.writeOut, output.writeErr), args.join(" ")).toBe(1);
+          if (message !== "") expect(output.stderr).toEqual([message]);
+          expect(output.stderr.join("\n")).toContain("runs through a symbolic link");
+          expect(output.stdout).toEqual([]);
+          expect(existsSync(json)).toBe(false);
+          expect(output.stderr.join("\n")).not.toContain("Secret");
+        }
+      } finally {
+        process.chdir(previous);
+      }
+      // The same file by its real path is read, so the refusal is the link's doing.
+      const control = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(outside, "secret.md"), "--project-dir", project], control.writeOut, control.writeErr)).toBe(0);
+      expect(control.stdout.join("\n")).toContain("Secret outside selected tree.");
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
