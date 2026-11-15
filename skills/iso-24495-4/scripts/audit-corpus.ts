@@ -2038,7 +2038,7 @@ const DRAFT_LABEL = /(?<![\p{L}\p{N}])(?:drafts?|provisional|unpublished)(?![\p{
 const QUOTED_TEXT = /"[^"]*"|\u201c[^\u201c\u201d]*\u201d/g;
 
 /** One paragraph, list item, quotation, heading or table row, with the line it starts on. */
-interface CitingUnit {
+export interface CitingUnit {
   readonly line: number;
   readonly text: string;
 }
@@ -2064,21 +2064,37 @@ function provisionalLabelViolations(text: string, reading: Reading): Violation[]
     ...headings(text, reading).map((heading) => ({ line: heading.line, text: heading.text })),
     ...readerTableRows(text, reading),
   ];
-  // The earliest line is kept as the units are read. Spreading every citing
-  // line into one Math.min call threw a RangeError on a long table.
-  let first = Infinity;
-  for (const unit of units) {
-    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
-    if (!PART_5_CITATION.test(unquoted)) continue;
-    if (DRAFT_LABEL.test(unquoted)) return [];
-    if (unit.line < first) first = unit.line;
-  }
-  if (first === Infinity) return [];
+  const first = firstUnlabelledCitation(units);
+  if (first === null) return [];
   return [{
     rule: "provisional-label",
     line: first,
     detail: "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it",
   }];
+}
+
+/**
+ * The line of the earliest unit that cites Part 5, when no citing unit says
+ * the standard is a draft. Text in double quotation marks is read as absent.
+ *
+ * Exported so a test can pass it more units than a document of a sensible
+ * size would hold. The earliest line is kept as the units are read: spreading
+ * every citing line into one Math.min call threw a RangeError on a long table.
+ *
+ * @param units The paragraphs, list items, quotations, headings and table
+ *     rows, in any order.
+ * @returns The earliest citing line, or null when no unit cites the standard
+ *     or a citing unit carries a draft word.
+ */
+export function firstUnlabelledCitation(units: Iterable<CitingUnit>): number | null {
+  let first: number | null = null;
+  for (const unit of units) {
+    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
+    if (!PART_5_CITATION.test(unquoted)) continue;
+    if (DRAFT_LABEL.test(unquoted)) return null;
+    if (first === null || unit.line < first) first = unit.line;
+  }
+  return first;
 }
 
 /**

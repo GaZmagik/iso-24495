@@ -17,6 +17,7 @@ import {
   auditText,
   configHash,
   ENGINE_THRESHOLDS,
+  firstUnlabelledCitation,
   isAuditedDocument,
   listTextFiles,
   runCli,
@@ -1042,23 +1043,38 @@ describe("provisional-label", () => {
   });
 
   test("reads opening curly quotes with no closer in time in proportion to the text", () => {
-    // One call against a fixed budget. The whole audit took about 5 seconds on this
-    // text. When a curly quotation could run past the next opener, each opener read on
-    // to the end of the text: quote removal alone took 1.4 seconds at a third of this
-    // size, and grows with the square of it.
-    const text = `ISO 24495-5 ${`${String.fromCharCode(0x201c)}a `.repeat(150_000)}\n`;
+    // One call to the scan alone, against a fixed budget. It takes about 1 ms
+    // here. When a curly quotation could run past the next opener, each opener
+    // read on to the end of the text, and the scan took 2.7 seconds at this
+    // size, growing with the square of it. The rest of the audit is not timed,
+    // because its own time swamped the scan's and sat near any fixed budget.
+    const text = `ISO 24495-5 ${`${String.fromCharCode(0x201c)}a `.repeat(60_000)}`;
     const started = performance.now();
-    expect(labelFindings(text)).toEqual([{ line: 1, detail: UNLABELLED }]);
-    expect(performance.now() - started).toBeLessThan(10_000);
-  }, 60_000);
+    expect(firstUnlabelledCitation([{ line: 1, text }])).toBe(1);
+    expect(performance.now() - started).toBeLessThan(500);
+  }, 30_000);
 
-  test("reports a table of a million citing rows once, at its first row", () => {
+  test("finds the earliest citing line among two million units without spreading them into a call", () => {
     // The earliest line was once found by spreading every citing line into
     // one Math.min call. On Windows with Bun 1.4.2 a spread of 600,000
-    // arguments passed and one of 700,000 threw a RangeError. On this text
-    // the audit ran for 53 seconds before it threw. The limit depends on the stack size, so another machine
-    // may throw at another size. No time is asserted, only the finding.
-    const text = `| Ref |\n|---|\n${"| 24495-5 |\n".repeat(1_000_000)}`;
+    // arguments passed and one of 700,000 threw a RangeError. The limit
+    // depends on the stack size, so two million leaves a wide margin, though
+    // a machine with a far larger stack could still pass the spread.
+    const units = Array.from({ length: 2_000_000 }, (_, index) => ({ line: 2_000_000 - index, text: "24495-5" }));
+    let first: number | null = null;
+    expect(() => { first = firstUnlabelledCitation(units); }).not.toThrow();
+    expect(first).toBe(1);
+  });
+
+  test("returns no line when nothing cites the standard, or a citing unit carries the label", () => {
+    expect(firstUnlabelledCitation([])).toBeNull();
+    expect(firstUnlabelledCitation([{ line: 4, text: "No citation." }])).toBeNull();
+    expect(firstUnlabelledCitation([{ line: 4, text: "ISO 24495-5" }, { line: 2, text: "ISO 24495-5, a draft" }])).toBeNull();
+    expect(firstUnlabelledCitation([{ line: 4, text: "ISO 24495-5" }, { line: 2, text: "\"ISO 24495-5\"" }])).toBe(4);
+  });
+
+  test("reports a table of a thousand citing rows once, at its first row", () => {
+    const text = `| Ref |\n|---|\n${"| 24495-5 |\n".repeat(1_000)}`;
     expect(labelFindings(text)).toEqual([{ line: 3, detail: UNLABELLED }]);
-  }, 300_000);
+  });
 });
