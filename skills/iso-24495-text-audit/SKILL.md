@@ -27,7 +27,7 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 ## Markdown layout recognition
 
-Four additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
+Five additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
 These recognition choices are project proxies and remain unmeasured on a corpus.
 Raw HTML structure, code and comments are excluded.
 Front matter is excluded from prose checks, but recognised edition metadata can satisfy the version or date rule.
@@ -37,6 +37,7 @@ Front matter is excluded from prose checks, but recognised edition metadata can 
 - **Version or date:** Ask whether a titled document needs edition metadata when none is recognised in its opening or front matter.
 - **Bullet depth:** Report unordered items beyond two unordered ancestors, counting the item itself and ignoring ordered or quote containers.
 - **Overview label:** At six root H2 sections, require an Overview or Summary heading before the first content H2, at any heading level outside lists and quotations.
+- **Empty signpost:** Report a heading worded as a referral, such as See also, Related or Resources, with nothing a reader sees beneath it. Its section ends at the next heading at its level or above, and headings in lists and quotations are not read.
 
 The section count includes Contents, excludes H3 subsections and ignores headings inside lists or quotations.
 Recognised contents labels:

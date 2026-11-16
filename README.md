@@ -124,7 +124,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Three layout rules, `opening-version-date`, `contents-list` and `overview-label`, read headings too, to find a document's title and sections, and so does the Jev route's `opening-title` finding. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Four layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, and `empty-signpost` finds an empty referral heading. So does the Jev route's `opening-title` finding. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 
@@ -156,7 +156,7 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-Four Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail.
+Five Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth, an overview before detail and an empty signpost check.
 Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus.
 
 The edition advisory applies only to titled documents and asks whether readers need a version or date.
@@ -169,6 +169,11 @@ Front matter is parsed once; aliases resolve before checking for a declared fiel
 A non-empty trimmed string, finite number or date counts, including `version: banana`.
 The field's format is not validated, because YAML can change number spelling and resolve aliases.
 Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
+
+The `empty-signpost` rule reports a heading worded as a referral, such as `See also`, `Related` or `Resources`, with nothing beneath it.
+Its section runs to the next heading at its level or above, and a deeper heading, a comment or a thematic break alone leaves it empty.
+To clear it, list where else to go beneath the heading, or remove the heading when nothing else exists.
+It found none in 822 third-party Markdown files or in this repository's own documents, so its precision is unmeasured.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 
