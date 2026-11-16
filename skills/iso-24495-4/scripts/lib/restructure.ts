@@ -600,8 +600,8 @@ function longestIncreasing(values: readonly number[]): Uint8Array {
 
 /**
  * Which values belong to one longest strictly increasing run of them, read
- * in order, holding as many favoured values as a run that long can. The
- * values must differ from each other. Where runs tie on both counts, the run
+ * in order, holding as many favoured values as a run that long can. Where
+ * runs tie on both counts, the run
  * chosen is the one `longestIncreasing` chooses when no value is favoured,
  * or when every value is: the run that ends last, each value in it preceded
  * by the last that can precede it. A tree of best runs over the values in
@@ -615,9 +615,14 @@ function longestIncreasingFavouring(values: readonly number[], favoured: readonl
   const count = values.length;
   // A run's score is its length, and then its favoured values: a longer run wins whatever it favours.
   const lengthWeight = count + 1;
+  // Equal values share a rank, so a run that repeats a value does not rise, and is not strictly increasing.
   const rank = new Int32Array(count);
-  for (const [order, index] of values.map((value, position) => position).sort((first, second) => (values[first] ?? 0) - (values[second] ?? 0)).entries()) {
-    rank[index] = order + 1;
+  let ranked = 0;
+  let previousValue = Number.NaN;
+  for (const index of values.map((value, position) => position).sort((first, second) => (values[first] ?? 0) - (values[second] ?? 0))) {
+    if (values[index] !== previousValue) ranked++;
+    previousValue = values[index] ?? 0;
+    rank[index] = ranked;
   }
   // For each range of ranks the tree covers, the best score of a run ending in it, and the last index ending such a run.
   const bestScore = new Float64Array(count + 1);

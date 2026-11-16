@@ -560,6 +560,11 @@ describe("the order of the kept units", () => {
     expect(order(compareVersions(before, "1. Finish.\n2. Prepare.\n   1. Close the valve.\n   2. Open the vent.\n", null))).toEqual({ moved: [], stepOrder: ["Finish."] });
   });
 
+  test("a nested list's units count for the step of the outer list that holds it, so moving the nested list past the next step puts that step out of order", () => {
+    const before = "1. Prepare.\n   1. Close the valve.\n   2. Open the vent.\n2. Finish.\n";
+    expect(order(compareVersions(before, "1. Prepare.\n2. Finish.\n   1. Close the valve.\n   2. Open the vent.\n", null))).toEqual({ moved: [], stepOrder: ["Finish."] });
+  });
+
   test("a whole list moved elsewhere keeps its steps in order, so it is moved and no step is out of order", () => {
     const prose = "Read this first.\n\nThen rest.\n\nThen more.\n\nThe end.\n";
     const comparison = compareVersions(`${prose}\n${STEPS_TO_VENT}`, `${STEPS_TO_VENT}\n${prose}`, null);
@@ -748,6 +753,12 @@ describe("a label gained or lost moves nothing", () => {
     const comparison = compareVersions("Close the valve.\n\nClose the valve.\n\nClose the valve.\n\nOpen the vent.\n\n**Purpose:** Check the gauge.\n\n**Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n", "1. Close the valve.\n2. **Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n\nOpen the vent.\n\n**Purpose:** Check the gauge.\n\n1. **Purpose:** Close the valve.\n", null);
     expect(order(comparison)).toEqual({ moved: ["Purpose: Close the valve."], stepOrder: [] });
     expect([comparison.kept.length, comparison.newLabels.length]).toEqual([7, 2]);
+  });
+
+  test("where weighing labels in the order search keeps no more units in order, whole wording alone is used", () => {
+    // Both matches keep four of five units in order. Each names a different copy as moved, and the one named is whole wording's.
+    const comparison = compareVersions("1. **Purpose:** Check the gauge.\n\nOpen the vent.\n\n1. **Purpose:** Open the vent.\n2. Close the valve.\n\n**Purpose:** Open the vent.\n", "**Purpose:** Open the vent.\n\n**Purpose:** Check the gauge.\n\n1. **Purpose:** Open the vent.\n2. Close the valve.\n\n**Purpose:** Open the vent.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: Check the gauge."], stepOrder: [] });
   });
 
   test("labels added to copies, or taken from them, but never both for one text, leave every unit in order", () => {
