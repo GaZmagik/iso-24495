@@ -124,12 +124,12 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `provisional-label` and the five word rules named below.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Three layout rules, `opening-version-date`, `contents-list` and `overview-label`, read headings too, to find a document's title and sections, and so does the Jev route's `opening-title` finding. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
-- tables, whose cells belong to a grid, except that `table-header` and `provisional-label` read them;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table. Given `--before`, the two-version comparison compares their cells too;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
@@ -142,7 +142,7 @@ The `iso-24495-text-audit` skill audits a selected `.md`, `.markdown`, or `.txt`
 
 The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
 
-Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` and `provisional-label` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text`, `provisional-label` and `generic-alt` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
 
 Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
 
@@ -170,11 +170,13 @@ A non-empty trimmed string, finite number or date counts, including `version: ba
 The field's format is not validated, because YAML can change number spelling and resolve aliases.
 Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
 
-The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
+The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 
 The `provisional-label` rule asks a document that cites ISO 24495-5 or its skill to say that the standard is an unpublished draft. One paragraph, list item, heading or table row that cites it must say so, and code and quoted text are skipped.
 
-The `link-text` and `image-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence.
+The `generic-alt` rule reports alternative text that is only one word naming the kind of image, such as `image` or `logo`, or only a file name, such as `IMG_0042.jpg`. It reads Markdown images and the alt attribute of HTML images, and code is skipped. It can miss some spellings of an image and report text that renders no image. Clause 12b's limits name examples.
+
+The `link-text`, `image-alt` and `generic-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence. Alternative text such as `image` tells them only that an image is there.
 
 The result reports zero findings when no implemented rule fires. That result does not prove the text suits its audience or purpose.
 

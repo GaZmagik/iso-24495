@@ -15,6 +15,7 @@ import {
   readDocument,
   structure,
   tableCells,
+  tickRun,
   toLines,
   type ProseBlock,
   type Reading,
@@ -347,12 +348,28 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
+  // One finding for each image, so a long document could give more than a
+  // call can take as separate arguments.
+  appendAll(violations, genericAltViolations(text, reading));
   violations.push(...provisionalLabelViolations(text, reading));
   if (options.markdown) {
     const fileName = options.fileName;
     violations.push(...layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
   }
   return violations;
+}
+
+/**
+ * Adds each item to the end of a list, one at a time.
+ *
+ * Exported so a test can pass it more items than a document of a sensible
+ * size gives. Spreading them into one push call throws a RangeError once
+ * they pass the engine's limit on arguments, which was 700,000 on Windows.
+ */
+export function appendAll<T>(target: T[], items: Iterable<T>): void {
+  for (const item of items) {
+    target.push(item);
+  }
 }
 
 /** How many sentences one reading found, and their mean length in words: 0 where it found none. */
@@ -539,24 +556,23 @@ let lineCacheEnds: number[] | null = null;
 
 function lineEnds(text: string): number[] {
   if (lineCacheText === text && lineCacheEnds !== null) return lineCacheEnds;
-  const ends: number[] = [];
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
-    ends.push(at);
-  }
+  const ends = lineEndOffsets(text);
   lineCacheText = text;
   lineCacheEnds = ends;
   return ends;
 }
 
-/**
- * The line an offset falls on, counted from the block's first line.
- *
- * The line endings are collected once and searched, because slicing the text from its
- * start for every finding grew with the square of the block: 4,000 long sentences in one
- * paragraph cost 10.8 seconds.
- */
-function lineAtOffset(blockLine: number, text: string, offset: number): number {
-  const ends = lineEnds(text);
+/** Where each line ending in the text stands, in order. */
+function lineEndOffsets(text: string): number[] {
+  const ends: number[] = [];
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
+    ends.push(at);
+  }
+  return ends;
+}
+
+/** How many of the line endings, in order, stand before the offset. */
+function endsBefore(ends: readonly number[], offset: number): number {
   let low = 0;
   let high = ends.length;
   while (low < high) {
@@ -567,7 +583,37 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
       high = middle;
     }
   }
-  return blockLine + low;
+  return low;
+}
+
+/**
+ * The line an offset falls on, counted from the block's first line.
+ *
+ * The line endings are collected once and searched, because slicing the text from its
+ * start for every finding grew with the square of the block: 4,000 long sentences in one
+ * paragraph cost 10.8 seconds.
+ */
+function lineAtOffset(blockLine: number, text: string, offset: number): number {
+  return blockLine + endsBefore(lineEnds(text), offset);
+}
+
+/**
+ * A finder of the line each offset in one text falls on, counted from 1.
+ *
+ * A rule that joins the document's lines into one text uses this rather than
+ * `lineAtOffset`. Joining makes a new string each time, and that cache checks
+ * a text with ===. Where another call had left an equal text there, each
+ * lookup compared the whole document: 80,000 images took 7.8 seconds.
+ *
+ * The line endings are collected at the first lookup, so a text with no
+ * finding costs nothing.
+ */
+function lineFinder(text: string): (offset: number) => number {
+  let ends: number[] | null = null;
+  return (offset) => {
+    ends ??= lineEndOffsets(text);
+    return 1 + endsBefore(ends, offset);
+  };
 }
 
 // The shape the scan looks for admits at most six initials once its dots are removed, so
@@ -1069,12 +1115,19 @@ const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
  *     gives it.
+ * @param shownAsText Where given, each image and each code span found is added to
+ *     it, as the offset it starts at and the offset just past its end. A renderer
+ *     shows HTML anywhere in either as text, an image's alternative text included.
  * @returns One entry for each UTF-16 unit of the block, which is each place an index
  *     into `source` counts: 1 where it is link syntax, and 0 elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
  *     cells. The entry for a line break means nothing: the caller takes the lines one
  *     at a time. All 0 where the block holds no link, and empty for empty text.
  */
-export function linkSyntaxIn(source: string, references: ReadonlySet<string>): Uint8Array {
+export function linkSyntaxIn(
+  source: string,
+  references: ReadonlySet<string>,
+  shownAsText?: Array<readonly [number, number]>,
+): Uint8Array {
   const marks = linkMarks(source);
   const syntax = new Uint8Array(source.length);
   const open: OpenBracket[] = [];
@@ -1087,7 +1140,10 @@ export function linkSyntaxIn(source: string, references: ReadonlySet<string>): U
       at++;
       escapedAt = at;
     } else if (source[at] === "`") {
-      at = codeSpanEnd(source, at, marks) - 1;
+      const end = codeSpanEnd(source, at, marks);
+      // Where no span opens, the end is just past the opening run.
+      if (shownAsText !== undefined && end > at + tickRun(source, at)) shownAsText.push([at, end]);
+      at = end - 1;
     } else if (source[at] === "<") {
       at = angleEnd(source, at, marks) - 1;
     } else if (source[at] === "[") {
@@ -1098,6 +1154,7 @@ export function linkSyntaxIn(source: string, references: ReadonlySet<string>): U
       switchedOff = Math.min(switchedOff, open.length);
       const end = live ? linkEnd(source, opener, at, marks, references) : -1;
       if (end === -1) continue;
+      if (opener.image) shownAsText?.push([opener.at - 1, end]);
       syntax.fill(1, opener.at - (opener.image ? 1 : 0), opener.at + 1);
       syntax.fill(1, at, end);
       if (!opener.image) switchedOff = open.length;
@@ -1621,7 +1678,8 @@ function doubletViolations(text: string, reading: Reading): Violation[] {
 // about the destination.
 const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|more|more info|details|see more|learn more|go|page|website|download)$/i;
 const HTML_ANCHOR = /<a\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/a\s*>/gi;
-const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
+/** An HTML image tag and its attributes. Exported so a test can hold `htmlImageTags` to exactly what this pattern finds. */
+export const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
 const HTML_TAG = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
 
 function spokenText(label: string): string {
@@ -1682,6 +1740,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     }
   }
   const markup = markupLines.join("\n");
+  const lineOf = lineFinder(markup);
   // A link whose label runs over a line ending. The same scan finds it, filtered to the
   // labels that hold one.
   for (const link of markdownLinks(markup)) {
@@ -1696,7 +1755,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, link.start),
+      line: lineOf(link.start),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
         : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
@@ -1712,7 +1771,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineOf(match.index),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
         : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
@@ -1799,14 +1858,16 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
     }
   }
   const markup = markupLines.join("\n");
-  for (const match of markup.matchAll(HTML_IMAGE)) {
-    const [whole, attributes] = match;
-    if (attributes === undefined || /\n[ \t]*\n/.test(whole)) continue;
-    if (htmlAttribute(attributes, "alt") !== null) continue;
-    const target = (htmlAttribute(attributes, "src") ?? "image").slice(0, 40);
+  const lineOf = lineFinder(markup);
+  // The tags `HTML_IMAGE` matches, found without reading on from each
+  // unclosed "<img" to the end of the text: 20,000 of them took 6.4 seconds.
+  for (const tag of htmlImageTags(markup)) {
+    if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
+    if (htmlAttribute(tag.attributes, "alt") !== null) continue;
+    const target = (htmlAttribute(tag.attributes, "src") ?? "image").slice(0, 40);
     violations.push({
       rule: "image-alt",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineOf(tag.start),
       detail: `image has no alternative text (${target})`,
     });
   }
@@ -1889,6 +1950,266 @@ function labelKey(label: string): string {
 /** A label of ASCII characters as a renderer matches it: trimmed, its spaces collapsed, in lower case. */
 function plainLabel(label: string): string {
   return label.trim().replace(/ +/g, " ").toLowerCase();
+}
+
+// Words that name only the kind of image. Alternative text that is one of
+// them tells a listener that an image is there, and nothing about what it
+// shows. "Acme logo" says whose logo it is, so only the word alone counts.
+const GENERIC_ALT_WORDS = new Set(["image", "picture", "photo", "screenshot", "graphic", "figure", "diagram", "icon", "logo"]);
+
+// One image file's name: no space, slash or backslash, and one of these
+// extensions. A closed list, so that "Node.js" or "v1.2" is not a file name.
+const IMAGE_FILE_NAME = /^[^\s/\\]+\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?|avif)$/i;
+
+/**
+ * Part 5 asks a meaningful image to say what it shows, not what it is.
+ * Alternative text that is one word naming the kind of image, or that is the
+ * image's file name, reads as the image's type and not its content.
+ *
+ * It reads a Markdown image, inline or by reference where a definition
+ * supplies its label, and the alt attribute of an HTML image. It finds them
+ * in the lines as `readDocument` gives them, with HTML tags, code spans and
+ * escapes set aside, so a reference label holding one of those is not
+ * looked up as written, and the image is missed. It finds an HTML image by
+ * its "<img", even inside another tag's attribute. Clause 12b's limits say
+ * so, with examples. The alternative
+ * text is read as the reader of the line gives it, with emphasis marks
+ * removed and its spaces trimmed. Empty alternative text belongs to
+ * `image-alt`, so this rule never reads it.
+ *
+ * Exported so a test can time this rule apart from the others.
+ */
+export function genericAltViolations(text: string, reading: Reading = {}): Violation[] {
+  const violations: Violation[] = [];
+  const { lines, markupLines, references } = readDocument(text, reading);
+  // The reader gives each line of code or front matter as an empty line, so none holds an image.
+  for (let i = 0; i < lines.length; i++) {
+    for (const link of markdownLinks(itemAt(lines, i))) {
+      if (!link.image || !link.rendered) continue;
+      if (link.kind === "inline") {
+        // The reader gives HTML, a comment or an escape as spaces, so a
+        // destination such as `<a b.png>` reads as spaces. Only one with
+        // nothing in it at all is empty.
+        if (link.target.length === 0) continue;
+      } else {
+        // A label after the image, other than "[]", names its definition,
+        // and the image renders only where that label is defined. One the
+        // reader gave as spaces cannot be looked up, and is never the
+        // image's own.
+        if (link.target.length > 0 && link.target.trim().length === 0) continue;
+        const name = link.kind === "reference" ? link.target.trim() || link.label : link.label;
+        if (!references.has(normaliseReference(name))) continue;
+      }
+      const finding = genericAltFinding(link.label, i + 1);
+      if (finding !== null) violations.push(finding);
+    }
+  }
+  const markup = markupLines.join("\n");
+  const lineOf = lineFinder(markup);
+  let asText: Uint8Array | null = null;
+  for (const tag of htmlImageTags(markup)) {
+    if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
+    const alt = altAttribute(tag.attributes);
+    if (alt === null) continue;
+    // With no "[" or backtick there is no link, image or code span, and nothing to read twice.
+    asText ??= /[[`]/.test(markup) ? htmlAsText(text, reading, markupLines, references) : new Uint8Array(0);
+    if (asText[tag.start] === 1) continue;
+    const finding = genericAltFinding(alt, lineOf(tag.start));
+    if (finding !== null) violations.push(finding);
+  }
+  return violations;
+}
+
+/**
+ * Where HTML in the document is shown as text, and so is no tag: a link's
+ * destination, title or reference label, the whole of an image, alternative
+ * text included, and a code span. `<img>` written there is no image. The
+ * reader already sets aside a code span in a paragraph, but not in a table row
+ * or a heading.
+ *
+ * Links are found where `linkSyntax` looks for them, in each prose block, each
+ * heading and each other line a rule reads, so no link runs from one block into
+ * the next. `linkSyntaxIn` reads them as CommonMark does, so an HTML tag binds
+ * tighter than a link, and `[t](x <img>)` is no link but text and an image.
+ *
+ * @param markupLines The document's lines with their HTML, as `readDocument` gives them.
+ * @returns One entry for each UTF-16 unit of `markupLines.join("\n")`: 1 where
+ *     HTML is shown as text, and 0 elsewhere.
+ */
+function htmlAsText(
+  text: string,
+  reading: Reading,
+  markupLines: readonly string[],
+  references: ReadonlySet<string>,
+): Uint8Array {
+  const starts: number[] = [];
+  let length = 0;
+  for (const line of markupLines) {
+    starts.push(length);
+    length += line.length + 1;
+  }
+  const asText = new Uint8Array(Math.max(length - 1, 0));
+  const spans = [
+    ...proseBlocks(text, reading).map((block) => [block.line - 1, block.lines.length]),
+    ...headings(text, reading).map((heading) => [heading.line - 1, heading.lines]),
+  ] as Array<[first: number, count: number]>;
+  const inBlock = new Set<number>();
+  for (const [first, count] of spans) {
+    for (let line = first; line < first + count; line++) {
+      inBlock.add(line);
+    }
+  }
+  markupLines.forEach((line, index) => {
+    if (!inBlock.has(index) && line.trim() !== "") spans.push([index, 1]);
+  });
+  for (const [first, count] of spans) {
+    // A block's lines stand together in the joined text, so an offset into the
+    // block is an offset into the text once the block's start is added.
+    const source = markupLines.slice(first, first + count).join("\n");
+    if (!/[[`]/.test(source)) continue;
+    const start = itemAt(starts, first);
+    const shown: Array<readonly [number, number]> = [];
+    const syntax = linkSyntaxIn(source, references, shown);
+    for (let at = 0; at < syntax.length; at++) {
+      if (syntax[at] === 1) asText[start + at] = 1;
+    }
+    // An image can hold another, so each is filled only past what is filled
+    // already. Filling each whole cost the square of the depth: 1,000 nested
+    // images filled 7,023,000 places in a text of 14,016.
+    shown.sort((one, two) => one[0] - two[0]);
+    let filled = 0;
+    for (const [from, to] of shown) {
+      if (to > filled) asText.fill(1, start + Math.max(from, filled), start + to);
+      filled = Math.max(filled, to);
+    }
+  }
+  return asText;
+}
+
+// One attribute of an HTML tag, read from where the last one ended: the
+// spaces and slashes before it, its name, and any value. A name runs to a
+// space, a slash, ">" or "=", as HTML reads it.
+const HTML_ATTRIBUTE = /[\s/]*([^\s/>][^\s/>=]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?/y;
+
+/**
+ * The value of an image tag's alt attribute, read one attribute at a time
+ * from the start, as HTML reads it. `htmlAttribute` searches the text instead,
+ * so it took `data-alt` or text inside another attribute's value for alt.
+ *
+ * @param attributes The text between "<img" and its closing ">".
+ * @returns The first alt attribute's value, "" when it has none, or null
+ *     when the tag has no alt attribute.
+ */
+function altAttribute(attributes: string): string | null {
+  const pattern = new RegExp(HTML_ATTRIBUTE.source, "y");
+  let at = 0;
+  while (at < attributes.length) {
+    pattern.lastIndex = at;
+    const match = pattern.exec(attributes);
+    if (match === null) return null;
+    if (match[1]?.toLowerCase() === "alt") return match[2] ?? match[3] ?? match[4] ?? "";
+    at = pattern.lastIndex;
+  }
+  return null;
+}
+
+/** One HTML image tag: where it starts and ends, and the text between "<img" and its closing ">". */
+export interface HtmlImageTag {
+  readonly start: number;
+  readonly end: number;
+  readonly attributes: string;
+}
+
+/**
+ * Each HTML image tag in the text: the matches `HTML_IMAGE` finds, found in
+ * time in proportion to the text.
+ *
+ * The pattern alone reads on from every "<img" with no closing ">" to the end
+ * of the text, so 20,000 of them on one line took seven seconds. Here each
+ * position's closing ">" is worked out once, from the end of the text back.
+ *
+ * @returns The tags in order, none overlapping, as `matchAll` would give them.
+ */
+export function htmlImageTags(text: string): HtmlImageTag[] {
+  const tags: HtmlImageTag[] = [];
+  let closings: Int32Array | null = null;
+  let after = 0;
+  for (const match of text.matchAll(/<img\b/gi)) {
+    // A match of the pattern consumes its tag, so an "<img" inside one is not another.
+    if (match.index < after) continue;
+    closings ??= tagClosings(text);
+    const from = match.index + match[0].length;
+    const close = closings[from] ?? -1;
+    if (close === -1) continue;
+    tags.push({ start: match.index, end: close + 1, attributes: text.slice(from, close) });
+    after = close + 1;
+  }
+  return tags;
+}
+
+/**
+ * For each position, the ">" that `HTML_IMAGE` would end a tag at if its
+ * attributes began there, or -1 where it would find none. Outside quotation
+ * marks the first ">" ends the tag. A quotation mark skips to its partner,
+ * and one with no partner ends the search with none.
+ */
+function tagClosings(text: string): Int32Array {
+  const closings = new Int32Array(text.length + 1).fill(-1);
+  let nextDouble = -1;
+  let nextSingle = -1;
+  for (let at = text.length - 1; at >= 0; at--) {
+    const character = text[at];
+    if (character === ">") {
+      closings[at] = at;
+    } else if (character === "\"" || character === "'") {
+      const partner = character === "\"" ? nextDouble : nextSingle;
+      closings[at] = partner === -1 ? -1 : closings[partner + 1] ?? -1;
+      if (character === "\"") {
+        nextDouble = at;
+      } else {
+        nextSingle = at;
+      }
+    } else {
+      closings[at] = closings[at + 1] ?? -1;
+    }
+  }
+  return closings;
+}
+
+/**
+ * The finding for one image's alternative text, or null when it says more
+ * than the kind of image or its file. Each step is one pass over the text,
+ * so a long alternative text costs time in proportion to its length.
+ */
+function genericAltFinding(alt: string, line: number): Violation | null {
+  const shown = alt.trim().slice(0, 40);
+  const spoken = withoutOuterMarks(alt.trim()).trim();
+  if (GENERIC_ALT_WORDS.has(spoken.toLowerCase())) {
+    return { rule: "generic-alt", line, detail: `alternative text "${shown}" names the kind of image, not what it shows` };
+  }
+  if (IMAGE_FILE_NAME.test(spoken)) {
+    return { rule: "generic-alt", line, detail: `alternative text "${shown}" is a file name, not what the image shows` };
+  }
+  return null;
+}
+
+/**
+ * Text without the emphasis and code marks at either end, paired or not.
+ * A mark inside a word stays, because a renderer shows "lo_go" as written.
+ * Counted from each end in turn, because a pattern anchored at the end
+ * retries from every mark in a long run of them.
+ */
+function withoutOuterMarks(text: string): string {
+  const marks = "*_~`";
+  let start = 0;
+  let end = text.length;
+  while (start < end && marks.includes(text.charAt(start))) {
+    start++;
+  }
+  while (end > start && marks.includes(text.charAt(end - 1))) {
+    end--;
+  }
+  return text.slice(start, end);
 }
 
 /**
@@ -2038,7 +2359,7 @@ const DRAFT_LABEL = /(?<![\p{L}\p{N}])(?:drafts?|provisional|unpublished)(?![\p{
 const QUOTED_TEXT = /"[^"]*"|\u201c[^\u201c\u201d]*\u201d/g;
 
 /** One paragraph, list item, quotation, heading or table row, with the line it starts on. */
-interface CitingUnit {
+export interface CitingUnit {
   readonly line: number;
   readonly text: string;
 }
@@ -2064,21 +2385,37 @@ function provisionalLabelViolations(text: string, reading: Reading): Violation[]
     ...headings(text, reading).map((heading) => ({ line: heading.line, text: heading.text })),
     ...readerTableRows(text, reading),
   ];
-  // The earliest line is kept as the units are read. Spreading every citing
-  // line into one Math.min call threw a RangeError on a long table.
-  let first = Infinity;
-  for (const unit of units) {
-    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
-    if (!PART_5_CITATION.test(unquoted)) continue;
-    if (DRAFT_LABEL.test(unquoted)) return [];
-    if (unit.line < first) first = unit.line;
-  }
-  if (first === Infinity) return [];
+  const first = firstUnlabelledCitation(units);
+  if (first === null) return [];
   return [{
     rule: "provisional-label",
     line: first,
     detail: "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it",
   }];
+}
+
+/**
+ * The line of the earliest unit that cites Part 5, when no citing unit says
+ * the standard is a draft. Text in double quotation marks is read as absent.
+ *
+ * Exported so a test can pass it more units than a document of a sensible
+ * size would hold. The earliest line is kept as the units are read: spreading
+ * every citing line into one Math.min call threw a RangeError on a long table.
+ *
+ * @param units The paragraphs, list items, quotations, headings and table
+ *     rows, in any order.
+ * @returns The earliest citing line, or null when no unit cites the standard
+ *     or a citing unit carries a draft word.
+ */
+export function firstUnlabelledCitation(units: Iterable<CitingUnit>): number | null {
+  let first: number | null = null;
+  for (const unit of units) {
+    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
+    if (!PART_5_CITATION.test(unquoted)) continue;
+    if (DRAFT_LABEL.test(unquoted)) return null;
+    if (first === null || unit.line < first) first = unit.line;
+  }
+  return first;
 }
 
 /**

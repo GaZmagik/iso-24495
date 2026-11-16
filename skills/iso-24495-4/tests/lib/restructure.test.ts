@@ -377,6 +377,26 @@ describe("an after unit left over is a gap, a heading, the author's or added", (
     expect(sorted(compareVersions("## Old name\n\nText.\n", "## New name\n\nText.\n", null))).toEqual(only({ kept: ["Text."], newHeadings: ["New name"], headingsGone: ["Old name"] }));
   });
 
+  test("a heading of two sentences is one new heading, or one heading gone, and not two", () => {
+    const one = "# Old\n\nKeep this text.\n";
+    const two = "# Old\n\n# One. Two.\n\nKeep this text.\n";
+    expect(sorted(compareVersions(one, two, null))).toEqual(only({ kept: ["Old", "Keep this text."], newHeadings: ["One. Two."] }));
+    expect(sorted(compareVersions(two, one, null))).toEqual(only({ kept: ["Old", "Keep this text."], headingsGone: ["One. Two."] }));
+    expect(printed(one, two).at(-2)).toBe(counts(2, 0, 0, 0, 0, 1, 0, 0, 0));
+    expect(printed(two, one).at(-2)).toBe(counts(2, 0, 0, 0, 0, 0, 1, 0, 0));
+  });
+
+  test("two new headings of two sentences each are two new headings, each on its own line", () => {
+    // Words, not letters: "A. B." reads as initials, which no sentence boundary splits.
+    const comparison = compareVersions("Text.\n", "## Fill it. Seal it.\n\nText.\n\n## Test it. Ship it.\n", null);
+    expect(comparison.newHeadings.map(unit => [unit.line, unit.key])).toEqual([[1, "Fill it. Seal it."], [5, "Test it. Ship it."]]);
+  });
+
+  test("a heading that keeps one of its sentences is counted by the sentences it does not keep", () => {
+    // Each sentence is still matched alone, so a sentence moved into a heading is kept.
+    expect(sorted(compareVersions("Close the valve.\n", "## Close the valve. Then wait. Then go.\n", null))).toEqual(only({ kept: ["Close the valve."], newHeadings: ["Then wait. Then go."] }));
+  });
+
   test("a unit matching the author's wording, whole or after its label, is from the author, once for each unit of it", () => {
     const author = "Readers are maintainers.\n\nThe pump is new.\n";
     const after = "Fix it.\n\nReaders are maintainers.\n\nReaders are maintainers.\n\n- **Note:** The pump is new.\n";
@@ -462,6 +482,12 @@ describe("the JSON report", () => {
       newLabels: [{ line: 3, kind: "item", excerpt: "Goal:" }],
       labelsGone: [{ line: 3, kind: "sentence", excerpt: "Aim:" }],
     });
+  });
+
+  test("a heading of two sentences is one entry, holding both", () => {
+    const report = comparisonReport(compareVersions("# Old\n\nKeep this text.\n", "# Old\n\n# One. Two.\n\nKeep this text.\n", null), PATHS);
+    expect(report.newHeadings).toEqual([{ line: 3, kind: "heading", excerpt: "One. Two." }]);
+    expect(comparisonReport(compareVersions("# One. Two.\n", "", null), PATHS).headingsGone).toEqual([{ line: 1, kind: "heading", excerpt: "One. Two." }]);
   });
 
   test("an excerpt is the first 60 characters, uncleaned", () => {

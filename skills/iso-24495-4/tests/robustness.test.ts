@@ -23,6 +23,8 @@ const FUZZ_INPUTS = [
   "[label]: " + String.fromCharCode(160),
 ] as const;
 
+// Every rule an audit can report, with the five layout rules that report only
+// when the audit is told the text is Markdown.
 const KNOWN_RULES = new Set([
   "sentence-length",
   "sentence-average",
@@ -34,7 +36,24 @@ const KNOWN_RULES = new Set([
   "acronym-undefined",
   "doublet",
   "prose-enumeration",
+  "link-text",
+  "image-alt",
+  "generic-alt",
+  "wordy-phrase",
+  "complex-word",
+  "double-negative",
+  "filler-opening",
+  "table-header",
+  "provisional-label",
+  "opening-title",
+  "opening-version-date",
+  "bullet-depth",
+  "contents-list",
+  "overview-label",
 ]);
+
+// One document that sets off every rule an audit of plain text can report.
+const EVERY_RULE = join(import.meta.dir, "fixtures", "difficult", "every-rule.md");
 
 describe("robustness and determinism", () => {
   test("auditText and proseBlocks never throw and are deterministic for hostile text shapes", () => {
@@ -63,9 +82,14 @@ describe("robustness and determinism", () => {
     const inputs = [
       ...FUZZ_INPUTS,
       ...listTextFiles(CORPUS).map((path) => readFileSync(path, "utf8")),
+      readFileSync(EVERY_RULE, "utf8"),
+      "![logo](logo.png)",
     ];
-    const violations = inputs.flatMap((input) => auditText(input));
+    const violations = inputs.flatMap((input) => [...auditText(input), ...auditText(input, { markdown: true })]);
     expect(violations.length).toBeGreaterThan(0);
+    // The inputs must reach the rules the list names, or a name missing from
+    // it passes unseen, as generic-alt and eight older names did.
+    expect(new Set(violations.map((violation) => violation.rule)).size).toBeGreaterThanOrEqual(20);
     for (const violation of violations) {
       expect(violation.line).toBeGreaterThanOrEqual(1);
       expect(KNOWN_RULES.has(violation.rule)).toBe(true);

@@ -135,11 +135,13 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   },
   {
     id: "12b", demand: "A meaningful image says what it shows.", state: "fault",
-    checks: [{ rule: "image-alt", kind: "offline" }], needs: [],
+    checks: [{ rule: "image-alt", kind: "offline" }, { rule: "generic-alt", kind: "offline" }], needs: [],
     limits: [
       "It can report a Markdown image with empty alternative text and a HyperText Markup Language (HTML) image with no alt attribute. It skips some that render, such as `![]()`, and other text in an HTML tag can pass for an alt attribute, such as `data-alt=\"\"`. `<img src=\"chart.png\" alt=\"\">` is taken as decorative and not reported, even when the image is meaningful, but `<img src=\"chart.png\" alt>` is reported. A title reading decorative marks a Markdown image as decorative only in this form: `![](chart.png \"decorative\")`, or `![][c]` with `[c]: chart.png \"decorative\"` on a line of its own. In that form nothing stands between the brackets of `![]`, and one space comes before the title. In a heading a tab can stand there instead, though only Bun's renderer then shows an image. The title can be in any letter case, in double or single quotes. The destination holds no space, quote, backslash, angle bracket or parenthesis, and no Unicode space, separator, control or format character. Nor does it hold a lone surrogate, which is half of a pair of code units that encode one character. Only a string passed to the audit from code can hold one. Nothing on the image's line is a code span, an HTML tag or an escape. Outside a heading, no tab stands in the text of its line. A reference image comes after no other image syntax in its paragraph. Its definition starts its line and has one space after the colon. Its label holds only American Standard Code for Information Interchange (ASCII) letters and digits, spaces, hyphens and underscores. No other text in the document is shaped like a definition, as `[x]:` is, with a label of the same ASCII letters and digits. Nor is any text shaped like one with a label holding a character beyond ASCII. Written any other way, an image with empty alternative text and that title is still reported, even where a renderer shows the title. The exceptions are the images this limit and the one on lines say are skipped. To clear such a finding, write the image in the form above. The reported spellings named next are examples, not a complete list. Images still reported include `![](chart(1).png \"decorative\")`, `![](<chart.png> \"decorative\")` and `![](chart.png (decorative))`. So are `![](chart.png  \"decorative\")` with two spaces, `![](chart.png \"decorative\" )` and `![](my'chart.png \"decorative\")`. So is a destination holding a no-break space, the next-line character, a zero-width space or a lone surrogate. So is a title written with a character reference, such as `![](chart.png \"&#100;ecorative\")`, which renderers read as decorative. So is an image on a line with a code span, an HTML tag or an escape, as in `<b>bold</b> ![](chart.png \"decorative\")`. Bun's renderer, though not the CommonMark reference, shows the title in `![](my\\ chart.png \"decorative\")`, and in a paragraph where a tab comes before the title. Both are reported. A reference image is reported when its definition's title is on the line below, or when other image syntax comes before it, as in `![x](a.png) ![][c]`. So is one beside another definition that could match its label, such as `[C]: other.png`, or text shaped like one, such as `See [c]: here.`. So is one in a document holding `[ß]: other.png`, or `[é]:` inside a destination, as in `[c]: a[é]:b \"decorative\"`. Text shaped like that has the same effect in a paragraph, in code, in an HTML comment, in a title or in alternative text. Neither renderer reads it as a definition there. Such text does not affect an inline image. It also skips `![][c]` when a tab, not a space, separates the parts of its definition. Text that renders no image can still be reported, such as `![](<chart.png>x \"decorative\")`. Text that renders no image goes unreported when it carries such a title in a raw HTML block, or in an earlier link's destination or title. In an earlier link it looks like `[t](<a) ![][c]>)` or `[t](a 'x) ![](chart.png \"decorative\")')`.",
       "It cannot tell whether the text says what the image shows, so `![nonsense](chart.png)` passes. Text that looks like HTML can still be reported, as in `![The <img> tag](chart.png)`.",
       "Some images that run over a line are not reported, though they still render, such as `![](` with the destination on the next line, or `![](chart.png` with `\"Chart\")` on the next line.",
+      "The `generic-alt` check can report alternative text that is only one word naming the kind of image, or only an image's file name. The words are image, picture, photo, screenshot, graphic, figure, diagram, icon and logo, in any letter case, so `![Logo](logo.png)` is reported. A file name holds no space, slash or backslash, and ends in `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`, `.bmp`, `.ico`, `.tif`, `.tiff` or `.avif`, in any letter case. So `![IMG_0042.jpg](photo.jpg)` is reported. Emphasis and code marks and spaces at either end are not read, paired or not, so `![**logo**](logo.png)` is reported too. A mark inside the text stays, so `![lo_go](logo.png)` passes. A title does not clear a finding, even a decorative one, as in `![logo](logo.png \"decorative\")`. To clear a finding, say what the image shows, as in `![Acme logo](logo.png)`. For an image that adds nothing to the text beside it, empty the alternative text and mark it decorative instead, as in `![](logo.png \"decorative\")`. The passing forms named next are examples, not a complete list. Text that says more passes, such as `an image`, `Figure 1`, `logos` or `Image:`, and so does a path such as `images/chart.png`. So does a word written with a character reference, such as `&#108;ogo`, or with a letter beyond ASCII, such as a dotted capital I in place of the I of Image.",
+      "The `generic-alt` check reads Markdown images, inline or by reference, including one in a table, a link or a heading. It finds them in each line as the audit reads it, with HTML tags, code spans and escapes set aside. It finds an HTML image by its `<img` tag, and reads its alt attribute, as in `<img src=\"logo.png\" alt=\"logo\">`. It reads no other attribute, so `data-alt=\"logo\"` passes. Found this way, some spellings of an image that renders are missed, and some text that renders no image is reported. The cases named next are examples, not a complete list. It skips an image with nothing between its parentheses, such as `![logo]()`, though `![logo]( )` is read. It skips a reference image whose label has no definition, such as `![logo][l]` alone. It also skips one whose label holds HTML, a code span or an escape, as in `![logo][<b>]`, `![logo][a<b>]` or `![logo][a\\_]`, even where that label is defined. With the label `[a]` and `[a]: logo.png`, the image is reported. An image whose alternative text holds another image is read as written, so `![![logo](a.png)](b.png)` passes, though a renderer reads its alternative text as logo. It skips an image whose alternative text or destination runs over a line, such as `![logo](` with the destination on the next line. It skips an HTML image with a blank line inside its tag, and it skips code, front matter and HTML comments. It skips an HTML image in a link's destination or title, or in an image's alternative text, which a renderer shows as text, as in `[guide](a.md \"<img alt='logo'>\")`. It skips one there in a raw HTML block such as `<div>` too, where a renderer shows the image. Text that renders no image can still be reported, such as image syntax in a raw HTML block like `<div>`, or in an earlier link's destination, as in `[t](<a) ![logo](a.png)>)`. So can an `<img` tag inside another tag's attribute, as in `<span title=\"<img alt='logo'>\">`. Written as `&lt;img` there, it passes.",
     ],
   },
   {
@@ -300,6 +302,19 @@ const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the st
 /** A non-breaking hyphen, which looks like the hyphen in 24495-5 and is another character. */
 const NON_BREAKING_HYPHEN = String.fromCharCode(0x2011);
 
+/** A capital I with a dot above, which looks like the I of Image and is another letter. */
+const DOTTED_CAPITAL_I = String.fromCharCode(0x130);
+
+/** What `generic-alt` says of alternative text that is one word naming the kind of image. */
+function kindOfImage(alt: string): string {
+  return `alternative text "${alt}" names the kind of image, not what it shows`;
+}
+
+/** What `generic-alt` says of alternative text that is a file name. */
+function fileOfImage(alt: string): string {
+  return `alternative text "${alt}" is a file name, not what the image shows`;
+}
+
 /**
  * A specimen document for a clause that names a check, and the detail of
  * each finding each of its offline rules gives on it, in order. Each
@@ -325,7 +340,7 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "8c": { text: "- One\n  - Two\n    - Three\n", reasons: { "bullet-depth": [BULLET_THREE] } },
   "10c": { text: `${GUIDE_OPENING}The valve opens when the pressure rises.\n`, reasons: {} },
   "12a": { text: "Read the guide [here](https://example.org/guide).\n", reasons: { "link-text": ["link text \"here\" describes no destination (https://example.org/guide)"] } },
-  "12b": { text: "![](chart.png)\n", reasons: { "image-alt": ["image has no alternative text (chart.png)"] } },
+  "12b": { text: "![](chart.png)\n\n![image](graph.png)\n", reasons: { "image-alt": ["image has no alternative text (chart.png)"], "generic-alt": [kindOfImage("image")] } },
   "12c": { text: "![](decoration.png)\n", reasons: { "image-alt": ["image has no alternative text (decoration.png)"] } },
   "13b": { text: "| Name | |\n|---|---|\n| Ann | 4 |\n", reasons: { "table-header": [EMPTY_HEADER] } },
   "15a": { text: "Text with no title.\n", reasons: { "opening-title": [NO_TITLE] } },
@@ -647,6 +662,45 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "12b", limit: 3, check: "image-alt", text: "![](\nchart.png\n)\n", found: [], control: { from: "(\nchart.png\n)", to: "(chart.png)", found: ["image has no alternative text (chart.png)"] } },
   { clause: "12b", limit: 3, check: "image-alt", text: "![](chart.png\n\"Chart\")\n", found: [], control: { from: "\n\"Chart\"", to: " \"Chart\"", found: ["image has no alternative text (chart.png \"Chart\")"] } },
   { clause: "12b", limit: 3, check: "image-alt", text: "![\n](chart.png)\n", found: [], control: { from: "![\n]", to: "![ ]", found: ["image has no alternative text (chart.png)"] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![Logo](logo.png)\n", found: [kindOfImage("Logo")], control: { from: "Logo", to: "Acme logo", found: [] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![IMG_0042.jpg](photo.jpg)\n", found: [fileOfImage("IMG_0042.jpg")], control: { from: "IMG_0042.jpg", to: "Harbour at dawn", found: [] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![**logo**](logo.png)\n", found: [kindOfImage("**logo**")], control: { from: "**logo**", to: "**Acme logo**", found: [] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![lo_go](logo.png)\n", found: [], control: { from: "lo_go", to: "_logo_", found: [kindOfImage("_logo_")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![logo](logo.png \"decorative\")\n", found: [kindOfImage("logo")], control: { from: "![logo]", to: "![]", found: [] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![an image](chart.png)\n", found: [], control: { from: "an image", to: "image", found: [kindOfImage("image")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![Figure 1](chart.png)\n", found: [], control: { from: "Figure 1", to: "Figure", found: [kindOfImage("Figure")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![logos](logo.png)\n", found: [], control: { from: "logos", to: "logo", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![Image:](chart.png)\n", found: [], control: { from: "Image:", to: "Image", found: [kindOfImage("Image")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![images/chart.png](chart.png)\n", found: [], control: { from: "images/", to: "", found: [fileOfImage("chart.png")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![chart.txt](chart.png)\n", found: [], control: { from: ".txt", to: ".svg", found: [fileOfImage("chart.svg")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: "![&#108;ogo](logo.png)\n", found: [], control: { from: "&#108;", to: "l", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 4, check: "generic-alt", text: `![${DOTTED_CAPITAL_I}mage](chart.png)\n`, found: [], control: { from: DOTTED_CAPITAL_I, to: "I", found: [kindOfImage("Image")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "| Mark |\n|---|\n| [![icon](a.png)](https://acme.example) |\n", found: [kindOfImage("icon")], control: { from: "![icon]", to: "![Acme icon]", found: [] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "# ![logo](logo.png) Acme\n", found: [kindOfImage("logo")], control: { from: "![logo]", to: "![Acme logo]", found: [] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "<img src=\"logo.png\" alt=\"logo\">\n", found: [kindOfImage("logo")], control: { from: "alt=\"logo\"", to: "alt=\"Acme logo\"", found: [] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "<img src=\"logo.png\" data-alt=\"logo\">\n", found: [], control: { from: "data-alt", to: "alt", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo]()\n", found: [], control: { from: "()", to: "(logo.png)", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo]( )\n", found: [kindOfImage("logo")], control: { from: "( )", to: "()", found: [] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo][l]\n", found: [], control: { from: "[l]\n", to: "[l]\n\n[l]: logo.png\n", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo][<b>]\n\n[<b>]: logo.png\n", found: [], control: { from: "[<b>]\n\n[<b>]", to: "[b]\n\n[b]", found: [kindOfImage("logo")] } },
+  // A label partly set aside is missed too. A renderer shows each image, as Bun's does.
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo][a<b>]\n\n[a<b>]: logo.png\n", found: [], control: { from: "[a<b>]\n\n[a<b>]", to: "[a]\n\n[a]", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo][a\\_]\n\n[a\\_]: logo.png\n", found: [], control: { from: "[a\\_]\n\n[a\\_]", to: "[a]\n\n[a]", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo][`a`]\n\n[`a`]: logo.png\n", found: [], control: { from: "[`a`]\n\n[`a`]", to: "[a]\n\n[a]", found: [kindOfImage("logo")] } },
+  // An "<img" inside another tag's attribute is text, and no image renders.
+  { clause: "12b", limit: 5, check: "generic-alt", text: "<span title=\"<img alt='logo'>\">Words</span>\n", found: [kindOfImage("logo")], control: { from: "<img", to: "&lt;img", found: [] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![![logo](a.png)](b.png)\n", found: [], control: { from: "![![logo](a.png)](b.png)", to: "![logo](b.png)", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo](\nlogo.png)\n", found: [], control: { from: "(\nlogo", to: "(logo", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "![logo\n](logo.png)\n", found: [], control: { from: "logo\n]", to: "logo]", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "Text <img alt=\"logo\"\n\nsrc=\"a.png\">\n", found: [], control: { from: "\n\nsrc", to: " src", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "[guide](a.md \"<img alt='logo'>\")\n", found: [], control: { from: " \"<img alt='logo'>\")", to: ") <img alt='logo'>", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "<div>\n[t](a.md \"<img alt='logo'>\")\n</div>\n", found: [], control: { from: "[t](a.md \"<img alt='logo'>\")", to: "<img alt='logo'>", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "```\n![logo](a.png)\n```\n", found: [], control: { from: "```\n![logo](a.png)\n```", to: "![logo](a.png)", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "<!-- ![logo](a.png) -->\n", found: [], control: { from: "<!-- ![logo](a.png) -->", to: "![logo](a.png)", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "| Tag |\n|---|\n| `<img alt=\"logo\">` |\n", found: [], control: { from: "`<img alt=\"logo\">`", to: "<img alt=\"logo\">", found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "---\nbanner: ![logo](a.png)\n---\n\nText.\n", found: [], control: { frontMatter: false, found: [kindOfImage("logo")] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "<div>\n![logo](a.png)\n</div>\n", found: [kindOfImage("logo")], control: { from: "<div>\n![logo](a.png)\n</div>", to: "```\n![logo](a.png)\n```", found: [] } },
+  { clause: "12b", limit: 5, check: "generic-alt", text: "[t](<a) ![logo](a.png)>)\n", found: [kindOfImage("logo")], control: { from: "logo", to: "Acme logo", found: [] } },
   { clause: "12c", limit: 1, check: "image-alt", text: "![][dec]\n\n[dec]: decoration.png \"decorative\"\n", found: [], control: { from: " \"decorative\"", to: "", found: ["image has no alternative text (dec)"] } },
   { clause: "12c", limit: 1, check: "image-alt", text: "![](decoration.png \"decorative\")\n", found: [], control: { from: " \"decorative\"", to: "", found: ["image has no alternative text (decoration.png)"] } },
   { clause: "12c", limit: 1, check: "image-alt", text: "![](decoration(1).png \"decorative\")\n", found: ["image has no alternative text (decoration(1)"], control: { from: "decoration(1).png", to: "decoration.png", found: [] } },
@@ -830,7 +884,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "8c": [4],
   "10c": [3, 1],
   "12a": [11, 8],
-  "12b": [48, 2, 3],
+  "12b": [48, 2, 3, 13, 24],
   "12c": [44, 2, 2, 2],
   "13b": [4, 6],
   "15a": [2, 0],
@@ -869,7 +923,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "8c": ["1e7ef38789ed8e7f"],
   "10c": ["715422e93c74c160", "9136f07360ae2af1"],
   "12a": ["52d00e27020486eb", "fba17df6643bd1d8"],
-  "12b": ["70527e3f6be02239", "0a8d2b897cc61c2d", "978b9b349ab33d16"],
+  "12b": ["70527e3f6be02239", "0a8d2b897cc61c2d", "978b9b349ab33d16", "dc14dabc5b0e0873", "674628e5f56dee55"],
   "12c": ["d230a142efde418d", "bf869cb66a91d31c", "0c0fabba94c93851", "444769517fdfd5cd"],
   "13b": ["b953b20f9ff853b2", "b24f75b567f42726"],
   "15a": ["de56b3a6afc9946f", "4f53cda18c2baa0c"],
@@ -893,7 +947,7 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "8c": "de544846e4fdb6fa",
   "10c": "ecdf55f88967aded",
   "12a": "c56cf169d00f950c",
-  "12b": "b53788abf49f1e71",
+  "12b": "a9413d3cd9973b1f",
   "12c": "2dbe29dac4576a69",
   "13b": "4bf003ee610bafdf",
   "15a": "dde96eedfccfa4b5",

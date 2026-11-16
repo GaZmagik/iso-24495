@@ -75,7 +75,8 @@ export function compareVersions(before: string, after: string, authorText: strin
  *    `[Author needed: reader]` and nothing else is a marked gap.
  * 2. A heading is a new heading. Part 5 lets a restructure change headings,
  *    so it is counted and not listed. A before heading left over is counted
- *    as gone in the same way, and is not dropped.
+ *    as gone in the same way, and is not dropped. A heading is counted once,
+ *    however many of its sentences are left over.
  * 3. A unit that matches a unit of the author's wording, whole or after its
  *    label, comes from the author. Each unit of the author's wording accounts
  *    for one after unit.
@@ -92,19 +93,20 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
   const comparison: Comparison = {
     before, after, author, kept,
     dropped: byLabel.leftBefore.filter(unit => unit.kind !== "heading"),
-    headingsGone: byLabel.leftBefore.filter(unit => unit.kind === "heading"),
+    headingsGone: byHeading(byLabel.leftBefore.filter(unit => unit.kind === "heading")),
     added: [], fromAuthor: [], gaps: [], newHeadings: [],
     // A pair the second match made differs in its labels, or the first would have made it.
     newLabels: byLabel.pairs.filter(pair => pair.after.label !== undefined).map(pair => pair.after),
     labelsGone: byLabel.pairs.filter(pair => pair.before.label !== undefined).map(pair => pair.before),
   };
   const takeAuthor = waitingByText(author, unit => unit.key);
+  const headingUnits: Unit[] = [];
   for (const unit of byLabel.leftAfter) {
     if (ONE_SLOT.test(withoutLabel(unit))) {
       comparison.gaps.push(unit);
       if (unit.label !== undefined) comparison.newLabels.push(unit);
     } else if (unit.kind === "heading") {
-      comparison.newHeadings.push(unit);
+      headingUnits.push(unit);
     } else if (takeAuthor(unit.key) !== undefined) {
       comparison.fromAuthor.push(unit);
     } else if (unit.label !== undefined && takeAuthor(withoutLabel(unit)) !== undefined) {
@@ -113,6 +115,10 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
     } else {
       comparison.added.push(unit);
     }
+  }
+  // One at a time: spreading a long list into push overflows the stack.
+  for (const heading of byHeading(headingUnits)) {
+    comparison.newHeadings.push(heading);
   }
   comparison.newLabels.sort((first, second) => first.line - second.line);
   return comparison;
@@ -216,7 +222,8 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
  * @returns The paths, how many units each text holds, how many units were
  *     kept, and a list of every other unit by what it is. Each entry gives
  *     the unit's line, its kind and its first 60 characters. A label's entry
- *     gives the label in place of the unit's text.
+ *     gives the label in place of the unit's text. A heading's entry is one
+ *     for the heading, and holds its sentences left over, joined by a space.
  */
 export function comparisonReport(comparison: Comparison, paths: ComparedPaths): RestructureReport {
   return {
@@ -243,7 +250,7 @@ export interface Unit {
   readonly line: number;
   /** The text the unit is matched by. */
   readonly key: string;
-  /** Units of one list or one table share this. Every other unit has its own. */
+  /** The units of one list, one table or one heading share this, as do the sentences of one paragraph. Each heading's is its own. */
   readonly block: number;
   /** A bold label the unit opens with, such as `Purpose:`, as a reader sees it. */
   readonly label?: string;
@@ -267,7 +274,9 @@ export interface Comparison {
   readonly added: Unit[];
   readonly fromAuthor: Unit[];
   readonly gaps: Unit[];
+  /** One unit for each heading with a sentence left over, holding those sentences, as `byHeading` gives them. */
   readonly newHeadings: Unit[];
+  /** The same for the before version. */
   readonly headingsGone: Unit[];
   /** The after units kept or taken from the author by the text after a label they gained or changed, and each gap with a label. */
   readonly newLabels: Unit[];
@@ -444,6 +453,25 @@ function singleSpaced(rendered: string): { text: string; lines: number[] } {
 /** How many line breaks a text holds. */
 function lineBreaks(text: string): number {
   return text.split("\n").length - 1;
+}
+
+/**
+ * Heading units left over, as one unit for each heading. A heading is split
+ * into sentences so that each can be matched alone, but it is counted once.
+ *
+ * @param units Heading units in document order. The units of one heading
+ *     share its `block`.
+ * @returns One unit for each heading among them, in the order of its first
+ *     unit, on that unit's line. Its text is the text of each of its units,
+ *     joined by a space.
+ */
+function byHeading(units: readonly Unit[]): Unit[] {
+  const headings = new Map<number, Unit>();
+  for (const unit of units) {
+    const heading = headings.get(unit.block);
+    headings.set(unit.block, heading === undefined ? unit : { ...heading, key: `${heading.key} ${unit.key}` });
+  }
+  return [...headings.values()];
 }
 
 /** A unit's text after its label, or its whole text when it has none. */
