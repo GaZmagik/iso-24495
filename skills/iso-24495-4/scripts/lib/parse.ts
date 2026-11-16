@@ -354,6 +354,8 @@ interface ItemContainer {
   unordered: boolean;
   listId: number;
   marker: string;
+  /** The index of the line the item's marker stands on. */
+  line: number;
   /** The column the item's content starts at. */
   column: number;
 }
@@ -380,6 +382,18 @@ interface Parsed {
   tableRows: Map<number, string[]>;
   /** Each code block and its contents. Filled only for the structural reading. */
   code: CodeBlock[];
+  /** The ordered steps each block's first line stands in. Filled only for the structural reading. */
+  steps: Map<number, ListStep[]>;
+}
+
+/**
+ * An item of an ordered list: the list, named by the index of the line its
+ * first item stands on, and the item, named by the index of the line its
+ * marker stands on.
+ */
+export interface ListStep {
+  readonly list: number;
+  readonly item: number;
 }
 
 /** A fenced or indented code block: its first line, counted from 1, and its content lines. */
@@ -490,6 +504,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   const blocks = new Map<number, { id: number; kind: "paragraph" | "list" | "table"; data: boolean }>();
   const tableRows = new Map<number, string[]>();
   const code: CodeBlock[] = [];
+  const steps = new Map<number, ListStep[]>();
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -621,7 +636,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
           const unordered = /^ {0,3}[-*+]/.test(consumed);
           const family = consumed.trim().replace(/\d+/g, "");
           const listId = stack.length === matched && previousItem?.kind === "item" && previousItem.marker === family ? previousItem.listId : i;
-          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered, listId, marker: family });
+          stack.push({ kind: "item", column: indentOf(consumed) + marker.column - indentOf(consumed), unordered, listId, marker: family, line: i });
           if (unordered) items.push({ line: i + 1, depth: stack.filter(container => container.kind === "item" && container.unordered).length });
           continue;
         }
@@ -693,6 +708,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       paragraph = null;
       const block = structural ? { line: i + 1, lines: [] } : null;
       if (block !== null) code.push(block);
+      if (structural) noteSteps(steps, i, stack);
       fence = { char: opener.charAt(0), length: opener.length, indent: fenceIndent.length, block };
       hidden.add(i);
       readable[i] = "";
@@ -703,6 +719,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     const [, hashes, wording] = ATX_HEADING.exec(text) ?? [];
     if (hashes !== undefined) {
       paragraph = null;
+      if (structural) noteSteps(steps, i, stack);
       if (stack.length === 0) rootHeadingLines.add(i + 1);
       found.push({
         level: hashes.length,
@@ -745,7 +762,10 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       hidden.add(i);
       readable[i] = "";
       markup[i] = "";
-      if (structural) indented = indentedCode(lines, i, sourceFrom(source, line, text.slice(4)), stack, indented, code);
+      if (structural) {
+        indented = indentedCode(lines, i, sourceFrom(source, line, text.slice(4)), stack, indented, code);
+        noteSteps(steps, i, stack);
+      }
       continue;
     }
 
@@ -764,6 +784,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       markup[i + 1] = divider;
       tables.add(i);
       tables.add(i + 1);
+      if (structural) noteSteps(steps, i, stack);
       blocks.set(i, { id: i, kind: "table", data: false });
       blocks.set(i + 1, { id: i, kind: "table", data: false });
       let row = i + 2;
@@ -773,6 +794,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         readable[row] = content;
         markup[row] = content;
         tables.add(row);
+        if (structural) noteSteps(steps, row, stack);
         blocks.set(row, { id: i, kind: "table", data: true });
         tableRows.set(row, tableCells(content.trim()));
         if (stack.length === 0) rootLines.add(row);
@@ -794,6 +816,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
       paragraph = { line: i + 1, lines: [] };
       paragraphDepth = stack.length;
       paragraphs.push(paragraph);
+      if (structural) noteSteps(steps, i, stack);
     }
     if (stack.length === 0) rootLines.add(i);
     if (!stack.some(container => container.kind === "quote")) navigationLines.add(i);
@@ -819,7 +842,20 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows, code };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows, code, steps };
+}
+
+/**
+ * Records the items of ordered lists a line stands in, outermost first, when
+ * it stands in any. A bulleted list inside an item adds nothing, so its
+ * lines stand in that item.
+ */
+function noteSteps(steps: Map<number, ListStep[]>, index: number, stack: readonly Container[]): void {
+  const chain: ListStep[] = [];
+  for (const container of stack) {
+    if (container.kind === "item" && !container.unordered) chain.push({ list: container.listId, item: container.line });
+  }
+  if (chain.length > 0) steps.set(index, chain);
 }
 
 /**
@@ -844,7 +880,10 @@ function indentedCode(
   const continues = current !== null && current.depth === stack.length
     && between.every(line => isBlank(matchOpen(expandTabs(line), stack).rest));
   if (current !== null && continues) {
-    current.block.lines.push(...between.map(() => ""), content);
+    for (const blank of between.map(() => "")) {
+      current.block.lines.push(blank);
+    }
+    current.block.lines.push(content);
     return { ...current, last: index };
   }
   const block = { line: index + 1, lines: [content] };
@@ -891,6 +930,11 @@ function indentedCode(
  *   with the raw HTML code blocks above left out. So a paragraph that follows
  *   `</pre>` with no blank line starts on its own line, and holds nothing of
  *   the block above it.
+ * - `steps`: for the first line of each paragraph, heading, code block and
+ *   table line that stands in an ordered list item, the ordered items it
+ *   stands in, outermost first. A bulleted list adds no item, so a line of a
+ *   bullet inside an ordered item stands in that item. A line in no ordered
+ *   item has no entry.
  *
  * Empty text gives one empty line and nothing else.
  */
@@ -903,11 +947,12 @@ export function structure(text: string, reading: Reading = {}): {
   tableRows: ReadonlyMap<number, string[]>;
   code: Array<{ line: number; text: string }>;
   paragraphs: ProseBlock[];
+  steps: ReadonlyMap<number, readonly ListStep[]>;
 } {
   const parsed = parse(toLines(text), reading, true);
   return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
     lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows,
-    code: parsed.code.map(block => ({ line: block.line, text: block.lines.join("\n") })), paragraphs: parsed.paragraphs };
+    code: parsed.code.map(block => ({ line: block.line, text: block.lines.join("\n") })), paragraphs: parsed.paragraphs, steps: parsed.steps };
 }
 
 /**
