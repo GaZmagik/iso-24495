@@ -60,3 +60,20 @@ test("the offsets name each removed mark, in order", () => {
 test("rendered wording keeps strikethrough marks, which are not CommonMark emphasis", () => {
   expect(renderInline("~~Overview~~ and *Summary*")).toBe("~~Overview~~ and Summary");
 });
+
+test("struck wording loses its marks only when the caller asks, as the two-version comparison does", () => {
+  expect(renderInline("~~Overview~~ and *Summary*", { strike: true })).toBe("Overview and Summary");
+  expect(renderInline("~one~ and ~~~three~~~ and ~~open", { strike: true })).toBe("~one~ and ~~~three~~~ and ~~open");
+  expect(renderInline("`~~code~~` and \\~~kept~~", { strike: true })).toBe("~~code~~ and ~~kept~~");
+  expect(renderInline("**a ~~b** c~~", { strike: true })).toBe("a ~~b c~~");
+  expect(renderInline("~~Overview~~", { strike: false })).toBe("~~Overview~~");
+});
+
+test("a backslash before a line ending is a hard line break, and reads as the line ending", () => {
+  expect(renderInline("Read the\\\nguide.")).toBe("Read the\nguide.");
+  expect(renderInline("Read the\\\r\nguide.")).toBe("Read the\r\nguide.");
+  expect(renderInline("Read the\\\rguide.")).toBe("Read the\rguide.");
+  // An escaped backslash is a character, and so is a backslash with nothing after it.
+  expect(renderInline("Read the\\\\\nguide.")).toBe("Read the\\\nguide.");
+  expect(renderInline("Read the guide.\\")).toBe("Read the guide.\\");
+});

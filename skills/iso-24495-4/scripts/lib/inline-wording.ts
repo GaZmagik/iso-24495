@@ -26,17 +26,24 @@ const STRIKE = "~";
  * An inline link or image becomes its label, a code span becomes its
  * contents, paired emphasis markers are removed, and character references are
  * decoded. An escaped character and the contents of a code span are kept
- * literally, so neither is read as emphasis or as a character reference.
+ * literally, so neither is read as emphasis or as a character reference. A
+ * backslash before a line ending is a hard line break, and gives the line
+ * ending alone.
  *
- * @param source One heading, label or line. Block structure is not read. A
- *     reference link stays as written, because no definitions are passed.
+ * @param source One heading, label or line, or a paragraph over several
+ *     lines. Block structure is not read. A reference link stays as written,
+ *     because no definitions are passed.
+ * @param marks Pass `strike: true` to remove paired strikethrough marks too,
+ *     as `emphasisMarkOffsets` pairs them. They stay by default, because
+ *     CommonMark does not read them.
  * @returns The rendered wording. An emphasis marker with no partner stays in
  *     the text. Empty for empty source.
  */
-export function renderInline(source: string): string {
+export function renderInline(source: string, marks: { strike?: boolean } = {}): string {
   const text = inlineText(source);
   const spans = codeSpanEnds(text);
-  const paired = new Set(pairedMarks(delimiterRuns(text, EMPHASIS)));
+  const markers = marks.strike === true ? EMPHASIS + STRIKE : EMPHASIS;
+  const paired = new Set(pairedMarks(delimiterRuns(text, markers)));
   let rendered = "";
   // Text since the last escape, code span or marker. Only this is decoded, so a
   // character reference cannot be made from the pieces either side of one.
@@ -46,6 +53,13 @@ export function renderInline(source: string): string {
       rendered += decodeEntities(plain) + text[index + 1];
       plain = "";
       index += 2;
+      continue;
+    }
+    if (text[index] === "\\" && (text[index + 1] === "\n" || text[index + 1] === "\r")) {
+      // The line ending stays, so a caller still counts the lines.
+      rendered += decodeEntities(plain);
+      plain = "";
+      index++;
       continue;
     }
     const span = spans.get(index);
@@ -58,7 +72,7 @@ export function renderInline(source: string): string {
       index = span;
       continue;
     }
-    if (EMPHASIS.includes(text.charAt(index))) {
+    if (markers.includes(text.charAt(index))) {
       rendered += decodeEntities(plain) + (paired.has(index) ? "" : text[index]);
       plain = "";
       index++;
