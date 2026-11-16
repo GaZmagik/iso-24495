@@ -194,7 +194,7 @@ The shipped acronym list stays universal, so a technical vocabulary needs naming
 
 An unreadable or malformed file leaves the shipped list alone, because an advisory tool must never be the reason a document cannot be checked.
 
-The skill never runs automatically. It requires Bun and does not alter the selected text.
+The skill never runs automatically. It requires Bun 1.3.8 or later and does not alter the selected text.
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
 

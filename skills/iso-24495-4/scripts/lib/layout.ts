@@ -165,20 +165,13 @@ function stretchShowsAnything(lines: readonly string[], headings: readonly Headi
   return /\S/.test(stretch) && showsAnything(stretch);
 }
 
-/** How each kind of raw HTML that a browser shows as nothing opens and ends. */
-const UNSEEN_MARKUP: ReadonlyArray<{ open: RegExp; end: string; from: number }> = [
-  // From the second character, so "<!-->" ends where it starts, as HTML has it.
-  { open: /^<!--/, end: "-->", from: 2 },
-  { open: /^<\?/, end: "?>", from: 2 },
-  { open: /^<!\[CDATA\[/, end: "]]>", from: 9 },
-  { open: /^<![A-Za-z]/, end: ">", from: 2 },
-];
-
 /**
- * Whether a block of raw HTML holds only what a browser shows as nothing:
- * comments, processing instructions, character data and declarations, with
- * white space between them. One with no end runs to the end of the block, as
- * CommonMark has it. It is read with `indexOf`, because a regular expression
+ * Whether a block of raw HTML holds only comments, with white space between
+ * them. A comment ends at the first `-->` or `--!>`, as a browser reads it,
+ * and `<!-->` ends where it starts. One with no end runs to the end of the
+ * block, as CommonMark has it. Other markup a browser hides, such as `<?x ?>`,
+ * is not read as hidden, because a browser ends it at the first `>` and text
+ * after that can show. It is read with `indexOf`, because a regular expression
  * gave no match on a block of 900,000 characters that it should have matched.
  */
 function unseenHtml(block: string): boolean {
@@ -188,12 +181,11 @@ function unseenHtml(block: string): boolean {
       at++;
       continue;
     }
-    const rest = block.slice(at, at + 9);
-    const markup = UNSEEN_MARKUP.find(kind => kind.open.test(rest));
-    if (markup === undefined) return false;
-    const end = block.indexOf(markup.end, at + markup.from);
-    if (end === -1) return true;
-    at = end + markup.end.length;
+    if (!block.startsWith("<!--", at)) return false;
+    const close = block.indexOf("-->", at + 2);
+    const bang = block.indexOf("--!>", at + 2);
+    if (close === -1 && bang === -1) return true;
+    at = close !== -1 && (bang === -1 || close < bang) ? close + 3 : bang + 4;
   }
   return true;
 }
@@ -205,7 +197,8 @@ function unseenHtml(block: string): boolean {
  * Its caller ends each stretch at every heading the structural reading finds
  * outside lists and quotations, so any heading here shows its wording, as one
  * in a list does. A thematic break and raw HTML for which `unseenHtml` holds
- * show nothing, and so does a link definition in any form the renderer accepts.
+ * show nothing, and so does a link definition in any form the renderer accepts,
+ * a footnote body among them.
  * Raw HTML inside a paragraph reaches this reading as text, so it counts even
  * when it is only a comment.
  *

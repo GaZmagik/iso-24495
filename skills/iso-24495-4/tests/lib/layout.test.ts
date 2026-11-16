@@ -425,9 +425,13 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(signposts("## See also\n\n* * *\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n- \n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n>\n")).toEqual([emptyAt(1)]);
+    // The renderer shows an empty task item as a box with nothing beside it.
+    expect(signposts("## See also\n\n- [ ]\n")).toEqual([emptyAt(1)]);
   });
 
   test("a link definition in any form CommonMark accepts shows nothing", () => {
+    // The renderer reads a footnote body as a definition. GitHub moves it to the end.
+    expect(signposts("## See also\n\n[^1]: guide.md\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n[guide]:\n  guide.md\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n[guide]:\tguide.md\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n[guide]: guide.md\n  \"The guide\"\n")).toEqual([emptyAt(1)]);
@@ -458,11 +462,15 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(signposts("## See also\n\nAsk <span>here</span>.\n")).toEqual([]);
     expect(signposts("## See also\n\n<!-- a --> <!-- b -->\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n<!-- a --> Ask the help desk.\n")).toEqual([]);
-    expect(signposts("## See also\n\n<?php echo 1; ?>\n<!DOCTYPE html>\n")).toEqual([emptyAt(1)]);
+    // Only a comment shows nothing. A browser ends a processing instruction or
+    // character data at the first ">", so text after it can show.
+    expect(signposts("## See also\n\n<?php echo 1; ?>\n<!DOCTYPE html>\n")).toEqual([]);
+    expect(signposts("## See also\n\n<?> Ask the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<![CDATA[ a > Ask the help desk. ]]>\n")).toEqual([]);
+    expect(signposts("## See also\n\n<!-- a --!> Ask the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<!-- a --!>\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n<!--> Ask the help desk.\n")).toEqual([]);
-    expect(signposts("## See also\n\n<![CDATA[ x ]]> <!-- y -->\n")).toEqual([emptyAt(1)]);
-    // A regular expression gave no match at this length, and so read it as content.
-    expect(signposts(`## See also\n\n${"<![CDATA[".repeat(100_000)}\n`)).toEqual([emptyAt(1)]);
+    expect(signposts(`## See also\n\n${"<!-- ".repeat(200_000)}\n`)).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n<!-- Add the guides.\n\n## Next\n")).toEqual([emptyAt(1)]);
     // Inside a paragraph a comment counts, because the renderer passes it on as
     // text, as it does an escaped one that a reader sees.
@@ -540,10 +548,11 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
 
   test("the scan takes no more than three times the parse it reads, so it does not grow with the square of the text", () => {
     // The parse of the same text is the baseline, so a slower or busier
-    // machine slows both. At this size the scan took about as long as the
-    // parse, and a scan that checked every code block for each heading took
-    // about 15 times as long. The fastest of three scans is timed, because
-    // one scan alone once ran slower than the parse under load.
+    // machine slows both. At this size the scan, which renders each stretch
+    // between headings once, took 1.2 to 1.5 times as long as the parse. No
+    // current mutant fails this test; it guards against a scan that reads on
+    // to the end of the text for each heading. The fastest of three scans is
+    // timed, because one scan alone once ran slower than the parse under load.
     const text = "## See also\n\n```\nx\n```\n\n### Resources\n\n".repeat(40_000);
     let started = performance.now();
     const parsed = structure(text);
