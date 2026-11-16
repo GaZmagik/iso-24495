@@ -91,6 +91,45 @@ function copiesOf(text: string, count: number): string[] {
   return Array.from({ length: count }, () => text);
 }
 
+/** A source of numbers from 0 to 1 that gives the same run for the same seed, so a random test is the same test each time. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+/** The items in a random order drawn from `random`. */
+function shuffled<T>(items: readonly T[], random: () => number): T[] {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index--) {
+    const other = Math.floor(random() * (index + 1));
+    const held = result[index] as T;
+    result[index] = result[other] as T;
+    result[other] = held;
+  }
+  return result;
+}
+
+/** The length of the longest strictly increasing run of values, read in order, found by comparing every pair: small inputs only. */
+function longestIncreasingLength(values: readonly number[]): number {
+  const lengths = values.map(() => 1);
+  for (let index = 0; index < values.length; index++) {
+    for (let earlier = 0; earlier < index; earlier++) {
+      if ((values[earlier] ?? 0) < (values[index] ?? 0)) lengths[index] = Math.max(lengths[index] ?? 1, (lengths[earlier] ?? 1) + 1);
+    }
+  }
+  return Math.max(0, ...lengths);
+}
+
+/** Whether values rise strictly, read in order. */
+function isIncreasing(values: readonly number[]): boolean {
+  return values.every((value, index) => index === 0 || (values[index - 1] ?? 0) < value);
+}
+
 /** The module the timed child processes read text with. */
 const RESTRUCTURE_MODULE = new URL("../../scripts/lib/restructure.ts", import.meta.url).href;
 
@@ -643,6 +682,129 @@ describe("a bold label is read only when the whole unit has no match", () => {
   test("a label's sentence that is the label alone takes no label", () => {
     expect(documentUnits("**Purpose:** Fix. it\n").map(unit => [unit.key, unit.label])).toEqual([["Purpose: Fix.", "Purpose:"], ["it", undefined]]);
     expect(documentUnits("**A:** B\n")[0]?.label).toBe("A:");
+  });
+});
+
+describe("a label gained or lost moves nothing", () => {
+  const VALVE = "Close the valve.";
+
+  test("a label added to one of two copies keeps both in order", () => {
+    // Pairing the unlabelled copy first, with the original's first copy, left the labelled copy to pair
+    // with the original's second, so the two pairs crossed and one copy read as moved.
+    const comparison = compareVersions(`${VALVE}\n\n${VALVE}\n`, `**Purpose:** ${VALVE}\n\n${VALVE}\n`, null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([...HEAD, counts(2, 0, 0, 0, 0, 0, 0, 1, 0), ...TAIL]);
+    expect(comparisonReport(comparison, PATHS).newLabels).toEqual([{ line: 1, kind: "sentence", excerpt: "Purpose:" }]);
+  });
+
+  test("a label added to one step of an ordered list leaves every step in order", () => {
+    expect(order(compareVersions(`1. ${VALVE}\n2. ${VALVE}\n`, `1. **Purpose:** ${VALVE}\n2. ${VALVE}\n`, null))).toEqual(IN_ORDER);
+    expect(order(compareVersions(`1. ${VALVE}\n2. ${VALVE}\n3. ${VALVE}\n`, `1. ${VALVE}\n2. **Purpose:** ${VALVE}\n3. ${VALVE}\n`, null))).toEqual(IN_ORDER);
+  });
+
+  test("a label added to a middle copy, or to the first and the last, leaves every copy in order", () => {
+    const three = `${VALVE}\n\n${VALVE}\n\n${VALVE}\n`;
+    for (const after of [
+      `${VALVE}\n\n**Purpose:** ${VALVE}\n\n${VALVE}\n`,
+      `**Purpose:** ${VALVE}\n\n${VALVE}\n\n**Purpose:** ${VALVE}\n`,
+      `${VALVE}\n\n${VALVE}\n\n**Purpose:** ${VALVE}\n`,
+    ]) {
+      const comparison = compareVersions(three, after, null);
+      expect(order(comparison), after).toEqual(IN_ORDER);
+      expect(comparison.kept, after).toHaveLength(3);
+    }
+  });
+
+  test("a label lost from one of two copies keeps both in order", () => {
+    const comparison = compareVersions(`**Purpose:** ${VALVE}\n\n${VALVE}\n`, `${VALVE}\n\n${VALVE}\n`, null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    expect(sorted(comparison)).toEqual(only({ kept: [VALVE, VALVE], labelsGone: ["Purpose:"] }));
+    expect(order(compareVersions(`${VALVE}\n\n**Purpose:** ${VALVE}\n`, `${VALVE}\n\n${VALVE}\n`, null))).toEqual(IN_ORDER);
+  });
+
+  test("a copy that gains a label and moves is the one unit moved", () => {
+    // Pairing so that the most units keep their order leaves one unit out of it, however the copies pair.
+    const comparison = compareVersions("X one.\n\nA one.\n\nY one.\n\nA one.\n", "**Purpose:** A one.\n\nX one.\n\nA one.\n\nY one.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: A one."], stepOrder: [] });
+    expect(comparison.newLabels.map(unit => unit.line)).toEqual([1]);
+    const unlabelled = compareVersions("X one.\n\nA one.\n\nY one.\n\nA one.\n", "A one.\n\nX one.\n\nA one.\n\nY one.\n", null);
+    expect(order(unlabelled)).toEqual({ moved: ["A one."], stepOrder: [] });
+  });
+
+  test("a label that passes from one copy to another reads as a move, because whole wording pairs first", () => {
+    // The labelled copy matches its original whole, so it is kept as it stood, and it now stands first.
+    const comparison = compareVersions(`${VALVE}\n\n**Purpose:** ${VALVE}\n`, `**Purpose:** ${VALVE}\n\n${VALVE}\n`, null);
+    expect(order(comparison)).toEqual({ moved: [VALVE], stepOrder: [] });
+    expect([comparison.newLabels.length, comparison.labelsGone.length]).toEqual([0, 0]);
+  });
+
+  test("labels added to copies, or taken from them, but never both for one text, leave every unit in order", () => {
+    const random = seeded(24_495);
+    const texts = ["Close the valve.", "Open the vent.", "Check the gauge."];
+    for (let trial = 0; trial < 400; trial++) {
+      const length = 2 + Math.floor(random() * 6);
+      const units = Array.from({ length }, () => ({ text: texts[Math.floor(random() * texts.length)] ?? "", label: random() < 0.4 }));
+      // Each text either gains labels or loses them in the new version, so no label passes between its copies.
+      const gains = new Map(texts.map(text => [text, random() < 0.5]));
+      const changed = units.map(unit => (random() < 0.5 ? { ...unit, label: gains.get(unit.text) === true } : unit));
+      const asList = random() < 0.5;
+      const write = (version: ReadonlyArray<{ text: string; label: boolean }>): string =>
+        `${version.map((unit, index) => `${asList ? `${index + 1}. ` : ""}${unit.label ? "**Purpose:** " : ""}${unit.text}`).join(asList ? "\n" : "\n\n")}\n`;
+      const before = write(units);
+      const after = write(changed);
+      const comparison = compareVersions(before, after, null);
+      expect(order(comparison), `${before}->\n${after}`).toEqual(IN_ORDER);
+      expect(comparison.kept, `${before}->\n${after}`).toHaveLength(length);
+    }
+  });
+});
+
+describe("moved and step order agree on one longest order", () => {
+  test("a step moved out of its list is a step out of order, and the prose around it is in order", () => {
+    // Taking the step named first out before reading the rest left the opening sentence outside the longest
+    // order of what remained, though it belongs to the one longest order of the whole document.
+    const before = "Read this first.\n\n1. Close the valve.\n2. Open the vent.\n\nFinish now.\n";
+    const after = "Open the vent.\n\nRead this first.\n\nClose the valve.\n\nFinish now.\n";
+    const comparison = compareVersions(before, after, null);
+    expect(order(comparison)).toEqual({ moved: [], stepOrder: ["Open the vent."] });
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([...HEAD, `| step order | 4 | 1 | ${STEP_ONE} "Open the vent." |`, counts(4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), ...TAIL]);
+  });
+
+  test("of two steps that swap with prose between them, the one outside the document's longest order is named", () => {
+    const comparison = compareVersions("Prepare.\n\n1. Close the valve.\n2. Open the vent.\n\nFinish now.\n", "Open the vent.\n\nPrepare.\n\nClose the valve.\n\nFinish now.\n", null);
+    expect(order(comparison)).toEqual({ moved: [], stepOrder: ["Open the vent."] });
+    // With nothing around them to settle it, the step that stood first is named, as before.
+    expect(order(compareVersions(STEPS_TO_VENT, "1. Open the vent.\n2. Close the valve.\n3. Check the gauge.\n", null))).toEqual({ moved: [], stepOrder: ["Close the valve."] });
+  });
+
+  test("steps kept in step order but moved past prose are moved, and a step out of step order is never also moved", () => {
+    const comparison = compareVersions("P one.\n\nQ one.\n\n1. S one.\n2. S two.\n3. S three.\n", "S two.\n\nS three.\n\nP one.\n\nQ one.\n\nS one.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["S two.", "S three."], stepOrder: ["S one."] });
+  });
+
+  test("on random documents, the moved leave a longest shared order, and each list keeps its longest order", () => {
+    const random = seeded(21);
+    for (let trial = 0; trial < 500; trial++) {
+      const prose = Math.floor(random() * 4);
+      const steps = 2 + Math.floor(random() * 4);
+      const listAt = Math.floor(random() * (prose + 1));
+      const texts = Array.from({ length: prose + steps }, (unused, index) => `Unit ${index} here.`);
+      const proseTexts = texts.slice(0, prose);
+      const stepTexts = texts.slice(prose);
+      const blocks = [...proseTexts.slice(0, listAt), stepTexts.map((text, index) => `${index + 1}. ${text}`).join("\n"), ...proseTexts.slice(listAt)];
+      const beforeOrder = [...proseTexts.slice(0, listAt), ...stepTexts, ...proseTexts.slice(listAt)];
+      const afterOrder = shuffled(beforeOrder, random);
+      const comparison = compareVersions(`${blocks.join("\n\n")}\n`, `${afterOrder.join("\n\n")}\n`, null);
+      const label = `${beforeOrder.join(" ")} -> ${afterOrder.join(" ")}`;
+      const place = (text: string): number => afterOrder.indexOf(text);
+      const moved = new Set(comparison.moved.map(pair => pair.after.key));
+      const outOfStep = new Set(comparison.stepOrder.map(pair => pair.after.key));
+      expect([...moved].filter(text => outOfStep.has(text)), label).toEqual([]);
+      expect(longestIncreasingLength(beforeOrder.filter(text => !moved.has(text)).map(place)), label).toBe(longestIncreasingLength(beforeOrder.map(place)));
+      expect(isIncreasing(beforeOrder.filter(text => !moved.has(text) && !outOfStep.has(text)).map(place)), label).toBe(true);
+      const kept = stepTexts.filter(text => !outOfStep.has(text)).map(place);
+      expect([isIncreasing(kept), kept.length], label).toEqual([true, longestIncreasingLength(stepTexts.map(place))]);
+    }
   });
 });
 
