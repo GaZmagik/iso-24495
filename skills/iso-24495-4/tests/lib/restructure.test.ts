@@ -738,6 +738,18 @@ describe("a label gained or lost moves nothing", () => {
     expect([comparison.newLabels.length, comparison.labelsGone.length]).toEqual([0, 0]);
   });
 
+  test("a text pairs by label no more often than it has copies to spare, so the labels counted are those whole wording leaves", () => {
+    const comparison = compareVersions("Close the valve.\n\nClose the valve.\n\nOpen the vent.\n\n**Purpose:** Open the vent.\n\n1. **Purpose:** Open the vent.\n\nOpen the vent.\n", "**Purpose:** Open the vent.\n\nClose the valve.\n\n1. **Purpose:** Close the valve.\n\nOpen the vent.\n\n1. Open the vent.\n\nOpen the vent.\n", null);
+    expect([comparison.kept.length, comparison.newLabels.length, comparison.labelsGone.length]).toEqual([6, 1, 1]);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: Open the vent."], stepOrder: [] });
+  });
+
+  test("where weighing labels in the order search keeps fewer units in order, whole wording alone is used", () => {
+    const comparison = compareVersions("Close the valve.\n\nClose the valve.\n\nClose the valve.\n\nOpen the vent.\n\n**Purpose:** Check the gauge.\n\n**Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n", "1. Close the valve.\n2. **Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n\nOpen the vent.\n\n**Purpose:** Check the gauge.\n\n1. **Purpose:** Close the valve.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: Close the valve."], stepOrder: [] });
+    expect([comparison.kept.length, comparison.newLabels.length]).toEqual([7, 2]);
+  });
+
   test("labels added to copies, or taken from them, but never both for one text, leave every unit in order", () => {
     const random = seeded(24_495);
     const texts = ["Close the valve.", "Open the vent.", "Check the gauge."];
@@ -780,6 +792,11 @@ describe("moved and step order agree on one longest order", () => {
   test("steps kept in step order but moved past prose are moved, and a step out of step order is never also moved", () => {
     const comparison = compareVersions("P one.\n\nQ one.\n\n1. S one.\n2. S two.\n3. S three.\n", "S two.\n\nS three.\n\nP one.\n\nQ one.\n\nS one.\n", null);
     expect(order(comparison)).toEqual({ moved: ["S two.", "S three."], stepOrder: ["S one."] });
+  });
+
+  test("of the longest orders, the one holding no step out of order is read, so a step is not listed with a moved unit beside it", () => {
+    const comparison = compareVersions("1. **Purpose:** Open the vent.\n2. Close the valve.\n3. **Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n", "1. **Purpose:** Close the valve.\n2. Open the vent.\n3. **Purpose:** Close the valve.\n\nClose the valve.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Close the valve."], stepOrder: ["Purpose: Close the valve."] });
   });
 
   test("on random documents, the moved leave a longest shared order, and each list keeps its longest order", () => {
