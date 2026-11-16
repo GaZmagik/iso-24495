@@ -697,7 +697,7 @@ describe("a bold label is read only when the whole unit has no match", () => {
   });
 });
 
-describe("a label gained or lost moves nothing", () => {
+describe("a label gained or lost on repeated wording", () => {
   const valve = "Close the valve.";
 
   test("a label added to one of two copies keeps both in order", () => {
@@ -743,11 +743,16 @@ describe("a label gained or lost moves nothing", () => {
     expect(order(unlabelled)).toEqual({ moved: ["A one."], stepOrder: [] });
   });
 
-  test("a label that passes from one copy to another reads as a move, because whole wording pairs first", () => {
-    // The labelled copy matches its original whole, so it is kept as it stood, and it now stands first.
+  test("a label that passes from one copy to another reads as a move of the copy that stood first, labelled or not", () => {
+    // Each copy pairs with its own wording, so the pairs cross. The copy that stood first in the original is named,
+    // here the unlabelled one, from line 1 to line 3. With the copies the other way round, the labelled one is named.
     const comparison = compareVersions(`${valve}\n\n**Purpose:** ${valve}\n`, `**Purpose:** ${valve}\n\n${valve}\n`, null);
     expect(order(comparison)).toEqual({ moved: [valve], stepOrder: [] });
+    expect(comparison.moved.map(pair => [pair.before.line, pair.after.line])).toEqual([[1, 3]]);
     expect([comparison.newLabels.length, comparison.labelsGone.length]).toEqual([0, 0]);
+    const mirrored = compareVersions(`**Purpose:** ${valve}\n\n${valve}\n`, `${valve}\n\n**Purpose:** ${valve}\n`, null);
+    expect(order(mirrored)).toEqual({ moved: [`Purpose: ${valve}`], stepOrder: [] });
+    expect(mirrored.moved.map(pair => [pair.before.line, pair.after.line])).toEqual([[1, 3]]);
   });
 
   test("a text pairs by label no more often than it has copies to spare, so the labels counted are those whole wording leaves", () => {

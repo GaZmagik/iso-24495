@@ -153,8 +153,8 @@ The comparison reads neither, beyond the question about "This", "It" or "These".
 Of two units that swap places, it names the one that stood first in the original.
 
 Of two steps that swap with other wording around them, it can name the one outside the longest order of the whole document instead.
-Below 1,000,000 possible pairings, a label added to one copy of repeated wording moves nothing.
-Where one copy gains a label and another copy loses it, the labelled copy reads as moved.
+When repeated wording and labels both change, a unit that another pairing would keep in place can read as moved or as a step out of order.
+When a label passes between two copies of a sentence, the copy that stood first in the original is named as moved, labelled or not.
 A number in a table that moved to another row reads as moved too, so the row cannot tell a changed value from a move.
 A heading's number, such as the `4.` of `## 4. Remove`, is not read for order, so renumbered headings list nothing.
 

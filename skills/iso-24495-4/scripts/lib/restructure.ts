@@ -115,10 +115,11 @@ export function compareVersions(before: string, after: string, authorText: strin
  * `pairKeepingOrder` describes. Both pair whole wording as often, but they
  * can pair different copies by label. The one that keeps more units is
  * used, then the one that keeps more of them in order, and the one by whole
- * wording alone on a tie. So below `PAIRING_BUDGET`, a label added to one
- * copy of repeated wording does not make the copies read as moved. No
- * comparison keeps fewer units than whole wording alone would, nor fewer in
- * order when it keeps as many. Which unit reads as dropped, and which labels
+ * wording alone on a tie. No comparison keeps fewer units than whole wording
+ * alone would, nor fewer in order when it keeps as many. Neither match is
+ * searched again after `pairKeepingOrder` leaves out pairs by label, so when
+ * repeated wording and labels both change, a unit that another pairing
+ * would keep in place can read as moved or as a step out of order. Which unit reads as dropped, and which labels
  * are counted, can differ from whole wording alone.
  *
  * An after unit still left over is sorted in this order:
@@ -687,12 +688,12 @@ function inOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, number
 
 /**
  * Pairs the after units with before units of the same text, or of the same
- * text after a label, so that the most pairs keep their order, and returns
- * what is left of each side.
+ * text after a label, by one search for the longest run of pairs that keep
+ * their order, and returns what is left of each side.
  *
  * Each after unit is offered every copy of its text in the original, last
  * copy first, and the longest run of offers in increasing original order is
- * the largest set of pairs that keep their order. A text past
+ * the largest set of offers that keep their order. A text past
  * `PAIRING_BUDGET` offers each after copy only the original copy at the same
  * place in document order. Copies left over pair in document order.
  *
@@ -703,8 +704,9 @@ function inOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, number
  * text has copies to spare and reads the same after its label. A text can
  * pair by label no more times than it has copies to spare, and a pair past
  * that is left out of the run. So whole wording pairs as often as it would
- * without labels, and a label added to one copy of repeated wording cannot
- * make the pairs cross. Units with the same text after a label, past
+ * without labels. The run is not searched again after that, so the pairs
+ * kept can cross where another choice of offers would keep them in order.
+ * Units with the same text after a label, past
  * `PAIRING_BUDGET` together, are not offered by label, and are left for
  * `compareUnits` to pair in document order.
  */
