@@ -473,9 +473,10 @@ describe("the order of the kept units", () => {
     const before = "1. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n2. ## Open the vent.\n\n       vent open\n3. Check the gauge.\n";
     const after = "1. Check the gauge.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. ## Open the vent.\n\n       vent open\n";
     expect(order(compareVersions(before, after, null))).toEqual({ moved: [], stepOrder: ["Check the gauge."] });
-    // Swapped with the step above, the table's step is the one named, so its cells count for it.
-    const swapped = "1. ## Open the vent.\n\n       vent open\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. Check the gauge.\n";
-    expect(order(compareVersions(before, swapped, null))).toEqual({ moved: [], stepOrder: ["Open the vent.", "vent open"] });
+    // With more kept units in the step below it, the table's step is the one named, header cells and all.
+    const longer = before.replace("vent open\n", "vent open\n\n   Wait. Then look. Then log. Then rest.\n");
+    const swapped = "1. ## Open the vent.\n\n       vent open\n\n   Wait. Then look. Then log. Then rest.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. Check the gauge.\n";
+    expect(order(compareVersions(longer, swapped, null))).toEqual({ moved: [], stepOrder: ["Close the valve.", "Valve", "Turns", "Main", "3"] });
   });
 
   test("the steps of a nested ordered list are read against each other, and not against the steps around them", () => {
