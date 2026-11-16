@@ -151,6 +151,7 @@ It does not yet pair a reworded unit with its original, or check that each numbe
 A moved row asks a person to check the move, because Part 5 allows a move that keeps its dependencies and the claim it qualifies.
 The comparison reads neither, beyond the question about "This", "It" or "These".
 Of two units that swap places, it names the one that stood first in the original.
+
 Of two steps that swap with other wording around them, it can name the one outside the longest order of the whole document instead.
 A label added to one copy of repeated wording moves nothing, but where one copy gains a label and another copy loses it, the labelled copy reads as moved.
 A number in a table that moved to another row reads as moved too, so the row cannot tell a changed value from a move.
