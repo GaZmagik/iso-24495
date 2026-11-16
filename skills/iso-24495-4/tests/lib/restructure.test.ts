@@ -107,11 +107,18 @@ function shuffled<T>(items: readonly T[], random: () => number): T[] {
   const result = [...items];
   for (let index = result.length - 1; index > 0; index--) {
     const other = Math.floor(random() * (index + 1));
-    const held = result[index] as T;
-    result[index] = result[other] as T;
+    const held = result[index];
+    const taken = result[other];
+    if (held === undefined || taken === undefined) continue;
+    result[index] = taken;
     result[other] = held;
   }
   return result;
+}
+
+/** Units as Markdown, each with a `**Purpose:**` label where it has one: a paragraph each, or an ordered list's items. */
+function labelledCopies(units: ReadonlyArray<{ text: string; label: boolean }>, asList: boolean): string {
+  return `${units.map((unit, index) => `${asList ? `${index + 1}. ` : ""}${unit.label ? "**Purpose:** " : ""}${unit.text}`).join(asList ? "\n" : "\n\n")}\n`;
 }
 
 /** The length of the longest strictly increasing run of values, read in order, found by comparing every pair: small inputs only. */
@@ -691,28 +698,28 @@ describe("a bold label is read only when the whole unit has no match", () => {
 });
 
 describe("a label gained or lost moves nothing", () => {
-  const VALVE = "Close the valve.";
+  const valve = "Close the valve.";
 
   test("a label added to one of two copies keeps both in order", () => {
     // Pairing the unlabelled copy first, with the original's first copy, left the labelled copy to pair
     // with the original's second, so the two pairs crossed and one copy read as moved.
-    const comparison = compareVersions(`${VALVE}\n\n${VALVE}\n`, `**Purpose:** ${VALVE}\n\n${VALVE}\n`, null);
+    const comparison = compareVersions(`${valve}\n\n${valve}\n`, `**Purpose:** ${valve}\n\n${valve}\n`, null);
     expect(order(comparison)).toEqual(IN_ORDER);
     expect(formatComparison(comparison, PATHS).split("\n")).toEqual([...HEAD, counts(2, 0, 0, 0, 0, 0, 0, 1, 0), ...TAIL]);
     expect(comparisonReport(comparison, PATHS).newLabels).toEqual([{ line: 1, kind: "sentence", excerpt: "Purpose:" }]);
   });
 
   test("a label added to one step of an ordered list leaves every step in order", () => {
-    expect(order(compareVersions(`1. ${VALVE}\n2. ${VALVE}\n`, `1. **Purpose:** ${VALVE}\n2. ${VALVE}\n`, null))).toEqual(IN_ORDER);
-    expect(order(compareVersions(`1. ${VALVE}\n2. ${VALVE}\n3. ${VALVE}\n`, `1. ${VALVE}\n2. **Purpose:** ${VALVE}\n3. ${VALVE}\n`, null))).toEqual(IN_ORDER);
+    expect(order(compareVersions(`1. ${valve}\n2. ${valve}\n`, `1. **Purpose:** ${valve}\n2. ${valve}\n`, null))).toEqual(IN_ORDER);
+    expect(order(compareVersions(`1. ${valve}\n2. ${valve}\n3. ${valve}\n`, `1. ${valve}\n2. **Purpose:** ${valve}\n3. ${valve}\n`, null))).toEqual(IN_ORDER);
   });
 
   test("a label added to a middle copy, or to the first and the last, leaves every copy in order", () => {
-    const three = `${VALVE}\n\n${VALVE}\n\n${VALVE}\n`;
+    const three = `${valve}\n\n${valve}\n\n${valve}\n`;
     for (const after of [
-      `${VALVE}\n\n**Purpose:** ${VALVE}\n\n${VALVE}\n`,
-      `**Purpose:** ${VALVE}\n\n${VALVE}\n\n**Purpose:** ${VALVE}\n`,
-      `${VALVE}\n\n${VALVE}\n\n**Purpose:** ${VALVE}\n`,
+      `${valve}\n\n**Purpose:** ${valve}\n\n${valve}\n`,
+      `**Purpose:** ${valve}\n\n${valve}\n\n**Purpose:** ${valve}\n`,
+      `${valve}\n\n${valve}\n\n**Purpose:** ${valve}\n`,
     ]) {
       const comparison = compareVersions(three, after, null);
       expect(order(comparison), after).toEqual(IN_ORDER);
@@ -721,10 +728,10 @@ describe("a label gained or lost moves nothing", () => {
   });
 
   test("a label lost from one of two copies keeps both in order", () => {
-    const comparison = compareVersions(`**Purpose:** ${VALVE}\n\n${VALVE}\n`, `${VALVE}\n\n${VALVE}\n`, null);
+    const comparison = compareVersions(`**Purpose:** ${valve}\n\n${valve}\n`, `${valve}\n\n${valve}\n`, null);
     expect(order(comparison)).toEqual(IN_ORDER);
-    expect(sorted(comparison)).toEqual(only({ kept: [VALVE, VALVE], labelsGone: ["Purpose:"] }));
-    expect(order(compareVersions(`${VALVE}\n\n**Purpose:** ${VALVE}\n`, `${VALVE}\n\n${VALVE}\n`, null))).toEqual(IN_ORDER);
+    expect(sorted(comparison)).toEqual(only({ kept: [valve, valve], labelsGone: ["Purpose:"] }));
+    expect(order(compareVersions(`${valve}\n\n**Purpose:** ${valve}\n`, `${valve}\n\n${valve}\n`, null))).toEqual(IN_ORDER);
   });
 
   test("a copy that gains a label and moves is the one unit moved", () => {
@@ -738,8 +745,8 @@ describe("a label gained or lost moves nothing", () => {
 
   test("a label that passes from one copy to another reads as a move, because whole wording pairs first", () => {
     // The labelled copy matches its original whole, so it is kept as it stood, and it now stands first.
-    const comparison = compareVersions(`${VALVE}\n\n**Purpose:** ${VALVE}\n`, `**Purpose:** ${VALVE}\n\n${VALVE}\n`, null);
-    expect(order(comparison)).toEqual({ moved: [VALVE], stepOrder: [] });
+    const comparison = compareVersions(`${valve}\n\n**Purpose:** ${valve}\n`, `**Purpose:** ${valve}\n\n${valve}\n`, null);
+    expect(order(comparison)).toEqual({ moved: [valve], stepOrder: [] });
     expect([comparison.newLabels.length, comparison.labelsGone.length]).toEqual([0, 0]);
   });
 
@@ -771,10 +778,8 @@ describe("a label gained or lost moves nothing", () => {
       const gains = new Map(texts.map(text => [text, random() < 0.5]));
       const changed = units.map(unit => (random() < 0.5 ? { ...unit, label: gains.get(unit.text) === true } : unit));
       const asList = random() < 0.5;
-      const write = (version: ReadonlyArray<{ text: string; label: boolean }>): string =>
-        `${version.map((unit, index) => `${asList ? `${index + 1}. ` : ""}${unit.label ? "**Purpose:** " : ""}${unit.text}`).join(asList ? "\n" : "\n\n")}\n`;
-      const before = write(units);
-      const after = write(changed);
+      const before = labelledCopies(units, asList);
+      const after = labelledCopies(changed, asList);
       const comparison = compareVersions(before, after, null);
       expect(order(comparison), `${before}->\n${after}`).toEqual(IN_ORDER);
       expect(comparison.kept, `${before}->\n${after}`).toHaveLength(length);
@@ -824,14 +829,13 @@ describe("moved and step order agree on one longest order", () => {
       const afterOrder = shuffled(beforeOrder, random);
       const comparison = compareVersions(`${blocks.join("\n\n")}\n`, `${afterOrder.join("\n\n")}\n`, null);
       const label = `${beforeOrder.join(" ")} -> ${afterOrder.join(" ")}`;
-      const place = (text: string): number => afterOrder.indexOf(text);
       const moved = new Set(comparison.moved.map(pair => pair.after.key));
       const outOfStep = new Set(comparison.stepOrder.map(pair => pair.after.key));
       expect([...moved].filter(text => outOfStep.has(text)), label).toEqual([]);
-      expect(longestIncreasingLength(beforeOrder.filter(text => !moved.has(text)).map(place)), label).toBe(longestIncreasingLength(beforeOrder.map(place)));
-      expect(isIncreasing(beforeOrder.filter(text => !moved.has(text) && !outOfStep.has(text)).map(place)), label).toBe(true);
-      const kept = stepTexts.filter(text => !outOfStep.has(text)).map(place);
-      expect([isIncreasing(kept), kept.length], label).toEqual([true, longestIncreasingLength(stepTexts.map(place))]);
+      expect(longestIncreasingLength(beforeOrder.filter(text => !moved.has(text)).map(text => afterOrder.indexOf(text))), label).toBe(longestIncreasingLength(beforeOrder.map(text => afterOrder.indexOf(text))));
+      expect(isIncreasing(beforeOrder.filter(text => !moved.has(text) && !outOfStep.has(text)).map(text => afterOrder.indexOf(text))), label).toBe(true);
+      const kept = stepTexts.filter(text => !outOfStep.has(text)).map(text => afterOrder.indexOf(text));
+      expect([isIncreasing(kept), kept.length], label).toEqual([true, longestIncreasingLength(stepTexts.map(text => afterOrder.indexOf(text)))]);
     }
   });
 });
