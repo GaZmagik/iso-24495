@@ -445,6 +445,9 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(signposts("See also\n========\n")).toEqual([emptyAt(1)]);
     expect(signposts("See also\n--------\n- [Install](install.md)\n")).toEqual([]);
     expect(signposts("Further\nreading\n-------\n\n## Next\n")).toEqual([emptyAt(1, "Further reading")]);
+    // A deeper setext heading's underline is part of that heading, not content
+    // for the signpost above. Two dashes are too few for a thematic break.
+    expect(signposts("# See also\n\nGuides\n--\n")).toEqual([emptyAt(1)]);
   });
 
   test("Windows line endings give the same findings", () => {
