@@ -535,7 +535,7 @@ describe("the two-version comparison, given --before", () => {
         "|------|--------|-------|---------|",
         "| dropped | 3 | | No unchanged copy is in the new version: \"Open the vent.\" |",
         "| added | | 4 | Not in the original or the author's wording. Confirm its source: \"Check the gauge.\" |",
-        "Kept 2: in order 2, moved 0, steps out of order 0. Dropped 1. Added 1. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
+        "Kept 2: moved 0, steps out of order 0. Dropped 1. Added 1. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
         "The comparison reads wording, not meaning.",
         "It does not yet pair a reworded unit with its original, or check that each number and code span is still there.",
       ]);
@@ -570,7 +570,7 @@ describe("the two-version comparison, given --before", () => {
       expect([lines[0], lines[3], lines[4]]).toEqual([
         "Restructure comparison: before `old.md`, after `new.md`, author's wording `notes.txt`",
         "| from the author | | 3 | Matches the author's wording: \"Readers are fitters.\" |",
-        "Kept 1: in order 1, moved 0, steps out of order 0. Dropped 0. Added 0. From the author 1. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
+        "Kept 1: moved 0, steps out of order 0. Dropped 0. Added 0. From the author 1. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
       ]);
     } finally {
       rmSync(project, { recursive: true, force: true });
@@ -584,11 +584,11 @@ describe("the two-version comparison, given --before", () => {
       writeFileSync(join(project, "new.md"), "---\ntitle: New title.\n---\n\nBody.\n");
       const set = capture();
       expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md")], set.writeOut, set.writeErr)).toBe(0);
-      expect(set.stdout[1]).toContain("Kept 1: in order 1, moved 0, steps out of order 0. Dropped 0. Added 0.");
+      expect(set.stdout[1]).toContain("Kept 1: moved 0, steps out of order 0. Dropped 0. Added 0.");
       const text = capture();
       expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md"), "--no-front-matter"], text.writeOut, text.writeErr)).toBe(0);
       // Read as text, the block's line above its closing "---" is a heading, so the change is counted.
-      expect(text.stdout[1]).toContain("Kept 1: in order 1, moved 0, steps out of order 0. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 1. Headings gone 1.");
+      expect(text.stdout[1]).toContain("Kept 1: moved 0, steps out of order 0. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 1. Headings gone 1.");
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
@@ -605,7 +605,7 @@ describe("the two-version comparison, given --before", () => {
       expect(output.stdout[1]?.split("\n").slice(3, 6)).toEqual([
         "| step order | 1 | 2 | A step of an ordered list now stands in another order against its neighbouring steps. Put it back, or confirm the steps can happen in this order: \"Close the valve.\" |",
         "| moved | 4 | 4 | Kept, but moved out of its original order. Check that it keeps what it depends on and the claim it qualifies: \"This keeps water out.\" It opens with \"This\". Check what \"This\" refers to in its new place. |",
-        "Kept 5: in order 3, moved 1, steps out of order 1. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
+        "Kept 5: moved 1, steps out of order 1. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
       ]);
       const report = JSON.parse(readFileSync(json, "utf8")) as { restructure: { moved: unknown; stepOrder: unknown } };
       expect(report.restructure.moved).toEqual([{ before: 4, after: 4, kind: "sentence", excerpt: "This keeps water out.", run: 1, opensWith: "This" }]);

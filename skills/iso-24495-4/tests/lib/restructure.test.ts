@@ -26,7 +26,7 @@ const TAIL = [
  * units moved and the steps out of order are among those kept.
  */
 function counts(kept: number, dropped: number, added: number, author: number, gaps: number, newHeadings: number, headingsGone: number, newLabels: number, labelsGone: number, moved = 0, steps = 0): string {
-  return `Kept ${kept}: in order ${kept - moved - steps}, moved ${moved}, steps out of order ${steps}. `
+  return `Kept ${kept}: moved ${moved}, steps out of order ${steps}. `
     + `Dropped ${dropped}. Added ${added}. From the author ${author}. Marked gaps ${gaps}. `
     + `New headings ${newHeadings}. Headings gone ${headingsGone}. New labels ${newLabels}. Labels gone ${labelsGone}.`;
 }
@@ -473,10 +473,18 @@ describe("the order of the kept units", () => {
     const before = "1. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n2. ## Open the vent.\n\n       vent open\n3. Check the gauge.\n";
     const after = "1. Check the gauge.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. ## Open the vent.\n\n       vent open\n";
     expect(order(compareVersions(before, after, null))).toEqual({ moved: [], stepOrder: ["Check the gauge."] });
-    // With more kept units in the step below it, the table's step is the one named, header cells and all.
-    const longer = before.replace("vent open\n", "vent open\n\n   Wait. Then look. Then log. Then rest.\n");
-    const swapped = "1. ## Open the vent.\n\n       vent open\n\n   Wait. Then look. Then log. Then rest.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. Check the gauge.\n";
-    expect(order(compareVersions(longer, swapped, null))).toEqual({ moved: [], stepOrder: ["Close the valve.", "Valve", "Turns", "Main", "3"] });
+    // The step with the heading and the code has one kept unit fewer than the table's, so it is the one named.
+    // Were the heading, the code, a header cell or a row not read as part of its step, the other step would be.
+    const longer = before.replace("vent open\n", "vent open\n\n   Wait. Then look.\n");
+    const swapped = "1. ## Open the vent.\n\n       vent open\n\n   Wait. Then look.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. Check the gauge.\n";
+    expect(order(compareVersions(longer, swapped, null))).toEqual({ moved: [], stepOrder: ["Open the vent.", "vent open", "Wait.", "Then look."] });
+  });
+
+  test("lists nested on one line are read as separate lists", () => {
+    const before = "1. 1. Close the valve. Open the vent.\n   2. Check the gauge.\n";
+    expect(order(compareVersions(before, before, null))).toEqual(IN_ORDER);
+    expect(order(compareVersions(before, "1. 1. Open the vent. Close the valve.\n   2. Check the gauge.\n", null))).toEqual({ moved: ["Close the valve."], stepOrder: [] });
+    expect(order(compareVersions(before, "1. 1. Check the gauge.\n   2. Close the valve. Open the vent.\n", null))).toEqual({ moved: [], stepOrder: ["Check the gauge."] });
   });
 
   test("the steps of a nested ordered list are read against each other, and not against the steps around them", () => {
@@ -508,6 +516,18 @@ describe("the order of the kept units", () => {
   test("units next to each other in the original but not in the new version are two rows", () => {
     const rows = printed("Fit the seal. Check the lip. Close the lid. Wipe it. Dry it.\n", "Close the lid. Check the lip. Fit the seal. Wipe it. Dry it.\n").filter(row => row.startsWith("| moved |"));
     expect(rows).toEqual([`| moved | 1 | 1 | ${MOVED_ONE} "Fit the seal." |`, `| moved | 1 | 1 | ${MOVED_ONE} "Check the lip." |`]);
+  });
+
+  test("a section added above numbered headings leaves their numbers unread for order, and a numbered section moved whole is one row", () => {
+    const before = "# Guide\n\n## 1. Install\n\nRun it.\n\n## 2. Use\n\nOpen it.\n\n## 3. Update\n\nPull it.\n\n## 4. Remove\n\nDelete it.\n";
+    const renumbered = "# Guide\n\n## 1. Install\n\nRun it.\n\n## 2. Configure\n\nSet it.\n\n## 3. Use\n\nOpen it.\n\n## 4. Update\n\nPull it.\n\n## 5. Remove\n\nDelete it.\n";
+    const comparison = compareVersions(before, renumbered, null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    // A number is still kept: four pair, and the new section's number and the last are new headings.
+    expect([comparison.kept.length, comparison.newHeadings.map(unit => unit.key)]).toEqual([13, ["Configure", "5."]]);
+    const moved = "# Guide\n\n## 4. Remove\n\nDelete it.\n\n## 1. Install\n\nRun it.\n\n## 2. Use\n\nOpen it.\n\n## 3. Update\n\nPull it.\n";
+    expect(printed(before, moved).filter(row => row.startsWith("| moved |")))
+      .toEqual(["| moved | 15 | 3 | 2 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: \"Remove\" |"]);
   });
 
   test("a moved unit that opens with This, It or These is asked what that word refers to, and only the first of a run is", () => {
@@ -799,6 +819,13 @@ describe("matching takes time in proportion to the units", () => {
       `${MAKE_UNITS} const before = units(100_000, index => index % 2 === 0 ? "Same." : "Gone."); const after = units(50_000, () => "Same.");`
         + " const unrelated = units(50_000, index => `T${index}.`); const compare = (first, second) => compareUnits(first, second, []);",
       { kept: 50_000, moved: 0, stepOrder: 0 },
+    ],
+    [
+      "100,000 sentences in reverse order inside 5,000 nested ordered lists",
+      "const markers = \"1. \".repeat(5_000); const sentences = Array.from({ length: 100_000 }, (unused, index) => `Step ${index} now.`);"
+        + " const before = markers + sentences.join(\" \"); const after = markers + [...sentences].reverse().join(\" \");"
+        + " const unrelated = markers + sentences.map(sentence => sentence.replace(\"Step\", \"Task\")).join(\" \"); const compare = (first, second) => compareVersions(first, second, null);",
+      { kept: 100_000, moved: 99_999, stepOrder: 0 },
     ],
     [
       "100,000 ordered-list steps in reverse order",

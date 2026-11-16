@@ -50,6 +50,16 @@ const BOLD_LABEL = /^(\*\*|__)(?=\S)(.*?\S)\1(:?)\s+(?=\S)/;
  */
 const REFERENT = /^(This|It|These)(?![\p{L}\p{N}_])/u;
 
+/** Any letter, in any script. A heading's unit with none, such as the number of `## 4. Remove`, is not read for order. */
+const LETTER = /\p{L}/u;
+
+/**
+ * How many ordered lists around a unit, innermost first, its order is read
+ * against. Reading every list around every unit takes their product in time,
+ * which a long run of nested markers on one line makes large.
+ */
+const STEP_DEPTH = 10;
+
 /** The kinds of unit that are prose, so a word opening one can point back. */
 const PROSE_KINDS: ReadonlySet<UnitKind> = new Set(["sentence", "item", "cell"]);
 
@@ -251,7 +261,6 @@ export function documentUnits(text: string, reading: Reading = {}): Unit[] {
  */
 export function formatComparison(comparison: Comparison, paths: ComparedPaths): string {
   const author = paths.authorText === null ? "" : `, author's wording ${safePathCode(paths.authorText)}`;
-  const inOrder = comparison.kept.length - comparison.moved.length - comparison.stepOrder.length;
   const lines = [
     `Restructure comparison: before ${safePathCode(paths.before)}, after ${safePathCode(paths.after)}${author}`,
     "| Kind | Before | After | Finding |",
@@ -264,7 +273,7 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
     lines.push(row);
   }
   lines.push(
-    `Kept ${comparison.kept.length}: in order ${inOrder}, moved ${comparison.moved.length}, steps out of order ${comparison.stepOrder.length}. `
+    `Kept ${comparison.kept.length}: moved ${comparison.moved.length}, steps out of order ${comparison.stepOrder.length}. `
       + `Dropped ${comparison.dropped.length}. Added ${comparison.added.length}. `
       + `From the author ${comparison.fromAuthor.length}. Marked gaps ${comparison.gaps.length}. `
       + `New headings ${comparison.newHeadings.length}. Headings gone ${comparison.headingsGone.length}. `
@@ -425,6 +434,13 @@ export interface ReportedOrder {
  * Then every other kept unit is read in the same way, and those outside the
  * longest run in increasing new order are moved.
  *
+ * A heading's unit with no letter is not read for order at all, though it
+ * is kept. Headings split into sentences, so `## 4. Remove` gives the units
+ * `4.` and `Remove`, and when a section is added above it, its number pairs
+ * with the number of the heading below and would read as moved. Part 5 lets
+ * a restructure renumber headings, as it lets one change them. A unit counts
+ * for the `STEP_DEPTH` innermost ordered lists around it, and no more.
+ *
  * Where two such runs are as long, the one the search meets last in the
  * original wins, so of two units that swap places, the one that stood first
  * in the original is named. Each search takes time in proportion to n log n
@@ -435,8 +451,9 @@ export interface ReportedOrder {
  */
 function keptOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, number>): { moved: OrderedPair[]; stepOrder: OrderedPair[] } {
   const newPlace = kept.map(pair => afterIndex.get(pair.after) ?? 0);
+  const unread = kept.map(pair => pair.before.kind === "heading" && !LETTER.test(pair.before.key));
   const outOfStep = new Uint8Array(kept.length);
-  for (const positions of stepsByList(kept).values()) {
+  for (const positions of stepsByList(kept, unread).values()) {
     const ordered = positions.map(([position]) => position);
     // Units of one item stand together in the original, so each item is one run of the list to put in its new order.
     let start = 0;
@@ -453,7 +470,7 @@ function keptOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, numb
       if (inStep[index] === 0) outOfStep[position] = 1;
     }
   }
-  const others = kept.flatMap((pair, position) => outOfStep[position] === 1 ? [] : [position]);
+  const others = kept.flatMap((pair, position) => outOfStep[position] === 1 || unread[position] === true ? [] : [position]);
   const inPlace = longestIncreasing(others.map(position => newPlace[position] ?? 0));
   const moved = new Uint8Array(kept.length);
   for (const [index, position] of others.entries()) {
@@ -469,12 +486,15 @@ function keptOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, numb
 /**
  * For each ordered list of the original, the positions of the kept pairs
  * whose before unit stands in one of its items, in before order, each with
- * the item it stands in.
+ * the item it stands in. A pair is read only against the `STEP_DEPTH`
+ * innermost lists around it, and not at all when it is unread.
  */
-function stepsByList(kept: readonly KeptPair[]): Map<number, Array<[number, number]>> {
-  const lists = new Map<number, Array<[number, number]>>();
+function stepsByList(kept: readonly KeptPair[], unread: readonly boolean[]): Map<string, Array<[number, number]>> {
+  const lists = new Map<string, Array<[number, number]>>();
   for (const [position, pair] of kept.entries()) {
-    for (const step of pair.before.steps ?? []) {
+    if (unread[position] === true) continue;
+    const chain = pair.before.steps ?? [];
+    for (const step of chain.slice(Math.max(0, chain.length - STEP_DEPTH))) {
       const list = lists.get(step.list);
       if (list === undefined) {
         lists.set(step.list, [[position, step.item]]);

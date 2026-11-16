@@ -388,11 +388,13 @@ interface Parsed {
 
 /**
  * An item of an ordered list: the list, named by the index of the line its
- * first item stands on, and the item, named by the index of the line its
- * marker stands on.
+ * first item stands on and how many containers stand outside it, and the
+ * item, named by the index of the line its marker stands on. Lists nested on
+ * one line, as in `1. 1. Close the valve.`, share a first line, so the
+ * count of containers outside each tells them apart.
  */
 export interface ListStep {
-  readonly list: number;
+  readonly list: string;
   readonly item: number;
 }
 
@@ -852,8 +854,8 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
  */
 function noteSteps(steps: Map<number, ListStep[]>, index: number, stack: readonly Container[]): void {
   const chain: ListStep[] = [];
-  for (const container of stack) {
-    if (container.kind === "item" && !container.unordered) chain.push({ list: container.listId, item: container.line });
+  for (const [depth, container] of stack.entries()) {
+    if (container.kind === "item" && !container.unordered) chain.push({ list: `${container.listId}:${depth}`, item: container.line });
   }
   if (chain.length > 0) steps.set(index, chain);
 }
