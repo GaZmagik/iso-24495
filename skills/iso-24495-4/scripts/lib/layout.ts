@@ -65,7 +65,7 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
   }
   // Before the section count below, which returns early for a short document.
-  for (const finding of emptySignpostViolations(text, parsed.headings)) {
+  for (const finding of emptySignpostViolations(text, parsed)) {
     findings.push(finding);
   }
   const sections = parsed.headings.filter(heading => heading.level === 2);
@@ -87,20 +87,26 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
  * A heading is read when it sits outside every list and quotation and its
  * whole wording, after `signpostWording`, is one of the signpost labels, such
  * as "See also", "Related" or "Resources". Its section runs to the next such
- * heading at its level or above, or to the end of the text. The section is
- * empty when `showsAnything` finds nothing in it, with each deeper heading's
- * own lines set aside.
+ * heading at its level or above, or to the end of the text.
+ *
+ * It reports a section only when it can tell that nothing in it shows, and
+ * counts every other form as content. So a form it does not know can cost a
+ * finding but never gives a false one. The section is empty when each
+ * stretch in it passes `stretchShowsNothing` and no deeper heading in it
+ * holds a link or an image.
  *
  * @param text The whole document, as `layoutViolations` was given it.
- * @param headings The headings outside every list and quotation, in document
- *     order, as `structure` gives them.
+ * @param parsed The structural reading of that text, as `structure` gives it.
  * @returns One finding for each empty signpost, on the line its heading
  *     starts, in document order. Empty when there is none.
  */
-export function emptySignpostViolations(text: string, headings: readonly Heading[]): Violation[] {
+export function emptySignpostViolations(text: string, parsed: Pick<ReturnType<typeof structure>, "headings" | "markupLines" | "code">): Violation[] {
+  const { headings } = parsed;
   const lines = toLines(text);
-  // Each stretch is rendered at most once, and only when a signpost's
-  // section reaches it: 0 not yet read, 1 shows something, 2 shows nothing.
+  const codeStarts = new Set(parsed.code.map(block => block.line));
+  // Each stretch between one heading and the next is read at most once, and
+  // only when a signpost's section reaches it: 0 not yet read, 1 shows
+  // something, 2 shows nothing.
   const read = new Int8Array(headings.length);
   // Where each heading's section ends: the position of the next heading at
   // its level or above. Each heading enters and leaves the stack once.
@@ -116,9 +122,10 @@ export function emptySignpostViolations(text: string, headings: readonly Heading
   headings.forEach((heading, position) => {
     if (!SIGNPOST_LABELS.has(signpostWording(heading.text))) return;
     // A stretch sits in the sections of at most six headings, one at each
-    // level, so no stretch is read more than six times.
+    // level, so no stretch or heading is read more than six times.
     for (let stretch = position; stretch < (sectionEnd[position] ?? headings.length); stretch++) {
-      if (read[stretch] === 0) read[stretch] = stretchShowsAnything(lines, headings, stretch) ? 1 : 2;
+      if (stretch > position && headingNamesDestination(lines, headings[stretch])) return;
+      if (read[stretch] === 0) read[stretch] = stretchShowsNothing(lines, parsed.markupLines, codeStarts, headings, stretch) ? 2 : 1;
       if (read[stretch] === 1) return;
     }
     findings.push({
@@ -129,83 +136,117 @@ export function emptySignpostViolations(text: string, headings: readonly Heading
   return findings;
 }
 
-/** Stands in for something a reader sees that has no text of its own, such as an image or an empty code block. */
-const SHOWN = "x";
+/**
+ * Text a deeper heading's own lines hold when it may link somewhere: a
+ * bracket for a link, an image or a footnote, an angle bracket for HTML or
+ * an autolink, an address, or a web address with no brackets around it.
+ */
+const DESTINATION_MARK = /[[\]<>@]|:\/\/|www\./i;
+
+/**
+ * Whether a heading's own lines may hold a link or an image, which names
+ * somewhere to go. The structural reading's wording has lost link syntax, so
+ * the source lines are read instead, without a setext heading's underline.
+ */
+function headingNamesDestination(lines: readonly string[], heading: Heading | undefined): boolean {
+  if (heading === undefined) return true;
+  return lines.slice(heading.line - 1, heading.line - 1 + heading.lines).some(line => DESTINATION_MARK.test(line));
+}
+
+/** A line the parser reads as blank: spaces and tabs only. */
+const BLANK = /^[ \t]*$/;
+/** The start of an HTML comment block, as CommonMark has it. */
+const COMMENT_OPEN = /^ {0,3}<!--/;
+/** A thematic break, which a reader sees as a rule and nothing more. The parser's own pattern is not exported. */
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+/** The quotation markers at the start of a line, each with its optional space. */
+const QUOTE_MARKERS = /^(?: {0,3}> ?)+/;
 /**
  * A character a reader can see: anything but white space, a control or format
  * character, a character Unicode says to show as nothing, such as a zero-width
  * space or a Hangul filler, or the blank braille pattern.
  */
 const VISIBLE = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/u;
-/**
- * What the renderer gives for each element. A thematic break gives nothing.
- * A code block and an image give `SHOWN` even when empty. Raw HTML in a
- * block of its own gives `SHOWN` unless `unseenHtml` holds for it.
- */
-const RENDER = {
-  hr: (): string => "",
-  code: (): string => SHOWN,
-  image: (): string => SHOWN,
-  html: (children: string): string => (unseenHtml(children) ? "" : SHOWN),
-};
 
 /**
- * Whether the lines between one heading and the next show a reader anything.
+ * Whether the lines between one heading and the next show a reader nothing.
  * A setext heading's underline is part of the heading, not of the stretch.
  *
- * \param position Which heading the stretch follows, counted from 0.
- * \returns False for a stretch of blank lines, without rendering it.
+ * Each line must be one of these, and the structural reading must agree:
+ *
+ * - blank, with spaces and tabs only;
+ * - an HTML comment block, as `commentLine` reads it, which the structural
+ *   reading has blanked;
+ * - a link definition, which the structural reading has blanked and which
+ *   starts with a bracket;
+ * - a thematic break, after any quotation markers, which the structural
+ *   reading has left as written, unless a link definition is straight above;
+ * - text with no `VISIBLE` character and no NUL, left as written. A renderer
+ *   shows NUL as a replacement character.
+ *
+ * Any code block counts, so does a comment still open at the next heading,
+ * because then the structural reading and this one disagree. One still open
+ * at the end of the text runs to its end, as CommonMark has it.
+ *
+ * @param position Which heading the stretch follows, counted from 0.
  */
-function stretchShowsAnything(lines: readonly string[], headings: readonly Heading[], position: number): boolean {
+function stretchShowsNothing(
+  lines: readonly string[], markupLines: readonly string[], codeStarts: ReadonlySet<number>, headings: readonly Heading[], position: number,
+): boolean {
   const heading = headings[position];
+  if (heading === undefined) return false;
   const next = headings[position + 1];
-  const start = heading === undefined ? lines.length : heading.line - 1 + (heading.setext ? heading.lines + 1 : heading.lines);
+  const start = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0);
   const end = next === undefined ? lines.length : next.line - 1;
-  const stretch = lines.slice(start, Math.max(start, end)).join("\n");
-  return /\S/.test(stretch) && showsAnything(stretch);
-}
-
-/**
- * Whether a block of raw HTML holds only comments, with white space between
- * them. A comment ends at the first `-->` or `--!>`, as a browser reads it,
- * and `<!-->` ends where it starts. One with no end runs to the end of the
- * block, as CommonMark has it. Other markup a browser hides, such as `<?x ?>`,
- * is not read as hidden, because a browser ends it at the first `>` and text
- * after that can show. It is read with `indexOf`, because a regular expression
- * gave no match on a block of 900,000 characters that it should have matched.
- */
-function unseenHtml(block: string): boolean {
-  let at = 0;
-  while (at < block.length) {
-    if (/\s/.test(block.charAt(at))) {
-      at++;
+  let inComment = false;
+  // Whether the line above was a link definition. A renderer can read dashes
+  // straight below one as text, so they count.
+  let belowDefinition = false;
+  for (let index = start; index < end; index++) {
+    if (codeStarts.has(index + 1)) return false;
+    const source = lines[index] ?? "";
+    const markup = markupLines[index] ?? "";
+    const definitionAbove = belowDefinition;
+    belowDefinition = false;
+    if (inComment || COMMENT_OPEN.test(source)) {
+      const after = commentLine(source, inComment);
+      if (after === null || !BLANK.test(markup)) return false;
+      inComment = after.open;
       continue;
     }
-    if (!block.startsWith("<!--", at)) return false;
-    const close = block.indexOf("-->", at + 2);
-    const bang = block.indexOf("--!>", at + 2);
-    if (close === -1 && bang === -1) return true;
-    at = close !== -1 && (bang === -1 || close < bang) ? close + 3 : bang + 4;
+    if (BLANK.test(source)) continue;
+    if (BLANK.test(markup) && /^ {0,3}\[/.test(source)) {
+      belowDefinition = true;
+      continue;
+    }
+    if (markup !== source) return false;
+    if (!definitionAbove && THEMATIC_BREAK.test(source.replace(QUOTE_MARKERS, ""))) continue;
+    if (!VISIBLE.test(source) && !source.includes("\u0000")) continue;
+    return false;
   }
-  return true;
+  return !inComment || next === undefined;
 }
 
 /**
- * Whether a stretch of Markdown shows a reader anything, as Bun's CommonMark
- * renderer reads it.
+ * How one line of an HTML comment block reads. A comment ends at the first
+ * `-->`, and the line it ends on must hold nothing after it.
  *
- * Its caller ends each stretch at every heading the structural reading finds
- * outside lists and quotations, so any heading here shows its wording, as one
- * in a list does. A thematic break and raw HTML for which `unseenHtml` holds
- * show nothing, and so does a link definition in any form the renderer accepts,
- * a footnote body among them.
- * Raw HTML inside a paragraph reaches this reading as text, so it counts even
- * when it is only a comment.
- *
- * @returns True when the rendering holds a `VISIBLE` character.
+ * @param open Whether a comment is open where the line starts. When it is
+ *     not, the line starts one.
+ * @returns Whether a comment is still open where the line ends. Null when
+ *     anything on the line could show: text or a second comment after the
+ *     end, or a comment a browser ends early, at `--!>` or at `<!-->`.
  */
-function showsAnything(markdown: string): boolean {
-  return VISIBLE.test(Bun.markdown.render(markdown, RENDER));
+function commentLine(source: string, open: boolean): { open: boolean } | null {
+  let from = 0;
+  if (!open) {
+    from = COMMENT_OPEN.exec(source)?.[0].length ?? 0;
+    if (source.startsWith(">", from) || source.startsWith("->", from)) return null;
+  }
+  const close = source.indexOf("-->", from);
+  if (source.slice(from, close === -1 ? source.length : close).includes("--!>")) return null;
+  if (close === -1) return { open: true };
+  return BLANK.test(source.slice(close + 3)) ? { open: false } : null;
 }
 
 /**

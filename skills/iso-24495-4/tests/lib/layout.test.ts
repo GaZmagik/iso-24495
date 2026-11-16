@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { emptySignpostViolations, layoutViolations, normaliseWording, headingIds } from "../../scripts/lib/layout.ts";
 import * as layoutModule from "../../scripts/lib/layout.ts";
-import { structure } from "../../scripts/lib/parse.ts";
+import { structure, toLines } from "../../scripts/lib/parse.ts";
 import { auditCorpus, auditText } from "../../scripts/audit-corpus.ts";
 import { selectDocuments } from "../../scripts/lib/jev/audit.ts";
 import { auditTarget } from "../../../iso-24495-text-audit/scripts/audit-text.ts";
@@ -373,8 +373,11 @@ describe("the structural reading lists code blocks and prose blocks", () => {
   });
 });
 
+/** Every text the signpost tests read, so the oracle below can check each finding against Bun's renderer. */
+const SIGNPOST_SPECIMENS = new Set<string>();
 /** The empty-signpost findings alone, as line and detail. */
 function signposts(text: string, frontMatter?: boolean): Array<{ line: number; detail: string }> {
+  if (frontMatter === undefined) SIGNPOST_SPECIMENS.add(text);
   return layoutViolations(text, frontMatter === undefined ? {} : { frontMatter })
     .filter(finding => finding.rule === "empty-signpost")
     .map(finding => ({ line: finding.line, detail: finding.detail }));
@@ -382,6 +385,77 @@ function signposts(text: string, frontMatter?: boolean): Array<{ line: number; d
 /** The finding for a signpost heading with this wording, on this line. */
 function emptyAt(line: number, wording = "See also"): { line: number; detail: string } {
   return { line, detail: `The "${wording}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.` };
+}
+/** How long `structure` takes to read this text, in milliseconds. */
+function parseTime(text: string): number {
+  const started = performance.now();
+  structure(text);
+  return performance.now() - started;
+}
+/**
+ * The fastest of three empty-signpost scans of this text, in milliseconds.
+ * The parse the scan reads is not timed. Each scan must find this many.
+ */
+function fastestScan(text: string, found: number): number {
+  const parsed = structure(text);
+  const scans: number[] = [];
+  for (let run = 0; run < 3; run++) {
+    const started = performance.now();
+    const findings = emptySignpostViolations(text, parsed);
+    scans.push(performance.now() - started);
+    expect(findings).toHaveLength(found);
+  }
+  return Math.min(...scans);
+}
+
+/** Bun's CommonMark renderer, as far as the oracle below uses it. */
+interface MarkdownRenderer { render(text: string, callbacks: object): string }
+/**
+ * Bun's CommonMark renderer, where this Bun has one. It is a test oracle for
+ * the empty-signpost rule and never part of the rule: Bun 1.3.7 has none.
+ */
+function markdownRenderer(): MarkdownRenderer | undefined {
+  return (Bun as unknown as { markdown?: MarkdownRenderer }).markdown;
+}
+/** Stands in for something a reader sees that is not text: a link, an image or code. */
+const SEEN = "\uE000";
+/** A character a reader can see. */
+const SEEN_CHARACTER = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/u;
+
+/**
+ * Whether a block of raw HTML is only comments, as a browser reads it.
+ * Written apart from the rule's own scan, so the two can disagree.
+ */
+function onlyComments(html: string): boolean {
+  return !html.includes("--!>") && html.replace(/<!--(?!-?>)[\s\S]*?(?:-->|$)/g, "").trim() === "";
+}
+
+/**
+ * Whether Bun's renderer shows a reader nothing beneath the heading on this
+ * line. The section ends where the shared reading ends it, so a heading that
+ * reading finds and Bun does not is outside this oracle. A deeper heading
+ * shows nothing unless it holds a link or an image.
+ */
+function rendersNothing(renderer: MarkdownRenderer, text: string, line: number): boolean {
+  const lines = toLines(text);
+  const { headings } = structure(text);
+  const position = headings.findIndex(heading => heading.line === line);
+  const heading = headings[position];
+  if (heading === undefined) throw new Error(`No heading on line ${line}.`);
+  const next = headings.slice(position + 1).find(later => later.level <= heading.level);
+  const start = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0);
+  const body = lines.slice(start, next === undefined ? lines.length : next.line - 1).join("\n");
+  // A heading of its own goes first, so the section does not start the text:
+  // a renderer drops a byte order mark only there.
+  const shown = renderer.render(`# Start\n${body}`, {
+    heading: (children: string) => (children.includes(SEEN) ? SEEN : ""),
+    link: (children: string) => SEEN + children,
+    image: () => SEEN,
+    code: () => SEEN,
+    hr: () => "",
+    html: (html: string) => (onlyComments(html) ? "" : SEEN),
+  });
+  return !SEEN_CHARACTER.test(shown);
 }
 
 describe("empty-signpost: a referral heading with nothing beneath it", () => {
@@ -417,50 +491,52 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(signposts("## See also\n\n```\n```\n")).toEqual([]);
   });
 
-  test("a comment, a link definition, a thematic break or an empty marker is not content", () => {
+  test("a comment, a link definition or a thematic break alone is not content", () => {
     expect(signposts("## See also\n\n<!-- Add the related guides. -->\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n<!--\nAdd the related guides.\n-->\n\n## Next\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n<!---->\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n[install]: install.md\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n  [install]: <install.md> \"The guide\"\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n---\n\n## Next\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n* * *\n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n- \n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n>\n")).toEqual([emptyAt(1)]);
-    // The renderer shows an empty task item as a box with nothing beside it.
-    expect(signposts("## See also\n\n- [ ]\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n<!-- None yet. -->\n\n[install]: install.md\n\n___\n")).toEqual([emptyAt(1)]);
   });
 
-  test("a link definition in any form CommonMark accepts shows nothing", () => {
-    // The renderer reads a footnote body as a definition. GitHub moves it to the end.
-    expect(signposts("## See also\n\n[^1]: guide.md\n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n[guide]:\n  guide.md\n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n[guide]:\tguide.md\n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n[guide]: guide.md\n  \"The guide\"\n")).toEqual([emptyAt(1)]);
-    // Not a definition, so a reader sees the brackets.
-    expect(signposts("## See also\n\n[guide]:\n")).toEqual([]);
-  });
-
-  test("a thematic break shows nothing inside a quotation or a list item too", () => {
+  test("a thematic break in a quotation is not content either", () => {
     expect(signposts("## See also\n\n> ---\n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n* ---\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n> > * * *\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n> Ask the help desk.\n")).toEqual([]);
+    // Five spaces after the marker make indented code, which a reader sees.
+    expect(signposts("## See also\n\n>     ---\n")).toEqual([]);
   });
 
-  test("text with no visible character shows nothing", () => {
-    for (const invisible of ["\u200B", "\uFEFF", "\u2060", "\u00AD", "\u3164", "\u2800", "\u00A0", "\u3000", "&#8203;", "&nbsp;", "\u200B\u200C\u200D", "\uFFF9"]) {
+  test("text of only invisible characters is not content", () => {
+    for (const invisible of ["\u200B", "\u2060", "\u00AD", "\u3164", "\u2800", "\u200B\u200C\u200D", "\uFFF9"]) {
       expect(signposts(`## See also\n\n${invisible}\n`), invisible).toEqual([emptyAt(1)]);
     }
     expect(signposts("## See also\n\n\u200BAsk the help desk.\n")).toEqual([]);
     // A combining mark on its own still counts.
     expect(signposts("## See also\n\n\u0301\n")).toEqual([]);
+    // A renderer shows NUL as a replacement character.
+    expect(signposts("## See also\n\n\u0000\n")).toEqual([]);
   });
 
-  test("raw HTML clears the heading unless it is only comments standing as their own block", () => {
+  test("invisible text above another line joins it in one paragraph, so the line below counts", () => {
+    // The definition and the indented line continue the paragraph, so a
+    // reader sees them as text.
+    expect(signposts("## See also\n\n\u00A0\n[install]: install.md\n")).toEqual([]);
+    expect(signposts("## See also\n\n\u200B\n    man install\n")).toEqual([]);
+    // The dashes make the invisible line a heading of its own, which ends the section.
+    expect(signposts("## See also\n\n\u200B\n---\n")).toEqual([emptyAt(1)]);
+  });
+
+  test("raw HTML clears the heading unless it is only a comment, standing as its own block", () => {
     expect(signposts("## See also\n\n<pre>man install</pre>\n")).toEqual([]);
     expect(signposts("## See also\n\n<pre>\nman install\n</pre>\n")).toEqual([]);
     expect(signposts("## See also\n\n<textarea>Ask the help desk.</textarea>\n")).toEqual([]);
+    expect(signposts("## See also\n\n<script>\nshow();\n</script>\n")).toEqual([]);
     expect(signposts("## See also\n\n<div></div>\n")).toEqual([]);
     expect(signposts("## See also\n\nAsk <span>here</span>.\n")).toEqual([]);
-    expect(signposts("## See also\n\n<!-- a --> <!-- b -->\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n<!-- a --> Ask the help desk.\n")).toEqual([]);
     // Only a comment shows nothing. A browser ends a processing instruction or
     // character data at the first ">", so text after it can show.
@@ -468,14 +544,55 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(signposts("## See also\n\n<?> Ask the help desk.\n")).toEqual([]);
     expect(signposts("## See also\n\n<![CDATA[ a > Ask the help desk. ]]>\n")).toEqual([]);
     expect(signposts("## See also\n\n<!-- a --!> Ask the help desk.\n")).toEqual([]);
-    expect(signposts("## See also\n\n<!-- a --!>\n")).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n<!--> Ask the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<!---> Ask the help desk.\n")).toEqual([]);
+    // A comment with no end runs to the end of the text, headings included.
     expect(signposts(`## See also\n\n${"<!-- ".repeat(200_000)}\n`)).toEqual([emptyAt(1)]);
     expect(signposts("## See also\n\n<!-- Add the guides.\n\n## Next\n")).toEqual([emptyAt(1)]);
-    // Inside a paragraph a comment counts, because the renderer passes it on as
-    // text, as it does an escaped one that a reader sees.
+    // Inside a paragraph a comment counts, as an escaped one does.
     expect(signposts("## See also\n\n&nbsp;<!-- a -->\n")).toEqual([]);
     expect(signposts("## See also\n\n\\<!-- a --\\>\n")).toEqual([]);
+  });
+
+  test("a deeper heading holding a link or an image counts, because it names somewhere to go", () => {
+    for (const heading of ["[Guides](guides.md)", "![Map](map.png)", "<a href=\"guides.md\">Guides</a>", "https://example.com", "www.example.com", "help@example.com"]) {
+      expect(signposts(`## See also\n\n### ${heading}\n\n## Next\n`), heading).toEqual([]);
+    }
+  });
+
+  test("limits: a section that shows nothing goes unreported unless each line is a form the rule knows", () => {
+    // An empty list item or quotation, and a thematic break in a list item.
+    expect(signposts("## See also\n\n- \n")).toEqual([]);
+    expect(signposts("## See also\n\n- [ ]\n")).toEqual([]);
+    expect(signposts("## See also\n\n>\n")).toEqual([]);
+    expect(signposts("## See also\n\n* ---\n")).toEqual([]);
+    // A link definition the shared reading does not take: a footnote body, a
+    // destination or title on the next line, or a tab after the colon.
+    expect(signposts("## See also\n\n[^1]: guide.md\n")).toEqual([]);
+    expect(signposts("## See also\n\n[guide]:\n  guide.md\n")).toEqual([]);
+    expect(signposts("## See also\n\n[guide]: guide.md\n  \"The guide\"\n")).toEqual([]);
+    expect(signposts("## See also\n\n[guide]:\tguide.md\n")).toEqual([]);
+    // Not a definition, so a reader sees the brackets.
+    expect(signposts("## See also\n\n[guide]:\n")).toEqual([]);
+    // A byte order mark or a wide or no-break space alone, which the shared
+    // reading blanks, and invisible text written as a character reference,
+    // which needs a renderer to read.
+    for (const blanked of ["\uFEFF", "\u00A0", "\u3000"]) {
+      expect(signposts(`## See also\n\n${blanked}\n`), blanked).toEqual([]);
+    }
+    expect(signposts("## See also\n\n&#8203;\n")).toEqual([]);
+    expect(signposts("## See also\n\n&nbsp;\n")).toEqual([]);
+    // Dashes straight below a link definition, which a renderer can show as text.
+    expect(signposts("## See also\n\n[install]: install.md\n---\n")).toEqual([]);
+    // A second comment on the line, or one ended by "--!>".
+    expect(signposts("## See also\n\n<!-- a --> <!-- b -->\n")).toEqual([]);
+    expect(signposts("## See also\n\n<!-- a --!>\n")).toEqual([]);
+  });
+
+  test("limits: headings are found as the shared reading finds them, so one inside an HTML block is read", () => {
+    // CommonMark makes the second line part of the HTML block. Every layout
+    // rule shares this reading; the oracle below cannot see it either.
+    expect(signposts("<div>\n## See also\n")).toEqual([emptyAt(2)]);
   });
 
   test("an image counts even with no alternative text", () => {
@@ -548,26 +665,30 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
 
   test("the scan takes no more than three times the parse it reads, so it does not grow with the square of the text", () => {
     // The parse of the same text is the baseline, so a slower or busier
-    // machine slows both. At this size the scan, which renders each stretch
-    // between headings once, took 1.2 to 1.5 times as long as the parse. No
-    // current mutant fails this test; it guards against a scan that reads on
-    // to the end of the text for each heading. The fastest of three scans is
-    // timed, because one scan alone once ran slower than the parse under load.
+    // machine slows both. The fastest of three scans is timed, because one
+    // scan alone once ran slower than the parse under load. It guards
+    // against a scan that reads on to the end of the text for each heading.
     const text = "## See also\n\n```\nx\n```\n\n### Resources\n\n".repeat(40_000);
-    let started = performance.now();
-    const parsed = structure(text);
-    const parse = performance.now() - started;
-    const scans: number[] = [];
-    let found: unknown[] = [];
-    for (let run = 0; run < 3; run++) {
-      started = performance.now();
-      found = emptySignpostViolations(text, parsed.headings);
-      scans.push(performance.now() - started);
-    }
-    expect(found).toHaveLength(40_000);
-    expect(Math.min(...scans)).toBeLessThan(3 * parse);
+    expect(fastestScan(text, 40_000)).toBeLessThan(3 * parseTime(text));
   }, 120_000);
 
+  test("the comment scan reads each line once, however many comments it holds or leaves open", () => {
+    // The baseline is the parse of plain text as long, because the parse of
+    // comments is itself slower and would hide a slow scan.
+    const shapes: Array<[string, number]> = [
+      // A closed comment on each of 80,000 lines.
+      [("## See also\n\n" + "<!-- x -->\n".repeat(2_000)).repeat(40), 40],
+      // 80,000 closed comments on one line. The second one counts as content.
+      ["## See also\n\n" + "<!-- x --> ".repeat(80_000) + "\n", 0],
+      // Comments over 2,000 lines each, and one line of openers that never close.
+      [("## See also\n\n<!--\n" + "x\n".repeat(2_000) + "-->\n").repeat(40), 40],
+      ["## See also\n\n" + "<!-- ".repeat(200_000) + "\n", 1],
+    ];
+    for (const [text, found] of shapes) {
+      const plain = "Text.\n".repeat(Math.ceil(text.length / 6));
+      expect(fastestScan(text, found)).toBeLessThan(3 * parseTime(plain));
+    }
+  }, 120_000);
   test("the full audit takes every layout finding however many there are, without spreading them into a call", () => {
     // A spread of 700,000 arguments into one call threw a RangeError on
     // Windows. A real document that long takes over a minute to audit, so the
@@ -581,4 +702,48 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
       stub.mockRestore();
     }
   }, 30_000);
+});
+
+describe("empty-signpost checked against Bun's renderer, a test oracle", () => {
+  // Bun before 1.3.8 has no renderer, so these tests are skipped there. The
+  // skip shows in the test count; it is not a pass. The rule never calls it.
+  const renderer = markdownRenderer();
+
+  test.skipIf(renderer === undefined)("each specimen above that the rule reports shows nothing in Bun's rendering", () => {
+    if (renderer === undefined) return;
+    const shown: string[] = [];
+    let checked = 0;
+    for (const text of SIGNPOST_SPECIMENS) {
+      for (const finding of emptySignpostViolations(text, structure(text))) {
+        checked++;
+        if (!rendersNothing(renderer, text, finding.line)) shown.push(JSON.stringify(text));
+      }
+    }
+    expect(shown).toEqual([]);
+    // The specimens above held 59 findings when this was written.
+    expect(checked).toBeGreaterThanOrEqual(59);
+  });
+
+  test.skipIf(renderer === undefined)("no two adjacent lines make the rule report what Bun's rendering shows", () => {
+    if (renderer === undefined) return;
+    const forms = ["", "<!-- c -->", "<!--", "c", "-->", "[x]: y", "[x]:", "  y", "---", "***", "=", "-", "- ", ">", "> ---", "> > * * *",
+      "\u200B", "\u00A0", "\uFEFF", "### Guides", "### [Guides](g.md)", "<pre>", "</pre>", "```"];
+    const lines = forms.flatMap(form => ["", "   ", "    ", "\t", "> "].map(indent => indent + form));
+    const shown: string[] = [];
+    let checked = 0;
+    for (const first of lines) {
+      for (const second of lines) {
+        for (const after of ["", "\n## Next"]) {
+          const text = `## See also\n${first}\n${second}${after}\n`;
+          for (const finding of emptySignpostViolations(text, structure(text))) {
+            checked++;
+            if (!rendersNothing(renderer, text, finding.line)) shown.push(JSON.stringify(text));
+          }
+        }
+      }
+    }
+    expect(shown).toEqual([]);
+    // 1,846 findings when this was written.
+    expect(checked).toBeGreaterThanOrEqual(1_846);
+  }, 120_000);
 });

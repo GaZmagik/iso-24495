@@ -37,7 +37,7 @@ Front matter is excluded from prose checks, but recognised edition metadata can 
 - **Version or date:** Ask whether a titled document needs edition metadata when none is recognised in its opening or front matter.
 - **Bullet depth:** Report unordered items beyond two unordered ancestors, counting the item itself and ignoring ordered or quote containers.
 - **Overview label:** At six root H2 sections, require an Overview or Summary heading before the first content H2, at any heading level outside lists and quotations.
-- **Empty signpost:** Report a heading worded as a referral, such as See also, Related or Resources, with nothing a reader sees beneath it, as Bun's CommonMark renderer shows the section. Text of only invisible characters, such as a zero-width space, shows nothing. Its section ends at the next heading at its level or above, and headings in lists and quotations are not read.
+- **Empty signpost:** Report a heading worded as a referral, such as See also, Related or Resources, with nothing beneath it. Blank lines, comments, one-line link definitions, thematic breaks and invisible text count as nothing. Any other line counts as content, so some sections that show nothing go unreported. Its section ends at the next heading at its level or above, and headings in lists and quotations are not read.
 
 The section count includes Contents, excludes H3 subsections and ignores headings inside lists or quotations.
 Recognised contents labels:

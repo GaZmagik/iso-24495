@@ -171,8 +171,9 @@ The field's format is not validated, because YAML can change number spelling and
 Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
 
 The `empty-signpost` rule reports a heading worded as a referral, such as `See also`, `Related` or `Resources`, with nothing beneath it.
-Its section runs to the next heading at its level or above, and a deeper heading, a comment or a thematic break alone leaves it empty.
-It reads the section as Bun's CommonMark renderer shows it: invisible text or any link definition leaves it empty, and raw HTML other than a comment counts.
+Its section runs to the next heading at its level or above.
+A deeper heading, a comment, a one-line link definition, a thematic break or invisible text alone leaves it empty.
+Any other line counts as content, raw HTML other than a comment included, so some sections that show nothing go unreported.
 To clear it, list where else to go beneath the heading, or remove the heading when nothing else exists.
 It found none in 822 third-party Markdown files or in this repository's own documents, so its precision is unmeasured.
 
@@ -194,7 +195,7 @@ The shipped acronym list stays universal, so a technical vocabulary needs naming
 
 An unreadable or malformed file leaves the shipped list alone, because an advisory tool must never be the reason a document cannot be checked.
 
-The skill never runs automatically. It requires Bun 1.3.8 or later and does not alter the selected text.
+The skill never runs automatically. It requires Bun and does not alter the selected text.
 
 Directory audits skip selected or nested symbolic links and directory junctions. The result reports each skipped entry instead of reading beyond the selected path or following a cycle.
 
