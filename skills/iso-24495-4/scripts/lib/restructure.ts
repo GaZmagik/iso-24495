@@ -13,8 +13,10 @@
 // A move is allowed only where a unit's dependencies, its order against
 // neighbouring steps and the claim it qualifies survive. So the comparison
 // also finds the longest order the kept units share with the original, and
-// lists each kept unit outside it: a step of an ordered list as a step out
-// of order, and any other unit as moved, for a person to check.
+// lists each kept unit outside it once, for a person to check: a step of an
+// ordered list out of order against the other steps of its list as a step
+// out of order, and any other unit as moved. A step out of order against
+// its list is listed even where it stands inside that longest order.
 //
 // It reads wording, not meaning. A sentence reworded without any change of
 // meaning reads as dropped and added, and a sentence kept word for word whose
@@ -104,8 +106,17 @@ export function compareVersions(before: string, after: string, authorText: strin
  * Units left over on both sides are then matched again, where one opens with
  * a bold label ending in a colon, such as `**Purpose:**`, by the text after
  * its label. So a sentence that gained, lost or changed a label is kept, and
- * the label is counted. This second match runs only on what the first left,
+ * the label is counted. This second match pairs only what the first leaves,
  * so `Purpose: Fix the pump.` written as plain text still matches itself.
+ *
+ * Which copies the first match leaves decides whether the second match's
+ * pairs keep their order. So the first match is made twice: by whole
+ * wording alone, and with pairs by label weighed in the same search, as
+ * `pairKeepingOrder` describes. Both keep and count the same units. The one
+ * that keeps more units in order is used, and the one by whole wording alone
+ * when they keep as many. So a label added to one copy of repeated wording
+ * does not make the copies read as moved, and no comparison keeps fewer
+ * units in order than whole wording alone would.
  *
  * An after unit still left over is sorted in this order:
  *
@@ -126,23 +137,28 @@ export function compareVersions(before: string, after: string, authorText: strin
  *     out of step order, and every other unit in the order of its own version.
  */
 export function compareUnits(before: readonly Unit[], after: readonly Unit[], author: readonly Unit[]): Comparison {
-  const exact = pairKeepingOrder(before, after);
-  const byLabel = pairByText(exact.leftBefore, exact.leftAfter, withoutLabel);
   const beforeIndex = new Map(before.map((unit, index) => [unit, index]));
-  const kept = [...exact.pairs, ...byLabel.pairs].sort((first, second) => (beforeIndex.get(first.before) ?? 0) - (beforeIndex.get(second.before) ?? 0));
-  const { moved, stepOrder } = keptOrder(kept, new Map(after.map((unit, index) => [unit, index])));
+  const afterIndex = new Map(after.map((unit, index) => [unit, index]));
+  let match = matched(before, after, true, beforeIndex);
+  if (match.offeredByLabel) {
+    const wholeFirst = matched(before, after, false, beforeIndex);
+    if (inOrder(wholeFirst.kept, afterIndex) >= inOrder(match.kept, afterIndex)) match = wholeFirst;
+  }
+  const { kept, leftBefore, leftAfter } = match;
+  const { moved, stepOrder } = keptOrder(kept, afterIndex);
+  // A pair whose texts differ was paired by the text after a label, so it differs in its labels.
+  const byItsLabel = kept.filter(pair => pair.before.key !== pair.after.key);
   const comparison: Comparison = {
     before, after, author, kept, moved, stepOrder,
-    dropped: byLabel.leftBefore.filter(unit => unit.kind !== "heading"),
-    headingsGone: byHeading(byLabel.leftBefore.filter(unit => unit.kind === "heading")),
+    dropped: leftBefore.filter(unit => unit.kind !== "heading"),
+    headingsGone: byHeading(leftBefore.filter(unit => unit.kind === "heading")),
     added: [], fromAuthor: [], gaps: [], newHeadings: [],
-    // A pair the second match made differs in its labels, or the first would have made it.
-    newLabels: byLabel.pairs.filter(pair => pair.after.label !== undefined).map(pair => pair.after),
-    labelsGone: byLabel.pairs.filter(pair => pair.before.label !== undefined).map(pair => pair.before),
+    newLabels: byItsLabel.filter(pair => pair.after.label !== undefined).map(pair => pair.after),
+    labelsGone: byItsLabel.filter(pair => pair.before.label !== undefined).map(pair => pair.before),
   };
   const takeAuthor = waitingByText(author, unit => unit.key);
   const headingUnits: Unit[] = [];
-  for (const unit of byLabel.leftAfter) {
+  for (const unit of leftAfter) {
     if (ONE_SLOT.test(withoutLabel(unit))) {
       comparison.gaps.push(unit);
       if (unit.label !== undefined) comparison.newLabels.push(unit);
@@ -433,16 +449,23 @@ export interface ReportedOrder {
  * The kept pairs outside the longest order the kept units share with the
  * original: the units of steps out of order, then the units moved.
  *
+ * First, all the kept units read for order are read in original order, and
+ * the longest run of them in increasing new order is found.
+ *
  * A step is an item of an ordered list in the original. For each such list,
  * the kept units that stand in its items are read in original order, and
  * the units of each item are first put in their new order, so units that
  * change places inside one item change nothing here. Those outside the
- * longest run of them in increasing new order are steps out of order. A list
- * nested in an item is read on its own, and its units count for the item
- * that holds it too.
+ * longest run of them in increasing new order are steps out of order. Of
+ * runs as long, the one holding the most units of the first run is chosen.
+ * A list nested in an item is read on its own, and its units count for the
+ * item that holds it too.
  *
- * Then every other kept unit is read in the same way, and those outside the
- * longest run in increasing new order are moved.
+ * Then the longest run of all the kept units read for order is found again,
+ * holding as few steps out of order as a run that long can. Each unit
+ * outside it that is not a step out of order is moved. So every unit
+ * outside it is listed once, as a step out of order or as moved, and no
+ * unit is moved that a longest order could keep.
  *
  * A heading's unit with no letter is not read for order at all, though it
  * is kept. Headings split into sentences, so `## 4. Remove` gives the units
@@ -451,10 +474,10 @@ export interface ReportedOrder {
  * a restructure renumber headings, as it lets one change them. A unit counts
  * for the `STEP_DEPTH` innermost ordered lists around it, and no more.
  *
- * Where two such runs are as long, the one the search meets last in the
- * original wins, so of two units that swap places, the one that stood first
- * in the original is named. Each search takes time in proportion to n log n
- * for n units.
+ * Where two such runs tie on all these counts, the one the search meets
+ * last in the original wins, so of two units that swap places, the one that
+ * stood first in the original is named. Each search takes time in
+ * proportion to n log n for n units.
  *
  * @param kept The kept pairs, in before order.
  * @param afterIndex Where each after unit stands in its version.
@@ -462,6 +485,12 @@ export interface ReportedOrder {
 function keptOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, number>): { moved: OrderedPair[]; stepOrder: OrderedPair[] } {
   const newPlace = kept.map(pair => afterIndex.get(pair.after) ?? 0);
   const unread = kept.map(pair => pair.before.kind === "heading" && !LETTER.test(pair.before.key));
+  const read = kept.flatMap((pair, position) => unread[position] === true ? [] : [position]);
+  const inRead = longestIncreasing(read.map(position => newPlace[position] ?? 0));
+  const inPlace = new Uint8Array(kept.length);
+  for (const [index, position] of read.entries()) {
+    inPlace[position] = inRead[index] ?? 0;
+  }
   const outOfStep = new Uint8Array(kept.length);
   for (const positions of stepsByList(kept, unread).values()) {
     const ordered = positions.map(([position]) => position);
@@ -475,16 +504,16 @@ function keptOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, numb
       }
       start = end;
     }
-    const inStep = longestIncreasing(ordered.map(position => newPlace[position] ?? 0));
+    const inStep = longestIncreasingFavouring(ordered.map(position => newPlace[position] ?? 0), ordered.map(position => inPlace[position] ?? 0));
     for (const [index, position] of ordered.entries()) {
       if (inStep[index] === 0) outOfStep[position] = 1;
     }
   }
-  const others = kept.flatMap((pair, position) => outOfStep[position] === 1 || unread[position] === true ? [] : [position]);
-  const inPlace = longestIncreasing(others.map(position => newPlace[position] ?? 0));
+  // Of the longest orders, the one holding the fewest steps out of order, so a step is not listed twice over.
+  const settled = longestIncreasingFavouring(read.map(position => newPlace[position] ?? 0), read.map(position => 1 - (outOfStep[position] ?? 0)));
   const moved = new Uint8Array(kept.length);
-  for (const [index, position] of others.entries()) {
-    if (inPlace[index] === 0) moved[position] = 1;
+  for (const [index, position] of read.entries()) {
+    if (settled[index] === 0 && outOfStep[position] === 0) moved[position] = 1;
   }
   const rank = new Int32Array(kept.length);
   for (const [order, position] of kept.map((pair, index) => index).sort((first, second) => (newPlace[first] ?? 0) - (newPlace[second] ?? 0)).entries()) {
@@ -570,55 +599,198 @@ function longestIncreasing(values: readonly number[]): Uint8Array {
 }
 
 /**
- * Pairs the after units with before units of the same text, so that the
- * most pairs keep their order, and returns what is left of each side.
+ * Which values belong to one longest strictly increasing run of them, read
+ * in order, holding as many favoured values as a run that long can. The
+ * values must differ from each other. Where runs tie on both counts, the run
+ * chosen is the one `longestIncreasing` chooses when no value is favoured,
+ * or when every value is: the run that ends last, each value in it preceded
+ * by the last that can precede it. A tree of best runs over the values in
+ * sorted order finds each value's best run in time in proportion to log n,
+ * so the whole takes time in proportion to n log n.
+ *
+ * @param favoured One flag for each value, 1 where it is favoured.
+ * @returns One flag for each value, 1 where it belongs to the run.
+ */
+function longestIncreasingFavouring(values: readonly number[], favoured: readonly number[]): Uint8Array {
+  const count = values.length;
+  // A run's score is its length, and then its favoured values: a longer run wins whatever it favours.
+  const lengthWeight = count + 1;
+  const rank = new Int32Array(count);
+  for (const [order, index] of values.map((value, position) => position).sort((first, second) => (values[first] ?? 0) - (values[second] ?? 0)).entries()) {
+    rank[index] = order + 1;
+  }
+  // For each range of ranks the tree covers, the best score of a run ending in it, and the last index ending such a run.
+  const bestScore = new Float64Array(count + 1);
+  const bestIndex = new Int32Array(count + 1).fill(-1);
+  const score = new Float64Array(count);
+  const previous = new Int32Array(count);
+  let end = -1;
+  for (let index = 0; index < count; index++) {
+    let before = -1;
+    let beforeScore = 0;
+    for (let node = (rank[index] ?? 1) - 1; node > 0; node -= node & -node) {
+      if (bestIndex[node] !== -1 && ((bestScore[node] ?? 0) > beforeScore || (bestScore[node] ?? 0) === beforeScore && (bestIndex[node] ?? -1) > before)) {
+        beforeScore = bestScore[node] ?? 0;
+        before = bestIndex[node] ?? -1;
+      }
+    }
+    previous[index] = before;
+    score[index] = beforeScore + lengthWeight + (favoured[index] ?? 0);
+    for (let node = rank[index] ?? 1; node <= count; node += node & -node) {
+      if ((score[index] ?? 0) >= (bestScore[node] ?? 0)) {
+        bestScore[node] = score[index] ?? 0;
+        bestIndex[node] = index;
+      }
+    }
+    if (end === -1 || (score[index] ?? 0) >= (score[end] ?? 0)) end = index;
+  }
+  const chosen = new Uint8Array(count);
+  for (let index = end; index !== -1; index = previous[index] ?? -1) {
+    chosen[index] = 1;
+  }
+  return chosen;
+}
+
+/**
+ * Both matches `compareUnits` describes, the first as `pairKeepingOrder`
+ * makes it, with the kept pairs in before order.
+ *
+ * @param byLabel Whether the first match weighs pairs by label too.
+ */
+function matched(before: readonly Unit[], after: readonly Unit[], byLabel: boolean, beforeIndex: ReadonlyMap<Unit, number>): {
+  kept: KeptPair[]; leftBefore: Unit[]; leftAfter: Unit[]; offeredByLabel: boolean;
+} {
+  const first = pairKeepingOrder(before, after, byLabel);
+  const second = pairByText(first.leftBefore, first.leftAfter, withoutLabel);
+  const kept = [...first.pairs, ...second.pairs].sort((one, other) => (beforeIndex.get(one.before) ?? 0) - (beforeIndex.get(other.before) ?? 0));
+  return { kept, leftBefore: second.leftBefore, leftAfter: second.leftAfter, offeredByLabel: first.offeredByLabel };
+}
+
+/** How many kept pairs, in before order, keep their order: the length of the longest order they share. */
+function inOrder(kept: readonly KeptPair[], afterIndex: ReadonlyMap<Unit, number>): number {
+  let count = 0;
+  for (const flag of longestIncreasing(kept.map(pair => afterIndex.get(pair.after) ?? 0))) {
+    count += flag;
+  }
+  return count;
+}
+
+/**
+ * Pairs the after units with before units of the same text, or of the same
+ * text after a label, so that the most pairs keep their order, and returns
+ * what is left of each side.
  *
  * Each after unit is offered every copy of its text in the original, last
  * copy first, and the longest run of offers in increasing original order is
  * the largest set of pairs that keep their order. A text past
  * `PAIRING_BUDGET` offers each after copy only the original copy at the same
  * place in document order. Copies left over pair in document order.
+ *
+ * A text one version holds more copies of than the other has copies to
+ * spare, and only those can pair by the text after a label, as
+ * `compareUnits` describes. So an after unit of a text with copies to spare
+ * is also offered, in the same search, every unit of the original whose
+ * text has copies to spare and reads the same after its label. A text can
+ * pair by label no more times than it has copies to spare, and a pair past
+ * that is left out of the run. So whole wording pairs as often as it would
+ * without labels, and a label added to one copy of repeated wording cannot
+ * make the pairs cross. Units with the same text after a label, past
+ * `PAIRING_BUDGET` together, are not offered by label, and are left for
+ * `compareUnits` to pair in document order.
  */
-function pairKeepingOrder(before: readonly Unit[], after: readonly Unit[]): { pairs: KeptPair[]; leftBefore: Unit[]; leftAfter: Unit[] } {
+function pairKeepingOrder(before: readonly Unit[], after: readonly Unit[], byLabel: boolean): { pairs: KeptPair[]; leftBefore: Unit[]; leftAfter: Unit[]; offeredByLabel: boolean } {
   const copiesBefore = positionsByKey(before);
-  const weighed = weighedTexts(copiesBefore, positionsByKey(after));
+  const copiesAfter = positionsByKey(after);
+  const spareBefore = spareCopies(copiesBefore, copiesAfter);
+  const spareAfter = spareCopies(copiesAfter, copiesBefore);
+  // The original units that can pair by label, by their text after it, in document order.
+  const byLabelBefore = new Map<string, number[]>();
+  for (const [index, unit] of before.entries()) {
+    if (!byLabel || !spareBefore.has(unit.key)) continue;
+    const units = byLabelBefore.get(withoutLabel(unit));
+    if (units === undefined) {
+      byLabelBefore.set(withoutLabel(unit), [index]);
+    } else {
+      units.push(index);
+    }
+  }
+  const byLabelAfter = new Map<string, number>();
+  for (const unit of after) {
+    if (spareAfter.has(unit.key)) byLabelAfter.set(withoutLabel(unit), (byLabelAfter.get(withoutLabel(unit)) ?? 0) + 1);
+  }
+  const pairings: Array<[string, number]> = [];
+  for (const [key, copies] of copiesAfter) {
+    const original = copiesBefore.get(key);
+    if (original !== undefined) pairings.push([`whole ${key}`, original.length * copies.length]);
+  }
+  for (const [text, count] of byLabelAfter) {
+    const original = byLabelBefore.get(text);
+    if (original !== undefined) pairings.push([`label ${text}`, original.length * count]);
+  }
+  const weighed = withinBudget(pairings);
   const offeredBefore: number[] = [];
   const offeredAfter: number[] = [];
   const copiesSeen = new Map<string, number>();
+  let offeredByLabel = false;
   for (const [index, unit] of after.entries()) {
+    const offers: number[] = [];
     const copies = copiesBefore.get(unit.key);
-    if (copies === undefined) continue;
-    if (weighed.has(unit.key)) {
+    if (copies !== undefined && weighed.has(`whole ${unit.key}`)) {
       for (let copy = copies.length - 1; copy >= 0; copy--) {
-        offeredBefore.push(copies[copy] ?? 0);
-        offeredAfter.push(index);
+        offers.push(copies[copy] ?? 0);
       }
-    } else {
+    } else if (copies !== undefined) {
       const copy = copiesSeen.get(unit.key) ?? 0;
       copiesSeen.set(unit.key, copy + 1);
-      if (copy < copies.length) {
-        offeredBefore.push(copies[copy] ?? 0);
-        offeredAfter.push(index);
-      }
+      if (copy < copies.length) offers.push(copies[copy] ?? 0);
+    }
+    const labelled = spareAfter.has(unit.key) && weighed.has(`label ${withoutLabel(unit)}`) ? byLabelBefore.get(withoutLabel(unit)) ?? [] : [];
+    for (let offer = labelled.length - 1; offer >= 0; offer--) {
+      offers.push(labelled[offer] ?? 0);
+    }
+    if (labelled.length > 0) offeredByLabel = true;
+    // Last copy first across both kinds of offer, so no after unit pairs twice.
+    if (labelled.length > 0 && copies !== undefined) offers.sort((first, second) => second - first);
+    for (const offer of offers) {
+      offeredBefore.push(offer);
+      offeredAfter.push(index);
     }
   }
   const chosen = longestIncreasing(offeredBefore);
   const takenBefore = new Uint8Array(before.length);
   const takenAfter = new Uint8Array(after.length);
+  const labelledBefore = new Map<string, number>();
+  const labelledAfter = new Map<string, number>();
   const pairs: KeptPair[] = [];
   for (const [offer, beforeAt] of offeredBefore.entries()) {
-    if (chosen[offer] === 0) continue;
-    const afterAt = offeredAfter[offer] ?? 0;
+    const pair = { before: before[beforeAt], after: after[offeredAfter[offer] ?? 0] };
+    if (chosen[offer] === 0 || pair.before === undefined || pair.after === undefined) continue;
+    if (pair.before.key !== pair.after.key) {
+      const fromBefore = labelledBefore.get(pair.before.key) ?? 0;
+      const fromAfter = labelledAfter.get(pair.after.key) ?? 0;
+      if (fromBefore >= (spareBefore.get(pair.before.key) ?? 0) || fromAfter >= (spareAfter.get(pair.after.key) ?? 0)) continue;
+      labelledBefore.set(pair.before.key, fromBefore + 1);
+      labelledAfter.set(pair.after.key, fromAfter + 1);
+    }
     takenBefore[beforeAt] = 1;
-    takenAfter[afterAt] = 1;
-    const pair = { before: before[beforeAt], after: after[afterAt] };
-    if (pair.before !== undefined && pair.after !== undefined) pairs.push({ before: pair.before, after: pair.after });
+    takenAfter[offeredAfter[offer] ?? 0] = 1;
+    pairs.push({ before: pair.before, after: pair.after });
   }
   const rest = pairByText(before.filter((unit, index) => takenBefore[index] === 0), after.filter((unit, index) => takenAfter[index] === 0), unit => unit.key);
   for (const pair of rest.pairs) {
     pairs.push(pair);
   }
-  return { pairs, leftBefore: rest.leftBefore, leftAfter: rest.leftAfter };
+  return { pairs, leftBefore: rest.leftBefore, leftAfter: rest.leftAfter, offeredByLabel };
+}
+
+/** How many copies of each text one side holds past the other's, for each text it holds more of. */
+function spareCopies(side: ReadonlyMap<string, readonly number[]>, other: ReadonlyMap<string, readonly number[]>): Map<string, number> {
+  const spare = new Map<string, number>();
+  for (const [key, copies] of side) {
+    const past = copies.length - (other.get(key)?.length ?? 0);
+    if (past > 0) spare.set(key, past);
+  }
+  return spare;
 }
 
 /** Where each text stands in a list of units, its copies in document order. */
@@ -636,15 +808,12 @@ function positionsByKey(units: readonly Unit[]): Map<string, number[]> {
 }
 
 /**
- * The texts in both versions whose every pairing of copies is weighed: those
- * with the fewest pairings first, until the next would pass `PAIRING_BUDGET`.
+ * The names whose pairings are weighed: those with the fewest pairings
+ * first, until the next would pass `PAIRING_BUDGET`.
+ *
+ * @param pairings Each name, with how many pairings weighing it takes.
  */
-function weighedTexts(before: ReadonlyMap<string, readonly number[]>, after: ReadonlyMap<string, readonly number[]>): Set<string> {
-  const pairings: Array<[string, number]> = [];
-  for (const [key, copies] of after) {
-    const original = before.get(key);
-    if (original !== undefined) pairings.push([key, original.length * copies.length]);
-  }
+function withinBudget(pairings: Array<[string, number]>): Set<string> {
   pairings.sort((first, second) => first[1] - second[1]);
   const weighed = new Set<string>();
   let spent = 0;

@@ -1050,12 +1050,35 @@ describe("matching takes time in proportion to the units", () => {
         + " const unrelated = lines.map(line => line.replace(\"Step\", \"Task\")).join(\"\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
       { kept: 100_000, moved: 0, stepOrder: 99_999 },
     ],
+    [
+      "100,000 units in reverse order, each gaining a label",
+      "const texts = Array.from({ length: 100_000 }, (unused, index) => `S${index}.`); const before = texts.join(\"\\n\\n\");"
+        + " const after = [...texts].reverse().map(text => `**Purpose:** ${text}`).join(\"\\n\\n\");"
+        + " const unrelated = texts.map(text => `**Purpose:** T${text}`).join(\"\\n\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      { kept: 100_000, moved: 99_999, stepOrder: 0 },
+    ],
+    [
+      "1,000 copies of one unit, every other one gaining a label, for 1,000,000 possible pairings",
+      "const before = Array.from({ length: 1_000 }, () => \"Same.\").join(\"\\n\\n\");"
+        + " const after = Array.from({ length: 1_000 }, (unused, index) => index % 2 === 0 ? \"**Purpose:** Same.\" : \"Same.\").join(\"\\n\\n\");"
+        + " const unrelated = Array.from({ length: 1_000 }, () => \"Same.\").join(\"\\n\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      // Its baseline weighs the same 1,000,000 pairings by whole wording alone, so it sets the pace for that much work.
+      { kept: 1_000, moved: 0, stepOrder: 0 },
+    ],
+    [
+      "100,000 copies of one unit, every other one gaining a label, past the pairing budget",
+      "const before = Array.from({ length: 100_000 }, () => \"Same.\").join(\"\\n\\n\");"
+        + " const after = Array.from({ length: 100_000 }, (unused, index) => index % 2 === 0 ? \"**Purpose:** Same.\" : \"Same.\").join(\"\\n\\n\");"
+        + " const unrelated = Array.from({ length: 100_000 }, (unused, index) => `T${index}.`).join(\"\\n\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      // Past the budget, copies pair in document order, so the labelled copies pair with the original's second half.
+      { kept: 100_000, moved: 50_000, stepOrder: 0 },
+    ],
   ];
   for (const [name, build, expected] of orderForms) {
     test(`${name} compare, print and report in time proportional to the units`, () => {
       const timed = timedOrder(build);
       expect(timed.exitCode, `the comparison was stopped after ${CHILD_LIMIT_MS} ms, or failed`).toBe(0);
-      expect(timed.orderMs, `${timed.plainMs} ms with nothing kept`).toBeLessThan(slotBudget(timed.plainMs));
+      expect(timed.orderMs, `${timed.plainMs} ms for the baseline`).toBeLessThan(slotBudget(timed.plainMs));
       expect({ kept: timed.kept, moved: timed.moved, stepOrder: timed.stepOrder }).toEqual(expected);
     }, 2 * CHILD_LIMIT_MS);
   }

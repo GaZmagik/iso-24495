@@ -136,8 +136,8 @@ It prints a row for each of these:
 - **Added:** a unit of the new version found in neither the original nor the author's wording. The added units of a new list or table that keeps nothing of the original share one row, which says how many units it stands for.
 - **From the author:** a unit that matches the author's wording.
 - **Marked gap:** a unit that is one `[Author needed: ...]` slot and nothing else. A full stop inside the slot does not split it.
-- **Moved:** a unit kept word for word that stands outside the longest order the kept units share with the original. Units moved together share one row. A moved sentence, list item or table cell that opens with "This", "It" or "These" also asks what that word refers to.
-- **Step order:** a kept unit of an ordered-list step that now stands in another order against the other steps of its list, wherever it now stands. Units that change places inside one step are listed as moved instead.
+- **Moved:** a unit kept word for word that stands outside the longest order the kept units share with the original, and is not listed under step order. Units moved together share one row. A moved sentence, list item or table cell that opens with "This", "It" or "These" also asks what that word refers to.
+- **Step order:** a kept unit of an ordered-list step that now stands in another order against the other steps of its list, wherever it now stands. Units that change places inside one step are listed as moved instead, and a step listed here is not also listed as moved.
 
 Headings and bold labels such as `**Purpose:**` that a restructure adds or removes are counted and not listed, because Part 5 lets a restructure change them.
 A heading is counted once, however many of its sentences changed. Its JSON entry holds the sentences of it that were not kept.
@@ -151,6 +151,8 @@ It does not yet pair a reworded unit with its original, or check that each numbe
 A moved row asks a person to check the move, because Part 5 allows a move that keeps its dependencies and the claim it qualifies.
 The comparison reads neither, beyond the question about "This", "It" or "These".
 Of two units that swap places, it names the one that stood first in the original.
+Of two steps that swap with other wording around them, it can name the one outside the longest order of the whole document instead.
+A label added to one copy of repeated wording moves nothing, but where one copy gains a label and another copy loses it, the labelled copy reads as moved.
 A number in a table that moved to another row reads as moved too, so the row cannot tell a changed value from a move.
 A heading's number, such as the `4.` of `## 4. Remove`, is not read for order, so renumbered headings list nothing.
 
