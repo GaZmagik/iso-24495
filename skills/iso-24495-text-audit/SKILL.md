@@ -15,7 +15,7 @@ Audit only the path the user selects. Report mechanical findings so the user can
 
 The audit is written for English and supports English only. The skills and output style are instructions a model interprets, so they are not limited to English in the same way.
 
-Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text` and `provisional-label` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
+Its word rules match English words and phrases: `legalese`, `doublet`, `wordy-phrase`, `filler-opening`, `complex-word`, `double-negative`, and the phrases `link-text`, `provisional-label` and `generic-alt` look for. The `filler-opening` rule checks only the opening prose. The `link-text` rule also flags empty labels and labels that are bare web addresses.
 
 Five word rules read headings as well as prose: `legalese`, `doublet`, `wordy-phrase`, `complex-word`, and `double-negative`. The rules about sentences and paragraphs read prose only, because a heading is not a sentence.
 
@@ -140,6 +140,7 @@ It prints a row for each of these:
 - **Step order:** a kept unit of an ordered-list step that now stands in another order against the other steps of its list, wherever it now stands. Units that change places inside one step are listed as moved instead.
 
 Headings and bold labels such as `**Purpose:**` that a restructure adds or removes are counted and not listed, because Part 5 lets a restructure change them.
+A heading is counted once, however many of its sentences changed. Its JSON entry holds the sentences of it that were not kept.
 
 The comparison reads wording, not meaning.
 A reworded sentence reads as dropped and added, even when it also moved.

@@ -42,6 +42,7 @@ const RULES = [
   "prose-enumeration",
   "link-text",
   "image-alt",
+  "generic-alt",
   "wordy-phrase",
   "complex-word",
   "double-negative",
@@ -884,7 +885,7 @@ ${sentence}`)
   });
 
   // The isolated controls prove each rule can fire alone. This fixture adds
-  // the composition case: every rule must remain observable when all eighteen
+  // the composition case: every rule must remain observable when all nineteen
   // occur together in one realistic document.
   test("every rule fires together in one integrated document", () => {
     const text = readFileSync(join(DIFFICULT, "every-rule.md"), "utf8");
@@ -2160,6 +2161,8 @@ ${sentence}`)
       "link-text": ["See [click here](https://example.com/refunds).", "See [how to claim a refund](https://example.com/refunds)."],
       // A reader who cannot see the image gets nothing at all from it.
       "image-alt": ["![](diagram.png)", "![Order flow from basket to payment](diagram.png)"],
+      // Alternative text that only names the kind of image says nothing of what it shows.
+      "generic-alt": ["![diagram](diagram.png)", "![Order flow from basket to payment](diagram.png)"],
       // An empty label is the worst case: the listener hears the link
       // announced and is told nothing whatsoever about it.
       "link-text-empty": ["See [](https://example.com/refunds).", "See [the refund policy](https://example.com/refunds)."],
@@ -2213,7 +2216,7 @@ ${sentence}`)
     }
 
     const readme = readFileSync(join(import.meta.dir, "..", "..", "..", "README.md"), "utf8");
-    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.";
+    const capability = "They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.";
     // The two rules for readers who cannot see the page must be explained, not
     // merely listed, or nobody knows why they exist.
     expect(readme).toContain("readers who hear or touch a document rather than look at it");
