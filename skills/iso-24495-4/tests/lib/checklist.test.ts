@@ -28,15 +28,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 19,
+  "fault": 21,
   "pass-only": 1,
   "not-read": 32,
-  "needs-two-versions": 11,
+  "needs-two-versions": 9,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 19;
+const FAULT_CLAUSES = 21;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -229,8 +229,37 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   },
   { id: "20b", demand: "On a restructure, no prose is rewritten.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "20c", demand: "On a restructure, the tone is unchanged.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-  { id: "21a", demand: "Every moved sentence or block keeps its dependencies.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-  { id: "21b", demand: "Every moved sentence or block keeps its order against neighbouring steps.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+  {
+    id: "21a", demand: "Every moved sentence or block keeps its dependencies.", state: "fault",
+    checks: [{ rule: "restructure-moved", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It lists each unit kept word for word that now stands outside the longest order the kept units share with the original, for a person to check. "
+        + "It does not read whether a moved unit keeps what it depends on, except that a moved sentence, list item or table cell opening with `This`, `It` or `These` gets a question about what that word refers to. "
+        + "The same rows are where to look for 21c, which no check reads. "
+        + "A row clears only when the unit is back in its original order against the units kept around it.",
+      "Where two orders keep as many units, it names the unit that stood first in the original, so of two sentences that swap places, the first is listed. "
+        + "Otherwise it names the part with fewer kept units, so when a heading and the text beside it change places, the heading can be the unit listed. "
+        + "Units next to each other in both versions share one row, and only the first of them gets the question.",
+      "Copies of one text pair so that the most units keep their order. "
+        + "A short text that stands more than once, such as a number in a table, can pair with a copy beside another label, so a value moved to another row reads as moved, and the row cannot tell that from a move of the label. "
+        + "When the copies of repeated texts would need more than 1,000,000 pairings, the texts with the most copies pair in document order, so a copy added or dropped can make another read as moved.",
+      "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as dropped and added, not as moved. "
+        + "A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
+    ],
+  },
+  {
+    id: "21b", demand: "Every moved sentence or block keeps its order against neighbouring steps.", state: "fault",
+    checks: [{ rule: "restructure-step-order", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It reads a step as an item of an ordered list in the original, with everything the item holds: its paragraphs, bullets, tables, headings and code. "
+        + "It reports each kept unit of a step that now stands in another order against the kept units of the other steps of its list, wherever it now stands, in a list or not. "
+        + "Units that change places inside one step are listed as moved instead. "
+        + "A row clears when the steps keep their original order, whatever their numbers or markers.",
+      "It does not read steps written as prose, such as `First, open the box. Then lift the lid.`, or numbers typed into a paragraph, so a sequence that is an ordered list only in the new version is read as moved. "
+        + "Of two steps that swap places, it names the one with fewer kept units, or the one that stood first in the original when they have as many. "
+        + "A unit is read against the 10 innermost ordered lists around it and no more.",
+    ],
+  },
   { id: "21c", demand: "Every moved sentence or block keeps the claim it qualifies.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   {
     id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "fault",
@@ -335,6 +364,8 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "17a": { text: `${GUIDE_OPENING}**Overview**\n\nOpen the box.\n\n${SIX_SECTIONS}`, reasons: { "overview-label": [NO_OVERVIEW] } },
   "19b": { text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [here](repair.md).\n", reasons: { "link-text": ["link text \"here\" describes no destination (repair.md)"] } },
   "20a": ONE_SENTENCE_DROPPED,
+  "21a": { before: "Fit the seal. Check the lip. This keeps water out.\n", text: "This keeps water out. Fit the seal. Check the lip.\n", reasons: { "restructure-moved": ["This keeps water out."] } },
+  "21b": { before: "1. Close the valve.\n2. Open the vent.\n", text: "1. Open the vent.\n2. Close the valve.\n", reasons: { "restructure-step-order": ["Close the valve."] } },
   "22a": { before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", reasons: { "restructure-added": ["The valve is new."] } },
   "23b": ONE_SENTENCE_DROPPED,
   "25a": { text: "Our layout follows ISO 24495-5.\n", reasons: { "provisional-label": [UNLABELLED] } },
@@ -779,6 +810,18 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
     { clause, limit: 3, check: "restructure-dropped", before: "Read [the guide](a.md).\n", text: "Read [the guide](b.md).\n", found: [], control: { from: "[the guide]", to: "[the manual]", found: ["Read the guide."] } },
     { clause, limit: 3, check: "restructure-dropped", before: "![Chart](a.png)\n", text: "![Chart](b.png)\n", found: [], control: { from: "![Chart]", to: "![Graph]", found: ["Chart"] } },
   ]),
+  { clause: "21a", limit: 1, check: "restructure-moved", before: "Fit the seal. Check the lip. This keeps water out.\n", text: "This keeps water out. Fit the seal. Check the lip.\n", found: ["This keeps water out."], control: { from: "This keeps water out. Fit the seal. Check the lip.", to: "Fit the seal. Check the lip. This keeps water out.", found: [] } },
+  { clause: "21a", limit: 1, check: "restructure-moved", before: "Fit the seal. Check the lip. Dry the lip.\n", text: "Dry the lip. Fit the seal. Check the lip.\n", found: ["Dry the lip."], control: { from: "Dry the lip. Fit the seal. Check the lip.", to: "Fit the seal. Check the lip. Dry the lip.", found: [] } },
+  { clause: "21a", limit: 2, check: "restructure-moved", before: "Fit the seal. Check the lip.\n", text: "Check the lip. Fit the seal.\n", found: ["Fit the seal."], control: { before: "Check the lip. Fit the seal.\n", found: [] } },
+  { clause: "21a", limit: 2, check: "restructure-moved", before: "Fit the seal. Check the lip.\n\n## Notes\n", text: "## Notes\n\nFit the seal. Check the lip.\n", found: ["Notes"], control: { from: "## Notes\n\n", to: "", found: [] } },
+  { clause: "21a", limit: 3, check: "restructure-moved", before: "| Kind | Number |\n|---|---|\n| familiarity | 41 |\n| training | 43 |\n", text: "| Kind | Number |\n|---|---|\n| familiarity | 43 |\n| training | 41 |\n", found: ["41", "training"], control: { from: "| familiarity | 43 |\n| training | 41 |", to: "| familiarity | 41 |\n| training | 43 |", found: [] } },
+  { clause: "21a", limit: 4, check: "restructure-moved", before: "Fit the seal. Check the lip. Dry the lip.\n", text: "Dry the lips. Fit the seal. Check the lip.\n", found: [], control: { from: "Dry the lips.", to: "Dry the lip.", found: ["Dry the lip."] } },
+  { clause: "21a", limit: 4, check: "restructure-moved", before: "## 1. Fit\n\nText.\n\n## 2. Dry\n\nMore.\n", text: "## 1. Clean\n\nWipe.\n\n## 2. Fit\n\nText.\n\n## 3. Dry\n\nMore.\n", found: [], control: { before: "## 1. Dry\n\nMore.\n\n## 2. Fit\n\nText.\n", found: ["Dry", "More."] } },
+  { clause: "21b", limit: 1, check: "restructure-step-order", before: "1. Close the valve.\n2. Open the vent.\n", text: "1. Open the vent.\n2. Close the valve.\n", found: ["Close the valve."], control: { from: "1. Open the vent.\n2. Close the valve.", to: "1. Close the valve.\n2. Open the vent.", found: [] } },
+  { clause: "21b", limit: 1, check: "restructure-step-order", before: "1. Close the valve.\n2. Open the vent.\n", text: "Open the vent.\n\n- Close the valve.\n", found: ["Close the valve."], control: { from: "Open the vent.\n\n- Close the valve.", to: "- Close the valve.\n\nOpen the vent.", found: [] } },
+  { clause: "21b", limit: 1, check: "restructure-step-order", before: "1. Close the valve. Wait.\n2. Open the vent.\n", text: "1. Wait. Close the valve.\n2. Open the vent.\n", found: [], control: { from: "1. Wait. Close the valve.\n2. Open the vent.", to: "1. Wait.\n2. Open the vent. Close the valve.", found: ["Close the valve."] } },
+  { clause: "21b", limit: 2, check: "restructure-step-order", before: "First, open the box. Then lift the lid.\n", text: "Then lift the lid. First, open the box.\n", found: [], control: { before: "1. First, open the box.\n2. Then lift the lid.\n", found: ["First, open the box."] } },
+  { clause: "21b", limit: 2, check: "restructure-step-order", before: "1. Close the valve. Wait.\n2. Open the vent.\n", text: "1. Open the vent.\n2. Close the valve. Wait.\n", found: ["Open the vent."], control: { from: "2. Close the valve. Wait.", to: "2. Close the valve.", found: ["Close the valve."] } },
   { clause: "22a", limit: 1, check: "restructure-added", before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", found: ["The valve is new."], control: { authorText: "The valve is new.\n", found: [] } },
   { clause: "22a", limit: 1, check: "restructure-added", before: "The valve is new and quiet.\n", text: "- **Purpose:** The valve is new.\n\nThe valve is new and quiet.\n", found: ["Purpose: The valve is new."], control: { before: "The valve is new.\n\nThe valve is new and quiet.\n", found: [] } },
   { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "## Overview\n\nText.\n", found: [], control: { from: "## Overview", to: "Overview.", found: ["Overview."] } },
@@ -840,6 +883,8 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "17a": [3, 11],
   "19b": [4, 2, 5],
   "20a": [1, 4, 2],
+  "21a": [2, 2, 1, 2],
+  "21b": [3, 2],
   "22a": [2, 3],
   "23b": [1, 4, 2],
   "25a": [9, 11, 11],
@@ -879,6 +924,8 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "17a": ["cfc121eded58bd56", "347357b868e06e98"],
   "19b": ["8d7374144d4bb978", "8e3c4f0d60d846d8", "a2f3adc83db9c51d"],
   "20a": ["1d55b19365949e80", "694867c80cb848a9", "f2857480c3fb4e6d"],
+  "21a": ["f1539b8909d17588", "3b754fa55057fc97", "b6e12711a8ebc5e6", "12d1c0838eff6d32"],
+  "21b": ["e52f54e7545cd726", "d125e06558a995ec"],
   "22a": ["0e4f938974d2501c", "0952c5bbd5bcde05"],
   "23b": ["b9c14081a16f57c1", "22bbc5d504e85772", "9799b5f30bedb957"],
   "25a": ["e2349adc4cce5065", "7868d82e12361114", "722af960a8b0ab98"],
@@ -903,6 +950,8 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "17a": "6371233b39f075a5",
   "19b": "44fdcbd1ca38383e",
   "20a": "a146fb876a677b53",
+  "21a": "e5e214b5ae080f5c",
+  "21b": "ca4561dc88636124",
   "22a": "0d7658fd5996b91b",
   "23b": "a146fb876a677b53",
   "25a": "8147f5bfb7a185bc",
@@ -952,7 +1001,9 @@ function stubAnswer(question: string): unknown {
  * band, or the identifier of a diagnosis gate. A pass is read from the
  * coverage counts, because a report lists no pass among its results. The
  * two-version comparison names `restructure-dropped` for the file after
- * when it drops a unit, and `restructure-added` when it adds one.
+ * when it drops a unit, `restructure-added` when it adds one,
+ * `restructure-moved` when a kept unit moved, and `restructure-step-order`
+ * when a kept unit of a step is out of order.
  */
 function namedInReport(report: ReportJson): Map<string, Map<string, Check["kind"]>> {
   const named = new Map<string, Map<string, Check["kind"]>>();
@@ -982,12 +1033,18 @@ function namedInReport(report: ReportJson): Map<string, Map<string, Check["kind"
 
 /**
  * The units a report's two-version comparison gives for each of its checks:
- * those dropped and those added, each as its excerpt.
+ * those dropped, those added, the kept units moved and the kept units of
+ * steps out of order, each as its excerpt.
  */
 function restructureFindings(report: ReportJson): Array<[string, string[]]> {
   const restructure = report.restructure;
   if (restructure === undefined) return [];
-  return [["restructure-dropped", restructure.dropped.map(unit => unit.excerpt)], ["restructure-added", restructure.added.map(unit => unit.excerpt)]];
+  return [
+    ["restructure-dropped", restructure.dropped.map(unit => unit.excerpt)],
+    ["restructure-added", restructure.added.map(unit => unit.excerpt)],
+    ["restructure-moved", restructure.moved.map(unit => unit.excerpt)],
+    ["restructure-step-order", restructure.stepOrder.map(unit => unit.excerpt)],
+  ];
 }
 
 /** Records that a report named a check for a file, and of which kind. */
@@ -1032,6 +1089,8 @@ interface ReportJson {
     readonly after: string;
     readonly dropped: ReadonlyArray<{ readonly excerpt: string }>;
     readonly added: ReadonlyArray<{ readonly excerpt: string }>;
+    readonly moved: ReadonlyArray<{ readonly excerpt: string }>;
+    readonly stepOrder: ReadonlyArray<{ readonly excerpt: string }>;
   };
 }
 
@@ -1321,11 +1380,14 @@ async function printedBlocks(command: Route["command"], argv: readonly string[])
  * rule named, in that order. For answers, `classify` reads them; the result
  * is the question with the band, then any diagnosis gate. For a check of the
  * two-version comparison, the text is compared with its original and the
- * author's wording; the result is the text of each unit dropped or added.
+ * author's wording; the result is the text of each unit dropped or added,
+ * or of each kept unit moved or out of step order, as the check names.
  */
 function limitFound(reading: LimitReading): string[] {
   if (reading.check.startsWith("restructure-")) {
     const comparison = compareVersions(reading.before ?? "", reading.text ?? "", reading.authorText ?? null, reading.frontMatter === undefined ? {} : { frontMatter: reading.frontMatter });
+    if (reading.check === "restructure-moved") return comparison.moved.map(pair => pair.after.key);
+    if (reading.check === "restructure-step-order") return comparison.stepOrder.map(pair => pair.after.key);
     return (reading.check === "restructure-dropped" ? comparison.dropped : comparison.added).map(unit => unit.key);
   }
   if (reading.answers !== undefined) {
@@ -1535,7 +1597,7 @@ describe("the Part 5 checklist clause registry", () => {
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 19 fault
+  // one folder with its option and without it. For each of the 21 fault
   // clauses, 228 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
