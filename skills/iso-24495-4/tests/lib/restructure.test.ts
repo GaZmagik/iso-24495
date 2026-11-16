@@ -488,15 +488,16 @@ describe("matching takes time in proportion to the units", () => {
 
   // Searching again for a closing bracket from every opening read the rest of
   // the text each time: 30,000 openings with none closed took 4.4 seconds.
-  const openingForms: Array<[string, string, number]> = [
-    ["100,000 slot openings with no closing bracket", "[Author needed: ".repeat(100_000), 1],
-    ["300,000 slot openings with no closing bracket", "[Author needed: ".repeat(300_000), 1],
-    ["100,000 slot openings, each followed by a full stop", "[Author needed: . ".repeat(100_000), 100_000],
-    ["one slot opening followed by 300,000 full stops", `[Author needed: ${". ".repeat(300_000)}`, 300_000],
+  // Each text is made inside its test, so no test after these holds it.
+  const openingForms: Array<[string, () => string, number]> = [
+    ["100,000 slot openings with no closing bracket", () => "[Author needed: ".repeat(100_000), 1],
+    ["300,000 slot openings with no closing bracket", () => "[Author needed: ".repeat(300_000), 1],
+    ["100,000 slot openings, each followed by a full stop", () => "[Author needed: . ".repeat(100_000), 100_000],
+    ["one slot opening followed by 300,000 full stops", () => `[Author needed: ${". ".repeat(300_000)}`, 300_000],
   ];
-  for (const [name, text, expectedUnits] of openingForms) {
+  for (const [name, makeText, expectedUnits] of openingForms) {
     test(`${name} are read in time proportional to the text`, () => {
-      const timed = timedReads(text);
+      const timed = timedReads(makeText());
       expect(timed.exitCode, `the read was stopped after ${CHILD_LIMIT_MS} ms, or failed`).toBe(0);
       expect(timed.slotsMs, `${timed.plainMs} ms with no openings`).toBeLessThan(slotBudget(timed.plainMs));
       expect(timed.units).toBe(expectedUnits);
