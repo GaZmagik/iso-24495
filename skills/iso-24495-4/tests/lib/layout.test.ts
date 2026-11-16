@@ -427,9 +427,51 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(signposts("## See also\n\n>\n")).toEqual([emptyAt(1)]);
   });
 
-  test("a raw HTML code block is blanked by the structural reading, so it does not clear the heading", () => {
-    expect(signposts("## See also\n\n<pre>\nman install\n</pre>\n")).toEqual([emptyAt(1)]);
-    expect(signposts("## See also\n\n```\nman install\n```\n")).toEqual([]);
+  test("a link definition in any form CommonMark accepts shows nothing", () => {
+    expect(signposts("## See also\n\n[guide]:\n  guide.md\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n[guide]:\tguide.md\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n[guide]: guide.md\n  \"The guide\"\n")).toEqual([emptyAt(1)]);
+    // Not a definition, so a reader sees the brackets.
+    expect(signposts("## See also\n\n[guide]:\n")).toEqual([]);
+  });
+
+  test("a thematic break shows nothing inside a quotation or a list item too", () => {
+    expect(signposts("## See also\n\n> ---\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n* ---\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n> Ask the help desk.\n")).toEqual([]);
+  });
+
+  test("text with no visible character shows nothing", () => {
+    for (const invisible of ["\u200B", "\uFEFF", "\u2060", "\u00AD", "\u3164", "\u2800", "\u00A0", "\u3000", "&#8203;", "&nbsp;", "\u200B\u200C\u200D", "\uFFF9"]) {
+      expect(signposts(`## See also\n\n${invisible}\n`), invisible).toEqual([emptyAt(1)]);
+    }
+    expect(signposts("## See also\n\n\u200BAsk the help desk.\n")).toEqual([]);
+    // A combining mark on its own still counts.
+    expect(signposts("## See also\n\n\u0301\n")).toEqual([]);
+  });
+
+  test("raw HTML clears the heading unless it is only comments standing as their own block", () => {
+    expect(signposts("## See also\n\n<pre>man install</pre>\n")).toEqual([]);
+    expect(signposts("## See also\n\n<pre>\nman install\n</pre>\n")).toEqual([]);
+    expect(signposts("## See also\n\n<textarea>Ask the help desk.</textarea>\n")).toEqual([]);
+    expect(signposts("## See also\n\n<div></div>\n")).toEqual([]);
+    expect(signposts("## See also\n\nAsk <span>here</span>.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<!-- a --> <!-- b -->\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n<!-- a --> Ask the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<?php echo 1; ?>\n<!DOCTYPE html>\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n<!--> Ask the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<![CDATA[ x ]]> <!-- y -->\n")).toEqual([emptyAt(1)]);
+    // A regular expression gave no match at this length, and so read it as content.
+    expect(signposts(`## See also\n\n${"<![CDATA[".repeat(100_000)}\n`)).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n<!-- Add the guides.\n\n## Next\n")).toEqual([emptyAt(1)]);
+    // Inside a paragraph a comment counts, because the renderer passes it on as
+    // text, as it does an escaped one that a reader sees.
+    expect(signposts("## See also\n\n&nbsp;<!-- a -->\n")).toEqual([]);
+    expect(signposts("## See also\n\n\\<!-- a --\\>\n")).toEqual([]);
+  });
+
+  test("an image counts even with no alternative text", () => {
+    expect(signposts("## See also\n\n![](map.png)\n")).toEqual([]);
   });
 
   test("front matter is metadata unless the text has none, when its block can become a heading", () => {
@@ -510,7 +552,7 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     let found: unknown[] = [];
     for (let run = 0; run < 3; run++) {
       started = performance.now();
-      found = emptySignpostViolations(parsed);
+      found = emptySignpostViolations(text, parsed.headings);
       scans.push(performance.now() - started);
     }
     expect(found).toHaveLength(40_000);

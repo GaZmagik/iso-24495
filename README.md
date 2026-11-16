@@ -172,6 +172,7 @@ Booleans, null, empty strings, maps, lists, other nesting and malformed front ma
 
 The `empty-signpost` rule reports a heading worded as a referral, such as `See also`, `Related` or `Resources`, with nothing beneath it.
 Its section runs to the next heading at its level or above, and a deeper heading, a comment or a thematic break alone leaves it empty.
+It reads the section as Bun's CommonMark renderer shows it: invisible text or any link definition leaves it empty, and raw HTML other than a comment counts.
 To clear it, list where else to go beneath the heading, or remove the heading when nothing else exists.
 It found none in 822 third-party Markdown files or in this repository's own documents, so its precision is unmeasured.
 

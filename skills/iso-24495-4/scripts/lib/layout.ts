@@ -17,8 +17,6 @@ const SIGNPOST_LABELS: ReadonlySet<string> = new Set([
   "related", "related documents", "related links", "related pages", "related reading", "related resources", "related topics",
   "see also", "resources", "additional resources", "further reading", "other languages", "external links", "useful links", "links",
 ]);
-/** A thematic break, which a reader sees as a rule and nothing more. The parser's own pattern is not exported. */
-const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 /**
  * What `layoutViolations` may be told besides the text. `fileName` exempts
@@ -67,7 +65,7 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
   }
   // Before the section count below, which returns early for a short document.
-  for (const finding of emptySignpostViolations(parsed)) {
+  for (const finding of emptySignpostViolations(text, parsed.headings)) {
     findings.push(finding);
   }
   const sections = parsed.headings.filter(heading => heading.level === 2);
@@ -90,57 +88,131 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
  * whole wording, after `signpostWording`, is one of the signpost labels, such
  * as "See also", "Related" or "Resources". Its section runs to the next such
  * heading at its level or above, or to the end of the text. The section is
- * empty when no line in it shows a reader anything but a heading or a
- * thematic break. A comment, a link definition and front matter show
- * nothing, because the structural reading blanks them; a code block shows
- * its contents. A raw HTML code block such as `<pre>` is blanked by that
- * reading too, so it does not clear the heading.
+ * empty when `showsAnything` finds nothing in it, with each deeper heading's
+ * own lines set aside.
  *
- * @param parsed The structural reading of the text, as `structure` gives it.
+ * @param text The whole document, as `layoutViolations` was given it.
+ * @param headings The headings outside every list and quotation, in document
+ *     order, as `structure` gives them.
  * @returns One finding for each empty signpost, on the line its heading
  *     starts, in document order. Empty when there is none.
  */
-export function emptySignpostViolations(parsed: Pick<ReturnType<typeof structure>, "headings" | "markupLines" | "code">): Violation[] {
-  const { headings, markupLines, code } = parsed;
-  const count = markupLines.length;
-  const shows = markupLines.map(line => line.trim() !== "" && !THEMATIC_BREAK.test(line));
-  for (const block of code) {
-    shows[block.line - 1] = true;
-  }
-  for (const heading of headings) {
-    // A setext heading's underline is part of the heading, not content.
-    const spanned = heading.setext ? heading.lines + 1 : heading.lines;
-    for (let index = heading.line - 1; index < heading.line - 1 + spanned && index < count; index++) {
-      shows[index] = false;
-    }
-  }
-  // For each line, the first line at or after it that shows anything: one
-  // pass, so no heading reads on to the end of the text.
-  const nextShown = new Int32Array(count + 1).fill(count);
-  for (let index = count - 1; index >= 0; index--) {
-    nextShown[index] = shows[index] === true ? index : nextShown[index + 1] ?? count;
-  }
-  // Where each heading's section ends: the line of the next heading at its
-  // level or above. Each heading enters and leaves the stack once.
-  const sectionEnd = new Int32Array(headings.length).fill(count);
+export function emptySignpostViolations(text: string, headings: readonly Heading[]): Violation[] {
+  const lines = toLines(text);
+  // Each stretch is rendered at most once, and only when a signpost's
+  // section reaches it: 0 not yet read, 1 shows something, 2 shows nothing.
+  const read = new Int8Array(headings.length);
+  // Where each heading's section ends: the position of the next heading at
+  // its level or above. Each heading enters and leaves the stack once.
+  const sectionEnd = new Int32Array(headings.length).fill(headings.length);
   const open: number[] = [];
   headings.forEach((heading, position) => {
     while (open.length > 0 && (headings[open[open.length - 1] ?? 0]?.level ?? 0) >= heading.level) {
-      sectionEnd[open.pop() ?? 0] = heading.line - 1;
+      sectionEnd[open.pop() ?? 0] = position;
     }
     open.push(position);
   });
   const findings: Violation[] = [];
   headings.forEach((heading, position) => {
     if (!SIGNPOST_LABELS.has(signpostWording(heading.text))) return;
-    const after = Math.min(heading.line - 1 + (heading.setext ? heading.lines + 1 : heading.lines), count);
-    if ((nextShown[after] ?? count) < (sectionEnd[position] ?? count)) return;
+    // A stretch sits in the sections of at most six headings, one at each
+    // level, so no stretch is read more than six times.
+    for (let stretch = position; stretch < (sectionEnd[position] ?? headings.length); stretch++) {
+      if (read[stretch] === 0) read[stretch] = stretchShowsAnything(lines, headings, stretch) ? 1 : 2;
+      if (read[stretch] === 1) return;
+    }
     findings.push({
       rule: "empty-signpost", line: heading.line,
       detail: `The "${normaliseWording(heading.text)}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.`,
     });
   });
   return findings;
+}
+
+/** Stands in for something a reader sees that has no text of its own, such as an image or an empty code block. */
+const SHOWN = "x";
+/**
+ * A character a reader can see: anything but white space, a control or format
+ * character, a character Unicode says to show as nothing, such as a zero-width
+ * space or a Hangul filler, or the blank braille pattern.
+ */
+const VISIBLE = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/u;
+/**
+ * What the renderer gives for each element. A thematic break gives nothing.
+ * A code block and an image give `SHOWN` even when empty. Raw HTML in a
+ * block of its own gives `SHOWN` unless `unseenHtml` holds for it.
+ */
+const RENDER = {
+  hr: (): string => "",
+  code: (): string => SHOWN,
+  image: (): string => SHOWN,
+  html: (children: string): string => (unseenHtml(children) ? "" : SHOWN),
+};
+
+/**
+ * Whether the lines between one heading and the next show a reader anything.
+ * A setext heading's underline is part of the heading, not of the stretch.
+ *
+ * \param position Which heading the stretch follows, counted from 0.
+ * \returns False for a stretch of blank lines, without rendering it.
+ */
+function stretchShowsAnything(lines: readonly string[], headings: readonly Heading[], position: number): boolean {
+  const heading = headings[position];
+  const next = headings[position + 1];
+  const start = heading === undefined ? lines.length : heading.line - 1 + (heading.setext ? heading.lines + 1 : heading.lines);
+  const end = next === undefined ? lines.length : next.line - 1;
+  const stretch = lines.slice(start, Math.max(start, end)).join("\n");
+  return /\S/.test(stretch) && showsAnything(stretch);
+}
+
+/** How each kind of raw HTML that a browser shows as nothing opens and ends. */
+const UNSEEN_MARKUP: ReadonlyArray<{ open: RegExp; end: string; from: number }> = [
+  // From the second character, so "<!-->" ends where it starts, as HTML has it.
+  { open: /^<!--/, end: "-->", from: 2 },
+  { open: /^<\?/, end: "?>", from: 2 },
+  { open: /^<!\[CDATA\[/, end: "]]>", from: 9 },
+  { open: /^<![A-Za-z]/, end: ">", from: 2 },
+];
+
+/**
+ * Whether a block of raw HTML holds only what a browser shows as nothing:
+ * comments, processing instructions, character data and declarations, with
+ * white space between them. One with no end runs to the end of the block, as
+ * CommonMark has it. It is read with `indexOf`, because a regular expression
+ * gave no match on a block of 900,000 characters that it should have matched.
+ */
+function unseenHtml(block: string): boolean {
+  let at = 0;
+  while (at < block.length) {
+    if (/\s/.test(block.charAt(at))) {
+      at++;
+      continue;
+    }
+    const rest = block.slice(at, at + 9);
+    const markup = UNSEEN_MARKUP.find(kind => kind.open.test(rest));
+    if (markup === undefined) return false;
+    const end = block.indexOf(markup.end, at + markup.from);
+    if (end === -1) return true;
+    at = end + markup.end.length;
+  }
+  return true;
+}
+
+/**
+ * Whether a stretch of Markdown shows a reader anything, as Bun's CommonMark
+ * renderer reads it.
+ *
+ * Its caller ends each stretch at every heading the structural reading finds
+ * outside lists and quotations, so any heading here shows its wording, as one
+ * in a list does. A thematic break and raw HTML for which `unseenHtml` holds
+ * show nothing, and so does a link definition in any form the renderer accepts.
+ * Raw HTML inside a paragraph reaches this reading as text, so it counts even
+ * when it is only a comment.
+ *
+ * @returns True when the rendering holds a `VISIBLE` character.
+ */
+function showsAnything(markdown: string): boolean {
+  return VISIBLE.test(Bun.markdown.render(markdown, RENDER));
 }
 
 /**
