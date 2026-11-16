@@ -347,13 +347,28 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...tableHeaderViolations(text, reading));
   violations.push(...linkTextViolations(text, reading));
   violations.push(...imageAltViolations(text, reading));
-  violations.push(...genericAltViolations(text, reading));
+  // One finding for each image, so a long document could give more than a
+  // call can take as separate arguments.
+  appendAll(violations, genericAltViolations(text, reading));
   violations.push(...provisionalLabelViolations(text, reading));
   if (options.markdown) {
     const fileName = options.fileName;
     violations.push(...layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
   }
   return violations;
+}
+
+/**
+ * Adds each item to the end of a list, one at a time.
+ *
+ * Exported so a test can pass it more items than a document of a sensible
+ * size gives. Spreading them into one push call throws a RangeError once
+ * they pass the engine's limit on arguments, which was 700,000 on Windows.
+ */
+export function appendAll<T>(target: T[], items: Iterable<T>): void {
+  for (const item of items) {
+    target.push(item);
+  }
 }
 
 /** How many sentences one reading found, and their mean length in words: 0 where it found none. */
@@ -1622,7 +1637,7 @@ function doubletViolations(text: string, reading: Reading): Violation[] {
 // about the destination.
 const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|more|more info|details|see more|learn more|go|page|website|download)$/i;
 const HTML_ANCHOR = /<a\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/a\s*>/gi;
-// Exported so a test can hold `htmlImageTags` to exactly what this pattern finds.
+/** An HTML image tag and its attributes. Exported so a test can hold `htmlImageTags` to exactly what this pattern finds. */
 export const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
 const HTML_TAG = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
 
@@ -2041,7 +2056,7 @@ function tagClosings(text: string): Int32Array {
  */
 function genericAltFinding(alt: string, line: number): Violation | null {
   const shown = alt.trim().slice(0, 40);
-  const spoken = alt.replace(/[*_~`]/g, "").trim();
+  const spoken = withoutOuterMarks(alt.trim()).trim();
   if (GENERIC_ALT_WORDS.has(spoken.toLowerCase())) {
     return { rule: "generic-alt", line, detail: `alternative text "${shown}" names the kind of image, not what it shows` };
   }
@@ -2049,6 +2064,25 @@ function genericAltFinding(alt: string, line: number): Violation | null {
     return { rule: "generic-alt", line, detail: `alternative text "${shown}" is a file name, not what the image shows` };
   }
   return null;
+}
+
+/**
+ * Text without the emphasis and code marks at either end, paired or not.
+ * A mark inside a word stays, because a renderer shows "lo_go" as written.
+ * Counted from each end in turn, because a pattern anchored at the end
+ * retries from every mark in a long run of them.
+ */
+function withoutOuterMarks(text: string): string {
+  const marks = "*_~`";
+  let start = 0;
+  let end = text.length;
+  while (start < end && marks.includes(text.charAt(start))) {
+    start++;
+  }
+  while (end > start && marks.includes(text.charAt(end - 1))) {
+    end--;
+  }
+  return text.slice(start, end);
 }
 
 /**

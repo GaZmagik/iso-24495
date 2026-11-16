@@ -17,6 +17,7 @@ import {
   auditText,
   configHash,
   ENGINE_THRESHOLDS,
+  appendAll,
   firstUnlabelledCitation,
   genericAltViolations,
   HTML_IMAGE,
@@ -1191,10 +1192,28 @@ describe("generic-alt", () => {
     }
   });
 
-  test("reads alternative text without its emphasis marks or HTML", () => {
+  test("reads alternative text without the marks at either end, or HTML", () => {
     expect(genericFindings("![**logo**](a.png)\n")).toEqual([kindOnly("**logo**")]);
+    // The reader gives a code span's marks as spaces, so the finding quotes them so.
+    expect(genericFindings("![~~`logo`~~](a.png)\n")).toEqual([kindOnly("~~ logo ~~")]);
+    expect(genericFindings("![**logo](a.png)\n")).toEqual([kindOnly("**logo")]);
     expect(genericFindings("![<b>logo</b>](a.png)\n")).toHaveLength(1);
     expect(genericFindings("![_IMG_0042.jpg_](a.png)\n")).toEqual([fileOnly("_IMG_0042.jpg_")]);
+    // A mark inside the text stays, because a renderer shows it as written.
+    expect(genericFindings("![lo_go](a.png)\n")).toEqual([]);
+    expect(genericFindings("![i*mage](a.png)\n")).toEqual([]);
+  });
+
+  test("appends each finding to the audit one at a time, however many there are", () => {
+    // A spread of 700,000 arguments into one call threw a RangeError on
+    // Windows. Two million leaves a margin, though a far larger stack could
+    // still pass the spread.
+    const target = [0];
+    const items = Array.from({ length: 2_000_000 }, (item, index) => index + 1);
+    expect(() => {
+      appendAll(target, items);
+    }).not.toThrow();
+    expect([target.length, target[0], target[2_000_000]]).toEqual([2_000_001, 0, 2_000_000]);
   });
 
   test("skips code, front matter and comments", () => {
@@ -1237,6 +1256,10 @@ describe("generic-alt", () => {
       `${"<img ".repeat(50_000)}\n`,
       `<img alt="${"<img ".repeat(50_000)}\n`,
       `${"![logo](a.png) ".repeat(20_000)}\n`,
+      '<img alt="logo">\n'.repeat(50_000),
+      // Marks between two letters: a pattern anchored at the end took 5.4 seconds on 80,000.
+      `![x${"*".repeat(100_000)}x](a.png)\n`,
+      `<img ${"x=\"y\" ".repeat(50_000)}alt=logo>\n`,
     ];
     for (const text of texts) {
       const started = performance.now();
