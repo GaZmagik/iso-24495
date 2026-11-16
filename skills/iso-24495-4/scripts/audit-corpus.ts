@@ -231,6 +231,58 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   // Every rule re-reads the text, so each is told the same thing about front matter.
   const frontMatter = options.frontMatter;
   const reading: Reading = frontMatter === undefined ? {} : { frontMatter };
+  const prose = proseLengthFindings(text, reading);
+  const fileName = options.fileName;
+  // Each rule's findings are added one at a time. A rule can give one finding
+  // for each word, image, heading or item, so a long document could give more
+  // than a call can take as separate arguments, which threw a RangeError.
+  const violations: Violation[] = [];
+  for (const findings of [
+    prose.findings,
+    legaleseViolations(text, reading),
+    sentenceAverageFindings(prose),
+    headingFindings(text, reading),
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    acronymViolations(text, options.knownAcronyms ?? new Set(), reading),
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    doubletViolations(text, reading),
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    proseEnumerationViolations(text, reading),
+    // The intended readers of a document include everyone who uses it, whether
+    // they see it, hear it or touch it. These two rules are the only ones here
+    // that serve a reader who is not looking at the page.
+    wordyPhraseViolations(text, reading),
+    complexWordViolations(text, reading),
+    doubleNegativeViolations(text, reading),
+    fillerOpeningViolations(text, reading),
+    tableHeaderViolations(text, reading),
+    linkTextViolations(text, reading),
+    imageAltViolations(text, reading),
+    genericAltViolations(text, reading),
+    provisionalLabelViolations(text, reading),
+    options.markdown === true ? layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }) : [],
+  ]) {
+    appendAll(violations, findings);
+  }
+  return violations;
+}
+
+/** The sentence and paragraph length findings, with the sentence lengths that the average is taken from. */
+interface ProseLengths {
+  findings: Violation[];
+  /** Words in each sentence the splitter found, for the sentences that hold any. */
+  sentenceLengths: number[];
+  /** Words in each sentence of the joined-up reading, which joins every doubtful full stop. */
+  mergedLengths: number[];
+}
+
+/**
+ * The `sentence-length` and `paragraph-length` findings for each prose block.
+ *
+ * @returns The findings in block order, and the length of every sentence in
+ *     both readings, for `sentenceAverageFindings`.
+ */
+function proseLengthFindings(text: string, reading: Reading): ProseLengths {
   const violations: Violation[] = [];
   const sentenceLengths: number[] = [];
   const mergedLengths: number[] = [];
@@ -264,7 +316,15 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
       });
     }
   }
-  violations.push(...legaleseViolations(text, reading));
+  return { findings: violations, sentenceLengths, mergedLengths };
+}
+
+/**
+ * The `sentence-average` finding, when the sentences are long on average.
+ *
+ * @returns One finding on line 1, or none.
+ */
+function sentenceAverageFindings({ sentenceLengths, mergedLengths }: ProseLengths): Violation[] {
   // The standards specify an average across the document, not a cap; the cap
   // above only catches genuine sprawl. Small samples are exempt because an
   // average over a handful of sentences is noise, not judgement.
@@ -275,13 +335,21 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   // abstention is for.
   const reported = sentenceAverage(sentenceLengths);
   const readings = [reported, sentenceAverage(mergedLengths)];
-  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
-    violations.push({
-      rule: "sentence-average",
-      line: 1,
-      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
-    });
-  }
+  if (!readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) return [];
+  return [{
+    rule: "sentence-average",
+    line: 1,
+    detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
+  }];
+}
+
+/**
+ * The `heading-depth`, `heading-skip` and `heading-style` findings.
+ *
+ * @returns The findings for each heading in document order.
+ */
+function headingFindings(text: string, reading: Reading): Violation[] {
+  const violations: Violation[] = [];
   const documentHeadings = headings(text, reading);
   for (const [i, heading] of documentHeadings.entries()) {
     if (heading.level > MAX_HEADING_LEVEL) {
@@ -328,36 +396,6 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
         detail: "heading ends with a full stop",
       });
     }
-  }
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set(), reading));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...doubletViolations(text, reading));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...proseEnumerationViolations(text, reading));
-
-  // The intended readers of a document include everyone who uses it, whether
-  // they see it, hear it or touch it. These two rules are the only ones here
-  // that serve a reader who is not looking at the page.
-  violations.push(...wordyPhraseViolations(text, reading));
-  violations.push(...complexWordViolations(text, reading));
-  violations.push(...doubleNegativeViolations(text, reading));
-  violations.push(...fillerOpeningViolations(text, reading));
-  violations.push(...tableHeaderViolations(text, reading));
-  violations.push(...linkTextViolations(text, reading));
-  violations.push(...imageAltViolations(text, reading));
-  // One finding for each image, so a long document could give more than a
-  // call can take as separate arguments.
-  appendAll(violations, genericAltViolations(text, reading));
-  violations.push(...provisionalLabelViolations(text, reading));
-  if (options.markdown) {
-    const fileName = options.fileName;
-    // One empty-signpost or bullet-depth finding for each heading or item, so a
-    // long document could give more than a call can take as separate arguments.
-    appendAll(violations, layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
   }
   return violations;
 }
@@ -866,7 +904,8 @@ function acronymViolations(
     const initials: string[] = [];
     carried[0] = 0;
     for (let at = 0; at < tokens.length; at++) {
-      initials.push(...expansionInitials(itemAt(tokens, at).raw));
+      // One token can hold a million words, too many to spread into one call.
+      appendAll(initials, expansionInitials(itemAt(tokens, at).raw));
       carried[at + 1] = initials.length;
     }
 

@@ -844,7 +844,11 @@ function indentedCode(
   const continues = current !== null && current.depth === stack.length
     && between.every(line => isBlank(matchOpen(expandTabs(line), stack).rest));
   if (current !== null && continues) {
-    current.block.lines.push(...between.map(() => ""), content);
+    // Filled in place: spreading a long run of blank lines into one call
+    // threw a RangeError.
+    current.block.lines.length += between.length;
+    current.block.lines.fill("", current.block.lines.length - between.length);
+    current.block.lines.push(content);
     return { ...current, last: index };
   }
   const block = { line: index + 1, lines: [content] };

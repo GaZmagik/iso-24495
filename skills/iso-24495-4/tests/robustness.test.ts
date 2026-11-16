@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { auditCorpus, auditText, configHash, listTextFiles } from "../scripts/audit-corpus.ts";
-import { proseBlocks, wordCount } from "../scripts/lib/parse.ts";
+import { layoutViolations } from "../scripts/lib/layout.ts";
+import { proseBlocks, structure, wordCount } from "../scripts/lib/parse.ts";
 
 const CORPUS = join(import.meta.dir, "fixtures", "corpus");
 const FUZZ_INPUTS = [
@@ -98,4 +99,30 @@ describe("robustness and determinism", () => {
       expect(violation.detail.trim().length).toBeGreaterThan(0);
     }
   });
+});
+
+// Spreading a list into one call throws a RangeError once the list passes the
+// engine's limit on arguments. Each text below threw on Windows before its
+// spread became a loop. Linux may allow more arguments, so there the old code
+// might pass at these sizes.
+describe("a long text gives every finding without spreading a list into a call", () => {
+  test("the full audit takes 800,000 findings from one rule", () => {
+    const found = auditText("shall ".repeat(800_000), { markdown: true }).filter((finding) => finding.rule === "legalese");
+    expect(found.length).toBe(800_000);
+  }, 120_000);
+
+  test("an indented code block keeps two million blank lines between its lines", () => {
+    const code = structure("    a\n" + "\n".repeat(2_000_000) + "    b\n").code;
+    expect(code).toEqual([{ line: 1, text: "a" + "\n".repeat(2_000_001) + "b" }]);
+  }, 60_000);
+
+  test("the acronym rule reads a single token that holds a million words", () => {
+    expect(auditText("Text (" + "b-".repeat(1_000_000) + ") here.\n").map((finding) => finding.rule)).not.toContain("acronym");
+  }, 60_000);
+
+  test("the contents rule gives one finding for each of 800,000 wrongly worded links", () => {
+    const sections = ["Overview", "One", "Two", "Three", "Four", "Five"].map((name) => `## ${name}\n\nText.\n`).join("\n");
+    const text = "# Guide\n\nVersion 1.0\n\n## Contents\n\n" + "- [Wrong](#one)\n".repeat(800_000) + "\n" + sections;
+    expect(layoutViolations(text).filter((finding) => finding.rule === "contents-list").length).toBe(800_000);
+  }, 120_000);
 });

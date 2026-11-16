@@ -72,7 +72,10 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   }
   const sections = parsed.headings.filter(heading => heading.level === 2);
   if (sections.length < SECTION_LIMIT) return findings;
-  findings.push(...contentsFindings(parsed, sections, end));
+  // One finding for each contents link, too many to spread into one call.
+  for (const finding of contentsFindings(parsed, sections, end)) {
+    findings.push(finding);
+  }
   const firstContent = sections.find(heading => !CONTENTS_LABEL.test(label(heading.text)) && !OVERVIEW_LABEL.test(label(heading.text)));
   const overview = parsed.headings.some(heading => OVERVIEW_LABEL.test(label(heading.text)) && (firstContent === undefined || heading.line < firstContent.line));
   if (!overview) findings.push({ rule: "overview-label", line: start, detail: "Add an Overview or Summary heading before the first content section." });
