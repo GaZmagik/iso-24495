@@ -112,11 +112,14 @@ export function compareVersions(before: string, after: string, authorText: strin
  * Which copies the first match leaves decides whether the second match's
  * pairs keep their order. So the first match is made twice: by whole
  * wording alone, and with pairs by label weighed in the same search, as
- * `pairKeepingOrder` describes. Both keep and count the same units. The one
- * that keeps more units in order is used, and the one by whole wording alone
- * when they keep as many. So a label added to one copy of repeated wording
- * does not make the copies read as moved, and no comparison keeps fewer
- * units in order than whole wording alone would.
+ * `pairKeepingOrder` describes. Both pair whole wording as often, but they
+ * can pair different copies by label. The one that keeps more units is
+ * used, then the one that keeps more of them in order, and the one by whole
+ * wording alone on a tie. So below `PAIRING_BUDGET`, a label added to one
+ * copy of repeated wording does not make the copies read as moved. No
+ * comparison keeps fewer units than whole wording alone would, nor fewer in
+ * order when it keeps as many. Which unit reads as dropped, and which labels
+ * are counted, can differ from whole wording alone.
  *
  * An after unit still left over is sorted in this order:
  *
@@ -142,7 +145,9 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
   let match = matched(before, after, true, beforeIndex);
   if (match.offeredByLabel) {
     const wholeFirst = matched(before, after, false, beforeIndex);
-    if (inOrder(wholeFirst.kept, afterIndex) >= inOrder(match.kept, afterIndex)) match = wholeFirst;
+    // More units kept wins, then more kept in order, and whole wording alone on a tie.
+    const keepsMore = wholeFirst.kept.length - match.kept.length;
+    if (keepsMore > 0 || keepsMore === 0 && inOrder(wholeFirst.kept, afterIndex) >= inOrder(match.kept, afterIndex)) match = wholeFirst;
   }
   const { kept, leftBefore, leftAfter } = match;
   const { moved, stepOrder } = keptOrder(kept, afterIndex);
@@ -1174,8 +1179,8 @@ function afterRows(comparison: Comparison): string[] {
     const first = run[0];
     if (first === undefined) continue;
     const finding = run.length === 1
-      ? "A step of an ordered list now stands in another order against its neighbouring steps. Put it back, or confirm the steps can happen in this order:"
-      : `${run.length} units of ordered-list steps now stand together in another order against their neighbouring steps. Put them back, or confirm the steps can happen in this order:`;
+      ? "A step of an ordered list now stands in another order against its neighbouring steps, so it is listed here and not as moved. Put it back, or confirm the steps can happen in this order:"
+      : `${run.length} units of ordered-list steps now stand together in another order against their neighbouring steps, so they are listed here and not as moved. Put them back, or confirm the steps can happen in this order:`;
     rows.push({ line: first.after.line, text: `| step order | ${first.before.line} | ${first.after.line} | ${finding} ${quoted(first.after.key)} |` });
   }
   return rows.sort((first, second) => first.line - second.line).map(row => row.text);

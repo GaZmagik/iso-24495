@@ -243,7 +243,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
       "Where two orders keep as many units, it names the unit that stood first in the original, so of two sentences that swap places, the first is listed. "
         + "Otherwise it names the part with fewer kept units, so when a heading and the text beside it change places, the heading can be the unit listed. "
         + "Units next to each other in both versions share one row, and only the first of them gets the question.",
-      "Copies of one text pair so that the most units keep their order, so a label added to one copy of repeated wording moves nothing. "
+      "Copies of one text pair so that the most units keep their order, so below the pairing budget a label added to one copy of repeated wording moves nothing. "
         + "Whole wording pairs first, so where one copy of a sentence gains a label and another copy loses it, the labelled copy reads as moved. "
         + "A short text that stands more than once, such as a number in a table, can pair with a copy beside another label, so a value moved to another row reads as moved, and the row cannot tell that from a move of the label. "
         + "When the copies of repeated texts would need more than 1,000,000 pairings, the texts with the most copies pair in document order, so a copy added or dropped can make another read as moved.",

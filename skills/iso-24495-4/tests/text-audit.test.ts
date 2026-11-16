@@ -623,7 +623,7 @@ describe("the two-version comparison, given --before", () => {
       const output = capture();
       expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md"), "--json", json], output.writeOut, output.writeErr)).toBe(0);
       expect(output.stdout[1]?.split("\n").slice(3, 6)).toEqual([
-        "| step order | 1 | 2 | A step of an ordered list now stands in another order against its neighbouring steps. Put it back, or confirm the steps can happen in this order: \"Close the valve.\" |",
+        "| step order | 1 | 2 | A step of an ordered list now stands in another order against its neighbouring steps, so it is listed here and not as moved. Put it back, or confirm the steps can happen in this order: \"Close the valve.\" |",
         "| moved | 4 | 4 | Kept, but moved out of its original order. Check that it keeps what it depends on and the claim it qualifies: \"This keeps water out.\" It opens with \"This\". Check what \"This\" refers to in its new place. |",
         "Kept 5: moved 1, steps out of order 1. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
       ]);

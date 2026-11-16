@@ -40,7 +40,7 @@ function printed(before: string, after: string, authorText: string | null = null
 const MOVED_ONE = "Kept, but moved out of its original order. Check that it keeps what it depends on and the claim it qualifies:";
 
 /** What a row says of a step out of order, before the unit's excerpt. */
-const STEP_ONE = "A step of an ordered list now stands in another order against its neighbouring steps. Put it back, or confirm the steps can happen in this order:";
+const STEP_ONE = "A step of an ordered list now stands in another order against its neighbouring steps, so it is listed here and not as moved. Put it back, or confirm the steps can happen in this order:";
 
 /** A unit's text as a row quotes it: its first 60 characters, in double quotes, with "..." where it was cut. */
 function excerpt(text: string): string {
@@ -766,6 +766,18 @@ describe("a label gained or lost moves nothing", () => {
     // Both matches keep four of five units in order. Each names a different copy as moved, and the one named is whole wording's.
     const comparison = compareVersions("1. **Purpose:** Check the gauge.\n\nOpen the vent.\n\n1. **Purpose:** Open the vent.\n2. Close the valve.\n\n**Purpose:** Open the vent.\n", "**Purpose:** Open the vent.\n\n**Purpose:** Check the gauge.\n\n1. **Purpose:** Open the vent.\n2. Close the valve.\n\n**Purpose:** Open the vent.\n", null);
     expect(order(comparison)).toEqual({ moved: ["Purpose: Check the gauge."], stepOrder: [] });
+  });
+
+  test("weighing labels can pair another copy by label, so another unit reads as dropped and another label is counted", () => {
+    // Whole wording alone pairs the first copy, and reads the labelled copy as dropped and the other as moved.
+    const comparison = compareVersions("A one.\n\nX one.\n\n**Purpose:** A one.\n", "X one.\n\n**Note:** A one.\n", null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    expect(sorted(comparison)).toEqual(only({ kept: ["X one.", "Note: A one."], dropped: ["A one."], newLabels: ["Note:"], labelsGone: ["Purpose:"] }));
+  });
+
+  test("of the two matches, the one that keeps more units is used, before the one that keeps more in order", () => {
+    const comparison = compareVersions("C three.\n\n**Purpose:** D four.\n\n**Purpose:** B two.\n\n1. **Purpose:** B two.\n\nD four.\n\n1. D four.\n\nPurpose: B two.\n", "C three.\n\nD four.\n\n**Note:** B two.\n\n1. **Purpose:** B two.\n\n**Note:** D four.\n\n1. **Note:** D four.\n\nB two.\n", null);
+    expect([comparison.kept.length, comparison.dropped.length, comparison.added.length]).toEqual([7, 0, 0]);
   });
 
   test("labels added to copies, or taken from them, but never both for one text, leave every unit in order", () => {
