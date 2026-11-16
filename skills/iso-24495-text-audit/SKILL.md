@@ -29,7 +29,7 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 Five additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
 These recognition choices are project proxies and remain unmeasured on a corpus.
-Raw HTML structure, code and comments are excluded.
+Raw HTML structure, code and comments are excluded, though the empty signpost rule counts code or an HTML tag beneath a heading as content.
 Front matter is excluded from prose checks, but recognised edition metadata can satisfy the version or date rule.
 
 - **Contents list:** At six root H2 sections, require labelled contents or opening navigation containing two same-document fragment links in one block.

@@ -496,20 +496,26 @@ describe("empty-signpost: a referral heading with nothing beneath it", () => {
     expect(auditText("## See also\n").filter(finding => finding.rule === "empty-signpost")).toEqual([]);
   });
 
-  test("the scan takes less time than the parse it reads, so it does not grow with the square of the text", () => {
-    // A heading checked against every later heading or every code block grew
-    // with the square of their number. The parse of the same text is the
-    // baseline, so a slower or busier machine slows both.
-    const text = "## See also\n\n```\nx\n```\n\n### Resources\n\n".repeat(20_000);
+  test("the scan takes no more than three times the parse it reads, so it does not grow with the square of the text", () => {
+    // The parse of the same text is the baseline, so a slower or busier
+    // machine slows both. At this size the scan took about as long as the
+    // parse, and a scan that checked every code block for each heading took
+    // about 15 times as long. The fastest of three scans is timed, because
+    // one scan alone once ran slower than the parse under load.
+    const text = "## See also\n\n```\nx\n```\n\n### Resources\n\n".repeat(40_000);
     let started = performance.now();
     const parsed = structure(text);
     const parse = performance.now() - started;
-    started = performance.now();
-    const found = emptySignpostViolations(parsed);
-    const scan = performance.now() - started;
-    expect(found).toHaveLength(20_000);
-    expect(scan).toBeLessThan(parse);
-  }, 60_000);
+    const scans: number[] = [];
+    let found: unknown[] = [];
+    for (let run = 0; run < 3; run++) {
+      started = performance.now();
+      found = emptySignpostViolations(parsed);
+      scans.push(performance.now() - started);
+    }
+    expect(found).toHaveLength(40_000);
+    expect(Math.min(...scans)).toBeLessThan(3 * parse);
+  }, 120_000);
 
   test("the full audit takes every layout finding however many there are, without spreading them into a call", () => {
     // A spread of 700,000 arguments into one call threw a RangeError on
