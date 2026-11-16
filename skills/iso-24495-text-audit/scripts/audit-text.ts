@@ -236,7 +236,8 @@ function readComparison(
  * is left for `auditTarget` to refuse.
  *
  * The path is made absolute first, and the file is read by that absolute
- * path, so the file read is the file whose path was checked. A directory
+ * path, so the file read is the file whose path was checked. A link put on
+ * the path between the check and the read is not caught. A directory
  * junction counts as a symbolic link.
  *
  * @param source The argument that named the file, as the usage line writes it.

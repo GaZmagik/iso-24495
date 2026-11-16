@@ -54,6 +54,45 @@ function manyUnits(prefix: string): Unit[] {
   return Array.from({ length: 10_000 }, (unused, index) => ({ kind: "sentence", line: index + 1, key: `${prefix} ${index % 5_000}.`, block: index }));
 }
 
+/** The module the timed child processes read text with. */
+const RESTRUCTURE_MODULE = new URL("../../scripts/lib/restructure.ts", import.meta.url).href;
+
+/** How long a timed child process may run before it is stopped. Linear code needs a small part of it. */
+const CHILD_LIMIT_MS = 30_000;
+
+/**
+ * Reads `text` once, and once more with every `[` made a space, so no slot
+ * opens, and gives the time each read took and the units of the first.
+ * The reads run in a child process, because a read that never returns cannot
+ * be stopped in this one. The text with no openings is read the same way at
+ * the same length, so it sets the pace of this machine for the comparison.
+ */
+function timedReads(text: string): { exitCode: number | null; slotsMs: number; plainMs: number; units: number } {
+  const script = [
+    `const { documentUnits } = await import(${JSON.stringify(RESTRUCTURE_MODULE)});`,
+    "const text = await Bun.stdin.text();",
+    "const plain = text.replaceAll(\"[\", \" \");",
+    "let started = performance.now();",
+    "const units = documentUnits(text).length;",
+    "const slotsMs = performance.now() - started;",
+    "started = performance.now();",
+    "documentUnits(plain);",
+    "const plainMs = performance.now() - started;",
+    "console.log(JSON.stringify({ slotsMs, plainMs, units }));",
+  ].join("\n");
+  const run = Bun.spawnSync([process.execPath, "-e", script], { stdin: Buffer.from(text), timeout: CHILD_LIMIT_MS });
+  if (run.exitCode !== 0) return { exitCode: run.exitCode, slotsMs: Number.NaN, plainMs: Number.NaN, units: Number.NaN };
+  return { exitCode: 0, ...(JSON.parse(run.stdout.toString()) as { slotsMs: number; plainMs: number; units: number }) };
+}
+
+/**
+ * The longest a read of slot openings may take: 10 times the read of the
+ * same text with no openings, and never less than one second.
+ */
+function slotBudget(plainMs: number): number {
+  return Math.max(1_000, 10 * plainMs);
+}
+
 /** A comparison's sorting with every list empty but those given. */
 function only(lists: Partial<Record<string, string[]>>): Record<string, string[]> {
   return { kept: [], dropped: [], added: [], fromAuthor: [], gaps: [], newHeadings: [], headingsGone: [], newLabels: [], labelsGone: [], ...lists };
@@ -311,6 +350,22 @@ describe("an after unit left over is a gap, a heading, the author's or added", (
     expect(keys("[Author needed: a.] [Author needed: b.]\n")).toEqual([["sentence", "[Author needed: a.]"], ["sentence", "[Author needed: b.]"]]);
   });
 
+  test("a slot runs from its opening to the first closing bracket after it, and an opening with none after it is no slot", () => {
+    // A bracket before any opening, an opening inside a slot, a character past the basic plane, and an opening left open at the end.
+    expect(keys("Go. ] [Author needed: a [Author needed: b. c] Then. 😀 [Author needed: d. e] Done. [Author needed: f. g")).toEqual([
+      ["sentence", "Go."],
+      ["sentence", "] [Author needed: a [Author needed: b. c] Then."],
+      ["sentence", "😀 [Author needed: d. e] Done."],
+      ["sentence", "[Author needed: f."],
+      ["sentence", "g"],
+    ]);
+    expect(keys("[Author needed:] x. [Author needed: [Author needed: y. z]] End. [Author needed:")).toEqual([
+      ["sentence", "[Author needed:] x."],
+      ["sentence", "[Author needed: [Author needed: y. z]] End."],
+      ["sentence", "[Author needed:"],
+    ]);
+  });
+
   test("a slot inside invented wording does not hide it, and two slots are not one", () => {
     expect(sorted(compareVersions("Fix it.\n", "Fix it.\n\nThe reader is [Author needed: reader] today.\n\n[Author needed: a] [Author needed: b]\n", null)))
       .toEqual(only({ kept: ["Fix it."], added: ["The reader is [Author needed: reader] today.", "[Author needed: a] [Author needed: b]"] }));
@@ -430,4 +485,21 @@ describe("matching takes time in proportion to the units", () => {
     expect(units).toHaveLength(50_000);
     expect(units[49_999]?.key).toBe("[Author needed: a. b] Then go.");
   });
+
+  // Searching again for a closing bracket from every opening read the rest of
+  // the text each time: 30,000 openings with none closed took 4.4 seconds.
+  const openingForms: Array<[string, string, number]> = [
+    ["100,000 slot openings with no closing bracket", "[Author needed: ".repeat(100_000), 1],
+    ["300,000 slot openings with no closing bracket", "[Author needed: ".repeat(300_000), 1],
+    ["100,000 slot openings, each followed by a full stop", "[Author needed: . ".repeat(100_000), 100_000],
+    ["one slot opening followed by 300,000 full stops", `[Author needed: ${". ".repeat(300_000)}`, 300_000],
+  ];
+  for (const [name, text, expectedUnits] of openingForms) {
+    test(`${name} are read in time proportional to the text`, () => {
+      const timed = timedReads(text);
+      expect(timed.exitCode, `the read was stopped after ${CHILD_LIMIT_MS} ms, or failed`).toBe(0);
+      expect(timed.slotsMs, `${timed.plainMs} ms with no openings`).toBeLessThan(slotBudget(timed.plainMs));
+      expect(timed.units).toBe(expectedUnits);
+    }, 2 * CHILD_LIMIT_MS);
+  }
 });

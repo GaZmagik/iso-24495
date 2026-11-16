@@ -21,8 +21,8 @@ import { safeCell, safePathCode } from "./safe-text.ts";
 /** A unit that is one slot Part 5 tells a restructure to leave where nothing serves, and nothing else. */
 const ONE_SLOT = /^\[Author needed:[^\]]*\]$/;
 
-/** Every such slot in a text, wherever it stands. */
-const SLOTS = /\[Author needed:[^\]]*\]/g;
+/** What every slot opens with. */
+const SLOT_OPENING = "[Author needed:";
 
 /**
  * Struck words are still on the page, and a screen reader says them with no
@@ -374,21 +374,43 @@ function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, bloc
  */
 function wholeSlots(text: string, sentences: readonly LocatedSentence[]): LocatedSentence[] {
   // Slots and sentences both run in text order, so one pass over each finds every slot a sentence starts inside.
-  const slots = text.matchAll(SLOTS);
-  let slot = slots.next();
+  const slots = slotSpans(text);
+  let next = 0;
+  let slot = slots[next];
   const joined: LocatedSentence[] = [];
   for (const sentence of sentences) {
-    while (slot.done !== true && slot.value.index + slot.value[0].length <= sentence.start) {
-      slot = slots.next();
+    while (slot !== undefined && slot.end <= sentence.start) {
+      next++;
+      slot = slots[next];
     }
     const previous = joined.at(-1);
-    if (previous !== undefined && slot.done !== true && slot.value.index < sentence.start) {
+    if (previous !== undefined && slot !== undefined && slot.start < sentence.start) {
       joined[joined.length - 1] = { text: text.slice(previous.start, sentence.start + sentence.text.length), start: previous.start };
     } else {
       joined.push(sentence);
     }
   }
   return joined;
+}
+
+/**
+ * Where each slot in a text starts and ends, in text order. A slot runs from
+ * its opening to the first closing bracket after it. The text is read once:
+ * the search for an opening starts after the last slot, and when no closing
+ * bracket is left, no later opening can close either, so the search stops.
+ */
+function slotSpans(text: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let from = 0;
+  let start = text.indexOf(SLOT_OPENING, from);
+  while (start !== -1) {
+    const close = text.indexOf("]", start + SLOT_OPENING.length);
+    if (close === -1) break;
+    spans.push({ start, end: close + 1 });
+    from = close + 1;
+    start = text.indexOf(SLOT_OPENING, from);
+  }
+  return spans;
 }
 
 /**

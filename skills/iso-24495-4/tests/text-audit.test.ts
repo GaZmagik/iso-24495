@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   auditTarget,
   formatFindings,
@@ -695,11 +695,15 @@ describe("the two-version comparison, given --before", () => {
       writeFileSync(join(project, "selected", "x.md"), "Inside the selected tree.\n");
       writeFileSync(join(project, "x.md"), "At the project root.\n");
       writeFileSync(join(project, "new.md"), "Text.\n");
-      // Made absolute, the path is selected/x.md, which holds no link. On Linux the system would
-      // follow the link and then step up, reaching the root's x.md, a file the check never saw.
-      // Windows takes the step up before the link, so this tells the two apart only on Linux.
+      // The path is typed with the link and the step up kept in it: `join` would take them out,
+      // and the audit would never see them. Made absolute, the path is selected/x.md, which holds
+      // no link. On Linux the system would follow the link and then step up, reaching the root's
+      // x.md, a file the check never saw. Windows takes the step up before the link, so this
+      // tells the two apart only on Linux.
+      const typed = [project, "selected", "linked", "..", "x.md"].join(sep);
+      expect(typed).toContain(`${sep}linked${sep}..${sep}x.md`);
       const output = capture();
-      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "selected", "linked", "..", "x.md"), "--project-dir", project], output.writeOut, output.writeErr)).toBe(0);
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", typed, "--project-dir", project], output.writeOut, output.writeErr)).toBe(0);
       const printed = output.stdout.join("\n");
       expect(printed).toContain("Inside the selected tree.");
       expect(printed).not.toContain("At the project root.");
