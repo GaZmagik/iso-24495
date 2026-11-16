@@ -326,3 +326,46 @@ describe("what a heading identifier keeps", () => {
     expect(headingIds(["a b", "A  B", "a-b"])).toEqual(["a-b", "a-b-1", "a-b-2"]);
   });
 });
+
+describe("the structural reading lists code blocks and prose blocks", () => {
+  test("a fenced block gives its contents without the fences, the info string or the fence's indentation", () => {
+    expect(structure("Text.\n\n```js\nconst a = 1;\n  kept  as  written\n```\n").code).toEqual([{ line: 3, text: "const a = 1;\n  kept  as  written" }]);
+    expect(structure("   ```\n   a\n  b\n c\nd\n   ```\n").code).toEqual([{ line: 1, text: "a\nb\nc\nd" }]);
+    expect(structure("~~~~\nx\n~~~\n~~~~\n").code).toEqual([{ line: 1, text: "x\n~~~" }]);
+  });
+
+  test("a block inside a list item or a quotation loses the container's markers", () => {
+    expect(structure("- Item\n\n  ```\n  inside\n  ```\n").code).toEqual([{ line: 3, text: "inside" }]);
+    expect(structure("> ```\n> quoted\n> ```\n").code).toEqual([{ line: 1, text: "quoted" }]);
+    expect(structure("> ```\n> quoted\n\nAfter.\n").code).toEqual([{ line: 1, text: "quoted" }]);
+  });
+
+  test("an unclosed fence runs to the end of the text, and the end after a final line break is no line", () => {
+    expect(structure("```\nunclosed\n").code).toEqual([{ line: 1, text: "unclosed" }]);
+    expect(structure("```\nunclosed\n\n").code).toEqual([{ line: 1, text: "unclosed\n" }]);
+    expect(structure("```\nunclosed").code).toEqual([{ line: 1, text: "unclosed" }]);
+  });
+
+  test("indented code loses four columns, and keeps the blank lines between its lines", () => {
+    expect(structure("Para.\n\n    code one\n\n    code two\n\nAfter.\n").code).toEqual([{ line: 3, text: "code one\n\ncode two" }]);
+    expect(structure("    a\n\n\n      b\nPara\n").code).toEqual([{ line: 1, text: "a\n\n\n  b" }]);
+    expect(structure("    a\nPara\n\n    b\n").code).toEqual([{ line: 1, text: "a" }, { line: 4, text: "b" }]);
+    expect(structure("    a\n\n-     b\n").code).toEqual([{ line: 1, text: "a" }, { line: 3, text: "b" }]);
+    expect(structure("\tTabbed\n").code).toEqual([{ line: 1, text: "Tabbed" }]);
+  });
+
+  test("front matter, a paragraph's indented continuation and a raw HTML block are not code", () => {
+    expect(structure("---\ntitle: x\n---\n\n```\nfm\n```\n").code).toEqual([{ line: 5, text: "fm" }]);
+    expect(structure("Para\n    continues\n").code).toEqual([]);
+    expect(structure("<pre>\ncode\n</pre>\n").code).toEqual([]);
+  });
+
+  test("an empty block is listed with no contents", () => {
+    expect(structure("```\n```\n").code).toEqual([{ line: 1, text: "" }]);
+  });
+
+  test("the prose blocks leave out a raw HTML code block, so prose straight after one is its own paragraph", () => {
+    expect(structure("<pre>\ncode\n</pre>\nThe prose stays.\n").paragraphs).toEqual([{ line: 4, lines: ["The prose stays."] }]);
+    expect(structure("One.\nTwo.\n\n- Item\n").paragraphs).toEqual([{ line: 1, lines: ["One.", "Two."] }, { line: 4, lines: ["Item"] }]);
+  });
+});

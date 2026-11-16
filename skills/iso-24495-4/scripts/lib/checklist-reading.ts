@@ -27,7 +27,8 @@ import { itemAt } from "./item-at.ts";
  *   with `--jev` and `--send` together.
  * - `front-matter` is met unless a leading "---" block is read as text, as
  *   the plain text audit does with `--no-front-matter`.
- * - `before` is met when the original version was given.
+ * - `before` is met when the original version was given, which only the
+ *   plain text audit takes, with `--before`.
  * - `fact:<name>` is met when the author declared that fact.
  *
  * It also counts the selected files that are not Markdown, which no clause
@@ -70,7 +71,9 @@ export function checklistReading(registry: readonly ChecklistItem[], run: RunFac
 /**
  * The reading as four lines of plain words: what the checks can report on,
  * what this run was set to use and what the rest still need, what the other
- * clauses are, and that the reading does not measure the document.
+ * clauses are, and that the reading does not measure the document. A clause
+ * that needs two versions but has no check yet is counted on the third line
+ * as needing the original and having no check.
  *
  * Unused clauses are counted by the needs they still lack, grouped in the
  * order each group first appears. Then come the selected files that the used
@@ -90,7 +93,8 @@ export function formatChecklistReading(reading: ChecklistReading, registry: read
   return [
     `Part 5 checklist reading: checks can report a fault on ${tool.fault} of ${reading.clauses} ${reading.clauses === 1 ? "clause" : "clauses"} (${reading.reading}), each within recorded limits.`,
     runLine(reading, registry),
-    `Of the other ${others} ${others === 1 ? "clause" : "clauses"}: ${tool.passOnly} can only pass, ${tool.needsTwoVersions} ${tool.needsTwoVersions === 1 ? "needs" : "need"} the original version, `
+    `Of the other ${others} ${others === 1 ? "clause" : "clauses"}: ${tool.passOnly} can only pass, `
+      + `${tool.needsTwoVersions} ${tool.needsTwoVersions === 1 ? "needs the original version and has" : "need the original version and have"} no check yet, `
       + `${tool.notCheckable} ${tool.notCheckable === 1 ? "is a judgement" : "are judgements"}, ${tool.notRead} ${tool.notRead === 1 ? "is" : "are"} not read.`,
     "This reading shows what the audit reads. It does not measure the document.",
   ].join("\n");
@@ -117,7 +121,7 @@ export interface RunFacts {
   readonly jevPreview: boolean;
   readonly jev: boolean;
   readonly send: boolean;
-  /** The original version of a restructured document was given. No option gives it today. */
+  /** The original version of a restructured document was given, with the text audit's `--before`. */
   readonly before: boolean;
   /** The names of the facts the author declared. None can be declared today. */
   readonly facts: readonly string[];

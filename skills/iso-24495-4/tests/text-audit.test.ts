@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   auditTarget,
   formatFindings,
@@ -10,6 +10,11 @@ import {
 
 function makeProject(): string {
   return mkdtempSync(join(tmpdir(), "iso-text-audit-"));
+}
+
+/** What the comparison prints when the path an argument names runs through a linked directory. */
+function linkedDirectoryRefusal(source: string, path: string): string {
+  return `audit-text: ${source} names a path of ${path.length} characters that runs through a symbolic link, which the comparison does not follow; name the file by a path with no link in it`;
 }
 
 function capture() {
@@ -252,7 +257,7 @@ describe("runCli", () => {
       // and its length, and never the text the caller typed.
       expect(unknown.stderr).toEqual([
         "audit-text: unknown option of 9 characters at argument 2; "
-          + "expected --json, --project-dir or --no-front-matter",
+          + "expected --json, --project-dir, --no-front-matter, --before or --author-text",
       ]);
 
       const extra = capture();
@@ -263,7 +268,7 @@ describe("runCli", () => {
       )).toBe(2);
       expect(extra.stderr).toEqual([
         "audit-text: unexpected argument of 8 characters at argument 3; "
-          + "expected --json, --project-dir or --no-front-matter",
+          + "expected --json, --project-dir, --no-front-matter, --before or --author-text",
       ]);
 
       const duplicate = capture();
@@ -470,7 +475,7 @@ describe("options and arguments that are not plain", () => {
       for (const argv of [holed, trailing]) {
         const output = capture();
         expect(runCli(argv, output.writeOut, output.writeErr)).toBe(2);
-        expect(output.stderr).toEqual(["audit-text: argument 2 is missing; expected --json, --project-dir or --no-front-matter"]);
+        expect(output.stderr).toEqual(["audit-text: argument 2 is missing; expected --json, --project-dir, --no-front-matter, --before or --author-text"]);
         expect(output.stdout).toEqual([]);
       }
     } finally {
@@ -506,4 +511,274 @@ function readLegalFrontMatter(): string {
 function findingsWithOptions(file: string, project: string): (reading: object) => string[] {
   return (reading: object): string[] => Object.values(auditTarget(file, project, readLegalFrontMatter, reading).files)
     .flatMap((result) => result.violations.map((violation) => `${violation.rule} at line ${violation.line}`)).sort();
+}
+
+describe("the two-version comparison, given --before", () => {
+  test("prints the comparison after the findings and before the reading, and the report holds it before the reading", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "# Guide\n\nClose the valve. Open the vent.\n");
+      writeFileSync(join(project, "new.md"), "# Guide\n\n- Close the valve.\n- Check the gauge.\n");
+      const json = join(project, "report.json");
+      const output = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md"), "--project-dir", project, "--json", json],
+        output.writeOut,
+        output.writeErr,
+      )).toBe(0);
+      expect(output.stderr).toEqual([]);
+      expect(output.stdout).toHaveLength(3);
+      expect(output.stdout[0]).toStartWith("| File | Line | Rule | Finding |");
+      expect(output.stdout[1]?.split("\n")).toEqual([
+        "Restructure comparison: before `old.md`, after `new.md`",
+        "| Kind | Before | After | Finding |",
+        "|------|--------|-------|---------|",
+        "| dropped | 3 | | No unchanged copy is in the new version: \"Open the vent.\" |",
+        "| added | | 4 | Not in the original or the author's wording. Confirm its source: \"Check the gauge.\" |",
+        "Kept 2. Dropped 1. Added 1. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
+        "The comparison reads wording, not meaning.",
+      ]);
+      expect(output.stdout[2]).toStartWith("Part 5 checklist reading: ");
+      const report = JSON.parse(readFileSync(json, "utf8")) as Record<string, unknown>;
+      expect(Object.keys(report).slice(-2)).toEqual(["restructure", "checklist"]);
+      expect(report.restructure).toEqual({
+        before: "old.md", after: "new.md", authorText: null,
+        units: { before: 3, after: 3, authorText: 0 }, kept: 2,
+        dropped: [{ line: 3, kind: "sentence", excerpt: "Open the vent." }],
+        added: [{ line: 4, kind: "item", excerpt: "Check the gauge." }],
+        fromAuthor: [], gaps: [], newHeadings: [], headingsGone: [], newLabels: [], labelsGone: [],
+      });
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("names the author's wording and counts what came from it", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "Close the valve.\n");
+      writeFileSync(join(project, "new.md"), "Close the valve.\n\nReaders are fitters.\n");
+      writeFileSync(join(project, "notes.txt"), "Readers are fitters.\n");
+      const output = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", join(project, "new.md"), "--author-text", join(project, "notes.txt"), "--before", join(project, "old.md"), "--project-dir", project],
+        output.writeOut,
+        output.writeErr,
+      )).toBe(0);
+      const lines = output.stdout[1]?.split("\n") ?? [];
+      expect([lines[0], lines[3], lines[4]]).toEqual([
+        "Restructure comparison: before `old.md`, after `new.md`, author's wording `notes.txt`",
+        "| from the author | | 3 | Matches the author's wording: \"Readers are fitters.\" |",
+        "Kept 1. Dropped 0. Added 0. From the author 1. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
+      ]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("reads front matter as text in every version with --no-front-matter", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "---\ntitle: Old title.\n---\n\nBody.\n");
+      writeFileSync(join(project, "new.md"), "---\ntitle: New title.\n---\n\nBody.\n");
+      const set = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md")], set.writeOut, set.writeErr)).toBe(0);
+      expect(set.stdout[1]).toContain("Kept 1. Dropped 0. Added 0.");
+      const text = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md"), "--no-front-matter"], text.writeOut, text.writeErr)).toBe(0);
+      // Read as text, the block's line above its closing "---" is a heading, so the change is counted.
+      expect(text.stdout[1]).toContain("Kept 1. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 1. Headings gone 1.");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("a directory target, --author-text alone and a missing file name are refused with exit 2, before anything is printed", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "Text.\n");
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      const refusals: Array<[string[], string]> = [
+        [[project, "--before", join(project, "old.md")], "audit-text: --before compares one file, and the selected path is a directory"],
+        [[join(project, "new.md"), "--author-text", join(project, "old.md")], "audit-text: --author-text needs --before"],
+        [[join(project, "new.md"), "--before"], "audit-text: --before requires a file"],
+        [[join(project, "new.md"), "--before", "--json", "x.json"], "audit-text: --before requires a file"],
+        [[join(project, "new.md"), "--before", join(project, "old.md"), "--author-text"], "audit-text: --author-text requires a file"],
+        [[join(project, "new.md"), "--before", "a.md", "--before", "b.md"], "audit-text: --before appears more than once"],
+      ];
+      for (const [args, message] of refusals) {
+        const output = capture();
+        expect(runCli(["bun", "audit-text-cli.ts", ...args], output.writeOut, output.writeErr), message).toBe(2);
+        expect(output.stderr).toEqual([message]);
+        expect(output.stdout).toEqual([]);
+      }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("a symbolic link is refused for the selected file, --before and --author-text, with the path given by its length", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "Text.\n");
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      mkdirSync(join(project, "real"));
+      // A junction needs no privilege on Windows, and is a symbolic link elsewhere.
+      const link = join(project, "link.md");
+      symlinkSync(join(project, "real"), link, "junction");
+      const cases: Array<[string[], string]> = [
+        [[link, "--before", join(project, "old.md")], `audit-text: <file-or-directory> names a path of ${link.length} characters that is a symbolic link, which the comparison does not follow`],
+        [[join(project, "new.md"), "--before", link], `audit-text: --before names a path of ${link.length} characters that is a symbolic link, which the comparison does not follow`],
+        [[join(project, "new.md"), "--before", join(project, "old.md"), "--author-text", link], `audit-text: --author-text names a path of ${link.length} characters that is a symbolic link, which the comparison does not follow`],
+      ];
+      for (const [args, message] of cases) {
+        const output = capture();
+        expect(runCli(["bun", "audit-text-cli.ts", ...args], output.writeOut, output.writeErr), message).toBe(1);
+        expect(output.stderr).toEqual([message]);
+        expect(output.stdout).toEqual([]);
+      }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("a path that runs through a linked directory is refused in every position, and nothing is printed or written", () => {
+    const project = makeProject();
+    try {
+      const outside = join(project, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "secret.md"), "Secret outside selected tree.\n");
+      mkdirSync(join(project, "selected"));
+      // A junction needs no privilege on Windows, and is a symbolic link elsewhere.
+      symlinkSync(outside, join(project, "selected", "linked"), "junction");
+      const through = join(project, "selected", "linked", "secret.md");
+      writeFileSync(join(project, "old.md"), "Text.\n");
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      const cases: Array<[string[], string]> = [
+        [[through, "--before", join(project, "old.md")], linkedDirectoryRefusal("<file-or-directory>", through)],
+        [[join(project, "new.md"), "--before", through], linkedDirectoryRefusal("--before", through)],
+        [[join(project, "new.md"), "--before", join(project, "old.md"), "--author-text", through], linkedDirectoryRefusal("--author-text", through)],
+        // A relative path is resolved first, so its link is found the same way.
+        [[join(project, "new.md"), "--before", join("selected", "linked", "..", "linked", "secret.md")], ""],
+      ];
+      const previous = process.cwd();
+      process.chdir(project);
+      try {
+        for (const [index, [args, message]] of cases.entries()) {
+          const json = join(project, `report-${index}.json`);
+          const output = capture();
+          expect(runCli(["bun", "audit-text-cli.ts", ...args, "--project-dir", project, "--json", json], output.writeOut, output.writeErr), args.join(" ")).toBe(1);
+          if (message !== "") expect(output.stderr).toEqual([message]);
+          expect(output.stderr.join("\n")).toContain("runs through a symbolic link");
+          expect(output.stdout).toEqual([]);
+          expect(existsSync(json)).toBe(false);
+          expect(output.stderr.join("\n")).not.toContain("Secret");
+        }
+      } finally {
+        process.chdir(previous);
+      }
+      // The same file by its real path is read, so the refusal is the link's doing.
+      const control = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(outside, "secret.md"), "--project-dir", project], control.writeOut, control.writeErr)).toBe(0);
+      expect(control.stdout.join("\n")).toContain("Secret outside selected tree.");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("the file read is the file whose path was checked, even when a link and a parent step meet on the path", () => {
+    const project = makeProject();
+    try {
+      mkdirSync(join(project, "outside"));
+      mkdirSync(join(project, "selected"));
+      symlinkSync(join(project, "outside"), join(project, "selected", "linked"), "junction");
+      writeFileSync(join(project, "selected", "x.md"), "Inside the selected tree.\n");
+      writeFileSync(join(project, "x.md"), "At the project root.\n");
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      // The path is typed with the link and the step up kept in it: `join` would take them out,
+      // and the audit would never see them. Made absolute, the path is selected/x.md, which holds
+      // no link. On Linux the system would follow the link and then step up, reaching the root's
+      // x.md, a file the check never saw. Windows takes the step up before the link, so this
+      // tells the two apart only on Linux.
+      const typed = [project, "selected", "linked", "..", "x.md"].join(sep);
+      expect(typed).toContain(`${sep}linked${sep}..${sep}x.md`);
+      const output = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", typed, "--project-dir", project], output.writeOut, output.writeErr)).toBe(0);
+      const printed = output.stdout.join("\n");
+      expect(printed).toContain("Inside the selected tree.");
+      expect(printed).not.toContain("At the project root.");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("a missing or unsupported --before or --author-text file is refused with exit 1", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "new.md"), "Text.\n");
+      writeFileSync(join(project, "old.rst"), "Text.\n");
+      const missing = join(project, "missing.md");
+      const unsupported = join(project, "old.rst");
+      const cases: Array<[string[], string]> = [
+        [["--before", missing], `audit-text: --before names a path of ${missing.length} characters that cannot be read: no such file or directory`],
+        [["--before", unsupported], `audit-text: --before names a path of ${unsupported.length} characters with another ending; select a file ending in .md, .markdown or .txt`],
+        [["--before", join(project, "new.md"), "--author-text", missing], `audit-text: --author-text names a path of ${missing.length} characters that cannot be read: no such file or directory`],
+        [["--before", join(project, "new.md"), "--author-text", project], `audit-text: --author-text names a path of ${project.length} characters with another ending; select a file ending in .md, .markdown or .txt`],
+      ];
+      for (const [args, message] of cases) {
+        const output = capture();
+        expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.md"), ...args], output.writeOut, output.writeErr), message).toBe(1);
+        expect(output.stderr).toEqual([message]);
+        expect(output.stdout).toEqual([]);
+      }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("an unsupported selected file is still refused as one", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "new.rst"), "Text.\n");
+      writeFileSync(join(project, "old.md"), "Text.\n");
+      const output = capture();
+      expect(runCli(["bun", "audit-text-cli.ts", join(project, "new.rst"), "--before", join(project, "old.md")], output.writeOut, output.writeErr)).toBe(1);
+      expect(output.stderr[0]).toStartWith("audit-text: Select a file ending in .md, .markdown or .txt");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("every Jev option beside --before or --author-text exits 2 and sends nothing", async () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "# Guide\n\nText.\n");
+      writeFileSync(join(project, "new.md"), "# Guide\n\nText.\n");
+      const jevOptions = [["--jev"], ["--jev-preview"], ["--send"], ["--yes"], ["--include-judged-text"], ["--jev", "--send", "--yes"]];
+      for (const comparisonOption of ["--before", "--author-text"]) {
+        for (const options of jevOptions) {
+          const requests: string[] = [];
+          const output = capture();
+          const exit = await runCli(
+            ["bun", "audit-text-cli.ts", join(project, "new.md"), ...options, comparisonOption, join(project, "old.md")],
+            output.writeOut,
+            output.writeErr,
+            { env: { TYPESAFE_API_KEY: "stand-in-key" }, client: { fetch: recordingFetch(requests) } },
+          );
+          expect(exit, `${options.join(" ")} ${comparisonOption}`).toBe(2);
+          expect(requests).toEqual([]);
+        }
+      }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
+/** A stand-in for the transport that records each address asked for, and answers nothing useful. */
+function recordingFetch(requests: string[]): (url: string) => Promise<Response> {
+  return async (url: string): Promise<Response> => {
+    requests.push(url);
+    return Response.json({});
+  };
 }
