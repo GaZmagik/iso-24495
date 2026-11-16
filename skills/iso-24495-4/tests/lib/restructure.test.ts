@@ -81,6 +81,16 @@ function manyUnits(prefix: string): Unit[] {
   return Array.from({ length: 10_000 }, (unused, index) => ({ kind: "sentence", line: index + 1, key: `${prefix} ${index % 5_000}.`, block: index }));
 }
 
+/** Sentence units of the given texts in order, one to a line and a block. */
+function sentenceUnits(texts: readonly string[]): Unit[] {
+  return texts.map((key, index) => ({ kind: "sentence", line: index + 1, key, block: index }));
+}
+
+/** `count` copies of one text. */
+function copiesOf(text: string, count: number): string[] {
+  return Array.from({ length: count }, () => text);
+}
+
 /** The module the timed child processes read text with. */
 const RESTRUCTURE_MODULE = new URL("../../scripts/lib/restructure.ts", import.meta.url).href;
 
@@ -372,6 +382,24 @@ describe("matching counts each text as often as it occurs", () => {
     const comparison = compareVersions("A one.\n\nB two.\n\nA one.\n\nC three.\n", "A one.\n\nC three.\n\nB two.\n\nA one.\n", null);
     expect(comparison.kept).toHaveLength(4);
     expect(order(comparison)).toEqual({ moved: ["C three."], stepOrder: [] });
+  });
+
+  test("a text past the pairing budget still steers which copy of another text is kept", () => {
+    // 1,001 copies before and 1,002 after make 1,003,002 possible pairings, past the budget of 1,000,000,
+    // so each copy of "Same." is offered only the original copy at the same place. Those offers still count
+    // when the copy of "Mark." to keep is chosen: the last one keeps its place, and the first is dropped.
+    const comparison = compareUnits(sentenceUnits(["Mark.", ...copiesOf("Same.", 1_001), "Mark."]), sentenceUnits([...copiesOf("Same.", 1_002), "Mark."]), []);
+    expect({ kept: comparison.kept.length, added: comparison.added.map(unit => unit.line), dropped: comparison.dropped.map(unit => unit.line) })
+      .toEqual({ kept: 1_002, added: [1_002], dropped: [1] });
+    expect(order(comparison)).toEqual(IN_ORDER);
+  });
+
+  test("a copy past the original's, in a text past the pairing budget, is added and pairs with no other text", () => {
+    // One copy before and 1,000,001 after are past the budget. The copies after the first have no original
+    // copy at their place, so none is offered one, and none pairs with "Lead.", which stands before it.
+    const comparison = compareUnits(sentenceUnits(["Lead.", "Same."]), sentenceUnits(copiesOf("Same.", 1_000_001)), []);
+    expect({ kept: comparison.kept.map(pair => [pair.before.key, pair.after.line]), added: comparison.added.length, dropped: comparison.dropped.map(unit => unit.key) })
+      .toEqual({ kept: [["Same.", 1]], added: 1_000_000, dropped: ["Lead."] });
   });
 
   test("a table that gains a row of repeated cells keeps every cell in order", () => {
