@@ -435,6 +435,8 @@ function onlyComments(html: string): boolean {
  * line. The section ends where the shared reading ends it, so a heading that
  * reading finds and Bun does not is outside this oracle. A deeper heading
  * shows nothing unless it holds a link or an image.
+ *
+ * @throws An `Error` when the shared reading finds no heading on that line.
  */
 function rendersNothing(renderer: MarkdownRenderer, text: string, line: number): boolean {
   const lines = toLines(text);
