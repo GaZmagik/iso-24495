@@ -317,7 +317,15 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         ],
       },
       { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
-      { id: "19d", demand: "There is no referral where nothing else exists.", state: "not-read", checks: [], needs: [], limits: [] },
+      {
+        id: "19d", demand: "There is no referral where nothing else exists.", state: "fault",
+        checks: [{ rule: "empty-signpost", kind: "offline" }], needs: ["markdown"],
+        limits: [
+          "It reads a heading whose whole wording names somewhere else to go, such as `See also`, `Related`, `Related documents`, `Resources`, `Further reading` or `Other languages`. It reads that wording in any letter case, after a leading number such as `7.`, and with symbols at either end set aside, so `## 7. See also:` is read. Other wording is not read, even when it holds one of those words, such as `References`, `Next steps` or `Human resources`. Nor is a bold line such as `**See also**`, an HTML heading such as `<h2>See also</h2>`, or a heading inside a list or a quotation.",
+          "It reads the lines from the heading to the next heading at its level or above, or to the end of the text, and reports the heading when none of them shows a reader anything. A deeper heading does not count, but what sits beneath it does, so `## See also` with only `### Guides` beneath is reported. A thematic break, an HTML comment and a link definition show nothing. A code block counts, and so does any other line a reader could see, even a lone HTML tag such as `<br>`.",
+          "It does not read what the content says, so `## See also` followed by `None.` passes. A raw HTML code block such as `<pre>` is set aside by the reading, so a section that holds only one is reported. Front matter is not read, unless the text is read as having none, when its block can become a heading, as `---`, `related:`, `---` does.",
+        ],
+      },
     ],
   },
   {

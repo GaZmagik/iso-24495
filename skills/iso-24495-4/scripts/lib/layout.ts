@@ -7,6 +7,18 @@ const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
 const OVERVIEW_LABEL = /^(?:overview|summary)$/i;
 const VERSION = /^(?:Version|Revision)\s*:?\s*v?\d+(?:\.\d+)+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
 const DATE_FIELD = /^(?:Date|Updated|Last updated|Reviewed)\s*:?\s*(.+)$/i;
+/**
+ * The wordings of a heading that promises to send the reader elsewhere, after
+ * `signpostWording`. Part 5 names related documents, other language versions
+ * and a person to ask. "References" lists sources, and "Next steps" carries on
+ * with this document, so neither is here.
+ */
+const SIGNPOST_LABELS: ReadonlySet<string> = new Set([
+  "related", "related documents", "related links", "related pages", "related reading", "related resources", "related topics",
+  "see also", "resources", "additional resources", "further reading", "other languages", "external links", "useful links", "links",
+]);
+/** A thematic break, which a reader sees as a rule and nothing more. The parser's own pattern is not exported. */
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 /**
  * What `layoutViolations` may be told besides the text. `fileName` exempts
@@ -16,7 +28,7 @@ export interface LayoutOptions extends Reading { fileName?: string }
 
 /**
  * The layout findings for one Markdown text: `opening-version-date`,
- * `bullet-depth`, `contents-list` and `overview-label`.
+ * `bullet-depth`, `empty-signpost`, `contents-list` and `overview-label`.
  *
  * The contents and overview rules apply only to a document with six or more
  * level-2 headings outside any list or quotation. The edition advisory
@@ -54,6 +66,10 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   for (const item of parsed.items) {
     if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
   }
+  // Before the section count below, which returns early for a short document.
+  for (const finding of emptySignpostViolations(parsed)) {
+    findings.push(finding);
+  }
   const sections = parsed.headings.filter(heading => heading.level === 2);
   if (sections.length < SECTION_LIMIT) return findings;
   findings.push(...contentsFindings(parsed, sections, end));
@@ -61,6 +77,78 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   const overview = parsed.headings.some(heading => OVERVIEW_LABEL.test(label(heading.text)) && (firstContent === undefined || heading.line < firstContent.line));
   if (!overview) findings.push({ rule: "overview-label", line: start, detail: "Add an Overview or Summary heading before the first content section." });
   return findings;
+}
+
+/**
+ * The `empty-signpost` findings: each heading that promises a referral and
+ * has nothing beneath it.
+ *
+ * A heading is read when it sits outside every list and quotation and its
+ * whole wording, after `signpostWording`, is one of the signpost labels, such
+ * as "See also", "Related" or "Resources". Its section runs to the next such
+ * heading at its level or above, or to the end of the text. The section is
+ * empty when no line in it shows a reader anything but a heading or a
+ * thematic break. A comment, a link definition and front matter show
+ * nothing, because the structural reading blanks them; a code block shows
+ * its contents. A raw HTML code block such as `<pre>` is blanked by that
+ * reading too, so it does not clear the heading.
+ *
+ * @param parsed The structural reading of the text, as `structure` gives it.
+ * @returns One finding for each empty signpost, on the line its heading
+ *     starts, in document order. Empty when there is none.
+ */
+export function emptySignpostViolations(parsed: Pick<ReturnType<typeof structure>, "headings" | "markupLines" | "code">): Violation[] {
+  const { headings, markupLines, code } = parsed;
+  const count = markupLines.length;
+  const shows = markupLines.map(line => line.trim() !== "" && !THEMATIC_BREAK.test(line));
+  for (const block of code) {
+    shows[block.line - 1] = true;
+  }
+  for (const heading of headings) {
+    // A setext heading's underline is part of the heading, not content.
+    const spanned = heading.setext ? heading.lines + 1 : heading.lines;
+    for (let index = heading.line - 1; index < heading.line - 1 + spanned && index < count; index++) {
+      shows[index] = false;
+    }
+  }
+  // For each line, the first line at or after it that shows anything: one
+  // pass, so no heading reads on to the end of the text.
+  const nextShown = new Int32Array(count + 1).fill(count);
+  for (let index = count - 1; index >= 0; index--) {
+    nextShown[index] = shows[index] === true ? index : nextShown[index + 1] ?? count;
+  }
+  // Where each heading's section ends: the line of the next heading at its
+  // level or above. Each heading enters and leaves the stack once.
+  const sectionEnd = new Int32Array(headings.length).fill(count);
+  const open: number[] = [];
+  headings.forEach((heading, position) => {
+    while (open.length > 0 && (headings[open[open.length - 1] ?? 0]?.level ?? 0) >= heading.level) {
+      sectionEnd[open.pop() ?? 0] = heading.line - 1;
+    }
+    open.push(position);
+  });
+  const findings: Violation[] = [];
+  headings.forEach((heading, position) => {
+    if (!SIGNPOST_LABELS.has(signpostWording(heading.text))) return;
+    const after = Math.min(heading.line - 1 + (heading.setext ? heading.lines + 1 : heading.lines), count);
+    if ((nextShown[after] ?? count) < (sectionEnd[position] ?? count)) return;
+    findings.push({
+      rule: "empty-signpost", line: heading.line,
+      detail: `The "${normaliseWording(heading.text)}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.`,
+    });
+  });
+  return findings;
+}
+
+/**
+ * A heading's wording in the form the signpost labels are written in.
+ *
+ * @returns The wording as `label` gives it, with any run of characters that
+ *     are neither letters nor numbers removed from each end, each run of
+ *     white space made one space, and every letter in lower case.
+ */
+function signpostWording(text: string): string {
+  return label(text).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").replace(/\s+/g, " ").toLowerCase();
 }
 
 /**

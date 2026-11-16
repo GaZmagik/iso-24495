@@ -210,10 +210,11 @@ const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
 /**
  * Every mechanical finding in one text.
  *
- * The four layout rules (`contents-list`, `opening-version-date`,
- * `bullet-depth` and `overview-label`) run only when `options.markdown` is
- * true. It defaults to false, so a caller that passes no options gets the
- * other rules alone, and nothing in the result says that layout was skipped.
+ * The five layout rules (`contents-list`, `opening-version-date`,
+ * `bullet-depth`, `empty-signpost` and `overview-label`) run only when
+ * `options.markdown` is true. It defaults to false, so a caller that passes
+ * no options gets the other rules alone, and nothing in the result says that
+ * layout was skipped.
  *
  * @param text The whole document, with any line ending.
  * @param options `markdown` turns the layout rules on; pass true for a
@@ -354,7 +355,9 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   violations.push(...provisionalLabelViolations(text, reading));
   if (options.markdown) {
     const fileName = options.fileName;
-    violations.push(...layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
+    // One empty-signpost or bullet-depth finding for each heading or item, so a
+    // long document could give more than a call can take as separate arguments.
+    appendAll(violations, layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }));
   }
   return violations;
 }

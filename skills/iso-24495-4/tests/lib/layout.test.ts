@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { layoutViolations, normaliseWording, headingIds } from "../../scripts/lib/layout.ts";
+import { emptySignpostViolations, layoutViolations, normaliseWording, headingIds } from "../../scripts/lib/layout.ts";
+import * as layoutModule from "../../scripts/lib/layout.ts";
 import { structure } from "../../scripts/lib/parse.ts";
 import { auditCorpus, auditText } from "../../scripts/audit-corpus.ts";
 import { selectDocuments } from "../../scripts/lib/jev/audit.ts";
@@ -132,9 +133,11 @@ describe("layout rules", () => {
   test("review 1: contents entries follow Markdown blocks rather than blank lines", () => {
     const opening = "# Title\n\nVersion 1.0\n\n";
     expect(rules(opening + "- [Section 1](#section-1)\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual([]);
-    for (const contents of ["## Contents\n\n", "## Contents\n\n| Section |\n|---|\n\n", "## Contents\n\n### Links\n\n", "## Contents\n\nChoose the section that helps you.\n\n", "## Contents\n\nSee [Section 1](#section-1) for details.\n\n", "## Contents\n\n| [Section 1](#section-1) |\n|---|\n\n"]) {
+    for (const contents of ["## Contents\n\n", "## Contents\n\n| Section |\n|---|\n\n","## Contents\n\nChoose the section that helps you.\n\n", "## Contents\n\nSee [Section 1](#section-1) for details.\n\n", "## Contents\n\n| [Section 1](#section-1) |\n|---|\n\n"]) {
       expect(rules(opening + contents + "### Overview\n\n" + sections()), contents).toEqual(["contents-list"]);
     }
+    // A heading is not an entry. This one is an empty signpost as well.
+    expect(rules(opening + "## Contents\n\n### Links\n\n### Overview\n\n" + sections())).toEqual(["empty-signpost", "contents-list"]);
     expect(rules(opening + "[Section 1](#section-1)\n\n[Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
     expect(rules(opening + "Read [Section 1](#section-1) and [Section 2](#section-2) for details.\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
     expect(rules(opening + "- [Section 1](#section-1)\n\nExplanation.\n\n- [Section 2](#section-2)\n\n### Overview\n\n" + sections())).toEqual(["contents-list"]);
@@ -368,4 +371,154 @@ describe("the structural reading lists code blocks and prose blocks", () => {
     expect(structure("<pre>\ncode\n</pre>\nThe prose stays.\n").paragraphs).toEqual([{ line: 4, lines: ["The prose stays."] }]);
     expect(structure("One.\nTwo.\n\n- Item\n").paragraphs).toEqual([{ line: 1, lines: ["One.", "Two."] }, { line: 4, lines: ["Item"] }]);
   });
+});
+
+/** The empty-signpost findings alone, as line and detail. */
+function signposts(text: string, frontMatter?: boolean): Array<{ line: number; detail: string }> {
+  return layoutViolations(text, frontMatter === undefined ? {} : { frontMatter })
+    .filter(finding => finding.rule === "empty-signpost")
+    .map(finding => ({ line: finding.line, detail: finding.detail }));
+}
+/** The finding for a signpost heading with this wording, on this line. */
+function emptyAt(line: number, wording = "See also"): { line: number; detail: string } {
+  return { line, detail: `The "${wording}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.` };
+}
+
+describe("empty-signpost: a referral heading with nothing beneath it", () => {
+  test("a signpost section at the end of the document, with nothing after its heading", () => {
+    expect(signposts("# Guide\n\nText.\n\n## See also\n")).toEqual([emptyAt(5)]);
+    expect(signposts("# Guide\n\nText.\n\n## See also")).toEqual([emptyAt(5)]);
+    expect(signposts("# Guide\n\nText.\n\n## See also\n\n\n\n")).toEqual([emptyAt(5)]);
+  });
+
+  test("a signpost followed by a heading at its own level or above, with nothing between", () => {
+    expect(signposts("## See also\n\n## Install\n\nText.\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## Part\n\nText.\n\n### See also\n\n# Next\n\nText.\n")).toEqual([emptyAt(5)]);
+  });
+
+  test("a deeper heading is not content, but what sits beneath it is", () => {
+    expect(signposts("## See also\n\n### Guides\n\n## Next\n\nText.\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n### Guides\n\n- [Install](install.md)\n\n## Next\n\nText.\n")).toEqual([]);
+    // The deeper heading is a signpost too, and holds nothing of its own.
+    expect(signposts("## See also\n\n### Related\n\n## Next\n")).toEqual([emptyAt(1), emptyAt(3, "Related")]);
+  });
+
+  test("a list, a paragraph, a quotation, a table or an HTML image beneath the heading clears it", () => {
+    expect(signposts("## See also\n\n- [Install](install.md)\n")).toEqual([]);
+    expect(signposts("## See also\n\nAsk the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n| Guide | Use |\n|---|---|\n| [Install](install.md) | Setting up |\n")).toEqual([]);
+    expect(signposts("## See also\n> Ask the help desk.\n")).toEqual([]);
+    expect(signposts("## See also\n\n<img src=\"map.png\" alt=\"Map of the related guides\">\n")).toEqual([]);
+  });
+
+  test("code beneath the heading clears it, because a reader sees it", () => {
+    expect(signposts("## See also\n\n```\nman install\n```\n")).toEqual([]);
+    expect(signposts("## See also\n\n    man install\n")).toEqual([]);
+    expect(signposts("## See also\n\n```\n```\n")).toEqual([]);
+  });
+
+  test("a comment, a link definition, a thematic break or an empty marker is not content", () => {
+    expect(signposts("## See also\n\n<!-- Add the related guides. -->\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n<!--\nAdd the related guides.\n-->\n\n## Next\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n[install]: install.md\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n---\n\n## Next\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n* * *\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n- \n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n>\n")).toEqual([emptyAt(1)]);
+  });
+
+  test("a raw HTML code block is blanked by the structural reading, so it does not clear the heading", () => {
+    expect(signposts("## See also\n\n<pre>\nman install\n</pre>\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See also\n\n```\nman install\n```\n")).toEqual([]);
+  });
+
+  test("front matter is metadata unless the text has none, when its block can become a heading", () => {
+    expect(signposts("---\ntitle: See also\n---\n\n# Guide\n\nText.\n")).toEqual([]);
+    expect(signposts("---\nrelated:\n---\n\n## Next\n")).toEqual([]);
+    expect(signposts("---\nrelated:\n---\n\n## Next\n", false)).toEqual([emptyAt(2, "related:")]);
+    // A block whose lines are not keys and values is not front matter at all.
+    expect(signposts("---\nSee also\n---\n\n## Next\n")).toEqual([emptyAt(2)]);
+  });
+
+  test("a setext heading is read like an ATX heading, from the line its text starts on", () => {
+    expect(signposts("See also\n--------\n\n## Next\n")).toEqual([emptyAt(1)]);
+    expect(signposts("See also\n========\n")).toEqual([emptyAt(1)]);
+    expect(signposts("See also\n--------\n- [Install](install.md)\n")).toEqual([]);
+    expect(signposts("Further\nreading\n-------\n\n## Next\n")).toEqual([emptyAt(1, "Further reading")]);
+  });
+
+  test("Windows line endings give the same findings", () => {
+    const text = "# Guide\n\nText.\n\n## See also\n\n<!-- none -->\n\nSee also\n--------\n\n## Resources\n\n- [Install](install.md)\n";
+    expect(signposts(text.replaceAll("\n", "\r\n"))).toEqual(signposts(text));
+    expect(signposts(text)).toEqual([emptyAt(5), emptyAt(9)]);
+  });
+
+  test("the wording is read whole, after numbering, symbols at either end and letter case", () => {
+    for (const wording of ["Related", "Related documents", "Related links", "Related pages", "Related reading", "Related resources", "Related topics",
+      "See also", "Resources", "Additional resources", "Further reading", "Other languages", "External links", "Useful links", "Links"]) {
+      expect(signposts(`## ${wording}\n`), wording).toEqual([emptyAt(1, wording)]);
+    }
+    expect(signposts("## SEE ALSO\n")).toEqual([emptyAt(1, "SEE ALSO")]);
+    expect(signposts("## See also:\n")).toEqual([emptyAt(1, "See also:")]);
+    expect(signposts("## 7. See also\n")).toEqual([emptyAt(1, "7. See also")]);
+    expect(signposts("## 🔗 Useful links\n")).toEqual([emptyAt(1, "🔗 Useful links")]);
+    expect(signposts("## *See also*\n")).toEqual([emptyAt(1, "See also")]);
+    expect(signposts("## See also ##\n")).toEqual([emptyAt(1)]);
+    expect(signposts("## See  also\n")).toEqual([emptyAt(1)]);
+  });
+
+  test("other wording is not a signpost, even when it holds a signpost word", () => {
+    for (const wording of ["References", "Next steps", "Learn more", "Human resources", "See also the install guide", "Resources used", "Relatedness"]) {
+      expect(signposts(`## ${wording}\n`), wording).toEqual([]);
+    }
+  });
+
+  test("a heading inside a list or a quotation, an HTML heading and a bold line are not read", () => {
+    expect(signposts("- ## See also\n")).toEqual([]);
+    expect(signposts("> ## See also\n")).toEqual([]);
+    expect(signposts("<h2>See also</h2>\n")).toEqual([]);
+    expect(signposts("**See also**\n")).toEqual([]);
+    expect(signposts("```\n## See also\n```\n")).toEqual([]);
+    // A heading in a list is content for the signpost above it.
+    expect(signposts("## See also\n\n- ## Install\n")).toEqual([]);
+  });
+
+  test("it reports in a document with six or more sections, beside the contents rule", () => {
+    const text = `# Guide\n\nVersion 1.0\n\n## Overview\n\nText.\n\n${sections(5)}\n## See also\n`;
+    expect(rules(text)).toEqual(["empty-signpost", "contents-list"]);
+  });
+
+  test("the full audit reports it for Markdown only", () => {
+    expect(auditText("## See also\n", { markdown: true }).filter(finding => finding.rule === "empty-signpost")).toEqual([{ rule: "empty-signpost", ...emptyAt(1) }]);
+    expect(auditText("## See also\n").filter(finding => finding.rule === "empty-signpost")).toEqual([]);
+  });
+
+  test("the scan takes less time than the parse it reads, so it does not grow with the square of the text", () => {
+    // A heading checked against every later heading or every code block grew
+    // with the square of their number. The parse of the same text is the
+    // baseline, so a slower or busier machine slows both.
+    const text = "## See also\n\n```\nx\n```\n\n### Resources\n\n".repeat(20_000);
+    let started = performance.now();
+    const parsed = structure(text);
+    const parse = performance.now() - started;
+    started = performance.now();
+    const found = emptySignpostViolations(parsed);
+    const scan = performance.now() - started;
+    expect(found).toHaveLength(20_000);
+    expect(scan).toBeLessThan(parse);
+  }, 60_000);
+
+  test("the full audit takes every layout finding however many there are, without spreading them into a call", () => {
+    // A spread of 700,000 arguments into one call threw a RangeError on
+    // Windows. A real document that long takes over a minute to audit, so the
+    // layout rules are stubbed to give two million findings at once.
+    const many = Array.from({ length: 2_000_000 }, (slot, index) => ({ rule: "empty-signpost", line: index + 1, detail: "Empty." }));
+    const stub = spyOn(layoutModule, "layoutViolations").mockImplementation(() => many);
+    try {
+      const found = auditText("Text.\n", { markdown: true });
+      expect([found.length, found.at(-1)?.line]).toEqual([2_000_000, 2_000_000]);
+    } finally {
+      stub.mockRestore();
+    }
+  }, 30_000);
 });

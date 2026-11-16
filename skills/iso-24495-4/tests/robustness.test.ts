@@ -48,6 +48,7 @@ const KNOWN_RULES = new Set([
   "opening-title",
   "opening-version-date",
   "bullet-depth",
+  "empty-signpost",
   "contents-list",
   "overview-label",
 ]);
@@ -84,6 +85,7 @@ describe("robustness and determinism", () => {
       ...listTextFiles(CORPUS).map((path) => readFileSync(path, "utf8")),
       readFileSync(EVERY_RULE, "utf8"),
       "![logo](logo.png)",
+      "## See also\n",
     ];
     const violations = inputs.flatMap((input) => [...auditText(input), ...auditText(input, { markdown: true })]);
     expect(violations.length).toBeGreaterThan(0);
