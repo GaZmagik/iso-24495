@@ -124,12 +124,12 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `provisional-label` and the five word rules named below.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. Four layout rules read headings too, to find a document's title and sections.
 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
-- tables, whose cells belong to a grid, except that `table-header` and `provisional-label` read them;
+- tables, whose cells belong to a grid. Five rules read their cells: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. Two layout rules read a contents list or an edition field set out in one;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.

@@ -1155,6 +1155,93 @@ describe("generic-alt", () => {
     expect(genericFindings("![Acme logo][l]\n\n[l]: logo.png\n")).toEqual([]);
   });
 
+  // The reader sets HTML, comments and escapes aside as spaces, and did so in
+  // a destination too, so a destination such as `<a b.png>` read as empty and
+  // the image went unreported. Each of these renders an image with that text.
+  test("reads an inline image whose destination the reader sets aside", () => {
+    for (const text of [
+      "![logo](<a b.png>)\n",
+      "![logo]( )\n",
+      "![logo](<>)\n",
+      "![logo](\\_)\n",
+      "![logo](<!--x-->)\n",
+      "![logo](<span title=\")\">)\n",
+      "| Mark |\n|---|\n| ![logo](<a b.png>) |\n",
+    ]) {
+      expect(genericFindings(text).map(({ detail }) => detail), JSON.stringify(text)).toEqual([kindOnly("logo").detail]);
+    }
+    // Nothing between the parentheses at all is still skipped, as limit 5 says.
+    expect(genericFindings("![logo]()\n")).toEqual([]);
+  });
+
+  // A label after the image that is not "[]" makes a full reference, which
+  // renders only where that label is defined. Reading one the reader set
+  // aside as the image's own text reported images that do not render.
+  test("never takes a set-aside reference label for the image's own", () => {
+    for (const text of [
+      "![logo][<b>]\n\n[logo]: a.png\n",
+      "![logo][ ]\n\n[logo]: a.png\n",
+      "![logo][\\_]\n\n[logo]: a.png\n",
+    ]) {
+      expect(genericFindings(text), JSON.stringify(text)).toEqual([]);
+    }
+    expect(genericFindings("![logo][]\n\n[logo]: a.png\n")).toEqual([kindOnly("logo")]);
+    expect(genericFindings("![logo][l]\n\n[l]: a.png\n")).toEqual([kindOnly("logo")]);
+  });
+
+  // A renderer shows a link's destination and title, and an image's
+  // alternative text, as text, so HTML written there is not an image.
+  test("does not read an HTML image written in a link's destination or title, or in alternative text", () => {
+    for (const text of [
+      "[Read guide](https://example.com \"<img alt='logo'>\")\n",
+      "![Acme](a.png \"<img alt='logo'>\")\n",
+      "[t](a '<img alt=\"logo\">')\n",
+      "[t](a (<img alt='logo'>))\n",
+      "[t](<img alt='logo'>)\n",
+      "![<img alt='logo'>](a.png)\n",
+      "![x <img alt=\"logo\"> y](a.png)\n",
+      "[t](a \"x\n<img alt='logo'>\")\n",
+      "[t](\n<img alt='logo'>)\n",
+      "# [t](a \"\\\" <img alt='logo'>\")\n",
+      "| A |\n|---|\n| [t](a \"<img alt='logo'>\") |\n",
+      "- [t](a \"<img alt='logo'>\")\n",
+      "> [t](a \"<img alt='logo'>\")\n",
+      // A title may hold ")", because the link reader follows CommonMark.
+      "[t](a \"x) <img alt='logo'>\")\n",
+      "[![<img alt='logo'>](a.png)](b.md)\n",
+      // Shown as text in a raw HTML block too, though a renderer shows it as an image. Limit 5 says so.
+      "<div>\n[t](a \"<img alt='logo'>\")\n</div>\n",
+    ]) {
+      expect(genericFindings(text), JSON.stringify(text)).toEqual([]);
+    }
+  });
+
+  // Each of these renders a real HTML image beside text shaped like a link,
+  // so the image is still read.
+  test("still reads an HTML image beside or around text shaped like a link", () => {
+    for (const [text, line] of [
+      ["[t](x <img alt='logo'>)\n", 1],
+      ["[t](x \"y\" <img alt='logo'>)\n", 1],
+      ["[t](a b <img alt='logo'>)\n", 1],
+      ["[t](<a b> <img alt='logo'>)\n", 1],
+      ["![x](a.png \"t\" <img alt='logo'>)\n", 1],
+      ["[<img alt='logo'>](a.png)\n", 1],
+      ["[t](a \"x\n\n<img alt='logo'>\")\n", 3],
+      ["<span title=\"[x](y)\"><img alt=\"logo\"></span>\n", 1],
+      ["[t](a \"x\") <img alt=\"logo\">\n", 1],
+      // Text shaped like a link inside another tag is that tag's, not a link.
+      ["<span title='[x](a \"'><img alt=logo>\")'>\n", 1],
+      // No link runs from one block into the next.
+      ["# [a\n](<img alt='logo'>)\n", 2],
+      ["[a\n\n](<img alt='logo'>)\n", 3],
+      ["- [t](a \"<img alt='x'>\")\n- <img alt=\"logo\">\n", 2],
+      ["[t](<img alt='logo'>\n", 1],
+    ] as const) {
+      expect(genericFindings(text), JSON.stringify(text)).toEqual([kindOnly("logo", line)]);
+    }
+    expect(genericFindings("<img alt='logo'> [t](a \"<img alt='Acme logo'>\")\n")).toEqual([kindOnly("logo")]);
+  });
+
   test("reads images inside tables, links, headings, list items and quotations", () => {
     expect(genericFindings("| Mark | Name |\n|---|---|\n| ![icon](a.png) | Acme |\n")).toEqual([kindOnly("icon", 3)]);
     expect(genericFindings("[![logo](logo.png)](https://acme.example)\n")).toEqual([kindOnly("logo")]);
@@ -1260,6 +1347,12 @@ describe("generic-alt", () => {
       // Marks between two letters: a pattern anchored at the end took 5.4 seconds on 80,000.
       `![x${"*".repeat(100_000)}x](a.png)\n`,
       `<img ${"x=\"y\" ".repeat(50_000)}alt=logo>\n`,
+      // These reach the reading of links that finds HTML shown as text.
+      `[x](y)\n\n${'<img alt="logo">\n'.repeat(50_000)}`,
+      "[t](a \"<img alt='logo'>\")\n".repeat(20_000),
+      `${"[".repeat(100_000)}<img alt="logo">\n`,
+      `${"![".repeat(50_000)}<img alt="logo">${"](a.png)".repeat(50_000)}\n`,
+      `[t](a "${"<img alt='logo'> ".repeat(50_000)}")\n`,
     ];
     for (const text of texts) {
       const started = performance.now();
@@ -1267,6 +1360,32 @@ describe("generic-alt", () => {
       expect(performance.now() - started, text.slice(0, 20)).toBeLessThan(3_000);
     }
   }, 120_000);
+
+  // The line of each finding came from a cache of one text, checked with ===.
+  // A second call joins an equal but separate text, so every lookup compared
+  // the whole of it: 80,000 images took 431 ms, then 7,785 ms. An audit
+  // reached the same path whenever image-alt had filled the cache first.
+  test("finds the line of each HTML image without a cache another call filled", () => {
+    const text = '<img alt="logo">\n'.repeat(80_000);
+    genericAltViolations(text);
+    const started = performance.now();
+    const found = genericAltViolations(text);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect([found.length, found.at(-1)?.line]).toEqual([80_000, 80_000]);
+  }, 60_000);
+});
+
+// The image-alt rule read HTML images with a pattern that reads on to the end
+// of the text from every unclosed "<img", and so did the whole audit.
+describe("an audit of many unclosed HTML image tags", () => {
+  test("takes time in proportion to the text", () => {
+    // 6,385 ms here before image-alt read tags with htmlImageTags.
+    const text = "<img ".repeat(20_000);
+    const started = performance.now();
+    const found = auditText(text);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(found.filter((violation) => violation.rule === "image-alt" || violation.rule === "generic-alt")).toEqual([]);
+  }, 60_000);
 });
 
 /** A generator of numbers from 0 up to `limit`, the same sequence every run. */
@@ -1287,9 +1406,9 @@ function byPattern(text: string): Array<{ start: number; end: number; attributes
   }));
 }
 
-// The generic-alt rule finds HTML image tags with its own scan, because the
-// pattern image-alt uses reads to the end of the text from each unclosed tag.
-// The scan must find exactly what the pattern finds.
+// The image-alt and generic-alt rules find HTML image tags with this scan,
+// because the pattern reads to the end of the text from each unclosed tag.
+// image-alt once used the pattern, so the scan must find exactly what it finds.
 describe("htmlImageTags", () => {
   test("finds what the pattern finds in chosen odd text", () => {
     for (const text of [

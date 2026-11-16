@@ -555,24 +555,23 @@ let lineCacheEnds: number[] | null = null;
 
 function lineEnds(text: string): number[] {
   if (lineCacheText === text && lineCacheEnds !== null) return lineCacheEnds;
-  const ends: number[] = [];
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
-    ends.push(at);
-  }
+  const ends = lineEndOffsets(text);
   lineCacheText = text;
   lineCacheEnds = ends;
   return ends;
 }
 
-/**
- * The line an offset falls on, counted from the block's first line.
- *
- * The line endings are collected once and searched, because slicing the text from its
- * start for every finding grew with the square of the block: 4,000 long sentences in one
- * paragraph cost 10.8 seconds.
- */
-function lineAtOffset(blockLine: number, text: string, offset: number): number {
-  const ends = lineEnds(text);
+/** Where each line ending in the text stands, in order. */
+function lineEndOffsets(text: string): number[] {
+  const ends: number[] = [];
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
+    ends.push(at);
+  }
+  return ends;
+}
+
+/** How many of the line endings, in order, stand before the offset. */
+function endsBefore(ends: readonly number[], offset: number): number {
   let low = 0;
   let high = ends.length;
   while (low < high) {
@@ -583,7 +582,37 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
       high = middle;
     }
   }
-  return blockLine + low;
+  return low;
+}
+
+/**
+ * The line an offset falls on, counted from the block's first line.
+ *
+ * The line endings are collected once and searched, because slicing the text from its
+ * start for every finding grew with the square of the block: 4,000 long sentences in one
+ * paragraph cost 10.8 seconds.
+ */
+function lineAtOffset(blockLine: number, text: string, offset: number): number {
+  return blockLine + endsBefore(lineEnds(text), offset);
+}
+
+/**
+ * A finder of the line each offset in one text falls on, counted from 1.
+ *
+ * A rule that joins the document's lines into one text uses this rather than
+ * `lineAtOffset`. Joining makes a new string each time, and that cache checks
+ * a text with ===. Where another call had left an equal text there, each
+ * lookup compared the whole document: 80,000 images took 7.8 seconds.
+ *
+ * The line endings are collected at the first lookup, so a text with no
+ * finding costs nothing.
+ */
+function lineFinder(text: string): (offset: number) => number {
+  let ends: number[] | null = null;
+  return (offset) => {
+    ends ??= lineEndOffsets(text);
+    return 1 + endsBefore(ends, offset);
+  };
 }
 
 // The shape the scan looks for admits at most six initials once its dots are removed, so
@@ -1085,12 +1114,18 @@ const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
  *     gives it.
+ * @param images Where given, each image found is added to it as the offsets where
+ *     its "!" stands and just past its end, alternative text included.
  * @returns One entry for each UTF-16 unit of the block, which is each place an index
  *     into `source` counts: 1 where it is link syntax, and 0 elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
  *     cells. The entry for a line break means nothing: the caller takes the lines one
  *     at a time. All 0 where the block holds no link, and empty for empty text.
  */
-export function linkSyntaxIn(source: string, references: ReadonlySet<string>): Uint8Array {
+export function linkSyntaxIn(
+  source: string,
+  references: ReadonlySet<string>,
+  images?: Array<readonly [number, number]>,
+): Uint8Array {
   const marks = linkMarks(source);
   const syntax = new Uint8Array(source.length);
   const open: OpenBracket[] = [];
@@ -1114,6 +1149,7 @@ export function linkSyntaxIn(source: string, references: ReadonlySet<string>): U
       switchedOff = Math.min(switchedOff, open.length);
       const end = live ? linkEnd(source, opener, at, marks, references) : -1;
       if (end === -1) continue;
+      if (opener.image) images?.push([opener.at - 1, end]);
       syntax.fill(1, opener.at - (opener.image ? 1 : 0), opener.at + 1);
       syntax.fill(1, at, end);
       if (!opener.image) switchedOff = open.length;
@@ -1699,6 +1735,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     }
   }
   const markup = markupLines.join("\n");
+  const lineOf = lineFinder(markup);
   // A link whose label runs over a line ending. The same scan finds it, filtered to the
   // labels that hold one.
   for (const link of markdownLinks(markup)) {
@@ -1713,7 +1750,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, link.start),
+      line: lineOf(link.start),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
         : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
@@ -1729,7 +1766,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineOf(match.index),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
         : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
@@ -1816,14 +1853,16 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
     }
   }
   const markup = markupLines.join("\n");
-  for (const match of markup.matchAll(HTML_IMAGE)) {
-    const [whole, attributes] = match;
-    if (attributes === undefined || /\n[ \t]*\n/.test(whole)) continue;
-    if (htmlAttribute(attributes, "alt") !== null) continue;
-    const target = (htmlAttribute(attributes, "src") ?? "image").slice(0, 40);
+  const lineOf = lineFinder(markup);
+  // The tags `HTML_IMAGE` matches, found without reading on from each
+  // unclosed "<img" to the end of the text: 20,000 of them took 6.4 seconds.
+  for (const tag of htmlImageTags(markup)) {
+    if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
+    if (htmlAttribute(tag.attributes, "alt") !== null) continue;
+    const target = (htmlAttribute(tag.attributes, "src") ?? "image").slice(0, 40);
     violations.push({
       rule: "image-alt",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineOf(tag.start),
       detail: `image has no alternative text (${target})`,
     });
   }
@@ -1938,9 +1977,16 @@ export function genericAltViolations(text: string, reading: Reading = {}): Viola
     for (const link of markdownLinks(itemAt(lines, i))) {
       if (!link.image || !link.rendered) continue;
       if (link.kind === "inline") {
-        if (link.target.trim().length === 0) continue;
+        // The reader gives HTML, a comment or an escape as spaces, so a
+        // destination such as `<a b.png>` reads as spaces. Only one with
+        // nothing in it at all is empty.
+        if (link.target.length === 0) continue;
       } else {
-        // A reference names its definition, and a bare label names its own.
+        // A label after the image, other than "[]", names its definition,
+        // and the image renders only where that label is defined. One the
+        // reader gave as spaces cannot be looked up, and is never the
+        // image's own.
+        if (link.target.length > 0 && link.target.trim().length === 0) continue;
         const name = link.kind === "reference" ? link.target.trim() || link.label : link.label;
         if (!references.has(normaliseReference(name))) continue;
       }
@@ -1949,14 +1995,83 @@ export function genericAltViolations(text: string, reading: Reading = {}): Viola
     }
   }
   const markup = markupLines.join("\n");
+  const lineOf = lineFinder(markup);
+  let asText: Uint8Array | null = null;
   for (const tag of htmlImageTags(markup)) {
     if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
     const alt = altAttribute(tag.attributes);
     if (alt === null) continue;
-    const finding = genericAltFinding(alt, lineAtOffset(1, markup, tag.start));
+    // With no "[" there is no link or image, and nothing to read twice.
+    asText ??= markup.includes("[") ? htmlAsText(text, reading, markupLines, references) : new Uint8Array(0);
+    if (asText[tag.start] === 1) continue;
+    const finding = genericAltFinding(alt, lineOf(tag.start));
     if (finding !== null) violations.push(finding);
   }
   return violations;
+}
+
+/**
+ * Where HTML in the document is shown as text, and so is no tag: a link's
+ * destination, title or reference label, and the whole of an image,
+ * alternative text included. `<img>` written there is no image.
+ *
+ * Links are found where `linkSyntax` looks for them, in each prose block, each
+ * heading and each other line a rule reads, so no link runs from one block into
+ * the next. `linkSyntaxIn` reads them as CommonMark does, so an HTML tag binds
+ * tighter than a link, and `[t](x <img>)` is no link but text and an image.
+ *
+ * @param markupLines The document's lines with their HTML, as `readDocument` gives them.
+ * @returns One entry for each UTF-16 unit of `markupLines.join("\n")`: 1 where
+ *     HTML is shown as text, and 0 elsewhere.
+ */
+function htmlAsText(
+  text: string,
+  reading: Reading,
+  markupLines: readonly string[],
+  references: ReadonlySet<string>,
+): Uint8Array {
+  const starts: number[] = [];
+  let length = 0;
+  for (const line of markupLines) {
+    starts.push(length);
+    length += line.length + 1;
+  }
+  const asText = new Uint8Array(Math.max(length - 1, 0));
+  const spans = [
+    ...proseBlocks(text, reading).map((block) => [block.line - 1, block.lines.length]),
+    ...headings(text, reading).map((heading) => [heading.line - 1, heading.lines]),
+  ] as Array<[first: number, count: number]>;
+  const inBlock = new Set<number>();
+  for (const [first, count] of spans) {
+    for (let line = first; line < first + count; line++) {
+      inBlock.add(line);
+    }
+  }
+  markupLines.forEach((line, index) => {
+    if (!inBlock.has(index) && line.trim() !== "") spans.push([index, 1]);
+  });
+  for (const [first, count] of spans) {
+    // A block's lines stand together in the joined text, so an offset into the
+    // block is an offset into the text once the block's start is added.
+    const source = markupLines.slice(first, first + count).join("\n");
+    if (!source.includes("[")) continue;
+    const start = itemAt(starts, first);
+    const images: Array<readonly [number, number]> = [];
+    const syntax = linkSyntaxIn(source, references, images);
+    for (let at = 0; at < syntax.length; at++) {
+      if (syntax[at] === 1) asText[start + at] = 1;
+    }
+    // An image can hold another, so each is filled only past what is filled
+    // already. Filling each whole cost the square of the depth: 1,000 nested
+    // images filled 7,023,000 places in a text of 14,016.
+    images.sort((one, two) => one[0] - two[0]);
+    let filled = 0;
+    for (const [from, to] of images) {
+      if (to > filled) asText.fill(1, start + Math.max(from, filled), start + to);
+      filled = Math.max(filled, to);
+    }
+  }
+  return asText;
 }
 
 // One attribute of an HTML tag, read from where the last one ended: the
