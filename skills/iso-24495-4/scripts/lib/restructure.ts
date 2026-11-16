@@ -707,10 +707,11 @@ function absentMark(text: string): string {
 }
 
 /**
- * Where each mark stands in rendered text once the marks are taken out, each
- * run of white space is made one space and the ends are trimmed, as
- * `singleSpaced` makes them. A mark after white space stands after that
- * space, where the next word starts.
+ * How many characters stand before each mark in rendered text, once the
+ * marks are taken out, each run of white space is made one space and the
+ * ends are trimmed, as `singleSpaced` makes them. A space just before a mark
+ * is not counted until a word follows it, so a mark between two sentences
+ * stands at the end of the first, before the second starts.
  */
 function markPlaces(rendered: string, mark: string): number[] {
   const places: number[] = [];
@@ -719,11 +720,11 @@ function markPlaces(rendered: string, mark: string): number[] {
   let space = false;
   for (const character of rendered) {
     if (character === mark) {
-      places.push(length + (space && length > 0 ? 1 : 0));
+      places.push(length);
     } else if (/\s/u.test(character)) {
-      space = true;
+      space = length > 0;
     } else {
-      if (space && length > 0) length++;
+      if (space) length++;
       space = false;
       length += character.length;
     }

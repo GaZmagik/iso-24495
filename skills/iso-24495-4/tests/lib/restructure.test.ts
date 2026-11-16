@@ -409,6 +409,13 @@ describe("the order of the kept units", () => {
     expect(keys("Close the valve.\nSee ![the chart](c.png) here.\n")).toEqual([["sentence", "Close the valve."], ["sentence", "See here."], ["alternative", "the chart"]]);
     // An image that starts where a sentence starts stands before it.
     expect(keys("Close the valve. ![The chart](c.png) Read it.\n")).toEqual([["sentence", "Close the valve."], ["alternative", "The chart"], ["sentence", "Read it."]]);
+    // The place is marked with a private-use character the text does not hold.
+    expect(keys("Close the \uE000 valve. See ![the chart](c.png) here.\n")).toEqual([["sentence", "Close the \uE000 valve."], ["sentence", "See here."], ["alternative", "the chart"]]);
+  });
+
+  test("an image in prose that holds every private-use character comes before the prose, as it did before places were read", () => {
+    const every = Array.from({ length: 0xF8FF - 0xE000 + 1 }, (unused, index) => String.fromCharCode(0xE000 + index)).join("");
+    expect(keys(`Close ${every}. See ![the chart](c.png) here.\n`).map(([kind]) => kind)).toEqual(["alternative", "sentence", "sentence"]);
   });
 
   test("units that changed kind but kept their place are in order", () => {
@@ -462,6 +469,15 @@ describe("the order of the kept units", () => {
       .toEqual({ moved: [], stepOrder: ["Open the vent."] });
   });
 
+  test("a table, a heading and indented code inside a step belong to that step", () => {
+    const before = "1. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n2. ## Open the vent.\n\n       vent open\n3. Check the gauge.\n";
+    const after = "1. Check the gauge.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. ## Open the vent.\n\n       vent open\n";
+    expect(order(compareVersions(before, after, null))).toEqual({ moved: [], stepOrder: ["Check the gauge."] });
+    // Swapped with the step above, the table's step is the one named, so its cells count for it.
+    const swapped = "1. ## Open the vent.\n\n       vent open\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. Check the gauge.\n";
+    expect(order(compareVersions(before, swapped, null))).toEqual({ moved: [], stepOrder: ["Open the vent.", "vent open"] });
+  });
+
   test("the steps of a nested ordered list are read against each other, and not against the steps around them", () => {
     const before = "1. Prepare.\n   1. Close the valve.\n   2. Open the vent.\n2. Finish.\n";
     expect(order(compareVersions(before, "1. Prepare.\n   1. Open the vent.\n   2. Close the valve.\n2. Finish.\n", null))).toEqual({ moved: [], stepOrder: ["Close the valve."] });
@@ -488,6 +504,11 @@ describe("the order of the kept units", () => {
     ]);
   });
 
+  test("units next to each other in the original but not in the new version are two rows", () => {
+    const rows = printed("Fit the seal. Check the lip. Close the lid. Wipe it. Dry it.\n", "Close the lid. Check the lip. Fit the seal. Wipe it. Dry it.\n").filter(row => row.startsWith("| moved |"));
+    expect(rows).toEqual([`| moved | 1 | 1 | ${MOVED_ONE} "Fit the seal." |`, `| moved | 1 | 1 | ${MOVED_ONE} "Check the lip." |`]);
+  });
+
   test("a moved unit that opens with This, It or These is asked what that word refers to, and only the first of a run is", () => {
     const before = "Fit the seal. Tighten the bolts. This keeps the seal tight.\n";
     expect(printed(before, "This keeps the seal tight. Fit the seal. Tighten the bolts.\n")[3]).toBe(referentRow("This", "This keeps the seal tight."));
@@ -498,6 +519,13 @@ describe("the order of the kept units", () => {
     // The second unit of a run moved with the one before it, so its word still refers to that unit.
     expect(printed("Fit the seal. Check the lip. Close the lid. Wipe it. This cleans it.\n", "Wipe it. This cleans it. Fit the seal. Check the lip. Close the lid.\n")[3])
       .toBe(`| moved | 1 | 1 | 2 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: "Wipe it." |`);
+    expect(compareVersions("Fit the seal. Check the lip. Close the lid. Wipe it. This cleans it.\n", "Wipe it. This cleans it. Fit the seal. Check the lip. Close the lid.\n", null).moved.map(pair => pair.opensWith))
+      .toEqual([null, null]);
+    // A run whose first unit opens with the word asks about the first.
+    expect(printed("Fit the seal. Check the lip. Close the lid. This cleans it. Dry it.\n", "This cleans it. Dry it. Fit the seal. Check the lip. Close the lid.\n")[3])
+      .toBe(`| moved | 1 | 1 | 2 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: "This cleans it." The first opens with "This". Check what "This" refers to in its new place. |`);
+    // A heading, a code block and an image's alternative text are not prose, so nothing is asked.
+    expect(compareVersions("# A\n\n## B\n\n## C\n\n## This week\n", "# A\n\n## This week\n\n## B\n\n## C\n", null).moved.map(pair => [pair.after.key, pair.opensWith])).toEqual([["This week", null]]);
   });
 
   test("the JSON report lists each moved unit and each step out of order, with both lines, the row it is printed in, and any word asked about", () => {
