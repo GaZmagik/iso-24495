@@ -553,6 +553,26 @@ describe("the two-version comparison, given --before", () => {
     }
   });
 
+  test("counts a new heading of two sentences once, in the printed line and the report", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "# Old\n\nKeep this text.\n");
+      writeFileSync(join(project, "new.md"), "# Old\n\n# One. Two.\n\nKeep this text.\n");
+      const json = join(project, "report.json");
+      const output = capture();
+      expect(runCli(
+        ["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md"), "--project-dir", project, "--json", json],
+        output.writeOut,
+        output.writeErr,
+      )).toBe(0);
+      expect(output.stdout.join("\n")).toContain("Kept 2. Dropped 0. Added 0. From the author 0. Marked gaps 0. New headings 1. Headings gone 0.");
+      const report = JSON.parse(readFileSync(json, "utf8")) as { restructure: { newHeadings: unknown[] } };
+      expect(report.restructure.newHeadings).toEqual([{ line: 3, kind: "heading", excerpt: "One. Two." }]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   test("names the author's wording and counts what came from it", () => {
     const project = makeProject();
     try {

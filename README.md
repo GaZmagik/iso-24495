@@ -124,12 +124,12 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. Four layout rules read headings too, to find a document's title and sections. Given `--before`, the two-version comparison counts the headings a restructure adds or removes.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Three layout rules, `opening-version-date`, `contents-list` and `overview-label`, read headings too, to find a document's title and sections, and so does the Jev route's `opening-title` finding. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
-- tables, whose cells belong to a grid. Five rules read their cells: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. Two layout rules read a contents list or an edition field set out in one. Given `--before`, the two-version comparison compares their cells too;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table. Given `--before`, the two-version comparison compares their cells too;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
@@ -174,7 +174,7 @@ The existing rules cover sentence length, sentence averages, paragraph length, l
 
 The `provisional-label` rule asks a document that cites ISO 24495-5 or its skill to say that the standard is an unpublished draft. One paragraph, list item, heading or table row that cites it must say so, and code and quoted text are skipped.
 
-The `generic-alt` rule reports alternative text that is only one word naming the kind of image, such as `image` or `logo`, or only a file name, such as `IMG_0042.jpg`. It reads Markdown images and the alt attribute of HTML images, and code is skipped.
+The `generic-alt` rule reports alternative text that is only one word naming the kind of image, such as `image` or `logo`, or only a file name, such as `IMG_0042.jpg`. It reads Markdown images and the alt attribute of HTML images, and code is skipped. It can miss some spellings of an image and report text that renders no image. Clause 12b's limits name examples.
 
 The `link-text`, `image-alt` and `generic-alt` rules serve readers who hear or touch a document rather than look at it. A screen reader can list every link with no sentence around it, and an image without alternative text is silence. Alternative text such as `image` tells them only that an image is there.
 

@@ -1966,8 +1966,13 @@ const IMAGE_FILE_NAME = /^[^\s/\\]+\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?|avi
  * Alternative text that is one word naming the kind of image, or that is the
  * image's file name, reads as the image's type and not its content.
  *
- * It reads a Markdown image of any form whose label a definition supplies
- * where it needs one, and the alt attribute of an HTML image. The alternative
+ * It reads a Markdown image, inline or by reference where a definition
+ * supplies its label, and the alt attribute of an HTML image. It finds them
+ * in the lines as `readDocument` gives them, with HTML tags, code spans and
+ * escapes set aside, so a reference label holding one of those is not
+ * looked up as written, and the image is missed. It finds an HTML image by
+ * its "<img", even inside another tag's attribute. Clause 12b's limits say
+ * so, with examples. The alternative
  * text is read as the reader of the line gives it, with emphasis marks
  * removed and its spaces trimmed. Empty alternative text belongs to
  * `image-alt`, so this rule never reads it.
