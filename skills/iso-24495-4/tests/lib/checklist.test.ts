@@ -1659,7 +1659,7 @@ describe("the Part 5 checklist clause registry", () => {
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
   // one folder with its option and without it. For each of the 21 fault
-  // clauses, 228 cells, it compares the two runs on that clause's own
+  // clauses, 252 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline
@@ -1669,7 +1669,7 @@ describe("the Part 5 checklist clause registry", () => {
   // What it does not establish: that the same holds on every input. It holds
   // for these specimens only, and it compares neither line numbers nor Jev
   // scores, only which Jev bands are named. No sweep gives --before, so the
-  // three clauses that need it are named on neither side; the sweep of
+  // five clauses that need it are named on neither side; the sweep of
   // --author-text has a test of its own. On METADATA_PROBE,
   // --no-front-matter also changes what the link-text check of 12a and 19b
   // finds. The reading's claim of the clauses a run is set to use is about
