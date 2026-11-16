@@ -61,17 +61,18 @@ const RESTRUCTURE_MODULE = new URL("../../scripts/lib/restructure.ts", import.me
 const CHILD_LIMIT_MS = 30_000;
 
 /**
- * Reads `text` once, and once more with every `[` made a space, so no slot
- * opens, and gives the time each read took and the units of the first.
+ * Reads `text` once, and once more with every `[` and every `.` made a
+ * space, and gives the time each read took and the units of the first.
  * The reads run in a child process, because a read that never returns cannot
- * be stopped in this one. The text with no openings is read the same way at
- * the same length, so it sets the pace of this machine for the comparison.
+ * be stopped in this one. The second text is as long, and is one sentence
+ * with no slot opening, so a search repeated for each slot or each sentence
+ * cannot slow it. It sets the pace of this machine for the comparison.
  */
 function timedReads(text: string): { exitCode: number | null; slotsMs: number; plainMs: number; units: number } {
   const script = [
     `const { documentUnits } = await import(${JSON.stringify(RESTRUCTURE_MODULE)});`,
     "const text = await Bun.stdin.text();",
-    "const plain = text.replaceAll(\"[\", \" \");",
+    "const plain = text.replace(/[[.]/g, \" \");",
     "let started = performance.now();",
     "const units = documentUnits(text).length;",
     "const slotsMs = performance.now() - started;",
@@ -87,7 +88,8 @@ function timedReads(text: string): { exitCode: number | null; slotsMs: number; p
 
 /**
  * The longest a read of slot openings may take: 10 times the read of the
- * same text with no openings, and never less than one second.
+ * same text with no openings and no full stops, or one second, whichever is
+ * longer.
  */
 function slotBudget(plainMs: number): number {
   return Math.max(1_000, 10 * plainMs);
@@ -499,7 +501,7 @@ describe("matching takes time in proportion to the units", () => {
     test(`${name} are read in time proportional to the text`, () => {
       const timed = timedReads(makeText());
       expect(timed.exitCode, `the read was stopped after ${CHILD_LIMIT_MS} ms, or failed`).toBe(0);
-      expect(timed.slotsMs, `${timed.plainMs} ms with no openings`).toBeLessThan(slotBudget(timed.plainMs));
+      expect(timed.slotsMs, `${timed.plainMs} ms with no openings and no full stops`).toBeLessThan(slotBudget(timed.plainMs));
       expect(timed.units).toBe(expectedUnits);
     }, 2 * CHILD_LIMIT_MS);
   }

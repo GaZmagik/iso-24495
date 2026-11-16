@@ -3096,7 +3096,7 @@ export const PINNED_DOCUMENT_TEXT: Record<string, string[]> = {
     "A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
     "",
     "A row makes white space single, so a code block that changed only a tab or a space prints a dropped row and an added row that look alike.",
-    "The JSON report, under `restructure`, holds the first 60 characters of each unit exactly.",
+    "The JSON report, under `restructure`, holds the first 60 characters of each dropped and added unit exactly.",
     "A difference after those 60 characters shows in neither the printed rows nor the JSON report.",
     "Report every row to the user, and leave it to the user to decide what each one means.",
     "",
