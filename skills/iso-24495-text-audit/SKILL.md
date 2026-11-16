@@ -136,17 +136,27 @@ It prints a row for each of these:
 - **Added:** a unit of the new version found in neither the original nor the author's wording. The added units of a new list or table that keeps nothing of the original share one row, which says how many units it stands for.
 - **From the author:** a unit that matches the author's wording.
 - **Marked gap:** a unit that is one `[Author needed: ...]` slot and nothing else. A full stop inside the slot does not split it.
+- **Moved:** a unit kept word for word that stands outside the longest order the kept units share with the original. Units moved together share one row. A moved sentence, list item or table cell that opens with "This", "It" or "These" also asks what that word refers to.
+- **Step order:** a kept unit of an ordered-list step that now stands in another order against the other steps of its list, wherever it now stands. Units that change places inside one step are listed as moved instead.
 
 Headings and bold labels such as `**Purpose:**` that a restructure adds or removes are counted and not listed, because Part 5 lets a restructure change them.
 
 The comparison reads wording, not meaning.
-A reworded sentence reads as dropped and added, and a sentence kept word for word reads as kept wherever it went.
+A reworded sentence reads as dropped and added, even when it also moved.
 It does not read front matter, a raw HTML block such as `<pre>`, or the alternative text of an HTML image, and it does not compare link destinations.
 A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.
+It does not yet pair a reworded unit with its original, or check that each number and code span is still there.
+
+A moved row asks a person to check the move, because Part 5 allows a move that keeps its dependencies and the claim it qualifies.
+The comparison reads neither, beyond the question about "This", "It" or "These".
+Of two units that swap places, it names the one that stood first in the original.
+A number in a table that moved to another row reads as moved too, so the row cannot tell a changed value from a move.
+A heading's number, such as the `4.` of `## 4. Remove`, is not read for order, so renumbered headings list nothing.
 
 A row makes white space single, so a code block that changed only a tab or a space prints a dropped row and an added row that look alike.
 The JSON report, under `restructure`, holds the first 60 characters of each dropped and added unit exactly.
-A difference after those 60 characters shows in neither the printed rows nor the JSON report.
+Under `moved` and `stepOrder` it gives each such unit's line in both versions, its first 60 characters, its printed row and any word asked about.
+A difference after those 60 characters shows in neither the printed rows nor the JSON report, and kept units are counted, not listed.
 Report every row to the user, and leave it to the user to decide what each one means.
 
 ## Optional calibrated Jev checks
