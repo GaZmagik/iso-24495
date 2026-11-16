@@ -1216,6 +1216,27 @@ describe("generic-alt", () => {
     }
   });
 
+  // The reader gives a table row or a heading with its code spans as written,
+  // and the rule read an `<img>` inside one as an image. A renderer shows it as code.
+  test("does not read an HTML image in a code span of a table cell or a heading", () => {
+    for (const text of [
+      "| A |\n|---|\n| `<img alt=\"logo\">` |\n",
+      "# `<img alt=\"logo\">`\n",
+      "# ``<img alt=\"logo\">`` x\n",
+    ]) {
+      expect(genericFindings(text), JSON.stringify(text)).toEqual([]);
+    }
+    for (const [text, line] of [
+      ["| A |\n|---|\n| <img alt=\"logo\"> |\n", 3],
+      // A backtick with no partner opens no span.
+      ["| A |\n|---|\n| `<img alt=\"logo\"> |\n", 3],
+      ["# `a` <img alt=\"logo\"> `b`\n", 1],
+      ["| A |\n|---|\n| `x` <img alt=\"logo\"> |\n", 3],
+    ] as const) {
+      expect(genericFindings(text), JSON.stringify(text)).toEqual([kindOnly("logo", line)]);
+    }
+  });
+
   // Each of these renders a real HTML image beside text shaped like a link,
   // so the image is still read.
   test("still reads an HTML image beside or around text shaped like a link", () => {

@@ -15,6 +15,7 @@ import {
   readDocument,
   structure,
   tableCells,
+  tickRun,
   toLines,
   type ProseBlock,
   type Reading,
@@ -1114,8 +1115,9 @@ const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
  * @param source The source lines of one block, joined by line breaks.
  * @param references The labels the document defines, each as `normaliseReference`
  *     gives it.
- * @param images Where given, each image found is added to it as the offsets where
- *     its "!" stands and just past its end, alternative text included.
+ * @param shownAsText Where given, each image and each code span found is added to
+ *     it, as the offset it starts at and the offset just past its end. A renderer
+ *     shows HTML anywhere in either as text, an image's alternative text included.
  * @returns One entry for each UTF-16 unit of the block, which is each place an index
  *     into `source` counts: 1 where it is link syntax, and 0 elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
  *     cells. The entry for a line break means nothing: the caller takes the lines one
@@ -1124,7 +1126,7 @@ const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
 export function linkSyntaxIn(
   source: string,
   references: ReadonlySet<string>,
-  images?: Array<readonly [number, number]>,
+  shownAsText?: Array<readonly [number, number]>,
 ): Uint8Array {
   const marks = linkMarks(source);
   const syntax = new Uint8Array(source.length);
@@ -1138,7 +1140,10 @@ export function linkSyntaxIn(
       at++;
       escapedAt = at;
     } else if (source[at] === "`") {
-      at = codeSpanEnd(source, at, marks) - 1;
+      const end = codeSpanEnd(source, at, marks);
+      // Where no span opens, the end is just past the opening run.
+      if (shownAsText !== undefined && end > at + tickRun(source, at)) shownAsText.push([at, end]);
+      at = end - 1;
     } else if (source[at] === "<") {
       at = angleEnd(source, at, marks) - 1;
     } else if (source[at] === "[") {
@@ -1149,7 +1154,7 @@ export function linkSyntaxIn(
       switchedOff = Math.min(switchedOff, open.length);
       const end = live ? linkEnd(source, opener, at, marks, references) : -1;
       if (end === -1) continue;
-      if (opener.image) images?.push([opener.at - 1, end]);
+      if (opener.image) shownAsText?.push([opener.at - 1, end]);
       syntax.fill(1, opener.at - (opener.image ? 1 : 0), opener.at + 1);
       syntax.fill(1, at, end);
       if (!opener.image) switchedOff = open.length;
@@ -2001,8 +2006,8 @@ export function genericAltViolations(text: string, reading: Reading = {}): Viola
     if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
     const alt = altAttribute(tag.attributes);
     if (alt === null) continue;
-    // With no "[" there is no link or image, and nothing to read twice.
-    asText ??= markup.includes("[") ? htmlAsText(text, reading, markupLines, references) : new Uint8Array(0);
+    // With no "[" or backtick there is no link, image or code span, and nothing to read twice.
+    asText ??= /[[`]/.test(markup) ? htmlAsText(text, reading, markupLines, references) : new Uint8Array(0);
     if (asText[tag.start] === 1) continue;
     const finding = genericAltFinding(alt, lineOf(tag.start));
     if (finding !== null) violations.push(finding);
@@ -2012,8 +2017,10 @@ export function genericAltViolations(text: string, reading: Reading = {}): Viola
 
 /**
  * Where HTML in the document is shown as text, and so is no tag: a link's
- * destination, title or reference label, and the whole of an image,
- * alternative text included. `<img>` written there is no image.
+ * destination, title or reference label, the whole of an image, alternative
+ * text included, and a code span. `<img>` written there is no image. The
+ * reader already sets aside a code span in a paragraph, but not in a table row
+ * or a heading.
  *
  * Links are found where `linkSyntax` looks for them, in each prose block, each
  * heading and each other line a rule reads, so no link runs from one block into
@@ -2054,19 +2061,19 @@ function htmlAsText(
     // A block's lines stand together in the joined text, so an offset into the
     // block is an offset into the text once the block's start is added.
     const source = markupLines.slice(first, first + count).join("\n");
-    if (!source.includes("[")) continue;
+    if (!/[[`]/.test(source)) continue;
     const start = itemAt(starts, first);
-    const images: Array<readonly [number, number]> = [];
-    const syntax = linkSyntaxIn(source, references, images);
+    const shown: Array<readonly [number, number]> = [];
+    const syntax = linkSyntaxIn(source, references, shown);
     for (let at = 0; at < syntax.length; at++) {
       if (syntax[at] === 1) asText[start + at] = 1;
     }
     // An image can hold another, so each is filled only past what is filled
     // already. Filling each whole cost the square of the depth: 1,000 nested
     // images filled 7,023,000 places in a text of 14,016.
-    images.sort((one, two) => one[0] - two[0]);
+    shown.sort((one, two) => one[0] - two[0]);
     let filled = 0;
-    for (const [from, to] of images) {
+    for (const [from, to] of shown) {
       if (to > filled) asText.fill(1, start + Math.max(from, filled), start + to);
       filled = Math.max(filled, to);
     }
