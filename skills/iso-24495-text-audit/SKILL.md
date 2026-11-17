@@ -133,6 +133,9 @@ Case, punctuation, numbers and the contents of code blocks, tabs included, do ma
 It prints a row for each of these:
 
 - **Dropped:** a unit of the original with no unchanged copy in the new version.
+- **Value:** a number written in figures, or the text of a code span, that the new version holds nowhere. It comes from a sentence, list item, table cell or image alternative that was dropped, rewritten or restructured. Each value is listed once for its unit.
+- **Rewritten:** a unit of the original with no unchanged copy, paired with a unit of the new version left over. The two share at least two words, and at least half the words of the longer. Of the pairs that qualify, the one sharing the largest part of its words is taken first. The row quotes both and says how many words they share.
+- **Restructured or rewritten:** units of the original with at least half their different words among those of a new table that keeps nothing of the original. The table prints one row, which says how many of their numbers and code spans are in the table, elsewhere in the new version, and nowhere. Its units are not listed as added.
 - **Added:** a unit of the new version found in neither the original nor the author's wording. The added units of a new list or table that keeps nothing of the original share one row, which says how many units it stands for.
 - **From the author:** a unit that matches the author's wording.
 - **Marked gap:** a unit that is one `[Author needed: ...]` slot and nothing else. A full stop inside the slot does not split it.
@@ -143,10 +146,18 @@ Headings and bold labels such as `**Purpose:**` that a restructure adds or remov
 A heading is counted once, however many of its sentences changed. Its JSON entry holds the sentences of it that were not kept.
 
 The comparison reads wording, not meaning.
-A reworded sentence reads as dropped and added, even when it also moved.
-It does not read front matter, a raw HTML block such as `<pre>`, or the alternative text of an HTML image, and it does not compare link destinations.
+A sentence reworded further than a rewritten pair allows reads as dropped and added.
+A rewritten pair is not read for order, so a sentence reworded and moved reads as rewritten, not as moved.
+It reads no unit from front matter, a raw HTML block such as `<pre>`, or the alternative text of an HTML image, and it does not compare link destinations.
 A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.
-It does not yet pair a reworded unit with its original, or check that each number and code span is still there.
+
+A number counts as held where the new version holds the same value in figures or in English words.
+It also counts as held where the same runs of digits stand with only marks or spaces between them, as `10:30` holds `10.30`.
+That holds even inside a longer figure, so `0.3.1` holds `0.3`, and any `one` holds 1. A month's name that opens with a capital holds the month's number.
+
+A code span counts as held only where its exact text stands, so `<thinking>` that becomes `thinking` is listed.
+Values are looked for in the whole new file, front matter, HTML and link destinations included.
+When the searches for pairs, tables and values would take more than 20,000,000 steps, none of them is read, and the comparison says so.
 
 A moved row asks a person to check the move, because Part 5 allows a move that keeps its dependencies and the claim it qualifies.
 The comparison reads neither, beyond the question about "This", "It" or "These".
@@ -162,6 +173,14 @@ A row makes white space single, so a code block that changed only a tab or a spa
 The JSON report, under `restructure`, holds the first 60 characters of each dropped and added unit exactly.
 Under `moved` and `stepOrder` it gives each such unit's line in both versions, its first 60 characters, its printed row and any word asked about.
 A difference after those 60 characters shows in neither the printed rows nor the JSON report, and kept units are counted, not listed.
+
+Under `rewritten` it gives both lines, the new unit's kind, the first 60 characters of each unit, the words shared and the words of the longer.
+Under `values` it gives the line of the value's unit, and the line of the unit or table that unit went to, or null.
+It also gives the value's kind, and the first 60 characters of the value and of its unit.
+Under `tables` it gives the lines of the units read with each table, the table's first line and how many units it holds.
+It also gives the first 60 characters of the first unit read with it, and its counts of values.
+
+`weighed` is false when the searches passed their limit.
 Report every row to the user, and leave it to the user to decide what each one means.
 
 ## Optional calibrated Jev checks
