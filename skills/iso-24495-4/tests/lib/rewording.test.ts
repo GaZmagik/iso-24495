@@ -291,6 +291,13 @@ describe("a value of the original that the new version does not hold", () => {
     expect(lost("Keep 5 bar now. Hold 5 bar later.\n", "Keep 5 bar now.\n")).toEqual([]);
   });
 
+  test("a value not found is listed once for each unit it stands in, however often it stands there", () => {
+    expect(lost("It was right on 14 of 14 headings with `make` and `make` again.\n", "It was right on most headings.\n")).toEqual(["14", "make"]);
+    expect(lost("It was right on 14 of 14 headings.\n\nIt was wrong on 14 lines.\n", "It was right on most headings.\n")).toEqual(["14", "14"]);
+    // The same text as a number and as a code span is two values.
+    expect(lost("Set `14` on 14 of them.\n", "Set it on all of them.\n")).toEqual(["14", "14"]);
+  });
+
   test("a value in the new version's front matter, a link destination or an HTML block is found", () => {
     expect(lost("Read issue 22 today.\n", "---\nissue: 22\n---\n\nRead the issue today.\n")).toEqual([]);
     expect(lost("Read issue 22 today.\n", "Read [the issue](https://example.org/22) today.\n")).toEqual([]);

@@ -676,7 +676,8 @@ function runs(kept: readonly KeptPair[], flagged: Uint8Array, rank: Int32Array, 
  *    describes, and neither they nor the table's units are then listed.
  * 3. Each number and code span of a unit dropped, rewritten or read with a
  *    table is looked for in the whole new version, as `foundIn` describes,
- *    and each not found is listed. One of a unit read with a table is
+ *    once for each unit however often it stands there, and each not found
+ *    is listed. One of a unit read with a table is
  *    counted as in the table, elsewhere or not found.
  *
  * When the searches pass `WEIGHING_BUDGET` steps, none of this is used: the
@@ -709,7 +710,12 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
   const tallies = read.map(() => ({ inTable: 0, elsewhere: 0, notFound: 0 }));
   const values: MissingValue[] = [];
   for (const { unit, after, table } of checked) {
+    // Each value once for its unit, so "14 of 14" lists one 14.
+    const read = new Set<string>();
     for (const value of valuesOf(unit)) {
+      const kind = value.figure === undefined ? "code" : "number";
+      if (read.has(`${kind} ${value.text}`)) continue;
+      read.add(`${kind} ${value.text}`);
       found ??= foundIn(comparison.after.map(other => other.key), afterSource, meter);
       const anywhere = valueFound(value, found);
       const inTable = table === -1 ? false : valueFound(value, inTables[table] ?? found);
@@ -724,7 +730,7 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
           tally.notFound++;
         }
       }
-      if (!anywhere) values.push({ unit, after, kind: value.figure === undefined ? "code" : "number", value: value.text });
+      if (!anywhere) values.push({ unit, after, kind, value: value.text });
     }
   }
   if (meter.spent > meter.limit) return unweighed;
