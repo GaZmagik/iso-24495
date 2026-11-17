@@ -15,12 +15,19 @@ const PATHS = { before: "old.md", after: "new.md", authorText: null };
 /** The first line, the table header and divider, of every printed comparison with no author's wording. */
 const HEAD = ["Restructure comparison: before `old.md`, after `new.md`", "| Kind | Before | After | Finding |", "|------|--------|-------|---------|"];
 
-/** The closing statement of every printed comparison. */
-const CLOSE = "The comparison reads wording, not meaning.";
+/** The closing statements of every printed comparison: what it reads, and what it does not compare yet. */
+const TAIL = [
+  "The comparison reads wording, not meaning.",
+  "It does not yet pair a reworded unit with its original, or check that each number and code span is still there.",
+];
 
-/** The line of counts, from the counts in the order it prints them. */
-function counts(kept: number, dropped: number, added: number, author: number, gaps: number, newHeadings: number, headingsGone: number, newLabels: number, labelsGone: number): string {
-  return `Kept ${kept}. Dropped ${dropped}. Added ${added}. From the author ${author}. Marked gaps ${gaps}. `
+/**
+ * The line of counts, from the counts in the order it prints them. The kept
+ * units moved and the steps out of order are among those kept.
+ */
+function counts(kept: number, dropped: number, added: number, author: number, gaps: number, newHeadings: number, headingsGone: number, newLabels: number, labelsGone: number, moved = 0, steps = 0): string {
+  return `Kept ${kept}: moved ${moved}, steps out of order ${steps}. `
+    + `Dropped ${dropped}. Added ${added}. From the author ${author}. Marked gaps ${gaps}. `
     + `New headings ${newHeadings}. Headings gone ${headingsGone}. New labels ${newLabels}. Labels gone ${labelsGone}.`;
 }
 
@@ -28,6 +35,26 @@ function counts(kept: number, dropped: number, added: number, author: number, ga
 function printed(before: string, after: string, authorText: string | null = null): string[] {
   return formatComparison(compareVersions(before, after, authorText), PATHS).split("\n");
 }
+
+/** What a row says of one unit kept but moved, before the unit's excerpt. */
+const MOVED_ONE = "Kept, but moved out of its original order. Check that it keeps what it depends on and the claim it qualifies:";
+
+/** What a row says of a step out of order, before the unit's excerpt. */
+const STEP_ONE = "A step of an ordered list now stands in another order against its neighbouring steps, so it is listed here and not as moved. Put it back, or confirm the steps can happen in this order:";
+
+/** A unit's text as a row quotes it: its first 60 characters, in double quotes, with "..." where it was cut. */
+function excerpt(text: string): string {
+  const characters = Array.from(text);
+  return characters.length > 60 ? `"${characters.slice(0, 60).join("").trimEnd()}..."` : `"${text}"`;
+}
+
+/** The keys of the kept units a comparison lists as moved, and of those it lists as steps out of order. */
+function order(comparison: Comparison): { moved: string[]; stepOrder: string[] } {
+  return { moved: comparison.moved.map(pair => pair.after.key), stepOrder: comparison.stepOrder.map(pair => pair.after.key) };
+}
+
+/** No kept unit moved, and no step out of order. */
+const IN_ORDER = { moved: [], stepOrder: [] };
 
 /** The keys of each unit of a text, with the kind of each. */
 function keys(text: string): Array<[string, string]> {
@@ -52,6 +79,62 @@ function sorted(comparison: Comparison): Record<string, string[]> {
 /** 10,000 sentence units, each text standing twice, on lines 1 to 10,000. */
 function manyUnits(prefix: string): Unit[] {
   return Array.from({ length: 10_000 }, (unused, index) => ({ kind: "sentence", line: index + 1, key: `${prefix} ${index % 5_000}.`, block: index }));
+}
+
+/** Sentence units of the given texts in order, one to a line and a block. */
+function sentenceUnits(texts: readonly string[]): Unit[] {
+  return texts.map((key, index) => ({ kind: "sentence", line: index + 1, key, block: index }));
+}
+
+/** `count` copies of one text. */
+function copiesOf(text: string, count: number): string[] {
+  return Array.from({ length: count }, () => text);
+}
+
+/** A source of numbers from 0 to 1 that gives the same run for the same seed, so a random test is the same test each time. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+/** The items in a random order drawn from `random`. */
+function shuffled<T>(items: readonly T[], random: () => number): T[] {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index--) {
+    const other = Math.floor(random() * (index + 1));
+    const held = result[index];
+    const taken = result[other];
+    if (held === undefined || taken === undefined) continue;
+    result[index] = taken;
+    result[other] = held;
+  }
+  return result;
+}
+
+/** Units as Markdown, each with a `**Purpose:**` label where it has one: a paragraph each, or an ordered list's items. */
+function labelledCopies(units: ReadonlyArray<{ text: string; label: boolean }>, asList: boolean): string {
+  return `${units.map((unit, index) => `${asList ? `${index + 1}. ` : ""}${unit.label ? "**Purpose:** " : ""}${unit.text}`).join(asList ? "\n" : "\n\n")}\n`;
+}
+
+/** The length of the longest strictly increasing run of values, read in order, found by comparing every pair: small inputs only. */
+function longestIncreasingLength(values: readonly number[]): number {
+  const lengths = values.map(() => 1);
+  for (let index = 0; index < values.length; index++) {
+    for (let earlier = 0; earlier < index; earlier++) {
+      if ((values[earlier] ?? 0) < (values[index] ?? 0)) lengths[index] = Math.max(lengths[index] ?? 1, (lengths[earlier] ?? 1) + 1);
+    }
+  }
+  return Math.max(0, ...lengths);
+}
+
+/** Whether values rise strictly, read in order. */
+function isIncreasing(values: readonly number[]): boolean {
+  return values.every((value, index) => index === 0 || (values[index - 1] ?? 0) < value);
 }
 
 /** The module the timed child processes read text with. */
@@ -95,6 +178,46 @@ function slotBudget(plainMs: number): number {
   return Math.max(1_000, 10 * plainMs);
 }
 
+/**
+ * Compares two versions in a child process, then compares the first with a
+ * version of the same size that shares no unit with it, and prints and
+ * reports both. Gives the time each took and what the first found. The
+ * second keeps nothing, so no work on the order of kept units can slow it,
+ * and it prints a row for every unit. It sets the pace of this machine.
+ *
+ * @param build JavaScript that defines `before`, `after` and `unrelated`,
+ *     each a text or a list of units, and `compare`, which takes two of them.
+ */
+function timedOrder(build: string): { exitCode: number | null; orderMs: number; plainMs: number; kept: number; moved: number; stepOrder: number } {
+  const script = [
+    `const { compareUnits, compareVersions, formatComparison, comparisonReport } = await import(${JSON.stringify(RESTRUCTURE_MODULE)});`,
+    "const paths = { before: \"old.md\", after: \"new.md\", authorText: null };",
+    build,
+    "const run = (first, second) => { const comparison = compare(first, second); formatComparison(comparison, paths); comparisonReport(comparison, paths); return comparison; };",
+    "let started = performance.now();",
+    "const found = run(before, after);",
+    "const orderMs = performance.now() - started;",
+    "started = performance.now();",
+    "run(before, unrelated);",
+    "const plainMs = performance.now() - started;",
+    "console.log(JSON.stringify({ orderMs, plainMs, kept: found.kept.length, moved: found.moved.length, stepOrder: found.stepOrder.length }));",
+  ].join("\n");
+  const run = Bun.spawnSync([process.execPath, "-e", script], { timeout: CHILD_LIMIT_MS });
+  if (run.exitCode !== 0) return { exitCode: run.exitCode, orderMs: Number.NaN, plainMs: Number.NaN, kept: Number.NaN, moved: Number.NaN, stepOrder: Number.NaN };
+  return { exitCode: 0, ...(JSON.parse(run.stdout.toString()) as { orderMs: number; plainMs: number; kept: number; moved: number; stepOrder: number }) };
+}
+
+/** Units made in a child process: `units(count, key)` gives `count` sentences, the key of each made by `key` from its index. */
+const MAKE_UNITS = "const units = (count, key) => Array.from({ length: count }, (unused, index) => ({ kind: \"sentence\", line: index + 1, key: key(index), block: index }));";
+
+/** Three ordered-list steps, the specimen for step order. */
+const STEPS_TO_VENT = "1. Close the valve.\n2. Open the vent.\n3. Check the gauge.\n";
+
+/** The row for one moved unit that opens with a word that points back, with the question it asks. */
+function referentRow(word: string, sentence: string): string {
+  return `| moved | 1 | 1 | ${MOVED_ONE} "${sentence}" It opens with "${word}". Check what "${word}" refers to in its new place. |`;
+}
+
 /** A comparison's sorting with every list empty but those given. */
 function only(lists: Partial<Record<string, string[]>>): Record<string, string[]> {
   return { kept: [], dropped: [], added: [], fromAuthor: [], gaps: [], newHeadings: [], headingsGone: [], newLabels: [], labelsGone: [], ...lists };
@@ -120,16 +243,23 @@ describe("Part 5's own examples of a restructure read as kept", () => {
       "| marked gap | | 5 | A slot left for the author: \"Reader: [Author needed: reader]\" |",
       "| marked gap | | 6 | A slot left for the author: \"Other guides: [Author needed: referral, or confirm that none...\" |",
       counts(4, 0, 0, 0, 2, 0, 0, 4, 0),
-      CLOSE,
+      ...TAIL,
     ]);
   });
 
-  test("example 16: a conclusion moved under a new overview heading, with the summary heading gone", () => {
-    expect(printed(EXAMPLE_16_BEFORE, EXAMPLE_16_AFTER)).toEqual([...HEAD, counts(4, 0, 0, 0, 0, 1, 1, 0, 0), CLOSE]);
+  test("example 16: a conclusion moved under a new overview heading is kept and listed as moved, with the summary heading gone", () => {
+    // Part 5 lets a restructure move a sentence, so the row asks a person to check the move, as an added row asks for a source.
+    const conclusion = "The migration moves the billing database to PostgreSQL 16 and takes the application offline for up to 30 minutes.";
+    expect(printed(EXAMPLE_16_BEFORE, EXAMPLE_16_AFTER)).toEqual([
+      ...HEAD,
+      `| moved | 8 | 4 | ${MOVED_ONE} ${excerpt(conclusion)} |`,
+      counts(4, 0, 0, 0, 0, 1, 1, 0, 0, 1),
+      ...TAIL,
+    ]);
   });
 
   test("example 17: a fork turned into labelled conditions", () => {
-    expect(printed(EXAMPLE_17_BEFORE, EXAMPLE_17_AFTER)).toEqual([...HEAD, counts(3, 0, 0, 0, 0, 0, 0, 0, 0), CLOSE]);
+    expect(printed(EXAMPLE_17_BEFORE, EXAMPLE_17_AFTER)).toEqual([...HEAD, counts(3, 0, 0, 0, 0, 0, 0, 0, 0), ...TAIL]);
   });
 
   test("the plans example adds a lead-in and turns a sentence into a table, which reads as a drop and one grouped row", () => {
@@ -141,7 +271,7 @@ describe("Part 5's own examples of a restructure read as kept", () => {
       "| added | | 1 | Not in the original or the author's wording. Confirm its source: \"Choose a plan:\" |",
       "| added | | 3 | 4 units in one new table are not in the original or the author's wording. Confirm their source: \"Plan\" |",
       counts(0, 1, 5, 0, 0, 0, 0, 0, 0),
-      CLOSE,
+      ...TAIL,
     ]);
   });
 });
@@ -200,7 +330,7 @@ describe("a unit's text is its wording as a reader sees it", () => {
 
   test("a changed link destination or image source keeps the unit, because only the wording is read", () => {
     expect(sorted(compareVersions("Read [the guide](a.md). ![Chart](a.png)\n", "Read [the guide](b.md). ![Chart](b.png)\n", null)))
-      .toEqual(only({ kept: ["Chart", "Read the guide."] }));
+      .toEqual(only({ kept: ["Read the guide.", "Chart"] }));
   });
 
   test("a code block's contents are kept exactly, and any change to them drops it", () => {
@@ -229,7 +359,7 @@ describe("a unit's text is its wording as a reader sees it", () => {
   });
 
   test("an image's alternative text is a unit of its own, taken out of its sentence", () => {
-    expect(keys("See ![A chart of sales](c.png) below.\n")).toEqual([["alternative", "A chart of sales"], ["sentence", "See below."]]);
+    expect(keys("See ![A chart of sales](c.png) below.\n")).toEqual([["sentence", "See below."], ["alternative", "A chart of sales"]]);
     expect(keys("![Only](o.png)\n")).toEqual([["alternative", "Only"]]);
     expect(keys("![](empty.png)\n")).toEqual([]);
     expect(keys("![A *bold* claim](c.png)\n")).toEqual([["alternative", "A bold claim"]]);
@@ -277,7 +407,7 @@ describe("a unit's text is its wording as a reader sees it", () => {
 describe("matching counts each text as often as it occurs", () => {
   test("a passage that stood twice and stands once is dropped once", () => {
     expect(printed("Close the valve.\n\nClose the valve.\n", "Close the valve.\n")).toEqual([
-      ...HEAD, "| dropped | 3 | | No unchanged copy is in the new version: \"Close the valve.\" |", counts(1, 1, 0, 0, 0, 0, 0, 0, 0), CLOSE,
+      ...HEAD, "| dropped | 3 | | No unchanged copy is in the new version: \"Close the valve.\" |", counts(1, 1, 0, 0, 0, 0, 0, 0, 0), ...TAIL,
     ]);
   });
 
@@ -285,10 +415,250 @@ describe("matching counts each text as often as it occurs", () => {
     expect(sorted(compareVersions("Close the valve.\n", "Close the valve.\n\nClose the valve.\n", null))).toEqual(only({ kept: ["Close the valve."], added: ["Close the valve."] }));
   });
 
-  test("occurrences pair in document order, and the kept pairs are in before order", () => {
+  test("occurrences pair so that the most units keep their order, and the kept pairs are in before order", () => {
+    // Pairing the first copy with the first copy would keep the copy on line 1, which now stands after B,
+    // and make B or that copy read as moved although only the first copy went.
     const comparison = compareVersions("A one.\n\nB two.\n\nA one.\n", "B two.\n\nA one.\n", null);
-    expect(comparison.kept.map(pair => [pair.before.line, pair.after.line])).toEqual([[1, 3], [3, 1]]);
-    expect(comparison.dropped.map(unit => unit.line)).toEqual([5]);
+    expect(comparison.kept.map(pair => [pair.before.line, pair.after.line])).toEqual([[3, 1], [5, 3]]);
+    expect(comparison.dropped.map(unit => unit.line)).toEqual([1]);
+    expect(order(comparison)).toEqual(IN_ORDER);
+  });
+
+  test("copies out of the common order still pair, and read as moved", () => {
+    const comparison = compareVersions("A one.\n\nB two.\n\nA one.\n\nC three.\n", "A one.\n\nC three.\n\nB two.\n\nA one.\n", null);
+    expect(comparison.kept).toHaveLength(4);
+    expect(order(comparison)).toEqual({ moved: ["C three."], stepOrder: [] });
+  });
+
+  test("a text past the pairing budget still steers which copy of another text is kept", () => {
+    // 1,001 copies before and 1,002 after make 1,003,002 possible pairings, past the budget of 1,000,000,
+    // so each copy of "Same." is offered only the original copy at the same place. Those offers still count
+    // when the copy of "Mark." to keep is chosen: the last one keeps its place, and the first is dropped.
+    const comparison = compareUnits(sentenceUnits(["Mark.", ...copiesOf("Same.", 1_001), "Mark."]), sentenceUnits([...copiesOf("Same.", 1_002), "Mark."]), []);
+    expect({ kept: comparison.kept.length, added: comparison.added.map(unit => unit.line), dropped: comparison.dropped.map(unit => unit.line) })
+      .toEqual({ kept: 1_002, added: [1_002], dropped: [1] });
+    expect(order(comparison)).toEqual(IN_ORDER);
+  });
+
+  test("a copy past the original's, in a text past the pairing budget, is added and pairs with no other text", () => {
+    // One copy before and 1,000,001 after are past the budget. The copies after the first have no original
+    // copy at their place, so none is offered one, and none pairs with "Lead.", which stands before it.
+    const comparison = compareUnits(sentenceUnits(["Lead.", "Same."]), sentenceUnits(copiesOf("Same.", 1_000_001)), []);
+    expect({ kept: comparison.kept.map(pair => [pair.before.key, pair.after.line]), added: comparison.added.length, dropped: comparison.dropped.map(unit => unit.key) })
+      .toEqual({ kept: [["Same.", 1]], added: 1_000_000, dropped: ["Lead."] });
+  });
+
+  test("a table that gains a row of repeated cells keeps every cell in order", () => {
+    const before = "| Name | Ready |\n|---|---|\n| Pump | Yes |\n| Valve | Yes |\n";
+    const after = "| Name | Ready |\n|---|---|\n| Pump | Yes |\n| Gauge | Yes |\n| Valve | Yes |\n";
+    expect(order(compareVersions(before, after, null))).toEqual(IN_ORDER);
+    // Keeping either the Pump row's Yes or the Gauge row's keeps every cell in order. The search meets the
+    // Gauge row's last, so it keeps that one, and names the Pump row's copy as added.
+    expect(comparisonReport(compareVersions(before, after, null), PATHS).added).toEqual([{ line: 3, kind: "cell", excerpt: "Yes" }, { line: 4, kind: "cell", excerpt: "Gauge" }]);
+  });
+});
+
+describe("the order of the kept units", () => {
+
+  test("a kept unit that moved is listed as moved, and the units around it are not", () => {
+    const comparison = compareVersions("Close the valve. Open the vent. Check the gauge.\n", "Open the vent. Check the gauge. Close the valve.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Close the valve."], stepOrder: [] });
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([
+      ...HEAD, `| moved | 1 | 1 | ${MOVED_ONE} "Close the valve." |`, counts(3, 0, 0, 0, 0, 0, 0, 0, 0, 1), ...TAIL,
+    ]);
+  });
+
+  test("an unchanged document, a reflow, emphasis and a change of list marker keep every unit in order", () => {
+    const before = "Close the valve. See ![the chart](c.png) here. Open the vent.\n\n- Check the gauge.\n- Call the team.\n";
+    const reflowed = "Close the **valve**.\nSee ![the chart](c.png)\nhere. Open the\nvent.\n\n* Check the *gauge*.\n* Call the team.\n";
+    for (const after of [before, reflowed]) {
+      const comparison = compareVersions(before, after, null);
+      expect(comparison.kept, after).toHaveLength(6);
+      expect(order(comparison), after).toEqual(IN_ORDER);
+    }
+  });
+
+  test("an image's alternative text stands where its image stands, so a reflow cannot move it past a sentence", () => {
+    expect(keys("Close the valve. See ![the chart](c.png) here.\n")).toEqual([["sentence", "Close the valve."], ["sentence", "See here."], ["alternative", "the chart"]]);
+    expect(keys("Close the valve.\nSee ![the chart](c.png) here.\n")).toEqual([["sentence", "Close the valve."], ["sentence", "See here."], ["alternative", "the chart"]]);
+    // An image that starts where a sentence starts stands before it.
+    expect(keys("Close the valve. ![The chart](c.png) Read it.\n")).toEqual([["sentence", "Close the valve."], ["alternative", "The chart"], ["sentence", "Read it."]]);
+    // The place is marked with a private-use character the text does not hold.
+    expect(keys("Close the \uE000 valve. See ![the chart](c.png) here.\n")).toEqual([["sentence", "Close the \uE000 valve."], ["sentence", "See here."], ["alternative", "the chart"]]);
+  });
+
+  test("an image in prose that holds every private-use character comes before the prose, as it did before places were read", () => {
+    const every = Array.from({ length: 0xF8FF - 0xE000 + 1 }, (unused, index) => String.fromCharCode(0xE000 + index)).join("");
+    expect(keys(`Close ${every}. See ![the chart](c.png) here.\n`).map(([kind]) => kind)).toEqual(["alternative", "sentence", "sentence"]);
+  });
+
+  test("units that changed kind but kept their place are in order", () => {
+    const comparison = compareVersions("Close the valve. Open the vent. Check the gauge. Call the team.\n", "## Close the valve.\n\n- Open the vent.\n\n| Check the gauge. |\n|---|\n\n> Call the team.\n", null);
+    expect(comparison.kept).toHaveLength(4);
+    expect(order(comparison)).toEqual(IN_ORDER);
+  });
+
+  test("two ordered-list steps that swap places are one step out of order, and nothing else", () => {
+    const comparison = compareVersions(STEPS_TO_VENT, "1. Open the vent.\n2. Close the valve.\n3. Check the gauge.\n", null);
+    // Either step could be named. The comparison names the one that stood first in the original.
+    expect(order(comparison)).toEqual({ moved: [], stepOrder: ["Close the valve."] });
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([
+      ...HEAD, `| step order | 1 | 2 | ${STEP_ONE} "Close the valve." |`, counts(3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), ...TAIL,
+    ]);
+  });
+
+  test("steps renumbered, given another marker, or made bullets or prose in the same order are in order", () => {
+    for (const after of [
+      "3. Close the valve.\n4. Open the vent.\n5. Check the gauge.\n",
+      "1. Close the valve.\n1. Open the vent.\n1. Check the gauge.\n",
+      "1) Close the valve.\n2) Open the vent.\n3) Check the gauge.\n",
+      "1.\tClose the valve.\n2.\tOpen the vent.\n3.\tCheck the gauge.\n",
+      "- Close the valve.\n- Open the vent.\n- Check the gauge.\n",
+      "Close the valve. Open the vent. Check the gauge.\n",
+    ]) {
+      expect(order(compareVersions(STEPS_TO_VENT, after, null)), after).toEqual(IN_ORDER);
+    }
+  });
+
+  test("steps made bullets or prose in another order are still steps out of order", () => {
+    for (const after of ["- Open the vent.\n- Close the valve.\n- Check the gauge.\n", "Open the vent. Close the valve. Check the gauge.\n"]) {
+      expect(order(compareVersions(STEPS_TO_VENT, after, null)), after).toEqual({ moved: [], stepOrder: ["Close the valve."] });
+    }
+  });
+
+  test("units of a bulleted list or of prose that change order are moved, not steps out of order", () => {
+    expect(order(compareVersions("- Close the valve.\n- Open the vent.\n", "- Open the vent.\n- Close the valve.\n", null))).toEqual({ moved: ["Close the valve."], stepOrder: [] });
+  });
+
+  test("a step is an item: sentences that change order inside one step are moved, not a step out of order", () => {
+    const before = "1. Close the valve. Wait a minute.\n2. Open the vent.\n";
+    const comparison = compareVersions(before, "1. Wait a minute. Close the valve.\n2. Open the vent.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Close the valve."], stepOrder: [] });
+    // A bullet or a code block inside a step belongs to that step.
+    const nested = "1. Close the valve.\n   - Use the lever.\n\n   ```\n   valve close\n   ```\n2. Open the vent.\n";
+    expect(order(compareVersions(nested, "1. Close the valve.\n   - Use the lever.\n2. Open the vent.\n\n   ```\n   valve close\n   ```\n", null)))
+      .toEqual({ moved: [], stepOrder: ["valve close"] });
+    // Of two steps that swap, the one with fewer kept units is named, so the most units keep their order.
+    expect(order(compareVersions(nested, "1. Open the vent.\n2. Close the valve.\n   - Use the lever.\n\n   ```\n   valve close\n   ```\n", null)))
+      .toEqual({ moved: [], stepOrder: ["Open the vent."] });
+  });
+
+  test("a table, a heading and indented code inside a step belong to that step", () => {
+    const before = "1. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n2. ## Open the vent.\n\n       vent open\n3. Check the gauge.\n";
+    const after = "1. Check the gauge.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. ## Open the vent.\n\n       vent open\n";
+    expect(order(compareVersions(before, after, null))).toEqual({ moved: [], stepOrder: ["Check the gauge."] });
+    // The step with the heading and the code has one kept unit fewer than the table's, so it is the one named.
+    // Were the heading, the code, a header cell or a row not read as part of its step, the other step would be.
+    const longer = before.replace("vent open\n", "vent open\n\n   Wait. Then look.\n");
+    const swapped = "1. ## Open the vent.\n\n       vent open\n\n   Wait. Then look.\n2. Close the valve.\n\n   | Valve | Turns |\n   |---|---|\n   | Main | 3 |\n3. Check the gauge.\n";
+    expect(order(compareVersions(longer, swapped, null))).toEqual({ moved: [], stepOrder: ["Open the vent.", "vent open", "Wait.", "Then look."] });
+  });
+
+  test("lists nested on one line are read as separate lists", () => {
+    const before = "1. 1. Close the valve. Open the vent.\n   2. Check the gauge.\n";
+    expect(order(compareVersions(before, before, null))).toEqual(IN_ORDER);
+    expect(order(compareVersions(before, "1. 1. Open the vent. Close the valve.\n   2. Check the gauge.\n", null))).toEqual({ moved: ["Close the valve."], stepOrder: [] });
+    expect(order(compareVersions(before, "1. 1. Check the gauge.\n   2. Close the valve. Open the vent.\n", null))).toEqual({ moved: [], stepOrder: ["Check the gauge."] });
+  });
+
+  test("the steps of a nested ordered list are read against each other, and not against the steps around them", () => {
+    const before = "1. Prepare.\n   1. Close the valve.\n   2. Open the vent.\n2. Finish.\n";
+    expect(order(compareVersions(before, "1. Prepare.\n   1. Open the vent.\n   2. Close the valve.\n2. Finish.\n", null))).toEqual({ moved: [], stepOrder: ["Close the valve."] });
+    expect(order(compareVersions(before, "1. Finish.\n2. Prepare.\n   1. Close the valve.\n   2. Open the vent.\n", null))).toEqual({ moved: [], stepOrder: ["Finish."] });
+  });
+
+  test("a nested list's units count for the step of the outer list that holds it, so moving the nested list past the next step puts that step out of order", () => {
+    const before = "1. Prepare.\n   1. Close the valve.\n   2. Open the vent.\n2. Finish.\n";
+    expect(order(compareVersions(before, "1. Prepare.\n2. Finish.\n   1. Close the valve.\n   2. Open the vent.\n", null))).toEqual({ moved: [], stepOrder: ["Finish."] });
+  });
+
+  test("a whole list moved elsewhere keeps its steps in order, so it is moved and no step is out of order", () => {
+    const prose = "Read this first.\n\nThen rest.\n\nThen more.\n\nThe end.\n";
+    const comparison = compareVersions(`${prose}\n${STEPS_TO_VENT}`, `${STEPS_TO_VENT}\n${prose}`, null);
+    expect(order(comparison)).toEqual({ moved: ["Close the valve.", "Open the vent.", "Check the gauge."], stepOrder: [] });
+    expect(formatComparison(comparison, PATHS).split("\n")[3]).toBe("| moved | 9 | 1 | 3 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: \"Close the valve.\" |");
+  });
+
+  test("a section moved whole is one row, which counts its units", () => {
+    const before = "# Guide\n\n## Install\n\nRun the installer. Restart the machine.\n\n## Use\n\nOpen the app.\n\n## Remove\n\nDelete the folder. Empty the bin.\n";
+    const after = "# Guide\n\n## Remove\n\nDelete the folder. Empty the bin.\n\n## Install\n\nRun the installer. Restart the machine.\n\n## Use\n\nOpen the app.\n";
+    const comparison = compareVersions(before, after, null);
+    expect(order(comparison)).toEqual({ moved: ["Remove", "Delete the folder.", "Empty the bin."], stepOrder: [] });
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([
+      ...HEAD,
+      "| moved | 11 | 3 | 3 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: \"Remove\" |",
+      counts(9, 0, 0, 0, 0, 0, 0, 0, 0, 3),
+      ...TAIL,
+    ]);
+  });
+
+  test("units next to each other in the original but not in the new version are two rows", () => {
+    const rows = printed("Fit the seal. Check the lip. Close the lid. Wipe it. Dry it.\n", "Close the lid. Check the lip. Fit the seal. Wipe it. Dry it.\n").filter(row => row.startsWith("| moved |"));
+    expect(rows).toEqual([`| moved | 1 | 1 | ${MOVED_ONE} "Fit the seal." |`, `| moved | 1 | 1 | ${MOVED_ONE} "Check the lip." |`]);
+  });
+
+  test("a section added above numbered headings leaves their numbers unread for order, and a numbered section moved whole is one row", () => {
+    const before = "# Guide\n\n## 1. Install\n\nRun it.\n\n## 2. Use\n\nOpen it.\n\n## 3. Update\n\nPull it.\n\n## 4. Remove\n\nDelete it.\n";
+    const renumbered = "# Guide\n\n## 1. Install\n\nRun it.\n\n## 2. Configure\n\nSet it.\n\n## 3. Use\n\nOpen it.\n\n## 4. Update\n\nPull it.\n\n## 5. Remove\n\nDelete it.\n";
+    const comparison = compareVersions(before, renumbered, null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    // A number is still kept: four pair, and the new section's number and the last are new headings.
+    expect([comparison.kept.length, comparison.newHeadings.map(unit => unit.key)]).toEqual([13, ["Configure", "5."]]);
+    const moved = "# Guide\n\n## 4. Remove\n\nDelete it.\n\n## 1. Install\n\nRun it.\n\n## 2. Use\n\nOpen it.\n\n## 3. Update\n\nPull it.\n";
+    expect(printed(before, moved).filter(row => row.startsWith("| moved |")))
+      .toEqual(["| moved | 15 | 3 | 2 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: \"Remove\" |"]);
+  });
+
+  test("a moved unit that opens with This, It or These is asked what that word refers to, and only the first of a run is", () => {
+    const before = "Fit the seal. Tighten the bolts. This keeps the seal tight.\n";
+    expect(printed(before, "This keeps the seal tight. Fit the seal. Tighten the bolts.\n")[3]).toBe(referentRow("This", "This keeps the seal tight."));
+    expect(printed("Fit the seal. Check the lip. It keeps water out.\n", "It keeps water out. Fit the seal. Check the lip.\n")[3]).toBe(referentRow("It", "It keeps water out."));
+    expect(printed("Fit the seals. Check the lips. These keep water out.\n", "These keep water out. Fit the seals. Check the lips.\n")[3]).toBe(referentRow("These", "These keep water out."));
+    // A longer word that starts the same way asks nothing.
+    expect(printed("Fit the seal. Check the lip. Its edge faces out.\n", "Its edge faces out. Fit the seal. Check the lip.\n")[3]).toBe(`| moved | 1 | 1 | ${MOVED_ONE} "Its edge faces out." |`);
+    // The second unit of a run moved with the one before it, so its word still refers to that unit.
+    expect(printed("Fit the seal. Check the lip. Close the lid. Wipe it. This cleans it.\n", "Wipe it. This cleans it. Fit the seal. Check the lip. Close the lid.\n")[3])
+      .toBe(`| moved | 1 | 1 | 2 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: "Wipe it." |`);
+    expect(compareVersions("Fit the seal. Check the lip. Close the lid. Wipe it. This cleans it.\n", "Wipe it. This cleans it. Fit the seal. Check the lip. Close the lid.\n", null).moved.map(pair => pair.opensWith))
+      .toEqual([null, null]);
+    // A run whose first unit opens with the word asks about the first.
+    expect(printed("Fit the seal. Check the lip. Close the lid. This cleans it. Dry it.\n", "This cleans it. Dry it. Fit the seal. Check the lip. Close the lid.\n")[3])
+      .toBe(`| moved | 1 | 1 | 2 units kept, but moved together out of their original order. Check that they keep what they depend on and the claims they qualify: "This cleans it." The first opens with "This". Check what "This" refers to in its new place. |`);
+    // A heading, a code block and an image's alternative text are not prose, so nothing is asked.
+    expect(compareVersions("# A\n\n## B\n\n## C\n\n## This week\n", "# A\n\n## This week\n\n## B\n\n## C\n", null).moved.map(pair => [pair.after.key, pair.opensWith])).toEqual([["This week", null]]);
+  });
+
+  test("the JSON report lists each moved unit and each step out of order, with both lines, the row it is printed in, and any word asked about", () => {
+    const report = comparisonReport(compareVersions(`${STEPS_TO_VENT}\nThis keeps it tight.\n`, "This keeps it tight.\n\n1. Open the vent.\n2. Close the valve.\n3. Check the gauge.\n", null), PATHS);
+    expect(report.moved).toEqual([{ before: 5, after: 1, kind: "sentence", excerpt: "This keeps it tight.", run: 1, opensWith: "This" }]);
+    expect(report.stepOrder).toEqual([{ before: 1, after: 4, kind: "item", excerpt: "Close the valve.", run: 1, opensWith: null }]);
+  });
+
+  test("CRLF line endings, tabs and characters past the basic plane read as the same units in the same order", () => {
+    const before = "1. Close the vanne \u{1F527}.\n2. Ouvrez l'\u00e9vent.\n\n\u00c9tape finale. Fermez.\n";
+    expect(order(compareVersions(before, before.replaceAll("\n", "\r\n").replace("1. ", "1.\t"), null))).toEqual(IN_ORDER);
+    const swapped = "1. Ouvrez l'\u00e9vent.\r\n2. Close the vanne \u{1F527}.\r\n\r\nFermez. \u00c9tape finale.\r\n";
+    expect(order(compareVersions(before, swapped, null))).toEqual({ moved: ["\u00c9tape finale."], stepOrder: ["Close the vanne \u{1F527}."] });
+  });
+
+  test("empty and identical files list nothing as moved", () => {
+    for (const [before, after] of [["", ""], ["", STEPS_TO_VENT], [STEPS_TO_VENT, ""], [STEPS_TO_VENT, STEPS_TO_VENT]]) {
+      expect(order(compareVersions(before ?? "", after ?? "", null))).toEqual(IN_ORDER);
+    }
+  });
+
+  test("swapping the two versions keeps as many units in order", () => {
+    const pairs: Array<[string, string]> = [
+      ["Close the valve. Open the vent. Check the gauge.\n", "Open the vent. Check the gauge. Close the valve.\n"],
+      [STEPS_TO_VENT, "1. Check the gauge.\n2. Close the valve.\n3. Open the vent.\n"],
+      ["A one. B two. A one. C three.\n", "C three. A one. B two.\n"],
+    ];
+    for (const [first, second] of pairs) {
+      const forward = compareVersions(first, second, null);
+      const backward = compareVersions(second, first, null);
+      expect(backward.kept.length, first).toBe(forward.kept.length);
+      expect(backward.moved.length + backward.stepOrder.length, first).toBe(forward.moved.length + forward.stepOrder.length);
+    }
   });
 });
 
@@ -324,6 +694,166 @@ describe("a bold label is read only when the whole unit has no match", () => {
   test("a label's sentence that is the label alone takes no label", () => {
     expect(documentUnits("**Purpose:** Fix. it\n").map(unit => [unit.key, unit.label])).toEqual([["Purpose: Fix.", "Purpose:"], ["it", undefined]]);
     expect(documentUnits("**A:** B\n")[0]?.label).toBe("A:");
+  });
+});
+
+describe("a label gained or lost on repeated wording", () => {
+  const valve = "Close the valve.";
+
+  test("a label added to one of two copies keeps both in order", () => {
+    // Pairing the unlabelled copy first, with the original's first copy, left the labelled copy to pair
+    // with the original's second, so the two pairs crossed and one copy read as moved.
+    const comparison = compareVersions(`${valve}\n\n${valve}\n`, `**Purpose:** ${valve}\n\n${valve}\n`, null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([...HEAD, counts(2, 0, 0, 0, 0, 0, 0, 1, 0), ...TAIL]);
+    expect(comparisonReport(comparison, PATHS).newLabels).toEqual([{ line: 1, kind: "sentence", excerpt: "Purpose:" }]);
+  });
+
+  test("a label added to one step of an ordered list leaves every step in order", () => {
+    expect(order(compareVersions(`1. ${valve}\n2. ${valve}\n`, `1. **Purpose:** ${valve}\n2. ${valve}\n`, null))).toEqual(IN_ORDER);
+    expect(order(compareVersions(`1. ${valve}\n2. ${valve}\n3. ${valve}\n`, `1. ${valve}\n2. **Purpose:** ${valve}\n3. ${valve}\n`, null))).toEqual(IN_ORDER);
+  });
+
+  test("a label added to a middle copy, or to the first and the last, leaves every copy in order", () => {
+    const three = `${valve}\n\n${valve}\n\n${valve}\n`;
+    for (const after of [
+      `${valve}\n\n**Purpose:** ${valve}\n\n${valve}\n`,
+      `**Purpose:** ${valve}\n\n${valve}\n\n**Purpose:** ${valve}\n`,
+      `${valve}\n\n${valve}\n\n**Purpose:** ${valve}\n`,
+    ]) {
+      const comparison = compareVersions(three, after, null);
+      expect(order(comparison), after).toEqual(IN_ORDER);
+      expect(comparison.kept, after).toHaveLength(3);
+    }
+  });
+
+  test("a label lost from one of two copies keeps both in order", () => {
+    const comparison = compareVersions(`**Purpose:** ${valve}\n\n${valve}\n`, `${valve}\n\n${valve}\n`, null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    expect(sorted(comparison)).toEqual(only({ kept: [valve, valve], labelsGone: ["Purpose:"] }));
+    expect(order(compareVersions(`${valve}\n\n**Purpose:** ${valve}\n`, `${valve}\n\n${valve}\n`, null))).toEqual(IN_ORDER);
+  });
+
+  test("a copy that gains a label and moves is the one unit moved", () => {
+    // Pairing so that the most units keep their order leaves one unit out of it, however the copies pair.
+    const comparison = compareVersions("X one.\n\nA one.\n\nY one.\n\nA one.\n", "**Purpose:** A one.\n\nX one.\n\nA one.\n\nY one.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: A one."], stepOrder: [] });
+    expect(comparison.newLabels.map(unit => unit.line)).toEqual([1]);
+    const unlabelled = compareVersions("X one.\n\nA one.\n\nY one.\n\nA one.\n", "A one.\n\nX one.\n\nA one.\n\nY one.\n", null);
+    expect(order(unlabelled)).toEqual({ moved: ["A one."], stepOrder: [] });
+  });
+
+  test("a label that passes from one copy to another reads as a move of the copy that stood first, labelled or not", () => {
+    // Each copy pairs with its own wording, so the pairs cross. The copy that stood first in the original is named,
+    // here the unlabelled one, from line 1 to line 3. With the copies the other way round, the labelled one is named.
+    const comparison = compareVersions(`${valve}\n\n**Purpose:** ${valve}\n`, `**Purpose:** ${valve}\n\n${valve}\n`, null);
+    expect(order(comparison)).toEqual({ moved: [valve], stepOrder: [] });
+    expect(comparison.moved.map(pair => [pair.before.line, pair.after.line])).toEqual([[1, 3]]);
+    expect([comparison.newLabels.length, comparison.labelsGone.length]).toEqual([0, 0]);
+    const mirrored = compareVersions(`**Purpose:** ${valve}\n\n${valve}\n`, `${valve}\n\n**Purpose:** ${valve}\n`, null);
+    expect(order(mirrored)).toEqual({ moved: [`Purpose: ${valve}`], stepOrder: [] });
+    expect(mirrored.moved.map(pair => [pair.before.line, pair.after.line])).toEqual([[1, 3]]);
+  });
+
+  test("a text pairs by label no more often than it has copies to spare, so the labels counted are those whole wording leaves", () => {
+    const comparison = compareVersions("Close the valve.\n\nClose the valve.\n\nOpen the vent.\n\n**Purpose:** Open the vent.\n\n1. **Purpose:** Open the vent.\n\nOpen the vent.\n", "**Purpose:** Open the vent.\n\nClose the valve.\n\n1. **Purpose:** Close the valve.\n\nOpen the vent.\n\n1. Open the vent.\n\nOpen the vent.\n", null);
+    expect([comparison.kept.length, comparison.newLabels.length, comparison.labelsGone.length]).toEqual([6, 1, 1]);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: Open the vent."], stepOrder: [] });
+  });
+
+  test("where weighing labels in the order search keeps fewer units in order, whole wording alone is used", () => {
+    const comparison = compareVersions("Close the valve.\n\nClose the valve.\n\nClose the valve.\n\nOpen the vent.\n\n**Purpose:** Check the gauge.\n\n**Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n", "1. Close the valve.\n2. **Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n\nOpen the vent.\n\n**Purpose:** Check the gauge.\n\n1. **Purpose:** Close the valve.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: Close the valve."], stepOrder: [] });
+    expect([comparison.kept.length, comparison.newLabels.length]).toEqual([7, 2]);
+  });
+
+  test("where weighing labels in the order search keeps no more units in order, whole wording alone is used", () => {
+    // Both matches keep four of five units in order. Each names a different copy as moved, and the one named is whole wording's.
+    const comparison = compareVersions("1. **Purpose:** Check the gauge.\n\nOpen the vent.\n\n1. **Purpose:** Open the vent.\n2. Close the valve.\n\n**Purpose:** Open the vent.\n", "**Purpose:** Open the vent.\n\n**Purpose:** Check the gauge.\n\n1. **Purpose:** Open the vent.\n2. Close the valve.\n\n**Purpose:** Open the vent.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Purpose: Check the gauge."], stepOrder: [] });
+  });
+
+  test("weighing labels can pair another copy by label, so another unit reads as dropped and another label is counted", () => {
+    // Whole wording alone pairs the first copy, and reads the labelled copy as dropped and the other as moved.
+    const comparison = compareVersions("A one.\n\nX one.\n\n**Purpose:** A one.\n", "X one.\n\n**Note:** A one.\n", null);
+    expect(order(comparison)).toEqual(IN_ORDER);
+    expect(sorted(comparison)).toEqual(only({ kept: ["X one.", "Note: A one."], dropped: ["A one."], newLabels: ["Note:"], labelsGone: ["Purpose:"] }));
+  });
+
+  test("of the two matches, the one that keeps more units is used, before the one that keeps more in order", () => {
+    const comparison = compareVersions("C three.\n\n**Purpose:** D four.\n\n**Purpose:** B two.\n\n1. **Purpose:** B two.\n\nD four.\n\n1. D four.\n\nPurpose: B two.\n", "C three.\n\nD four.\n\n**Note:** B two.\n\n1. **Purpose:** B two.\n\n**Note:** D four.\n\n1. **Note:** D four.\n\nB two.\n", null);
+    expect([comparison.kept.length, comparison.dropped.length, comparison.added.length]).toEqual([7, 0, 0]);
+  });
+
+  test("labels added to copies, or taken from them, but never both for one text, leave every unit in order", () => {
+    const random = seeded(24_495);
+    const texts = ["Close the valve.", "Open the vent.", "Check the gauge."];
+    for (let trial = 0; trial < 400; trial++) {
+      const length = 2 + Math.floor(random() * 6);
+      const units = Array.from({ length }, () => ({ text: texts[Math.floor(random() * texts.length)] ?? "", label: random() < 0.4 }));
+      // Each text either gains labels or loses them in the new version, so no label passes between its copies.
+      const gains = new Map(texts.map(text => [text, random() < 0.5]));
+      const changed = units.map(unit => (random() < 0.5 ? { ...unit, label: gains.get(unit.text) === true } : unit));
+      const asList = random() < 0.5;
+      const before = labelledCopies(units, asList);
+      const after = labelledCopies(changed, asList);
+      const comparison = compareVersions(before, after, null);
+      expect(order(comparison), `${before}->\n${after}`).toEqual(IN_ORDER);
+      expect(comparison.kept, `${before}->\n${after}`).toHaveLength(length);
+    }
+  });
+});
+
+describe("moved and step order agree on one longest order", () => {
+  test("a step moved out of its list is a step out of order, and the prose around it is in order", () => {
+    // Taking the step named first out before reading the rest left the opening sentence outside the longest
+    // order of what remained, though it belongs to the one longest order of the whole document.
+    const before = "Read this first.\n\n1. Close the valve.\n2. Open the vent.\n\nFinish now.\n";
+    const after = "Open the vent.\n\nRead this first.\n\nClose the valve.\n\nFinish now.\n";
+    const comparison = compareVersions(before, after, null);
+    expect(order(comparison)).toEqual({ moved: [], stepOrder: ["Open the vent."] });
+    expect(formatComparison(comparison, PATHS).split("\n")).toEqual([...HEAD, `| step order | 4 | 1 | ${STEP_ONE} "Open the vent." |`, counts(4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), ...TAIL]);
+  });
+
+  test("of two steps that swap with prose between them, the one outside the document's longest order is named", () => {
+    const comparison = compareVersions("Prepare.\n\n1. Close the valve.\n2. Open the vent.\n\nFinish now.\n", "Open the vent.\n\nPrepare.\n\nClose the valve.\n\nFinish now.\n", null);
+    expect(order(comparison)).toEqual({ moved: [], stepOrder: ["Open the vent."] });
+    // With nothing around them to settle it, the step that stood first is named, as before.
+    expect(order(compareVersions(STEPS_TO_VENT, "1. Open the vent.\n2. Close the valve.\n3. Check the gauge.\n", null))).toEqual({ moved: [], stepOrder: ["Close the valve."] });
+  });
+
+  test("steps kept in step order but moved past prose are moved, and a step out of step order is never also moved", () => {
+    const comparison = compareVersions("P one.\n\nQ one.\n\n1. S one.\n2. S two.\n3. S three.\n", "S two.\n\nS three.\n\nP one.\n\nQ one.\n\nS one.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["S two.", "S three."], stepOrder: ["S one."] });
+  });
+
+  test("of the longest orders, the one holding no step out of order is read, so a step is not listed with a moved unit beside it", () => {
+    const comparison = compareVersions("1. **Purpose:** Open the vent.\n2. Close the valve.\n3. **Purpose:** Close the valve.\n\n**Purpose:** Close the valve.\n", "1. **Purpose:** Close the valve.\n2. Open the vent.\n3. **Purpose:** Close the valve.\n\nClose the valve.\n", null);
+    expect(order(comparison)).toEqual({ moved: ["Close the valve."], stepOrder: ["Purpose: Close the valve."] });
+  });
+
+  test("on random documents, the moved leave a longest shared order, and each list keeps its longest order", () => {
+    const random = seeded(21);
+    for (let trial = 0; trial < 500; trial++) {
+      const prose = Math.floor(random() * 4);
+      const steps = 2 + Math.floor(random() * 4);
+      const listAt = Math.floor(random() * (prose + 1));
+      const texts = Array.from({ length: prose + steps }, (unused, index) => `Unit ${index} here.`);
+      const proseTexts = texts.slice(0, prose);
+      const stepTexts = texts.slice(prose);
+      const blocks = [...proseTexts.slice(0, listAt), stepTexts.map((text, index) => `${index + 1}. ${text}`).join("\n"), ...proseTexts.slice(listAt)];
+      const beforeOrder = [...proseTexts.slice(0, listAt), ...stepTexts, ...proseTexts.slice(listAt)];
+      const afterOrder = shuffled(beforeOrder, random);
+      const comparison = compareVersions(`${blocks.join("\n\n")}\n`, `${afterOrder.join("\n\n")}\n`, null);
+      const label = `${beforeOrder.join(" ")} -> ${afterOrder.join(" ")}`;
+      const moved = new Set(comparison.moved.map(pair => pair.after.key));
+      const outOfStep = new Set(comparison.stepOrder.map(pair => pair.after.key));
+      expect([...moved].filter(text => outOfStep.has(text)), label).toEqual([]);
+      expect(longestIncreasingLength(beforeOrder.filter(text => !moved.has(text)).map(text => afterOrder.indexOf(text))), label).toBe(longestIncreasingLength(beforeOrder.map(text => afterOrder.indexOf(text))));
+      expect(isIncreasing(beforeOrder.filter(text => !moved.has(text) && !outOfStep.has(text)).map(text => afterOrder.indexOf(text))), label).toBe(true);
+      const kept = stepTexts.filter(text => !outOfStep.has(text)).map(text => afterOrder.indexOf(text));
+      expect([isIncreasing(kept), kept.length], label).toEqual([true, longestIncreasingLength(stepTexts.map(text => afterOrder.indexOf(text)))]);
+    }
   });
 });
 
@@ -382,8 +912,8 @@ describe("an after unit left over is a gap, a heading, the author's or added", (
     const two = "# Old\n\n# One. Two.\n\nKeep this text.\n";
     expect(sorted(compareVersions(one, two, null))).toEqual(only({ kept: ["Old", "Keep this text."], newHeadings: ["One. Two."] }));
     expect(sorted(compareVersions(two, one, null))).toEqual(only({ kept: ["Old", "Keep this text."], headingsGone: ["One. Two."] }));
-    expect(printed(one, two).at(-2)).toBe(counts(2, 0, 0, 0, 0, 1, 0, 0, 0));
-    expect(printed(two, one).at(-2)).toBe(counts(2, 0, 0, 0, 0, 0, 1, 0, 0));
+    expect(printed(one, two).at(-1 - TAIL.length)).toBe(counts(2, 0, 0, 0, 0, 1, 0, 0, 0));
+    expect(printed(two, one).at(-1 - TAIL.length)).toBe(counts(2, 0, 0, 0, 0, 0, 1, 0, 0));
   });
 
   test("two new headings of two sentences each are two new headings, each on its own line", () => {
@@ -422,19 +952,19 @@ describe("the printed comparison", () => {
       "| marked gap | | 4 | A slot left for the author: \"[Author needed: date]\" |",
       "| added | | 6 | Not in the original or the author's wording. Confirm its source: \"Invented here.\" |",
       counts(1, 1, 1, 1, 1, 0, 0, 1, 0),
-      CLOSE,
+      ...TAIL,
     ]);
   });
 
   test("added items of a new list share one row, and a list that keeps a unit lists each added item", () => {
-    expect(printed("Keep.\n", "Keep.\n\n- One.\n- Two.\n- Three.\n").slice(3, -2)).toEqual([
+    expect(printed("Keep.\n", "Keep.\n\n- One.\n- Two.\n- Three.\n").slice(3, -3)).toEqual([
       "| added | | 3 | 3 units in one new list are not in the original or the author's wording. Confirm their source: \"One.\" |",
     ]);
-    expect(printed("Keep.\n", "- Keep.\n- One.\n- Two.\n").slice(3, -2)).toEqual([
+    expect(printed("Keep.\n", "- Keep.\n- One.\n- Two.\n").slice(3, -3)).toEqual([
       "| added | | 2 | Not in the original or the author's wording. Confirm its source: \"One.\" |",
       "| added | | 3 | Not in the original or the author's wording. Confirm its source: \"Two.\" |",
     ]);
-    expect(printed("Keep.\n", "Keep.\n\n- One.\n").slice(3, -2)).toEqual([
+    expect(printed("Keep.\n", "Keep.\n\n- One.\n").slice(3, -3)).toEqual([
       "| added | | 3 | Not in the original or the author's wording. Confirm its source: \"One.\" |",
     ]);
   });
@@ -443,12 +973,12 @@ describe("the printed comparison", () => {
     expect(printed("", "- First sentence. Second sentence.\n- Third sentence. Fourth sentence.\n").slice(3)).toEqual([
       "| added | | 1 | 4 units in one new list are not in the original or the author's wording. Confirm their source: \"First sentence.\" |",
       counts(0, 0, 4, 0, 0, 0, 0, 0, 0),
-      CLOSE,
+      ...TAIL,
     ]);
     expect(printed("", "| Header |\n|---|\n| First sentence. Second sentence. |\n").slice(3)).toEqual([
       "| added | | 1 | 3 units in one new table are not in the original or the author's wording. Confirm their source: \"Header\" |",
       counts(0, 0, 3, 0, 0, 0, 0, 0, 0),
-      CLOSE,
+      ...TAIL,
     ]);
     for (const text of ["items in one new list", "cells in one new table"]) {
       expect(printed("", "- One. Two.\n- Three.\n\n| A | B |\n|---|---|\n| C. D. | E |\n").join("\n")).not.toContain(text);
@@ -472,6 +1002,8 @@ describe("the JSON report", () => {
     expect(comparisonReport(comparison, { before: "old.md", after: "new.md", authorText: "me.md" })).toEqual({
       before: "old.md", after: "new.md", authorText: "me.md",
       units: { before: 3, after: 5, authorText: 1 },
+      moved: [],
+      stepOrder: [],
       kept: 1,
       dropped: [{ line: 3, kind: "sentence", excerpt: "Drop." }],
       added: [{ line: 6, kind: "item", excerpt: "Added." }],
@@ -531,4 +1063,80 @@ describe("matching takes time in proportion to the units", () => {
       expect(timed.units).toBe(expectedUnits);
     }, 2 * CHILD_LIMIT_MS);
   }
+
+  // A longest common order found by comparing every pair of kept units takes
+  // time in the square of their number. These forms show it at an assertion.
+  const orderForms: Array<[string, string, { kept: number; moved: number; stepOrder: number }]> = [
+    [
+      "100,000 units in reverse order",
+      `${MAKE_UNITS} const before = units(100_000, index => \`S\${index}.\`); const after = units(100_000, index => \`S\${99_999 - index}.\`);`
+        + " const unrelated = units(100_000, index => `T${index}.`); const compare = (first, second) => compareUnits(first, second, []);",
+      { kept: 100_000, moved: 99_999, stepOrder: 0 },
+    ],
+    [
+      "100,000 copies of one unit on each side",
+      `${MAKE_UNITS} const before = units(100_000, () => "Same."); const after = units(100_000, () => "Same.");`
+        + " const unrelated = units(100_000, index => `T${index}.`); const compare = (first, second) => compareUnits(first, second, []);",
+      { kept: 100_000, moved: 0, stepOrder: 0 },
+    ],
+    [
+      "100,000 copies of one unit, with every other unit one of 50,000 copies and dropped",
+      `${MAKE_UNITS} const before = units(100_000, index => index % 2 === 0 ? "Same." : "Gone."); const after = units(50_000, () => "Same.");`
+        + " const unrelated = units(50_000, index => `T${index}.`); const compare = (first, second) => compareUnits(first, second, []);",
+      { kept: 50_000, moved: 0, stepOrder: 0 },
+    ],
+    [
+      "100,000 sentences in reverse order inside 5,000 nested ordered lists",
+      "const markers = \"1. \".repeat(5_000); const sentences = Array.from({ length: 100_000 }, (unused, index) => `Step ${index} now.`);"
+        + " const before = markers + sentences.join(\" \"); const after = markers + [...sentences].reverse().join(\" \");"
+        + " const unrelated = markers + sentences.map(sentence => sentence.replace(\"Step\", \"Task\")).join(\" \"); const compare = (first, second) => compareVersions(first, second, null);",
+      { kept: 100_000, moved: 99_999, stepOrder: 0 },
+    ],
+    [
+      "100,000 ordered-list steps in reverse order",
+      "const lines = Array.from({ length: 100_000 }, (unused, index) => `${index + 1}. Step ${index}.`);"
+        + " const before = lines.join(\"\\n\"); const after = [...lines].reverse().join(\"\\n\");"
+        + " const unrelated = lines.map(line => line.replace(\"Step\", \"Task\")).join(\"\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      { kept: 100_000, moved: 0, stepOrder: 99_999 },
+    ],
+    [
+      "100,000 units in reverse order, each gaining a label",
+      "const texts = Array.from({ length: 100_000 }, (unused, index) => `S${index}.`); const before = texts.join(\"\\n\\n\");"
+        + " const after = [...texts].reverse().map(text => `**Purpose:** ${text}`).join(\"\\n\\n\");"
+        + " const unrelated = texts.map(text => `**Purpose:** T${text}`).join(\"\\n\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      { kept: 100_000, moved: 99_999, stepOrder: 0 },
+    ],
+    [
+      "1,000 copies of one unit, every other one gaining a label, for 1,000,000 possible pairings",
+      "const before = Array.from({ length: 1_000 }, () => \"Same.\").join(\"\\n\\n\");"
+        + " const after = Array.from({ length: 1_000 }, (unused, index) => index % 2 === 0 ? \"**Purpose:** Same.\" : \"Same.\").join(\"\\n\\n\");"
+        + " const unrelated = Array.from({ length: 1_000 }, () => \"Same.\").join(\"\\n\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      // Its baseline weighs the same 1,000,000 pairings by whole wording alone, so it sets the pace for that much work.
+      { kept: 1_000, moved: 0, stepOrder: 0 },
+    ],
+    [
+      "100,000 copies of one unit, every other one gaining a label, past the pairing budget",
+      "const before = Array.from({ length: 100_000 }, () => \"Same.\").join(\"\\n\\n\");"
+        + " const after = Array.from({ length: 100_000 }, (unused, index) => index % 2 === 0 ? \"**Purpose:** Same.\" : \"Same.\").join(\"\\n\\n\");"
+        + " const unrelated = Array.from({ length: 100_000 }, (unused, index) => `T${index}.`).join(\"\\n\\n\"); const compare = (first, second) => compareVersions(first, second, null);",
+      // Past the budget, copies pair in document order, so the labelled copies pair with the original's second half.
+      { kept: 100_000, moved: 50_000, stepOrder: 0 },
+    ],
+  ];
+  for (const [name, build, expected] of orderForms) {
+    test(`${name} compare, print and report in time proportional to the units`, () => {
+      const timed = timedOrder(build);
+      expect(timed.exitCode, `the comparison was stopped after ${CHILD_LIMIT_MS} ms, or failed`).toBe(0);
+      expect(timed.orderMs, `${timed.plainMs} ms for the baseline`).toBeLessThan(slotBudget(timed.plainMs));
+      expect({ kept: timed.kept, moved: timed.moved, stepOrder: timed.stepOrder }).toEqual(expected);
+    }, 2 * CHILD_LIMIT_MS);
+  }
+
+  test("a paragraph of 1,000,000 sentences is read without passing them all to one call", () => {
+    // A spread of every unit into one call throws a RangeError on far fewer.
+    const script = `const { documentUnits } = await import(${JSON.stringify(RESTRUCTURE_MODULE)}); console.log(documentUnits("Go now. ".repeat(1_000_000)).length);`;
+    const run = Bun.spawnSync([process.execPath, "-e", script], { timeout: CHILD_LIMIT_MS });
+    expect(run.exitCode, run.stderr.toString().slice(0, 500)).toBe(0);
+    expect(run.stdout.toString().trim()).toBe("1000000");
+  }, 2 * CHILD_LIMIT_MS);
 });
