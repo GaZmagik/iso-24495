@@ -171,13 +171,82 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     for (const opening of ["<pre", "<PRE", "<script", "<style", "<textarea", "<pre class=\"x\"", "<![CDATA[", "<!--", "<?php", "<!DOCTYPE", "   <pre"]) {
       expect(alerts(`${opening}\n\n${pair("NOTE", "NOTE")}`), opening).toEqual([]);
     }
-    // A block closed above the alerts, on its own line or the next, leaves them to be read.
-    expect(alerts(`<pre\n</pre>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 4, 7)]);
+    // A block closed above the alerts leaves them to be read.
+    expect(alerts(`<pre>\n</pre>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 4, 7)]);
     expect(alerts(`<!-- c -->\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
     expect(alerts(`<![CDATA[ x ]]>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
-    // Four spaces in is code, and inside a list item the block ends with the item.
+    // Four spaces in is code.
     expect(alerts(`    <pre\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
-    expect(alerts(`- <pre\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    // A tag whose end is not on its line is not read as closed: HTML reads
+    // `<pre` and the next line `</pre>` as one start tag, so the pre holds the
+    // alerts. Inside a list item the item may end it, but the rule is not sure.
+    expect(alerts(`<pre\n</pre>\n\n${pair("NOTE", "NOTE")}`)).toEqual([]);
+    expect(alerts(`- <pre\n\n${pair("NOTE", "NOTE")}`)).toEqual([]);
+  });
+
+  test("an alert inside an HTML element that an earlier line opened is not read", () => {
+    const wrappers: Array<[string, string]> = [
+      ["<details>\n<summary>Notes</summary>\n\n", "\n</details>\n"],
+      ["<div>\n\n", "\n</div>\n"],
+      ["<DIV class=\"note\">\n\n", "\n</DIV>\n"],
+      ["<div\n  class=\"note\">\n\n", "\n</div>\n"],
+      ["<table><tr><td>\n\n", "\n</td></tr></table>\n"],
+      ["<blockquote>\n\n", "\n</blockquote>\n"],
+      ["<p align=\"center\">\n<img src=\"logo.png\" alt=\"Logo\">\n\n", ""],
+      ["Text <span>open.\n\n", ""],
+      ["<details>\n\n", ""],
+      ["<details\n\n", ""],
+      ["<div>\n<details>\n</div>\n\n", ""],
+      ["<div></div>\n```\n<details>\n```\n\n", ""],
+      ["<script>let tag = \"<details>\";\n\n", ""],
+      // Raw text runs to its own end tag, so the alerts between are text.
+      ["Text <style>\n\n", "\n</style>\n"],
+      ["Text <script>\n\n", ""],
+      ["Text <style>\n[x]: </style>\n\n", ""],
+      ["Text <style></style foo>\n\n", ""],
+      // A comment Markdown does not end, or one that seems to run over a blank line, may hide a tag.
+      ["Text <!-- open\n\n", ""],
+      ["Text <!-- a\n\n<details>\n\n# Head -->\n\n", ""],
+      ["<details\n<!-- c -->\n\n", ""],
+    ];
+    for (const [before, after] of wrappers) {
+      expect(alerts(`${before}${pair("NOTE", "NOTE")}${after}`), before).toEqual([]);
+    }
+  });
+
+  test("an end tag that may be text closes nothing, so an alert after it is not read", () => {
+    const backslash = String.fromCharCode(92);
+    for (const closing of ["Use `</details>` to end it.", "Use ``a `</details>` b`` to end it.", "Use `a\n</details>` to end it.", `${backslash}</details>`, "<!-- </details> -->",
+      "[End](</details>)", "[End]( </details> )", "[End](url \"x </details>\")", "[end]: </details>", "[end]:\n  </details>", "<script>\"</details>\"</script>", "</details foo=\"bar\">",
+      "# Notes <!-- </details> -->", "</details\n\n", "# Use `</details>` now", "Setext `</details>`\n===", `# Head ${backslash}</details>`,
+      "| Tag |\n|---|\n| `</details>` |", `| Tag |\n|---|\n| ${backslash}</details> |`, "# Run <style>`</style>` now",
+      // HTML closes nothing outside a table cell from inside it, and a row needs no pipe.
+      "| Notes |\n|---|\n| End </details> |", "| Notes |\n|---|\nEnd </details>"]) {
+      expect(alerts(`<details>\n\n${closing}\n\n${pair("NOTE", "NOTE")}`), closing).toEqual([]);
+    }
+  });
+
+  test("HTML closed above the alerts, void or written as text leaves them to be read", () => {
+    const backslash = String.fromCharCode(92);
+    for (const before of ["<details>\n<summary>Notes</summary>\n\nBody.\n\n</details>", "<p align=\"center\"><a href=\"https://example.org\"><img src=\"logo.png\" alt=\"Logo\"></a></p>",
+      "<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\" />\n</p>", "<picture>\n<source media=\"(prefers-color-scheme: dark)\" srcset=\"dark.png\" />\n<img alt=\"Chart\" src=\"light.png\">\n</picture>",
+      "Press <kbd>Ctrl</kbd> and <kbd>C</kbd>.<br>Then wait.", "Use `<details>` to fold text.", `Write ${backslash}<details> to fold text.`, "See <https://example.org> or <a@example.org>.",
+      "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<script>\nlet tag = \"<details>\";\n</script>", "<div title=\"</div>\">\nBody.\n</div>",
+      "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
+      expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([adjacent("NOTE", before.split("\n").length + 2, before.split("\n").length + 5)]);
+    }
+    // HTML inside the earlier alert, closed there, leaves the later one read.
+    expect(alerts("> [!NOTE]\n> Press <kbd>Ctrl</kbd>.\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 4)]);
+    // A tag, an end tag or a link left unfinished at the end of the text holds nothing above it.
+    for (const tail of ["<details open", "</details   ", "[a](x"]) {
+      expect(alerts(`${pair("NOTE", "NOTE")}\n${tail}`), tail).toEqual([adjacent("NOTE", 1, 4)]);
+    }
+  });
+
+  test("HTML on the marker line makes it no marker", () => {
+    expect(alerts("> [!NOTE]<!-- c -->\n> One.\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
+    expect(alerts("> [!NOTE] <b>Read</b>\n> One.\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
+    expect(alerts("> <b>[!NOTE]</b>\n> One.\n\n> <b>[!NOTE]</b>\n> Two.\n")).toEqual([]);
   });
 
   test("a document that defines the marker as a link label is not read, as the marker may then be a link", () => {
@@ -206,7 +275,7 @@ describe("adjacent-alerts in the audits", () => {
 });
 
 /** Bun's CommonMark renderer, as far as the oracle below uses it. */
-interface MarkdownRenderer { render(text: string, callbacks: object): string }
+interface MarkdownRenderer { render(text: string, callbacks: object): string; html(text: string): string }
 /**
  * Bun's CommonMark renderer, where this Bun has one. It is a test oracle for
  * the adjacent-alerts rule and never part of the rule: Bun 1.3.7 has none.
@@ -334,6 +403,68 @@ function unconfirmed(renderer: MarkdownRenderer, text: string): string[] {
   return missing;
 }
 
+
+/**
+ * For each quotation `structure` lists, in order, whether the HTML Bun
+ * renders the text as holds it inside no element at all. Bun's callback tree
+ * shows raw HTML as nodes beside a quotation, never around it, so this reads
+ * the rendered HTML instead, with Bun's HTMLRewriter. The quotations are
+ * matched in order to the rendered quotations that no list item or other
+ * quotation holds.
+ *
+ * @returns One entry for each quotation, or null when the two counts differ
+ *     and the quotations cannot be matched.
+ */
+async function topLevelQuotations(renderer: MarkdownRenderer, text: string): Promise<boolean[] | null> {
+  const rendered: RenderedQuotation[] = [];
+  await new HTMLRewriter()
+    .on("blockquote", {
+      element: () => {
+        rendered.push({ inContainer: false, inElement: false });
+      },
+    })
+    .on("li blockquote", markLast(rendered, "inContainer"))
+    .on("blockquote blockquote", markLast(rendered, "inContainer"))
+    .on("* blockquote", markLast(rendered, "inElement"))
+    .transform(new Response(renderer.html(text))).text();
+  const outside = rendered.filter(quotation => !quotation.inContainer);
+  if (outside.length !== structure(text).quotations.length) return null;
+  return outside.map(quotation => !quotation.inElement);
+}
+
+/** A quotation in Bun's rendered HTML: whether a list item or another quotation holds it, and whether any element does. */
+interface RenderedQuotation { inContainer: boolean; inElement: boolean }
+
+/** An HTMLRewriter handler that marks the quotation last met as held in one of the two ways. */
+function markLast(rendered: RenderedQuotation[], field: keyof RenderedQuotation): { element: () => void } {
+  return {
+    element: () => {
+      const last = rendered[rendered.length - 1];
+      if (last !== undefined) last[field] = true;
+    },
+  };
+}
+
+/**
+ * The findings of the rule on a text whose alerts, the later or the earlier,
+ * Bun's rendered HTML puts inside an element, or whose quotations it cannot
+ * match.
+ */
+async function nestedFindings(renderer: MarkdownRenderer, text: string): Promise<string[]> {
+  const findings = adjacentAlertViolations(text, structure(text));
+  if (findings.length === 0) return [];
+  const top = await topLevelQuotations(renderer, text);
+  const lines = structure(text).quotations.map(quotation => quotation.line);
+  const nested: string[] = [];
+  for (const finding of findings) {
+    const earlier = Number(/on line (\d+)/.exec(finding.detail)?.[1]);
+    for (const line of [earlier, finding.line]) {
+      if (top === null || top[lines.indexOf(line)] !== true) nested.push(`${JSON.stringify(text)} line ${line}`);
+    }
+  }
+  return nested;
+}
+
 describe("adjacent-alerts checked against Bun's renderer, a test oracle", () => {
   // Bun before 1.3.8 has no renderer, so these tests are skipped there. The
   // skip shows in the test count; it is not a pass. The rule never calls it.
@@ -381,6 +512,32 @@ describe("adjacent-alerts checked against Bun's renderer, a test oracle", () => 
     expect(shown).toEqual([]);
     expect(checked).toBeGreaterThanOrEqual(1_000);
   }, 120_000);
+
+  test.skipIf(renderer === undefined)("the HTML oracle shows a quotation inside an element as held, and one after the element closes as not", async () => {
+    if (renderer === undefined) return;
+    const twice = pair("NOTE", "NOTE");
+    expect(await topLevelQuotations(renderer, `<details>\n<summary>Notes</summary>\n\n${twice}\n</details>\n`)).toEqual([false, false]);
+    expect(await topLevelQuotations(renderer, `<div>\n\n${twice}\n</div>\n`)).toEqual([false, false]);
+    expect(await topLevelQuotations(renderer, `<table><tr><td>\n\n${twice}\n</td></tr></table>\n`)).toEqual([false, false]);
+    expect(await topLevelQuotations(renderer, `<pre\n</pre>\n\n${twice}`)).toEqual([false, false]);
+    expect(await topLevelQuotations(renderer, `<div>\n\n> [!NOTE]\n> One.\n\n</div>\n\n> [!NOTE]\n> Two.\n`)).toEqual([false, true]);
+    expect(await topLevelQuotations(renderer, `<details>\n\nBody.\n\n</details>\n\n${twice}`)).toEqual([true, true]);
+    expect(await topLevelQuotations(renderer, `- > [!NOTE]\n  > One.\n\n${twice}`)).toEqual([true, true]);
+  });
+
+  test.skipIf(renderer === undefined)("no finding on a specimen above or a seeded document stands inside an element in Bun's rendered HTML", async () => {
+    if (renderer === undefined) return;
+    const nested: string[] = [];
+    let checked = 0;
+    for (const text of [...SPECIMENS, ...seededDocuments().map(generated => generated.text)]) {
+      checked += adjacentAlertViolations(text, structure(text)).length;
+      for (const finding of await nestedFindings(renderer, text)) {
+        nested.push(finding);
+      }
+    }
+    expect(nested.slice(0, 5)).toEqual([]);
+    expect(checked).toBeGreaterThanOrEqual(1_000);
+  }, 120_000);
 });
 
 /**
@@ -406,6 +563,7 @@ const AXES = {
   ending: ["\n", `${CR}\n`, CR],
   definition: ["none", "other", "same"],
   after: ["", "paragraph", "lazy"],
+  html: ["none", "closed-above", "badge", "code-span", "details", "div", "table-cell", "blockquote", "span-open", "unclosed-tag"],
 } as const;
 type Axis = keyof typeof AXES;
 type Choice = { [axis in Axis]: (typeof AXES)[axis][number]; };
@@ -474,13 +632,14 @@ function shouldReport(choice: Choice): boolean {
   const text = ["text", "list", "heading", "fence"];
   const bodies = text.includes(choice.firstBody) && text.includes(choice.secondBody);
   const gap = ["one", "two", "spaces", "tab"].includes(choice.gap);
-  const above = ["blank", "start", "front-matter-blank", "pre-closed"].includes(choice.above);
+  const above = ["blank", "start", "front-matter-blank"].includes(choice.above);
+  const html = ["none", "closed-above", "badge", "code-span"].includes(choice.html);
   // A line without a marker carries on a paragraph, but not a closed fence
   // or a heading, so after those it is a paragraph between the two alerts.
   const lazyBetween = choice.extra === "lazy" && (choice.firstBody === "fence" || choice.firstBody === "heading");
   // An underline below the text that follows a marker makes the marker part of a heading.
   const underlined = (choice.extra === "underline" || choice.extra === "dashes-below") && (choice.firstBody === "text" || choice.secondBody === "text");
-  return known && markers && bodies && gap && above && !lazyBetween && !underlined && choice.container === "none" && choice.definition !== "same";
+  return known && markers && bodies && gap && above && html && !lazyBetween && !underlined && choice.container === "none" && choice.definition !== "same";
 }
 
 /** One seeded document from a choice of a value on every axis. */
@@ -499,6 +658,15 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
     "pre-closed": ["<pre", "</pre>", ""], "pre-open": ["<pre", ""], "cdata-open": ["<![CDATA[", ""], "comment-open": ["<!--", ""],
   };
   const above = aboves[choice.above] ?? [];
+  // HTML around the whole document: lines before it and lines after it.
+  const wrappers: Record<string, [string[], string[]]> = {
+    none: [[], []], "closed-above": [["<details>", "<summary>Notes</summary>", "", "Body.", "", "</details>", ""], []],
+    badge: [["<p align=\"center\"><a href=\"https://example.org\"><img src=\"logo.png\" alt=\"Logo\"></a></p>", ""], []], "code-span": [["Use `<details>` here.", ""], []],
+    details: [["<details>", "<summary>Notes</summary>", ""], ["", "</details>"]], div: [["<div>", ""], ["", "</div>"]],
+    "table-cell": [["<table><tr><td>", ""], ["", "</td></tr></table>"]], blockquote: [["<blockquote>", ""], ["", "</blockquote>"]],
+    "span-open": [["Text <span>open.", ""], []], "unclosed-tag": [["<details", ""], []],
+  };
+  const [htmlBefore, htmlAfter] = wrappers[choice.html] ?? [[], []];
   let wrapped = block;
   let shift = 0;
   if (choice.container === "list") wrapped = block.map((line, offset) => (offset === 0 ? `- ${line}` : line === "" ? line : `  ${line}`));
@@ -507,22 +675,22 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
   if (choice.container === "comment") [wrapped, shift] = [["<!--", ...block, "-->"], 1];
   const definitionKind = choice.definition === "same" ? cased(choice.firstKind, choice.firstCase) : choice.firstKind === "TIP" ? "NOTE" : "TIP";
   const after: Record<string, string[]> = { "": [], paragraph: ["", "After."], lazy: ["After, lazily."] };
-  const lines = [...above, ...wrapped, ...(after[choice.after] ?? []), ...(choice.definition === "none" ? [] : ["", `[!${definitionKind}]: https://example.org`])];
-  const firstLine = above.length + shift + 1;
+  const lines = [...htmlBefore, ...above, ...wrapped, ...(after[choice.after] ?? []), ...htmlAfter, ...(choice.definition === "none" ? [] : ["", `[!${definitionKind}]: https://example.org`])];
+  const firstLine = htmlBefore.length + above.length + shift + 1;
   const report = shouldReport(choice);
   return { text: lines.join(choice.ending) + choice.ending, expected: report ? [firstLine + secondOffset] : [], choice };
 }
 
 /**
- * 5,000 documents from a fixed seed. Each axis keeps its first value unless
+ * 7,000 documents from a fixed seed. Each axis keeps its first value unless
  * the generator varies it, which it does for one axis in four, so about one
- * document in five holds a reported pair and every value of every axis is
- * met.
+ * document in six holds a reported pair, 1,175 in all, and every value of
+ * every axis is met.
  */
 function seededDocuments(): SeededDocument[] {
   const random = seededRandom(24_495);
   const documents: SeededDocument[] = [];
-  for (let index = 0; index < 5_000; index++) {
+  for (let index = 0; index < 7_000; index++) {
     const choice: Record<string, string> = {};
     for (const [axis, values] of Object.entries(AXES)) {
       const vary = random() < 0.25;
@@ -564,7 +732,8 @@ describe("adjacent-alerts on seeded documents that vary every distinction it key
       ["firstKind", ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"]], ["secondKind", ["same", "NOTE"]], ["firstCase", AXES.firstCase], ["secondCase", AXES.secondCase],
       ["indent", ["", " ", "  ", "   "]], ["afterMarker", [" ", "", TAB, "  ", "    "]], ["markerEnd", ["", "  ", "tab"]], ["markerEndOn", AXES.markerEndOn],
       ["firstBody", ["text", "list", "heading", "fence"]], ["secondBody", ["text", "list", "heading", "fence"]], ["extra", ["", "more", "spaced", "lazy"]], ["gap", ["one", "two", "spaces", "tab"]],
-      ["above", ["blank", "start", "front-matter-blank", "pre-closed"]], ["container", ["none"]], ["ending", AXES.ending], ["definition", ["none", "other"]], ["after", AXES.after],
+      ["above", ["blank", "start", "front-matter-blank"]], ["container", ["none"]], ["ending", AXES.ending], ["definition", ["none", "other"]], ["after", AXES.after],
+      ["html", ["none", "closed-above", "badge", "code-span"]],
     ];
     const neverReported: string[] = [];
     for (const [axis, values] of reportable) {
@@ -616,9 +785,33 @@ describe("adjacent-alerts takes time in proportion to the text", () => {
     }
   }, 120_000);
 
-  test("100,000 HTML blocks opened and closed, and one left open, scan as fast", () => {
-    const closed = `${"<pre\n</pre>\n".repeat(100_000)}\n${pair("NOTE", "NOTE")}`;
+  // Each tail is HTML the rule reads for elements left open: runs of
+  // openings, of end tags, of comments and quotes never closed, and of code
+  // spans and link tails, each of which could send a search to the end of
+  // the text from every place it starts.
+  test("100,000 and 300,000 characters of tags, comments, quotes, code spans and link tails above the alerts scan as fast", () => {
+    for (const size of [100_000, 300_000]) {
+      const tails = [
+        "<details>".repeat(size / 9), "</details>".repeat(size / 10), "<!--".repeat(size / 4), "<a ".repeat(size / 3), "<a x=\"".repeat(size / 6), "</".repeat(size / 2),
+        "<kbd>x</kbd>".repeat(size / 12), "<script>".repeat(size / 8), "`".repeat(size), "` <b>".repeat(size / 5), "](".repeat(size / 2), "[x]: ".repeat(size / 5),
+        ">".repeat(size), "[!".repeat(size / 2), `<a title="${"x".repeat(size)}`, "<a\n".repeat(size / 3),
+      ];
+      for (const tail of tails) {
+        const text = `${tail}\n\n${pair("NOTE", "NOTE")}`;
+        const found = adjacentAlertViolations(text, structure(text)).length;
+        expect(fastestScan(text, found), `${tail.slice(0, 8)} ${size}`).toBeLessThan(3 * parseTime(text));
+        const balanced = `<kbd>x</kbd>`.repeat(size / 12);
+        if (tail === balanced) expect(found).toBe(1);
+      }
+    }
+  }, 120_000);
+
+  test("100,000 HTML blocks and elements opened and closed, and one left open, scan as fast", () => {
+    const closed = `${"<div>\n</div>\n".repeat(100_000)}\n${pair("NOTE", "NOTE")}`;
     expect(fastestScan(closed, 1)).toBeLessThan(3 * parseTime(closed));
+    // HTML reads `<pre` and `</pre>` on the next line as one start tag, so these hold the alerts.
+    const unended = `${"<pre\n</pre>\n".repeat(100_000)}\n${pair("NOTE", "NOTE")}`;
+    expect(fastestScan(unended, 0)).toBeLessThan(3 * parseTime(unended));
     const open = `<!--\n\n${pair("NOTE", "NOTE").repeat(50_000)}`;
     expect(fastestScan(open, 0)).toBeLessThan(3 * parseTime(open));
   }, 120_000);
