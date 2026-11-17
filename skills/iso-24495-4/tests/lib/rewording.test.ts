@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compareVersions, comparisonReport, formatComparison, type Comparison } from "../../scripts/lib/restructure.ts";
+import { compareVersions, comparisonReport, formatComparison, type Comparison, type Unit } from "../../scripts/lib/restructure.ts";
 import { figureValues, foundIn, numberWords, pairReworded, wordsOf, WEIGHING_BUDGET, type Meter } from "../../scripts/lib/rewording.ts";
 
 /** The paths every printed comparison here names. */
@@ -423,4 +423,165 @@ describe("on random documents", () => {
       }
     }
   });
+
+  test("the pairs are those weighing every unit against every other gives, and every value the new version cannot hold is listed", () => {
+    const random = seeded(5_2026);
+    const subjects = ["valve", "pump", "seal", "gauge"];
+    const verbs = ["Close", "Open", "Check", "Fit"];
+    const tails = ["now", "today", "with care", "at once", "before noon"];
+    const numbers = ["5", "12", "1,000", "2.5", "50%"];
+    // Each number written another way that holds the same value.
+    const sameValue: Readonly<Record<string, readonly string[]>> = { "5": ["five", "05"], "12": ["twelve"], "1,000": ["1000", "one thousand", "1 000"], "2.5": ["2,5"], "50%": ["50 per cent", "fifty per cent"] };
+    const spans = ["npm test", "make all", "x=1"];
+    let paired = 0;
+    let listed = 0;
+    for (let trial = 0; trial < 600; trial++) {
+      const count = 2 + Math.floor(random() * 6);
+      const drawn = Array.from({ length: count }, () => {
+        const value = random() < 0.5 ? ` ${pick(numbers, random)} times` : "";
+        const span = random() < 0.3 ? ` with \`${pick(spans, random)}\`` : "";
+        const label = random() < 0.2 ? "**Note:** " : "";
+        return `${label}${pick(verbs, random)} the ${pick(subjects, random)}${value}${span} ${pick(tails, random)}.`;
+      });
+      const sentences = random() < 0.25 ? [...drawn, drawn[0] ?? ""] : drawn;
+      const moved: string[] = [];
+      const changed = sentences.map(sentence => {
+        const roll = random();
+        if (roll < 0.25) return sentence;
+        if (roll < 0.4) return sentence.replace(/ (now|today|with care|at once|before noon)\.$/, ` ${pick(tails, random)}.`);
+        if (roll < 0.5) return sentence.replace(/ \d[\d.,%]*/, ` ${pick(numbers, random)}`);
+        if (roll < 0.6) return sentence.replace(/ (\d[\d.,%]*)/, (whole, figure: string) => ` ${pick(sameValue[figure] ?? [figure], random)}`);
+        if (roll < 0.67) return sentence.replace(/`[^`]*`/, `\`${pick(spans, random)}\``);
+        if (roll < 0.74) {
+          return sentence.replace(/ with `([^`]*)`/, (whole, code: string) => {
+            moved.push(code);
+            return "";
+          });
+        }
+        if (roll < 0.84) return sentence.startsWith("**Note:** ") ? sentence.slice(10) : `**Purpose:** ${sentence}`;
+        return random() < 0.5 ? sentence : `${pick(verbs, random)} it.`;
+      });
+      const doubled = random() < 0.3 ? [...changed, changed[0] ?? ""] : changed;
+      const asList = random() < 0.35;
+      const asTable = !asList && random() < 0.25;
+      const heading = random() < 0.3 ? `## ${pick(verbs, random)} the ${pick(subjects, random)}\n\n` : "";
+      const body = asTable ? `| Step |\n|---|\n${doubled.map(sentence => `| ${sentence} |`).join("\n")}\n` : `${doubled.map(sentence => (asList ? `- ${sentence}` : sentence)).join("\n\n")}\n`;
+      const block = moved.length > 0 ? `\n\`\`\`\n${moved.join("\n")}\n\`\`\`\n` : "";
+      const ends = random() < 0.25 ? "\r\n" : "\n";
+      const before = `${random() < 0.3 ? `## ${pick(verbs, random)} the ${pick(subjects, random)}\n\n` : ""}${sentences.join("\n\n")}\n`.replaceAll("\n", ends);
+      const after = `${heading}${body}${block}`.replaceAll("\n", ends);
+      const comparison = compareVersions(before, after, null);
+      const label = JSON.stringify([before, after]);
+      // Every unit of either version not kept, as the comparison held them before it paired any.
+      const left = inOrderOf([...comparison.dropped, ...comparison.rewritten.map(pair => pair.before), ...comparison.tables.flatMap(table => table.sources)], comparison.before);
+      const over = inOrderOf([...comparison.added, ...comparison.rewritten.map(pair => pair.after), ...comparison.tables.flatMap(table => table.cells)], comparison.after);
+      const made = comparison.rewritten.map(pair => [pair.before.line, pair.before.key, pair.after.line, pair.after.key]);
+      expect(made, label).toEqual(pairsByHand(left, over).map(([one, other]) => [one.line, one.key, other.line, other.key]));
+      paired += made.length;
+      // Each value of a unit not kept that nothing in the new version could be read as must be listed.
+      const listedHere = new Set(comparison.values.map(value => `${value.unit.line} ${value.unit.key} ${value.value}`));
+      for (const unit of [...comparison.dropped.filter(isProse), ...comparison.rewritten.map(pair => pair.before), ...comparison.tables.flatMap(table => table.sources)]) {
+        for (const value of [...spans.filter(code => unit.key.includes(code)), ...figuresOutside(unit.key, spans)]) {
+          if (cannotHold(after, comparison.after, value, spans.includes(value))) {
+            expect(listedHere.has(`${unit.line} ${unit.key} ${value}`), `${label}: ${value}`).toBe(true);
+            listed++;
+          }
+        }
+      }
+    }
+    // The run must exercise both checks, or it tests nothing.
+    expect(paired).toBeGreaterThan(300);
+    expect(listed).toBeGreaterThan(100);
+  });
 });
+
+/** Whether a unit can be paired or hold a value looked for, for the random documents here, which hold no slot. */
+function isProse(unit: Unit): boolean {
+  return unit.kind === "sentence" || unit.kind === "item" || unit.kind === "cell" || unit.kind === "alternative";
+}
+
+/** The units given, in the order they stand among all the units of their version. */
+function inOrderOf(units: readonly Unit[], all: readonly Unit[]): Unit[] {
+  return all.filter(unit => units.includes(unit));
+}
+
+/** Each unit that `isProse` accepts, with where it stands among the units given. */
+function proseAt(units: readonly Unit[]): Array<[Unit, number]> {
+  return units.flatMap((unit, position): Array<[Unit, number]> => (isProse(unit) ? [[unit, position]] : []));
+}
+
+/** A unit's words after its label, as the pairing counts them. */
+function wordsAfterLabel(unit: Unit): string[] {
+  return wordsOf(unit.label === undefined ? unit.key : unit.key.slice(unit.label.length + 1));
+}
+
+/** How many words two lists share, each counted as often as it stands in both. */
+function sharedWords(first: readonly string[], second: readonly string[]): number {
+  const left = new Map<string, number>();
+  for (const word of first) {
+    left.set(word, (left.get(word) ?? 0) + 1);
+  }
+  let shared = 0;
+  for (const word of second) {
+    const held = left.get(word) ?? 0;
+    if (held > 0) {
+      shared++;
+      left.set(word, held - 1);
+    }
+  }
+  return shared;
+}
+
+/**
+ * The pairs `pairReworded` describes, found by weighing every unit of the
+ * original left over against every unit of the new version left over.
+ */
+function pairsByHand(before: readonly Unit[], after: readonly Unit[]): Array<[Unit, Unit]> {
+  const candidates: Array<{ one: number; other: number; shared: number; longer: number }> = [];
+  for (const [unit, one] of proseAt(before)) {
+    for (const [otherUnit, other] of proseAt(after)) {
+      const shared = sharedWords(wordsAfterLabel(unit), wordsAfterLabel(otherUnit));
+      const longer = Math.max(wordsAfterLabel(unit).length, wordsAfterLabel(otherUnit).length);
+      if (shared >= 2 && 2 * shared >= longer) candidates.push({ one, other, shared, longer });
+    }
+  }
+  candidates.sort((first, second) => second.shared / second.longer - first.shared / first.longer || second.shared - first.shared || first.one - second.one || first.other - second.other);
+  const pairs: Array<[Unit, Unit]> = [];
+  const taken = new Set<number>();
+  const takenAfter = new Set<number>();
+  for (const candidate of candidates) {
+    const one = before[candidate.one];
+    const other = after[candidate.other];
+    if (one === undefined || other === undefined || taken.has(candidate.one) || takenAfter.has(candidate.other)) continue;
+    taken.add(candidate.one);
+    takenAfter.add(candidate.other);
+    pairs.push([one, other]);
+  }
+  return pairs.sort((first, second) => before.indexOf(first[0]) - before.indexOf(second[0]));
+}
+
+/** The figures of a unit's text once the given code texts are taken out of it. */
+function figuresOutside(text: string, codes: readonly string[]): string[] {
+  let plain = text;
+  for (const code of codes) {
+    plain = plain.replaceAll(code, " ");
+  }
+  return plain.match(/\d+(?:[.,]\d+)*/g) ?? [];
+}
+
+/** English number words, any of which could hold a number's value. */
+const NUMBER_WORD = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred|thousand|million|half)\b/i;
+
+/**
+ * Whether nothing in the new version could be read as a value: for code, its
+ * text stands nowhere in the file or its units; for a number, no run of its
+ * digits, nor all its digits joined, stands as a run of digits there, and no
+ * number word does.
+ */
+function cannotHold(source: string, units: readonly Unit[], value: string, isCode: boolean): boolean {
+  const text = `${source}\n${units.map(unit => unit.key).join("\n")}`;
+  if (isCode) return !text.includes(value);
+  const runs = new Set((text.match(/\d+/g) ?? []).map(run => run.replace(/^0+(?=\d)/, "")));
+  const digits = [...(value.match(/\d+/g) ?? []), value.replace(/\D/g, "")];
+  return !NUMBER_WORD.test(text) && digits.every(run => !runs.has(run.replace(/^0+(?=\d)/, "")));
+}
