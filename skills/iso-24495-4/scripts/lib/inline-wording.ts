@@ -35,11 +35,13 @@ const STRIKE = "~";
  *     because no definitions are passed.
  * @param marks Pass `strike: true` to remove paired strikethrough marks too,
  *     as `emphasisMarkOffsets` pairs them. They stay by default, because
- *     CommonMark does not read them.
+ *     CommonMark does not read them. Pass `code` as two characters to put
+ *     the first before the contents of each code span and the second after
+ *     them, so a caller can find where each stands.
  * @returns The rendered wording. An emphasis marker with no partner stays in
  *     the text. Empty for empty source.
  */
-export function renderInline(source: string, marks: { strike?: boolean } = {}): string {
+export function renderInline(source: string, marks: { strike?: boolean; code?: readonly [string, string] } = {}): string {
   const text = inlineText(source);
   const spans = codeSpanEnds(text);
   const markers = marks.strike === true ? EMPHASIS + STRIKE : EMPHASIS;
@@ -67,7 +69,7 @@ export function renderInline(source: string, marks: { strike?: boolean } = {}): 
       const ticks = tickRun(text, index);
       let content = text.slice(index + ticks, span - ticks).replace(/\r\n|\r|\n/g, " ");
       if (content.startsWith(" ") && content.endsWith(" ") && /\S/.test(content)) content = content.slice(1, -1);
-      rendered += decodeEntities(plain) + content;
+      rendered += decodeEntities(plain) + (marks.code === undefined ? content : `${marks.code[0]}${content}${marks.code[1]}`);
       plain = "";
       index = span;
       continue;

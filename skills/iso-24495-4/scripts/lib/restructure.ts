@@ -18,11 +18,18 @@
 // out of order, and any other unit as moved. A step out of order against
 // its list is listed even where it stands inside that longest order.
 //
-// It reads wording, not meaning. A sentence reworded without any change of
-// meaning reads as dropped and added, and a sentence kept word for word whose
-// meaning changed in its new place reads as kept.
+// Units left over on both sides are then read again, as `rewording.ts`
+// describes: a pair that shares half the longer one's words or more is
+// rewritten, units of the original that share most of their words with a new
+// table are read with it, and each number and code span of a unit not kept is
+// looked for in the whole new version.
+//
+// It reads wording, not meaning. A sentence reworded further than that reads
+// as dropped and added, and a sentence kept word for word whose meaning
+// changed in its new place reads as kept.
 
 import { renderInline } from "./inline-wording.ts";
+import { figureFound, figureValues, foundIn, pairReworded, PIPE_ESCAPE, tablesFrom, WEIGHING_BUDGET, type FigureValue, type Found, type Meter, type ReworkedPair } from "./rewording.ts";
 import { inlineText, locateSentences, markdownLinks, normaliseReference, structure, tableCells, type ListStep, type LocatedSentence, type MarkdownLink, type Reading } from "./parse.ts";
 import { safeCell, safePathCode } from "./safe-text.ts";
 
@@ -65,6 +72,15 @@ const STEP_DEPTH = 10;
 /** The kinds of unit that are prose, so a word opening one can point back. */
 const PROSE_KINDS: ReadonlySet<UnitKind> = new Set(["sentence", "item", "cell"]);
 
+/** The kinds of unit that can pair as rewritten, be read with a new table, or hold a value that is looked for. */
+const REWORDED_KINDS: ReadonlySet<UnitKind> = new Set(["sentence", "item", "cell", "alternative"]);
+
+/** What the printed comparison says it pairs and reads as values, when it weighed them. */
+const WEIGHED_LINE = "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.";
+
+/** What the printed comparison says when its searches passed `WEIGHING_BUDGET`. */
+const NOT_WEIGHED_LINE = "It found too many shared words to weigh, so it paired no reworded unit, read no new table and traced no value.";
+
 /**
  * How many pairings of repeated texts the comparison weighs, at most, when
  * it pairs their copies. Weighing every pairing of a text with `b` copies
@@ -89,7 +105,7 @@ const EXCERPT_LENGTH = 60;
  * @returns What `compareUnits` returns for the units of each text.
  */
 export function compareVersions(before: string, after: string, authorText: string | null, reading: Reading = {}): Comparison {
-  return compareUnits(documentUnits(before, reading), documentUnits(after, reading), authorText === null ? [] : documentUnits(authorText, reading));
+  return compareUnits(documentUnits(before, reading), documentUnits(after, reading), authorText === null ? [] : documentUnits(authorText, reading), after);
 }
 
 /**
@@ -135,12 +151,15 @@ export function compareVersions(before: string, after: string, authorText: strin
  *    for one after unit.
  * 4. Any other unit is added.
  *
- * The kept units are then read in order, as `keptOrder` describes.
+ * The kept units are then read in order, as `keptOrder` describes, and the
+ * units dropped and added are read again, as `readRewording` describes.
  *
+ * @param afterSource The new version's whole text, which values are looked
+ *     for in as well as its units. Empty when only units are given.
  * @returns The pairs kept, in before order, the kept pairs moved and those
  *     out of step order, and every other unit in the order of its own version.
  */
-export function compareUnits(before: readonly Unit[], after: readonly Unit[], author: readonly Unit[]): Comparison {
+export function compareUnits(before: readonly Unit[], after: readonly Unit[], author: readonly Unit[], afterSource = ""): Comparison {
   const beforeIndex = new Map(before.map((unit, index) => [unit, index]));
   const afterIndex = new Map(after.map((unit, index) => [unit, index]));
   let match = matched(before, after, true, beforeIndex);
@@ -161,6 +180,7 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
     added: [], fromAuthor: [], gaps: [], newHeadings: [],
     newLabels: byItsLabel.filter(pair => pair.after.label !== undefined).map(pair => pair.after),
     labelsGone: byItsLabel.filter(pair => pair.before.label !== undefined).map(pair => pair.before),
+    rewritten: [], tables: [], values: [], weighed: true,
   };
   const takeAuthor = waitingByText(author, unit => unit.key);
   const headingUnits: Unit[] = [];
@@ -184,7 +204,7 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
     comparison.newHeadings.push(heading);
   }
   comparison.newLabels.sort((first, second) => first.line - second.line);
-  return comparison;
+  return readRewording(comparison, afterSource);
 }
 
 /**
@@ -265,20 +285,22 @@ export function documentUnits(text: string, reading: Reading = {}): Unit[] {
  * The comparison as a table of what it found, a line of counts and two
  * closing statements. It prints only what the comparison reads.
  *
- * Each dropped unit is a row, in before order. Then come the after units
- * left over and the kept units out of order, in after order: each added
- * unit, each unit from the author, each marked gap, each run of moved units
- * and each run of units of steps out of order. A run is units next to each
+ * Each dropped unit is a row, in before order, then each value not found,
+ * in before order. Then come the after units left over and the kept units
+ * out of order, in after order: each rewritten pair, each new table read
+ * with units of the original, each added unit, each unit from the author,
+ * each marked gap, each run of moved units and each run of units of steps
+ * out of order. A run is units next to each
  * other among the kept units in both versions, so a section moved whole is
  * one row. Its row names the lines of its first unit, says how many units
  * it stands for, and quotes the first. When that first moved unit opens with
  * `This`, `It` or `These`, the row asks what the word refers to.
  *
- * Added units of a list or a table that keeps no unit of the original share
- * one row, when there are two or more, with how many units it stands for and
- * the first unit's text. The count is of units, not of items or cells, so
- * the rows add up to the count of added units. Headings and labels are
- * counted and not listed.
+ * Added units of a list or a table that keeps no unit of the original, and
+ * rewords none, share one row, when there are two or more, with how many
+ * units it stands for and the first unit's text. The count is of units, not
+ * of items or cells, so the rows add up to the count of added units.
+ * Headings and labels are counted and not listed.
  *
  * A unit is quoted by its first 60 characters, cleaned with `safeCell`, with
  * "..." where it was cut. A path is printed with `safePathCode`.
@@ -297,17 +319,24 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
   for (const unit of comparison.dropped) {
     lines.push(`| dropped | ${unit.line} | | No unchanged copy is in the new version: ${quoted(unit.key)} |`);
   }
+  for (const value of comparison.values) {
+    const finding = value.kind === "number"
+      ? "A number of the original is found in the new version neither in figures nor in words."
+      : "A code span of the original is not found in the new version.";
+    lines.push(`| value | ${value.unit.line} | ${value.after === null ? "" : `${value.after} `}| ${finding} Check that it was not cut or changed: ${quoted(value.value)} in ${quoted(value.unit.key)} |`);
+  }
   for (const row of afterRows(comparison)) {
     lines.push(row);
   }
   lines.push(
     `Kept ${comparison.kept.length}: moved ${comparison.moved.length}, steps out of order ${comparison.stepOrder.length}. `
-      + `Dropped ${comparison.dropped.length}. Added ${comparison.added.length}. `
+      + `Rewritten ${comparison.rewritten.length}. Into new tables ${comparison.tables.reduce((sum, table) => sum + table.sources.length, 0)}. `
+      + `Dropped ${comparison.dropped.length}. Added ${comparison.added.length}. Values not found ${comparison.values.length}. `
       + `From the author ${comparison.fromAuthor.length}. Marked gaps ${comparison.gaps.length}. `
       + `New headings ${comparison.newHeadings.length}. Headings gone ${comparison.headingsGone.length}. `
       + `New labels ${comparison.newLabels.length}. Labels gone ${comparison.labelsGone.length}.`,
     "The comparison reads wording, not meaning.",
-    "It does not yet pair a reworded unit with its original, or check that each number and code span is still there.",
+    comparison.weighed ? WEIGHED_LINE : NOT_WEIGHED_LINE,
   );
   return lines.join("\n");
 }
@@ -325,7 +354,15 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
  *     gives the unit's line, its kind and its first 60 characters. A label's
  *     entry gives the label in place of the unit's text. A heading's entry is
  *     one for the heading, and holds its sentences left over, joined by a
- *     space.
+ *     space. A rewritten pair's entry gives both lines, the new unit's kind,
+ *     the first 60 characters of each unit, the words shared and the words
+ *     of the longer. A table's entry gives the lines of the units read with
+ *     it, its first line, how many units it holds, the first 60 characters
+ *     of the first unit read with it, and how many of their values are in
+ *     the table, elsewhere and not found. A value's entry gives its unit's
+ *     line, the line of the unit or table it went to or null, its kind, and
+ *     the first 60 characters of the value and of its unit. `weighed` is
+ *     false when the searches passed their limit and none of these was read.
  */
 export function comparisonReport(comparison: Comparison, paths: ComparedPaths): RestructureReport {
   return {
@@ -344,6 +381,15 @@ export function comparisonReport(comparison: Comparison, paths: ComparedPaths): 
     headingsGone: comparison.headingsGone.map(unit => entry(unit, unit.key)),
     newLabels: comparison.newLabels.map(unit => entry(unit, unit.label ?? "")),
     labelsGone: comparison.labelsGone.map(unit => entry(unit, unit.label ?? "")),
+    rewritten: comparison.rewritten.map(pair => ({
+      before: pair.before.line, after: pair.after.line, kind: pair.after.kind, excerpt: excerpt(pair.after.key), original: excerpt(pair.before.key), shared: pair.shared, words: pair.longer,
+    })),
+    tables: comparison.tables.map(table => ({
+      before: table.sources.map(unit => unit.line), after: table.cells[0]?.line ?? 0, units: table.cells.length, excerpt: excerpt(table.sources[0]?.key ?? ""),
+      values: { inTable: table.inTable, elsewhere: table.elsewhere, notFound: table.notFound },
+    })),
+    values: comparison.values.map(value => ({ before: value.unit.line, after: value.after, kind: value.kind, value: excerpt(value.value), excerpt: excerpt(value.unit.key) })),
+    weighed: comparison.weighed,
   };
 }
 
@@ -360,6 +406,14 @@ export interface Unit {
   readonly label?: string;
   /** The items of ordered lists the unit stands in, outermost first. Absent outside every ordered list. */
   readonly steps?: readonly ListStep[];
+  /** Where the contents of each code span stand in `key`, in order. Absent when the unit holds none. */
+  readonly spans?: readonly CodeSpan[];
+}
+
+/** Where a piece of a unit's text starts, and where it ends, just past its last character. */
+export interface CodeSpan {
+  readonly start: number;
+  readonly end: number;
 }
 
 /**
@@ -406,6 +460,39 @@ export interface Comparison {
   readonly newLabels: Unit[];
   /** The before units kept by the text after a label they lost or changed. */
   readonly labelsGone: Unit[];
+  /** Each unit of the original paired with the unit that rewords it, in before order. */
+  readonly rewritten: readonly ReworkedPair[];
+  /** Each new table read with units of the original, in after order. */
+  readonly tables: readonly TableRead[];
+  /** Each value of a unit not kept that the new version does not hold, in before order. */
+  readonly values: readonly MissingValue[];
+  /** False when the searches for rewording, tables and values passed their limit, so none of them was read. */
+  readonly weighed: boolean;
+}
+
+/** A new table and the units of the original read with it, as `readRewording` describes. */
+export interface TableRead {
+  /** The units of the original read with the table, in before order. */
+  readonly sources: readonly Unit[];
+  /** The table's units, in after order. */
+  readonly cells: readonly Unit[];
+  /** How many of the values of the units read with it the table holds. */
+  readonly inTable: number;
+  /** How many the new version holds outside the table. */
+  readonly elsewhere: number;
+  /** How many it does not hold. */
+  readonly notFound: number;
+}
+
+/** A number or code span of a unit not kept, found nowhere in the new version. */
+export interface MissingValue {
+  /** The unit of the original it stands in. */
+  readonly unit: Unit;
+  /** The line of the unit that rewords that unit, or of the table it was read with, or null. */
+  readonly after: number | null;
+  readonly kind: "number" | "code";
+  /** The value as the original writes it. */
+  readonly value: string;
 }
 
 /** The paths a comparison names, as the report shows them. */
@@ -432,6 +519,10 @@ export interface RestructureReport {
   headingsGone: ReportedUnit[];
   newLabels: ReportedUnit[];
   labelsGone: ReportedUnit[];
+  rewritten: Array<{ before: number; after: number; kind: UnitKind; excerpt: string; original: string; shared: number; words: number }>;
+  tables: Array<{ before: number[]; after: number; units: number; excerpt: string; values: { inTable: number; elsewhere: number; notFound: number } }>;
+  values: Array<{ before: number; after: number | null; kind: "number" | "code"; value: string; excerpt: string }>;
+  weighed: boolean;
 }
 
 /** One unit in a report: its line, its kind and its first 60 characters. */
@@ -571,6 +662,125 @@ function runs(kept: readonly KeptPair[], flagged: Uint8Array, rank: Int32Array, 
     found.push({ before: pair.before, after: pair.after, run, opensWith: word });
   }
   return found;
+}
+
+/**
+ * The comparison with the units dropped and added read again.
+ *
+ * 1. A unit dropped and a unit added that share half the longer one's words
+ *    or more pair as rewritten, as `pairReworded` describes. Only sentences,
+ *    list items, table cells and image alternatives pair, and never a unit
+ *    that is one slot. A pair is not read for order.
+ * 2. A new table is one whose units are all added and number two or more.
+ *    Units still dropped are read with such a table as `tablesFrom`
+ *    describes, and neither they nor the table's units are then listed.
+ * 3. Each number and code span of a unit dropped, rewritten or read with a
+ *    table is looked for in the whole new version, as `foundIn` describes,
+ *    and each not found is listed. One of a unit read with a table is
+ *    counted as in the table, elsewhere or not found.
+ *
+ * When the searches pass `WEIGHING_BUDGET` steps, none of this is used: the
+ * comparison keeps its units dropped and added, and says it weighed nothing.
+ */
+function readRewording(comparison: Comparison, afterSource: string): Comparison {
+  const meter: Meter = { spent: 0, limit: WEIGHING_BUDGET };
+  const unweighed = { ...comparison, weighed: false };
+  const pairs = pairReworded(comparison.dropped.filter(isReworded), comparison.added.filter(isReworded), meter);
+  if (pairs === null) return unweighed;
+  const pairedBefore = new Set(pairs.map(pair => pair.before));
+  const pairedAfter = new Set(pairs.map(pair => pair.after));
+  const stillDropped = comparison.dropped.filter(unit => !pairedBefore.has(unit));
+  const stillAdded = comparison.added.filter(unit => !pairedAfter.has(unit));
+  const read = tablesFrom(stillDropped.filter(isReworded), newTables(comparison.after, stillAdded), meter);
+  if (read === null) return unweighed;
+  const sources = new Set(read.flatMap(table => table.sources));
+  const cells = new Set(read.flatMap(table => table.cells));
+  const dropped = stillDropped.filter(unit => !sources.has(unit));
+  const found = foundIn(comparison.after.map(unit => unit.key), afterSource, meter);
+  const checked: Array<{ unit: Unit; after: number | null; table: number }> = [
+    ...dropped.filter(isReworded).map(unit => ({ unit, after: null, table: -1 })),
+    ...pairs.map(pair => ({ unit: pair.before, after: pair.after.line, table: -1 })),
+    ...read.flatMap((table, position) => table.sources.map(unit => ({ unit, after: table.cells[0]?.line ?? null, table: position }))),
+  ];
+  const beforeIndex = new Map(comparison.before.map((unit, index) => [unit, index]));
+  checked.sort((first, second) => (beforeIndex.get(first.unit) ?? 0) - (beforeIndex.get(second.unit) ?? 0));
+  const inTables = read.map(table => foundIn(table.cells.map(cell => cell.key), "", meter));
+  const tallies = read.map(() => ({ inTable: 0, elsewhere: 0, notFound: 0 }));
+  const values: MissingValue[] = [];
+  for (const { unit, after, table } of checked) {
+    for (const value of valuesOf(unit)) {
+      const isFound = (where: Found): boolean | null => value.figure === undefined ? where.code(value.text) : figureFound(value.figure, where);
+      const anywhere = isFound(found);
+      const inTable = table === -1 ? false : isFound(inTables[table] ?? found);
+      if (anywhere === null || inTable === null) return unweighed;
+      const tally = tallies[table];
+      if (tally !== undefined) {
+        if (inTable) {
+          tally.inTable++;
+        } else if (anywhere) {
+          tally.elsewhere++;
+        } else {
+          tally.notFound++;
+        }
+      }
+      if (!anywhere) values.push({ unit, after, kind: value.figure === undefined ? "code" : "number", value: value.text });
+    }
+  }
+  if (meter.spent > meter.limit) return unweighed;
+  return {
+    ...comparison,
+    dropped,
+    added: stillAdded.filter(unit => !cells.has(unit)),
+    rewritten: pairs,
+    tables: read.map((table, position) => ({ sources: table.sources, cells: table.cells, ...(tallies[position] ?? { inTable: 0, elsewhere: 0, notFound: 0 }) })),
+    values,
+  };
+}
+
+/** Whether a unit can pair as rewritten, be read with a table, or hold a value looked for: prose, and not one slot. */
+function isReworded(unit: Unit): boolean {
+  return REWORDED_KINDS.has(unit.kind) && !ONE_SLOT.test(withoutLabel(unit));
+}
+
+/**
+ * The tables of the new version whose units are all among those given and
+ * number two or more, each as its units in document order.
+ *
+ * @param after Every unit of the new version.
+ * @param added The units of it left over.
+ */
+function newTables(after: readonly Unit[], added: readonly Unit[]): Unit[][] {
+  const held = new Map<number, number>();
+  for (const unit of after) {
+    if (unit.kind === "cell") held.set(unit.block, (held.get(unit.block) ?? 0) + 1);
+  }
+  const tables = new Map<number, Unit[]>();
+  for (const unit of added) {
+    if (unit.kind !== "cell") continue;
+    const cells = tables.get(unit.block);
+    if (cells === undefined) {
+      tables.set(unit.block, [unit]);
+    } else {
+      cells.push(unit);
+    }
+  }
+  return [...tables.entries()].filter(([block, cells]) => cells.length >= 2 && cells.length === held.get(block)).map(([, cells]) => cells);
+}
+
+/**
+ * The numbers in figures and the code spans of a unit, in the order they
+ * stand in it. A code span's text is as the unit holds it, its white space
+ * made single, and a number inside one is not read on its own. In a table
+ * cell, an escaped pipe in a code span is read as the pipe a table shows.
+ */
+function valuesOf(unit: Unit): Array<{ text: string; start: number; figure?: FigureValue }> {
+  const spans = unit.spans ?? [];
+  const shown = (text: string): string => unit.kind === "cell" ? text.replaceAll(PIPE_ESCAPE, "|") : text;
+  const values: Array<{ text: string; start: number; figure?: FigureValue }> = spans.map(span => ({ text: shown(unit.key.slice(span.start, span.end)), start: span.start }));
+  for (const figure of figureValues(unit.key, spans)) {
+    values.push({ text: figure.text, start: figure.start, figure });
+  }
+  return values.sort((first, second) => first.start - second.start);
 }
 
 /**
@@ -876,7 +1086,7 @@ function proseUnits(source: string, firstLine: number, kind: UnitKind, block: nu
     from = image.end;
   }
   prose += source.slice(from);
-  const sentences = sentenceUnits(renderInline(inlineText(prose, references), STRIKE), firstLine, kind, block, boldLabel(prose, references));
+  const sentences = sentenceUnits(renderInline(inlineText(prose, references), STRIKE), firstLine, kind, block, boldLabel(prose, references), codeSpans(prose, references));
   if (alternatives.length === 0) return sentences.map(sentence => sentence.unit);
   marked += source.slice(from);
   const places = markPlaces(renderInline(inlineText(marked, references), STRIKE), mark);
@@ -899,6 +1109,42 @@ function proseUnits(source: string, firstLine: number, kind: UnitKind, block: nu
     }
   }
   return units;
+}
+
+/**
+ * Where the contents of each code span of prose stand in its rendered text,
+ * once white space is made single as `singleSpaced` makes it. A code span's
+ * contents begin at their first character that is not white space, and end
+ * just past their last. Prose with no backtick holds none, and nor does
+ * prose that holds every character `absentMark` could mark with.
+ */
+function codeSpans(prose: string, references: ReadonlySet<string>): CodeSpan[] {
+  if (!prose.includes("`")) return [];
+  const open = absentMark(prose);
+  const close = absentMark(prose + open);
+  if (open === "" || close === "") return [];
+  const marked = renderInline(inlineText(prose, references), { strike: true, code: [open, close] });
+  const spans: CodeSpan[] = [];
+  let length = 0;
+  let space = false;
+  // -1 outside a span, -2 inside one before its first character, and otherwise where it starts.
+  let start = -1;
+  for (const character of marked) {
+    if (character === open) {
+      start = -2;
+    } else if (character === close) {
+      if (start >= 0) spans.push({ start, end: length });
+      start = -1;
+    } else if (/\s/u.test(character)) {
+      space = length > 0;
+    } else {
+      if (space) length++;
+      space = false;
+      if (start === -2) start = length;
+      length += character.length;
+    }
+  }
+  return spans;
 }
 
 /**
@@ -969,11 +1215,22 @@ function boldLabel(prose: string, references: ReadonlySet<string>): string | nul
  * @param firstLine The line its first character stands on.
  * @param label The label the text opens with, given to the first sentence
  *     when that sentence holds more than the label. Null for none.
+ * @param spans Where the code spans stand in the single-spaced text, in
+ *     order. Each unit holds the part of each that falls inside it.
  */
-function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, block: number, label: string | null): Array<{ unit: Unit; start: number }> {
+function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, block: number, label: string | null, spans: readonly CodeSpan[] = []): Array<{ unit: Unit; start: number }> {
   const { text, lines } = singleSpaced(rendered);
+  let next = 0;
   return wholeSlots(text, locateSentences(text)).map((sentence, index) => {
-    const unit = { kind, line: firstLine + (lines[sentence.start] ?? 0), key: sentence.text, block };
+    const end = sentence.start + sentence.text.length;
+    while (next < spans.length && (spans[next]?.end ?? 0) <= sentence.start) next++;
+    const held: CodeSpan[] = [];
+    for (let span = next; span < spans.length && (spans[span]?.start ?? end) < end; span++) {
+      const from = Math.max(spans[span]?.start ?? 0, sentence.start);
+      const to = Math.min(spans[span]?.end ?? 0, end);
+      if (from < to) held.push({ start: from - sentence.start, end: to - sentence.start });
+    }
+    const unit = { kind, line: firstLine + (lines[sentence.start] ?? 0), key: sentence.text, block, ...(held.length > 0 ? { spans: held } : {}) };
     return { unit: index === 0 && label !== null && sentence.text.startsWith(`${label} `) ? { ...unit, label } : unit, start: sentence.start };
   });
 }
@@ -1138,7 +1395,7 @@ function waitingByText(units: readonly Unit[], text: (unit: Unit) => string): (w
  * moved, or of units of steps out of order, gives one row.
  */
 function afterRows(comparison: Comparison): string[] {
-  const keptBlocks = new Set(comparison.kept.map(pair => pair.after.block));
+  const keptBlocks = new Set([...comparison.kept, ...comparison.rewritten].map(pair => pair.after.block));
   const groups = new Map<number, Unit[]>();
   for (const unit of comparison.added) {
     if ((unit.kind === "item" || unit.kind === "cell") && !keptBlocks.has(unit.block)) {
@@ -1160,6 +1417,19 @@ function afterRows(comparison: Comparison): string[] {
       const what = unit.kind === "cell" ? "units in one new table" : "units in one new list";
       rows.push({ line: unit.line, text: `| added | | ${unit.line} | ${group.length} ${what} are not in the original or the author's wording. Confirm their source: ${quoted(unit.key)} |` });
     }
+  }
+  for (const pair of comparison.rewritten) {
+    const finding = `Reworded, keeping ${pair.shared} of ${pair.longer} words. Check that it still says what the original said: ${quoted(pair.after.key)}, from ${quoted(pair.before.key)}`;
+    rows.push({ line: pair.after.line, text: `| rewritten | ${pair.before.line} | ${pair.after.line} | ${finding} |` });
+  }
+  for (const table of comparison.tables) {
+    const first = table.sources[0];
+    const line = table.cells[0]?.line ?? 0;
+    if (first === undefined) continue;
+    const who = table.sources.length === 1 ? "A unit of the original shares most of its words" : `${table.sources.length} units of the original share most of their words`;
+    const whose = table.sources.length === 1 ? "Its" : "Their";
+    const traced = `${whose} numbers and code spans: ${table.inTable} in the table, ${table.elsewhere} elsewhere in the new version, ${table.notFound} not found:`;
+    rows.push({ line, text: `| restructured or rewritten | ${first.line} | ${line} | ${who} with a new table of ${table.cells.length} units, which are not listed one by one. Check that nothing was cut or reworded. ${traced} ${quoted(first.key)} |` });
   }
   for (const unit of comparison.fromAuthor) {
     rows.push({ line: unit.line, text: `| from the author | | ${unit.line} | Matches the author's wording: ${quoted(unit.key)} |` });
