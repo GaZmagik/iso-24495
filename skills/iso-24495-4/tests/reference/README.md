@@ -25,3 +25,15 @@ One adjustment makes the comparison meaningful. The reference renders inline mar
 ```sh
 NODE_PATH="$PWD/node_modules" bun /path/to/skills/iso-24495-4/tests/reference/build-image-titles.ts
 ```
+
+## The plan pin
+
+`../fixtures/plan-pin.ts` records what `planDocument` makes of 342 documents: the specimens in `../fixtures/plan-specimens.ts` and the 302 documents of `../fixtures/reference-blocks.ts`. For each it holds a digest of the whole plan, and the state of every Jev request in it. A test in `../lib/jev/engine.test.ts` fails when the two disagree. It needs no calibration file, so it runs in the gate, unlike the calibration tests beside it.
+
+`build-plan-pin.ts` rewrites the record, and needs nothing installed:
+
+```sh
+bun skills/iso-24495-4/tests/reference/build-plan-pin.ts
+```
+
+Run it only for a change meant to alter a Jev request. A parser edit for an offline rule should leave the record as it is.
