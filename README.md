@@ -131,7 +131,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
 - tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
-- a GitHub alert label, which is a label;
+- a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;
 - a task marker, which is a control rather than two words.
 
 The parser is checked against the CommonMark reference implementation. 302 documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`, and every one that this engine reads differently carries the reason why. The reference is not a dependency: it was installed outside the repository, asked once, and its answers kept.
@@ -156,8 +156,8 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-Five Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth, an overview before detail and an empty signpost check.
-Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus, and the empty signpost rule found nothing to measure on one.
+Six Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth, an overview before detail, an empty signpost check and an adjacent alerts check.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus. The two newest rules were run on one, as their paragraphs below say.
 
 The edition advisory applies only to titled documents and asks whether readers need a version or date.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
@@ -175,6 +175,12 @@ A deeper heading, a comment, a one-line link definition, a thematic break or inv
 Any other line counts as content, raw HTML other than a comment included, so some sections that show nothing go unreported.
 To clear it, list where else to go beneath the heading, or remove the heading when nothing else exists.
 It found none in 822 third-party Markdown files or in this repository's own documents, so its precision is unmeasured.
+
+The `adjacent-alerts` rule reports a GitHub alert, such as `> [!NOTE]`, that follows an alert of the same kind with only blank lines between.
+Alerts of different kinds, and alerts with anything else between them, are not reported.
+It reports only alerts it is sure of, so an alert straight below a line that is not blank, or whose next line is not text, goes unreported.
+To clear it, merge the two alerts; when they serve different purposes, the finding can stand, because the rule does not read what they say.
+It found 3 in 2 of 822 third-party Markdown files, each two alerts of one kind with only a blank line between, and none in this repository's own documents.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 

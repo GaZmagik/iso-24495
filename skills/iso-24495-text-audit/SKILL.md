@@ -27,7 +27,7 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 ## Markdown layout recognition
 
-Five additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
+Six additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
 These recognition choices are project proxies and remain unmeasured on a corpus.
 Raw HTML structure, code and comments are excluded, though the empty signpost rule counts code and any raw HTML other than a comment beneath a heading as content.
 Front matter is excluded from prose checks, but recognised edition metadata can satisfy the version or date rule.
@@ -38,6 +38,7 @@ Front matter is excluded from prose checks, but recognised edition metadata can 
 - **Bullet depth:** Report unordered items beyond two unordered ancestors, counting the item itself and ignoring ordered or quote containers.
 - **Overview label:** At six root H2 sections, require an Overview or Summary heading before the first content H2, at any heading level outside lists and quotations.
 - **Empty signpost:** Report a heading worded as a referral, such as See also, Related or Resources, with nothing beneath it. Blank lines, comments, one-line link definitions, thematic breaks and invisible text count as nothing. Any other line counts as content, so some sections that show nothing go unreported. Its section ends at the next heading at its level or above, and headings in lists and quotations are not read.
+- **Adjacent alerts:** Report a GitHub alert, such as `> [!NOTE]`, that follows an alert of the same kind with only blank lines between. Alerts of different kinds, alerts in lists or quotations, and alerts with anything else between them are not reported. It reports only alerts it is sure of, so some adjacent alerts go unreported. Ask whether the two serve one purpose before merging them.
 
 The section count includes Contents, excludes H3 subsections and ignores headings inside lists or quotations.
 Recognised contents labels:
