@@ -600,6 +600,22 @@ describe("adjacent-alerts takes time in proportion to the text", () => {
     expect(fastestScan(long, 1)).toBeLessThan(3 * parseTime(long));
   }, 120_000);
 
+  // Each body line here looks like the line below a marker that the rule
+  // tests for an underline, a rule or a table delimiter, until its last
+  // character. The 100,000 case runs first, so code that rescans the line
+  // from each position fails at its assertion rather than at the time limit.
+  // A rule of stars is left out: the parse reads `* * *` with text after as
+  // lists nested one in another, and takes time in the square of their
+  // number before the rule runs.
+  test("a body line of 100,000 and 300,000 characters that is almost a delimiter, a rule or an underline scans as fast", () => {
+    for (const size of [100_000, 300_000]) {
+      for (const body of ["-".repeat(size), "-:| ".repeat(size / 4), "_ ".repeat(size / 2), "=".repeat(size), ">".repeat(size), "[!".repeat(size / 2), "[!NOTE".repeat(size / 6)]) {
+        const text = `> [!NOTE]\n> ${body}x\n\n> [!NOTE]\n> Two.\n`;
+        expect(fastestScan(text, 1), `${body.slice(0, 6)} ${size}`).toBeLessThan(3 * parseTime(text));
+      }
+    }
+  }, 120_000);
+
   test("100,000 HTML blocks opened and closed, and one left open, scan as fast", () => {
     const closed = `${"<pre\n</pre>\n".repeat(100_000)}\n${pair("NOTE", "NOTE")}`;
     expect(fastestScan(closed, 1)).toBeLessThan(3 * parseTime(closed));

@@ -12,12 +12,16 @@ const DEFINED_MARKER = /\[[\s>]*\\?!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)[\s>]*\]
 const QUOTE_MARKER = /^ {0,3}>[ \t]?/;
 const BLANK = /^[ \t]*$/;
 /**
- * What can follow an alert's marker line and stop it being plain text in the
- * alert: an underline that would make the marker a heading, a thematic
- * break, a row of dashes, colons and pipes that would make it a table
- * header, or HTML, which may show nothing.
+ * The characters of a row that would make the marker line a table header,
+ * when the row holds a dash. Each pattern here holds one repetition of one
+ * class, so a long line is read once.
  */
-const NOT_TEXT = /^(?:[-:| \t]*-[-:| \t]*|([*_])(?:[ \t]*\1){2,}|=+[ \t]*)$|^</;
+const DELIMITER_ROW = /^[-:| \t]+$/;
+/** A thematic break of stars or underscores, once its spaces and tabs are gone. */
+const THEMATIC_BREAK = /^(?:\*{3,}|_{3,})$/;
+/** A setext underline of equals signs, trimmed. */
+const UNDERLINE = /^=+$/;
+const SPACES = /[ \t]/g;
 /**
  * The HTML blocks that run on over blank lines, as CommonMark has them, that
  * the structural reading can leave unread, each with what ends it. One is
@@ -101,7 +105,19 @@ function readableAlert(reading: AlertReading, quotation: Quotation): boolean {
   const marker = QUOTE_MARKER.exec(next);
   if (marker === null) return false;
   const rest = next.slice(marker[0].length).trim();
-  return rest !== "" && !NOT_TEXT.test(rest) && !reading.underlined.has(quotation.line + 1);
+  return rest !== "" && isText(rest) && !reading.underlined.has(quotation.line + 1);
+}
+
+/**
+ * Whether the line after an alert's marker, trimmed, stays plain text in the
+ * alert. It does not when it is an underline that would make the marker a
+ * heading, a thematic break, a row of dashes, colons and pipes that would
+ * make it a table header, or HTML, which may show nothing.
+ */
+function isText(rest: string): boolean {
+  if (rest.startsWith("<")) return false;
+  if (rest.includes("-") && DELIMITER_ROW.test(rest)) return false;
+  return !UNDERLINE.test(rest) && !THEMATIC_BREAK.test(rest.replace(SPACES, ""));
 }
 
 /**
