@@ -150,6 +150,13 @@ describe("a reworded unit is paired with its original", () => {
     expect(copies.dropped.map(unit => unit.line)).toEqual([3]);
   });
 
+  test("taking the closest pair first can make fewer pairs than another pairing would", () => {
+    // Pairing the first with the second new unit, and the second with the first, would make two pairs.
+    const comparison = compareVersions("Close the red valve now.\n\nShut the red valve today.\n", "Close the red valve today.\n\nClose the blue pump now.\n", null);
+    expect(rewritten(comparison)).toEqual([["Close the red valve now.", "Close the red valve today.", 4, 5]]);
+    expect([comparison.dropped.map(unit => unit.key), comparison.added.map(unit => unit.key)]).toEqual([["Shut the red valve today."], ["Close the blue pump now."]]);
+  });
+
   test("a label added to one copy of repeated wording keeps both copies, and pairs nothing", () => {
     const comparison = compareVersions("Close the valve.\n\nClose the valve.\n", "**Purpose:** Close the valve.\n\nClose the valve.\n", null);
     expect([comparison.kept.length, comparison.rewritten.length, comparison.newLabels.length, comparison.moved.length]).toEqual([2, 0, 1, 0]);
