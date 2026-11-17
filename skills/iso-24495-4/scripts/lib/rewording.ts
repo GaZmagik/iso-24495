@@ -23,6 +23,34 @@ import type { CodeSpan, Unit } from "./restructure.ts";
  */
 export const WEIGHING_BUDGET = 20_000_000;
 
+/** An escaped pipe, which a table shows as a pipe. */
+export const PIPE_ESCAPE = "\\|";
+
+/** A figure, as `figureValues` reads one. */
+const FIGURE = /\d{1,3}(?:[ \u00A0\u202F]\d{3})+(?!\d|[.,]\d)|\d+(?:[.,]\d+)*/g;
+
+/** The space that joins the groups of a figure such as `1 000`. */
+const SPACE_GROUP = /[ \u00A0\u202F]/;
+
+/** English number words below a hundred, with ordinals, and their values. */
+const SMALL_NUMBERS: ReadonlyMap<string, number> = new Map([
+  ...["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    .map((word, value): [string, number] => [word, value]),
+  ...["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth"]
+    .map((word, value): [string, number] => [word, value]),
+  ...["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"].map((word, index): [string, number] => [word, 20 + 10 * index]),
+  ...["twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth"].map((word, index): [string, number] => [word, 20 + 10 * index]),
+]);
+
+/** English words for a hundred and more, with ordinals, and their values. */
+const SCALES: ReadonlyMap<string, number> = new Map([
+  ["hundred", 100], ["hundredth", 100], ["thousand", 1_000], ["thousandth", 1_000],
+  ["million", 1_000_000], ["millionth", 1_000_000], ["billion", 1_000_000_000], ["billionth", 1_000_000_000],
+]);
+
+/** A letter, a mark or a digit: a character a word is made of. */
+const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
+
 /** The steps a comparison's searches have taken, and how many they may take. */
 export interface Meter {
   spent: number;
@@ -83,11 +111,9 @@ export function pairReworded(before: readonly Unit[], after: readonly Unit[], me
   const beforeTokens = before.map(unit => tokensOf(unit, tokens, frequency, meter));
   const afterTokens = after.map(unit => tokensOf(unit, tokens, frequency, meter));
   if (meter.spent > meter.limit) return null;
-  // Rarest first, so the words indexed are those fewest units hold.
-  const rarity = (first: number, second: number): number => (frequency[first] ?? 0) - (frequency[second] ?? 0) || first - second;
   const index = new Map<number, number[]>();
   for (const [position, held] of beforeTokens.entries()) {
-    for (const token of [...held].sort(rarity).slice(0, prefixLength(held.length))) {
+    for (const token of rarestFirst(held, frequency).slice(0, prefixLength(held.length))) {
       const units = index.get(token);
       if (units === undefined) {
         index.set(token, [position]);
@@ -99,7 +125,7 @@ export function pairReworded(before: readonly Unit[], after: readonly Unit[], me
   const candidates: Array<{ before: number; after: number; shared: number; longer: number }> = [];
   const seen = new Int32Array(before.length).fill(-1);
   for (const [position, held] of afterTokens.entries()) {
-    for (const token of [...held].sort(rarity).slice(0, prefixLength(held.length))) {
+    for (const token of rarestFirst(held, frequency).slice(0, prefixLength(held.length))) {
       const units = index.get(token) ?? [];
       meter.spent += units.length;
       if (meter.spent > meter.limit) return null;
@@ -346,27 +372,13 @@ export function wordsOf(text: string): string[] {
   return text.toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu) ?? [];
 }
 
-/** A figure, as `figureValues` reads one. */
-const FIGURE = /\d{1,3}(?:[ \u00A0\u202F]\d{3})+(?!\d|[.,]\d)|\d+(?:[.,]\d+)*/g;
-
-/** The space that joins the groups of a figure such as `1 000`. */
-const SPACE_GROUP = /[ \u00A0\u202F]/;
-
-/** English number words below a hundred, with ordinals, and their values. */
-const SMALL_NUMBERS: ReadonlyMap<string, number> = new Map([
-  ...["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
-    .map((word, value): [string, number] => [word, value]),
-  ...["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth"]
-    .map((word, value): [string, number] => [word, value]),
-  ...["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"].map((word, index): [string, number] => [word, 20 + 10 * index]),
-  ...["twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth"].map((word, index): [string, number] => [word, 20 + 10 * index]),
-]);
-
-/** English words for a hundred and more, with ordinals, and their values. */
-const SCALES: ReadonlyMap<string, number> = new Map([
-  ["hundred", 100], ["hundredth", 100], ["thousand", 1_000], ["thousandth", 1_000],
-  ["million", 1_000_000], ["millionth", 1_000_000], ["billion", 1_000_000_000], ["billionth", 1_000_000_000],
-]);
+/**
+ * A unit's tokens, rarest first, so the words indexed are those fewest units
+ * hold; tokens held as often keep their ascending order.
+ */
+function rarestFirst(held: readonly number[], frequency: readonly number[]): number[] {
+  return [...held].sort((first, second) => (frequency[first] ?? 0) - (frequency[second] ?? 0) || first - second);
+}
 
 /**
  * How many of a unit's rarest words to index, or to look up, so that any
@@ -469,12 +481,6 @@ function standsIn(text: string, wanted: string): boolean {
   }
   return false;
 }
-
-/** An escaped pipe, which a table shows as a pipe. */
-export const PIPE_ESCAPE = "\\|";
-
-/** A letter, a mark or a digit: a character a word is made of. */
-const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 
 /** A value written with no leading zero before its digits and no trailing zero after its decimal point. */
 function canonical(whole: string, fraction: string): string {

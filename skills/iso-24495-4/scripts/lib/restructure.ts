@@ -709,9 +709,8 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
   const values: MissingValue[] = [];
   for (const { unit, after, table } of checked) {
     for (const value of valuesOf(unit)) {
-      const isFound = (where: Found): boolean | null => value.figure === undefined ? where.code(value.text) : figureFound(value.figure, where);
-      const anywhere = isFound(found);
-      const inTable = table === -1 ? false : isFound(inTables[table] ?? found);
+      const anywhere = valueFound(value, found);
+      const inTable = table === -1 ? false : valueFound(value, inTables[table] ?? found);
       if (anywhere === null || inTable === null) return unweighed;
       const tally = tallies[table];
       if (tally !== undefined) {
@@ -775,12 +774,24 @@ function newTables(after: readonly Unit[], added: readonly Unit[]): Unit[][] {
  */
 function valuesOf(unit: Unit): Array<{ text: string; start: number; figure?: FigureValue }> {
   const spans = unit.spans ?? [];
-  const shown = (text: string): string => unit.kind === "cell" ? text.replaceAll(PIPE_ESCAPE, "|") : text;
-  const values: Array<{ text: string; start: number; figure?: FigureValue }> = spans.map(span => ({ text: shown(unit.key.slice(span.start, span.end)), start: span.start }));
+  const values: Array<{ text: string; start: number; figure?: FigureValue }> = spans.map(span => {
+    const text = unit.key.slice(span.start, span.end);
+    return { text: unit.kind === "cell" ? text.replaceAll(PIPE_ESCAPE, "|") : text, start: span.start };
+  });
   for (const figure of figureValues(unit.key, spans)) {
     values.push({ text: figure.text, start: figure.start, figure });
   }
   return values.sort((first, second) => first.start - second.start);
+}
+
+/**
+ * Whether a value of a unit, as `valuesOf` gives it, is found in what a
+ * version holds, as `foundIn` describes.
+ *
+ * @returns Null when the meter passed its limit while looking for a code span.
+ */
+function valueFound(value: { text: string; figure?: FigureValue }, where: Found): boolean | null {
+  return value.figure === undefined ? where.code(value.text) : figureFound(value.figure, where);
 }
 
 /**
@@ -1223,7 +1234,9 @@ function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, bloc
   let next = 0;
   return wholeSlots(text, locateSentences(text)).map((sentence, index) => {
     const end = sentence.start + sentence.text.length;
-    while (next < spans.length && (spans[next]?.end ?? 0) <= sentence.start) next++;
+    while (next < spans.length && (spans[next]?.end ?? 0) <= sentence.start) {
+      next++;
+    }
     const held: CodeSpan[] = [];
     for (let span = next; span < spans.length && (spans[span]?.start ?? end) < end; span++) {
       const from = Math.max(spans[span]?.start ?? 0, sentence.start);

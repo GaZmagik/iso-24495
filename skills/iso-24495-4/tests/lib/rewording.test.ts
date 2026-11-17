@@ -50,6 +50,15 @@ function meter(limit = WEIGHING_BUDGET): Meter {
   return { spent: 0, limit };
 }
 
+/** The steps pairing `count` reworded units takes, each unit pairing once. */
+function spentFor(count: number): number {
+  const before = Array.from({ length: count }, (unused, index) => ({ kind: "sentence" as const, line: index + 1, key: `Step ${index} now.`, block: index }));
+  const after = Array.from({ length: count }, (unused, index) => ({ kind: "sentence" as const, line: index + 1, key: `Step ${index} today.`, block: index }));
+  const counted = meter(Number.POSITIVE_INFINITY);
+  expect(pairReworded(before, after, counted)?.length).toBe(count);
+  return counted.spent;
+}
+
 /** A source of numbers from 0 to 1 that gives the same run for the same seed. */
 function seeded(seed: number): () => number {
   let state = seed >>> 0;
@@ -362,13 +371,6 @@ describe("weighing has a limit", () => {
   });
 
   test("the steps of pairing grow in proportion to the units, not with their square", () => {
-    const spentFor = (count: number): number => {
-      const before = Array.from({ length: count }, (unused, index) => ({ kind: "sentence" as const, line: index + 1, key: `Step ${index} now.`, block: index }));
-      const after = Array.from({ length: count }, (unused, index) => ({ kind: "sentence" as const, line: index + 1, key: `Step ${index} today.`, block: index }));
-      const counted = meter(Number.POSITIVE_INFINITY);
-      expect(pairReworded(before, after, counted)?.length).toBe(count);
-      return counted.spent;
-    };
     // Twice the units in the square of their number would take four times the steps.
     expect(spentFor(40_000) / spentFor(20_000)).toBeLessThan(2.5);
   });
@@ -416,7 +418,7 @@ describe("on random documents", () => {
       const plainAfter = `${comparison.after.map(unit => unit.key).join(" ")} ${after}`;
       const figures = new Set(plainAfter.match(/\d+(?:[.,]\d+)*/g) ?? []);
       for (const value of comparison.values) {
-        const apart = new RegExp(`(?<![\w])${value.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\w])`).test(plainAfter);
+        const apart = new RegExp(String.raw`(?<![\p{L}\p{M}\p{N}])${value.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\p{L}\p{M}\p{N}])`, "u").test(plainAfter);
         expect(value.kind === "number" ? figures.has(value.value) : apart, `${label}: ${value.value}`).toBe(false);
       }
     }
