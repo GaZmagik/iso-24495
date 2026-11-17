@@ -384,7 +384,7 @@ const AXES = {
   after: ["", "paragraph", "lazy"],
 } as const;
 type Axis = keyof typeof AXES;
-type Choice = { [axis in Axis]: (typeof AXES)[axis][number] };
+type Choice = { [axis in Axis]: (typeof AXES)[axis][number]; };
 
 /** A seeded document, the lines the rule should report on it, and the value it took on each axis. */
 interface SeededDocument { text: string; expected: number[]; choice: Choice }
