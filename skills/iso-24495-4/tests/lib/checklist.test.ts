@@ -28,15 +28,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 21,
+  "fault": 22,
   "pass-only": 1,
-  "not-read": 32,
+  "not-read": 31,
   "needs-two-versions": 9,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 21;
+const FAULT_CLAUSES = 22;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -219,7 +219,19 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     ],
   },
   { id: "19c", demand: "The referral says when to use its destination.", state: "not-read", checks: [], needs: [], limits: [] },
-  { id: "19d", demand: "There is no referral where nothing else exists.", state: "not-read", checks: [], needs: [], limits: [] },
+  {
+    id: "19d", demand: "There is no referral where nothing else exists.", state: "fault",
+    checks: [{ rule: "empty-signpost", kind: "offline" }], needs: ["markdown"],
+    limits: [
+      "It reads a heading whose whole wording names somewhere else to go, such as `See also`, `Related`, `Related documents`, `Resources`, `Further reading` or `Other languages`. It reads that wording in any letter case, after a leading number such as `7.`, and with symbols at either end set aside, so `## 7. See also:` is read. Other wording is not read, even when it holds one of those words, such as `References`, `Next steps` or `Human resources`. Nor is a bold line such as `**See also**`, an HTML heading such as `<h2>See also</h2>`, or a heading inside a list or a quotation.",
+      "It reads the lines from the heading to the next heading at its level or above, or to the end of the text. It reports the heading only when each line is one of these: blank, an HTML comment standing as its own block, a link definition on one line, a thematic break alone or in a quotation, or text of only invisible characters. A deeper heading does not count unless it holds a link or an image, but what sits beneath it does. So `## See also` with only `### Guides` beneath is reported.",
+      "Any other line counts as content, so some sections that show a reader nothing are not reported. Examples are an empty list item such as `- `, a thematic break in a list item such as `* ---`, and a footnote body such as `[^1]: guide.md`. So are a link definition whose destination or title is on the next line or follows a tab, a second comment on one line, and a comment ended by `--!>`.",
+      "Raw HTML other than a comment always counts, so `<pre>`, `<textarea>`, `<?php ?>`, `<!DOCTYPE html>` and even an empty `<div>` clear the heading. A comment inside a paragraph counts too. So do dashes straight below a link definition, which a renderer can show as text. A character reference such as `&nbsp;` counts, and so does a line of only a byte order mark, a no-break space or a wide space.",
+      "Invisible characters are white space, control and format characters other than NUL, and characters Unicode says to show as nothing, such as a zero-width space or a Hangul filler. The blank braille pattern is one too. A lone combining mark counts as content.",
+      "It finds headings as the shared structural reading does, as the other layout rules do. So `## See also` straight below `<div>` is read as a heading, although CommonMark makes it part of that HTML block.",
+      "It does not read what the content says, so `## See also` followed by `None.` passes. Front matter is not read, unless the text is read as having none, when its block can become a heading, as `---`, `related:`, `---` does.",
+    ],
+  },
   {
     id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "fault",
     checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
@@ -332,6 +344,7 @@ const HEADING_FIVE = "heading level 5 (limit 4)";
 const PROSE_RANKS = "enumeration ranks 1, 2, 3 in prose; consider a list";
 const BULLET_THREE = "Unordered bullet depth 3 (limit 2). Flatten this item.";
 const EMPTY_HEADER = "table header has an empty column name";
+const EMPTY_SEE_ALSO = emptySignpost("See also");
 const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it";
 
 /** A non-breaking hyphen, which looks like the hyphen in 24495-5 and is another character. */
@@ -341,6 +354,11 @@ const NON_BREAKING_HYPHEN = String.fromCharCode(0x2011);
 const DOTTED_CAPITAL_I = String.fromCharCode(0x130);
 
 /** What `generic-alt` says of alternative text that is one word naming the kind of image. */
+/** The empty-signpost finding for a heading with this wording. */
+function emptySignpost(wording: string): string {
+  return `The "${wording}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.`;
+}
+
 function kindOfImage(alt: string): string {
   return `alternative text "${alt}" names the kind of image, not what it shows`;
 }
@@ -384,6 +402,7 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "15f": { text: "# Title\n\nText.\n", reasons: { "opening-version-date": [NO_EDITION] } },
   "17a": { text: `${GUIDE_OPENING}**Overview**\n\nOpen the box.\n\n${SIX_SECTIONS}`, reasons: { "overview-label": [NO_OVERVIEW] } },
   "19b": { text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [here](repair.md).\n", reasons: { "link-text": ["link text \"here\" describes no destination (repair.md)"] } },
+  "19d": { text: "# Install guide\n\nVersion: 1.0\n\nFit the valve.\n\n## See also\n", reasons: { "empty-signpost": [EMPTY_SEE_ALSO] } },
   "20a": ONE_SENTENCE_DROPPED,
   "21a": { before: "Fit the seal. Check the lip. This keeps water out.\n", text: "This keeps water out. Fit the seal. Check the lip.\n", reasons: { "restructure-moved": ["This keeps water out."] } },
   "21b": { before: "1. Close the valve.\n2. Open the vent.\n", text: "1. Open the vent.\n2. Close the valve.\n", reasons: { "restructure-step-order": ["Close the valve."] } },
@@ -861,6 +880,35 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][r].\n\n[r]: repair.md\n", found: [], control: { from: "[click\nhere]", to: "[click here]", found: ["link text \"click here\" describes no destination (r)"] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click here](repair.md \"Repair (advanced)\nmanual\").\n", found: ["link text \"click here\" describes no destination (repair.md \"Repair (advanced)"], control: { from: "(advanced)", to: "advanced", found: [] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][here].\n\n[here]: repair.md\n", found: ["link text \"here\" describes no destination (here)"], control: { from: "here][here]", to: "here][r]", found: [] } },
+  { clause: "19d", limit: 1, check: "empty-signpost", text: "## References\n", found: [], control: { from: "References", to: "See also", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 1, check: "empty-signpost", text: "**See also**\n", found: [], control: { from: "**See also**", to: "## See also", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 1, check: "empty-signpost", text: "<h2>See also</h2>\n", found: [], control: { from: "<h2>See also</h2>", to: "## See also", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 1, check: "empty-signpost", text: "- ## See also\n", found: [], control: { from: "- ## ", to: "## ", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 1, check: "empty-signpost", text: "## 7. See also:\n", found: [emptySignpost("7. See also:")], control: { from: "7. See also:", to: "7. See also the guide", found: [] } },
+  { clause: "19d", limit: 2, check: "empty-signpost", text: "## See also\n\n### Guides\n", found: [EMPTY_SEE_ALSO], control: { from: "### Guides", to: "### [Guides](guides.md)", found: [] } },
+  { clause: "19d", limit: 2, check: "empty-signpost", text: "## See also\n\n---\n", found: [EMPTY_SEE_ALSO], control: { from: "---", to: "Ask the help desk.", found: [] } },
+  { clause: "19d", limit: 2, check: "empty-signpost", text: "## See also\n\n<!-- Add links. -->\n", found: [EMPTY_SEE_ALSO], control: { from: "<!-- Add links. -->", to: "Add links.", found: [] } },
+  { clause: "19d", limit: 2, check: "empty-signpost", text: "## See also\n\n[guide]: guide.md\n", found: [EMPTY_SEE_ALSO], control: { from: "[guide]: guide.md", to: "[guide](guide.md)", found: [] } },
+  { clause: "19d", limit: 2, check: "empty-signpost", text: "## See also\n\n> ---\n", found: [EMPTY_SEE_ALSO], control: { from: "> ---", to: "> Ask the help desk.", found: [] } },
+  { clause: "19d", limit: 2, check: "empty-signpost", text: "## See also\n\n\u200B\n", found: [EMPTY_SEE_ALSO], control: { from: "\u200B", to: "Ask the help desk.", found: [] } },
+  { clause: "19d", limit: 3, check: "empty-signpost", text: "## See also\n\n- \n", found: [], control: { from: "- ", to: "", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 3, check: "empty-signpost", text: "## See also\n\n* ---\n", found: [], control: { from: "* ---", to: "---", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 3, check: "empty-signpost", text: "## See also\n\n[^1]: guide.md\n", found: [], control: { from: "[^1]", to: "[1]", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 3, check: "empty-signpost", text: "## See also\n\n[guide]:\n  guide.md\n", found: [], control: { from: ":\n  ", to: ": ", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 3, check: "empty-signpost", text: "## See also\n\n<!-- a --> <!-- b -->\n", found: [], control: { from: " <!-- b -->", to: "", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 3, check: "empty-signpost", text: "## See also\n\n<!-- a --!>\n", found: [], control: { from: "--!>", to: "-->", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 4, check: "empty-signpost", text: "## See also\n\n<pre>\nman install\n</pre>\n", found: [], control: { from: "<pre>\nman install\n</pre>", to: "<!--\nman install\n-->", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 4, check: "empty-signpost", text: "## See also\n\n<?> Ask the help desk.\n", found: [], control: { from: "<?> Ask the help desk.", to: "<!-- -->", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 4, check: "empty-signpost", text: "## See also\n\n&nbsp;<!-- a -->\n", found: [], control: { from: "&nbsp;<!-- a -->", to: "<!-- a -->", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 4, check: "empty-signpost", text: "## See also\n\n[guide]: guide.md\n---\n", found: [], control: { from: "md\n---", to: "md\n\n---", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 4, check: "empty-signpost", text: "## See also\n\n&#8203;\n", found: [], control: { from: "&#8203;", to: "\u200B", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 4, check: "empty-signpost", text: "## See also\n\n\u00A0\n", found: [], control: { from: "\u00A0", to: "\u200B", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 5, check: "empty-signpost", text: "## See also\n\n\u2800\n", found: [EMPTY_SEE_ALSO], control: { from: "\u2800", to: "\u2801", found: [] } },
+  { clause: "19d", limit: 5, check: "empty-signpost", text: "## See also\n\n\u0000\n", found: [], control: { from: "\u0000", to: "\u200B", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 5, check: "empty-signpost", text: "## See also\n\n\u0301\n", found: [], control: { from: "\u0301", to: "\u200B", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 6, check: "empty-signpost", text: "<div>\n## See also\n", found: [EMPTY_SEE_ALSO], control: { from: "See also", to: "Next", found: [] } },
+  { clause: "19d", limit: 7, check: "empty-signpost", text: "## See also\n\nNone.\n", found: [], control: { from: "None.", to: "", found: [EMPTY_SEE_ALSO] } },
+  { clause: "19d", limit: 7, check: "empty-signpost", text: "---\nrelated:\n---\n", found: [], control: { frontMatter: false, found: [emptySignpost("related:")] } },
   ...["20a", "23b"].flatMap(clause => [
     { clause, limit: 1, check: "restructure-dropped", before: "Close the valve.\n", text: "Shut the valve.\n", found: ["Close the valve."], control: { from: "Shut", to: "Close", found: [] } },
     { clause, limit: 2, check: "restructure-dropped", before: "## Keep below 5 bar\n\nText.\n", text: "Text.\n", found: [], control: { before: "Keep below 5 bar.\n\nText.\n", found: ["Keep below 5 bar."] } },
@@ -950,6 +998,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "15f": [1, 12, 19],
   "17a": [3, 11],
   "19b": [4, 2, 5],
+  "19d": [5, 6, 6, 6, 3, 1, 2],
   "20a": [1, 4, 2],
   "21a": [3, 2, 5, 2],
   "21b": [3, 5],
@@ -991,6 +1040,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "15f": ["463bba50c60651a7", "72c02ad5ffca09f8", "cbe52aeab5b5f019"],
   "17a": ["cfc121eded58bd56", "347357b868e06e98"],
   "19b": ["8d7374144d4bb978", "8e3c4f0d60d846d8", "a2f3adc83db9c51d"],
+  "19d": ["158731c1cbd995b3", "4ead0c2b7442da76", "2fea839acce8ecf8", "8e6ac8af7b8d42ac", "f321e10be3b9cd16", "9a9c678461efcfde", "bfb05222f94b4000"],
   "20a": ["1d55b19365949e80", "694867c80cb848a9", "f2857480c3fb4e6d"],
   "21a": ["3b17814a63e62b11", "3b754fa55057fc97", "0e60fa8f01851b96", "12d1c0838eff6d32"],
   "21b": ["e52f54e7545cd726", "b37773368f704475"],
@@ -1017,6 +1067,7 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "15f": "a110f40c437220f5",
   "17a": "6371233b39f075a5",
   "19b": "44fdcbd1ca38383e",
+  "19d": "f4449702033d278c",
   "20a": "a146fb876a677b53",
   "21a": "e5e214b5ae080f5c",
   "21b": "ca4561dc88636124",
@@ -1665,8 +1716,8 @@ describe("the Part 5 checklist clause registry", () => {
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 21 fault
-  // clauses, 252 cells, it compares the two runs on that clause's own
+  // one folder with its option and without it. For each of the 22 fault
+  // clauses, 264 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline

@@ -124,12 +124,12 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Three layout rules, `opening-version-date`, `contents-list` and `overview-label`, read headings too, to find a document's title and sections, and so does the Jev route's `opening-title` finding. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Four layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, and `empty-signpost` finds an empty referral heading. So does the Jev route's `opening-title` finding. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer;
-- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table. Given `--before`, the two-version comparison compares their cells too;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
 - a GitHub alert label, which is a label;
 - a task marker, which is a control rather than two words.
@@ -156,8 +156,8 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-Four Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and an overview before detail.
-Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus.
+Five Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth, an overview before detail and an empty signpost check.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus, and the empty signpost rule found nothing to measure on one.
 
 The edition advisory applies only to titled documents and asks whether readers need a version or date.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
@@ -169,6 +169,12 @@ Front matter is parsed once; aliases resolve before checking for a declared fiel
 A non-empty trimmed string, finite number or date counts, including `version: banana`.
 The field's format is not validated, because YAML can change number spelling and resolve aliases.
 Booleans, null, empty strings, maps, lists, other nesting and malformed front matter do not count.
+
+The `empty-signpost` rule reports a heading worded as a referral, such as `See also`, with nothing beneath it up to the next heading at its level or above.
+A deeper heading, a comment, a one-line link definition, a thematic break or invisible text alone leaves it empty.
+Any other line counts as content, raw HTML other than a comment included, so some sections that show nothing go unreported.
+To clear it, list where else to go beneath the heading, or remove the heading when nothing else exists.
+It found none in 822 third-party Markdown files or in this repository's own documents, so its precision is unmeasured.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 
