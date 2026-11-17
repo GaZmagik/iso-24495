@@ -20,8 +20,8 @@
 //
 // Units left over on both sides are then read again, as `rewording.ts`
 // describes: a pair that shares half the longer one's words or more is
-// rewritten, units of the original that share most of their words with a new
-// table are read with it, and each number and code span of a unit not kept is
+// rewritten, units of the original that share at least half of their
+// different words with a new table are read with it, and each number and code span of a unit not kept is
 // looked for in the whole new version.
 //
 // It reads wording, not meaning. A sentence reworded further than that reads
@@ -1447,7 +1447,7 @@ function afterRows(comparison: Comparison): string[] {
     const first = table.sources[0];
     const line = table.cells[0]?.line ?? 0;
     if (first === undefined) continue;
-    const who = table.sources.length === 1 ? "A unit of the original shares most of its words" : `${table.sources.length} units of the original share most of their words`;
+    const who = table.sources.length === 1 ? "A unit of the original shares at least half of its different words" : `${table.sources.length} units of the original each share at least half of their different words`;
     const whose = table.sources.length === 1 ? "Its" : "Their";
     const traced = `${whose} numbers and code spans: ${table.inTable} in the table, ${table.elsewhere} elsewhere in the new version, ${table.notFound} not found:`;
     rows.push({ line, text: `| restructured or rewritten | ${first.line} | ${line} | ${who} with a new table of ${table.cells.length} units, which are not listed one by one. Check that nothing was cut or reworded. ${traced} ${quoted(first.key)} |` });

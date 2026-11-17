@@ -352,10 +352,20 @@ describe("a unit turned into a new table", () => {
     expect(comparison.tables.map(table => [table.sources.map(unit => unit.line), table.cells.length, table.inTable, table.elsewhere, table.notFound])).toEqual([[[1], 20, 6, 0, 0]]);
     expect(printed(PLANS_BEFORE, PLANS_AFTER).slice(3)).toEqual([
       "| added | | 1 | Not in the original or the author's wording. Confirm its source: \"Choose a plan based on storage and support needs:\" |",
-      "| restructured or rewritten | 1 | 3 | A unit of the original shares most of its words with a new table of 20 units, which are not listed one by one. "
+      "| restructured or rewritten | 1 | 3 | A unit of the original shares at least half of its different words with a new table of 20 units, which are not listed one by one. "
         + "Check that nothing was cut or reworded. Its numbers and code spans: 6 in the table, 0 elsewhere in the new version, 0 not found: "
         + "\"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
       counts({ tables: 1, added: 1 }),
+      ...TAIL,
+    ]);
+  });
+
+  test("two units turned into one new table print one row, which says each shares at least half of its words with it", () => {
+    const lines = printed("The Basic plan costs £5 per month.\n\nThe Pro plan costs £15 per month.\n", "| Plan | Price per month |\n|---|---|\n| Basic | £5 |\n| Pro | £15 |\n");
+    expect(lines.slice(3)).toEqual([
+      "| restructured or rewritten | 1 | 1 | 2 units of the original each share at least half of their different words with a new table of 6 units, which are not listed one by one. "
+        + "Check that nothing was cut or reworded. Their numbers and code spans: 2 in the table, 0 elsewhere in the new version, 0 not found: \"The Basic plan costs £5 per month.\" |",
+      counts({ tables: 2 }),
       ...TAIL,
     ]);
   });

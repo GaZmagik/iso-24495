@@ -6,8 +6,8 @@
 // be cut or distorted to fit a layout. So a unit of the original left over
 // is paired with a unit of the new version left over when the two share half
 // the longer one's words or more, for a person to check the rewording. A
-// unit of the original that shares most of its words with a new table is read
-// with that table, because Part 5's own example turns a sentence into one.
+// unit of the original that shares at least half of its different words with
+// a new table is read with that table, because Part 5's own example turns a sentence into one.
 // And each number and code span of a unit not kept is looked for in the
 // whole new version.
 //
