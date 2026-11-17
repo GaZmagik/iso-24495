@@ -321,6 +321,7 @@ describe("number words and figures", () => {
     expect([...numberWords("Two thousand and ten people; the second.")].sort()).toEqual(["10", "1000", "2", "2000", "2010"]);
     expect([...numberWords("No numbers here.")]).toEqual([]);
     expect([...numberWords("Due in Sep, or by May, or in SEPTEMBER, but not in a separate month.")].sort()).toEqual(["5", "9"]);
+    expect([...numberWords("It may close in march or sept, said the separate note.")]).toEqual([]);
   });
 
   test("a figure is read with either mark as the decimal point where the other groups digits in threes", () => {

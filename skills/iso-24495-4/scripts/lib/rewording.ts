@@ -365,16 +365,18 @@ export function figureValues(text: string, spans: readonly CodeSpan[]): FigureVa
  * The values English number words in a text give: each word's own, and the
  * value of each run of them so far, so `twenty-five` gives 20, 5 and 25,
  * and `one hundred and five` gives 1, 100, 5 and 105. Ordinals count, so
- * `third` gives 3. A month's name, in full or cut to three letters, gives
- * its number, so `September` and `Sep` give 9. Letter case is ignored.
+ * `third` gives 3. Letter case is ignored, except that a month's name, in
+ * full or cut to three letters, gives its number only when it opens with a
+ * capital, so `September` and `Sep` give 9 and `may` gives nothing.
  */
 export function numberWords(text: string): Set<string> {
   const values = new Set<string>();
   let total = 0;
   let current = 0;
   let inRun = false;
-  for (const match of text.toLowerCase().matchAll(/[a-z]+|[^a-z]+/g)) {
-    const word = match[0];
+  for (const match of text.matchAll(/[a-z]+|[^a-z]+/gi)) {
+    const written = match[0];
+    const word = written.toLowerCase();
     if (!/^[a-z]/.test(word)) {
       // A space or a hyphen continues a run; anything else ends it.
       if (!/^[\s-]+$/.test(word)) inRun = false;
@@ -384,7 +386,8 @@ export function numberWords(text: string): Set<string> {
     if (word === "and" && inRun) continue;
     const small = SMALL_NUMBERS.get(word);
     const scale = SCALES.get(word);
-    const month = MONTHS.get(word);
+    // A month's name is read only with its capital, so the verb "may" holds no 5.
+    const month = /^[A-Z]/.test(written) ? MONTHS.get(word) : undefined;
     if (month !== undefined) values.add(String(month));
     if (small === undefined && scale === undefined) {
       inRun = false;
