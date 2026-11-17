@@ -328,12 +328,21 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "fault",
         checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
         limits: [
-          "It compares wording, not meaning. A passage reworded is reported as dropped, as one removed is, so a finding does not say whether 20a or 20b failed.",
+          "It compares wording, not meaning. A passage reworded reads as dropped, as one removed does, unless 20b's check pairs it as rewritten or reads it with a new table, so a dropped row does not say whether 20a or 20b failed.",
           "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
           "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.",
         ],
       },
-      { id: "20b", demand: "On a restructure, no prose is rewritten.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "20b", demand: "On a restructure, no prose is rewritten.", state: "fault",
+        checks: [{ rule: "restructure-rewritten", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It pairs a unit of the original that has no unchanged copy with a unit of the new version left over, when the two share at least two words and at least half the words of the longer. A word counts as often as it stands, in any letter case, and a bold label such as `**Purpose:**` is set aside. It lists each pair as rewritten, for a person to check, and does not read whether the meaning changed. A unit reworded further reads as dropped and added, so `Close the valve.` becoming `Shut it.` is not paired.",
+          "It pairs only sentences, list items, table cells and image alternatives, never a heading, a code block, a unit that is one slot, or a unit that matches the author's wording. Of the pairs that qualify, the one sharing the largest part of the longer one's words is taken first, then the one sharing more words, then the earliest in the original, then the earliest in the new version, so it does not always make the most pairs. A pair is not read for order, so a unit reworded and moved reads as rewritten and not as moved.",
+          "A unit of the original left over with at least two, and at least half, of its different words among the words of a new table is read with that table. The table must keep no unit of the original, reword none, hold two or more units, and have at least half its own different words among those of the units read with it. It then prints one row, as restructured or rewritten, and its units are not listed as added. This was measured only on Part 5's own plans example and on constructed specimens, because this repository's history holds no sentence turned into a table.",
+          "When its searches for pairs, tables and values would take more than 20,000,000 steps, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
+        ],
+      },
       { id: "20c", demand: "On a restructure, the tone is unchanged.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
     ],
   },
@@ -348,7 +357,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
           "It lists each unit kept word for word that now stands outside the longest order the kept units share with the original, for a person to check. A unit of a step out of order against the other steps of its list is listed by 21b's check instead, and not also here. It does not read whether a moved unit keeps what it depends on, except that a moved sentence, list item or table cell opening with `This`, `It` or `These` gets a question about what that word refers to. The same rows are where to look for 21c, which no check reads. A row clears only when the unit is back in its original order against the units kept around it.",
           "Where two orders keep as many units, it names the unit that stood first in the original, so of two sentences that swap places, the first is listed. Otherwise it names the part with fewer kept units, so when a heading and the text beside it change places, the heading can be the unit listed. Units next to each other in both versions share one row, and only the first of them gets the question.",
           "Copies of one text pair by whole wording first, and no comparison keeps fewer units than whole wording alone, nor fewer in order when it keeps as many. When repeated wording and labels both change, a unit that another pairing would keep in place can read as moved. When a label passes between two copies of a sentence, the pairs cross, and the copy that stood first in the original is named, labelled or not. A short text that stands more than once, such as a number in a table, can pair with a copy beside another label, so a value moved to another row reads as moved, and the row cannot tell that from a move of the label. When the copies of repeated texts would need more than 1,000,000 pairings, the texts with the most copies pair in document order, so a copy added or dropped can make another read as moved.",
-          "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as dropped and added, not as moved. A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
+          "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as rewritten, or as dropped and added, not as moved. A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
         ],
       },
       {
@@ -370,7 +379,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "fault",
         checks: [{ rule: "restructure-added", kind: "offline" }], needs: ["before"],
         limits: [
-          "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. It compares wording, not meaning, so a promoted sentence that was reworded is reported, and a person must confirm its source.",
+          "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. It compares wording, not meaning, so a promoted sentence that was reworded is reported, as rewritten when 20b's check pairs it with its original and as added otherwise, and a person must confirm its source. The units of a new table that 20b's check reads with units of the original are not listed one by one.",
           "A new heading is counted and not reported, and so is a bold label ending in a colon, such as `**Purpose:**`, before a sentence that is kept. A unit that is one slot such as `[Author needed: reader]` is listed as a marked gap and not reported.",
         ],
       },
@@ -385,12 +394,21 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     item: 23,
     line: "- [ ] **Content primacy:** Did accuracy and completeness survive every structural choice, with nothing cut or distorted to fit a layout?",
     clauses: [
-      { id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "fault",
+        checks: [{ rule: "restructure-value", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It reads a value as a number written in figures, or the text of a code span, in a sentence, list item, table cell or image alternative of the original that has no unchanged copy in the new version. It lists each value the new version does not hold, for a person to check, and does not read whether a value it finds kept its meaning or its place.",
+          "A number counts as held where the new version holds the same value in figures, with or without marks grouping its digits in threes, such as `1,000` and `1000`, with either a full stop or a comma as its decimal point, or in English words, such as `five`, `twenty-five` or `fifth`. A code span counts as held where its text stands in the new version, in a code span or not, and not inside a longer word. It reads the whole new file for this, front matter, HTML and link destinations included.",
+          "A value written another way is listed, as when `0.5` becomes `50%` or `half`. A number written only in words in the original, such as `five`, is not read, nor is a code span holding no letter or digit, such as `--`, nor a value in a heading or a code block. A value counts as held however many times it stood in the original, so cutting one of two copies of it lists nothing.",
+          "When its searches for pairs, tables and values would take more than 20,000,000 steps, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
+        ],
+      },
       {
         id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "fault",
         checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
         limits: [
-          "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too.",
+          "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too, unless 20b's check pairs it as rewritten or reads it with a new table.",
           "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
           "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.",
         ],
@@ -457,9 +475,11 @@ export type ClauseState = "fault" | "pass-only" | "not-read" | "needs-two-versio
 /**
  * A rule or a Jev gate that can report on a clause. An offline rule is named
  * as its findings name it. The two-version comparison reports the units it
- * dropped, those it added, the kept units it moved and the kept units of
- * steps out of order, named here `restructure-dropped`, `restructure-added`,
- * `restructure-moved` and `restructure-step-order`. A Jev gate is named by
+ * dropped, those it added, the kept units it moved, the kept units of steps
+ * out of order, the units it paired as rewritten or read with a new table,
+ * and the values it did not find, named here `restructure-dropped`,
+ * `restructure-added`, `restructure-moved`, `restructure-step-order`,
+ * `restructure-rewritten` and `restructure-value`. A Jev gate is named by
  * its identifier in the calibration record.
  */
 export interface Check {

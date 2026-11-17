@@ -15,19 +15,21 @@ const PATHS = { before: "old.md", after: "new.md", authorText: null };
 /** The first line, the table header and divider, of every printed comparison with no author's wording. */
 const HEAD = ["Restructure comparison: before `old.md`, after `new.md`", "| Kind | Before | After | Finding |", "|------|--------|-------|---------|"];
 
-/** The closing statements of every printed comparison: what it reads, and what it does not compare yet. */
+/** The closing statements of every printed comparison: what it reads, and the bounds of what it pairs and reads as values. */
 const TAIL = [
   "The comparison reads wording, not meaning.",
-  "It does not yet pair a reworded unit with its original, or check that each number and code span is still there.",
+  "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
 ];
 
 /**
  * The line of counts, from the counts in the order it prints them. The kept
- * units moved and the steps out of order are among those kept.
+ * units moved and the steps out of order are among those kept. Rewritten
+ * pairs, units read with new tables and values not found are counted last
+ * here, and print among the others.
  */
-function counts(kept: number, dropped: number, added: number, author: number, gaps: number, newHeadings: number, headingsGone: number, newLabels: number, labelsGone: number, moved = 0, steps = 0): string {
-  return `Kept ${kept}: moved ${moved}, steps out of order ${steps}. `
-    + `Dropped ${dropped}. Added ${added}. From the author ${author}. Marked gaps ${gaps}. `
+function counts(kept: number, dropped: number, added: number, author: number, gaps: number, newHeadings: number, headingsGone: number, newLabels: number, labelsGone: number, moved = 0, steps = 0, rewritten = 0, tables = 0, values = 0): string {
+  return `Kept ${kept}: moved ${moved}, steps out of order ${steps}. Rewritten ${rewritten}. Into new tables ${tables}. `
+    + `Dropped ${dropped}. Added ${added}. Values not found ${values}. From the author ${author}. Marked gaps ${gaps}. `
     + `New headings ${newHeadings}. Headings gone ${headingsGone}. New labels ${newLabels}. Labels gone ${labelsGone}.`;
 }
 
@@ -262,15 +264,16 @@ describe("Part 5's own examples of a restructure read as kept", () => {
     expect(printed(EXAMPLE_17_BEFORE, EXAMPLE_17_AFTER)).toEqual([...HEAD, counts(3, 0, 0, 0, 0, 0, 0, 0, 0), ...TAIL]);
   });
 
-  test("the plans example adds a lead-in and turns a sentence into a table, which reads as a drop and one grouped row", () => {
+  test("the plans example adds a lead-in and turns a sentence into a table too small to read with it, which reads as a drop, a value not found and one grouped row", () => {
     const before = "The Basic plan costs £5 per month and includes 10 GB of storage but no\npriority support.\n";
     const after = "Choose a plan:\n\n| Plan | Price |\n|---|---|\n| Basic | £5 |\n";
     expect(printed(before, after)).toEqual([
       ...HEAD,
       "| dropped | 1 | | No unchanged copy is in the new version: \"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
+      "| value | 1 | | A number of the original is found in the new version neither in figures nor in words. Check that it was not cut or changed: \"10\" in \"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
       "| added | | 1 | Not in the original or the author's wording. Confirm its source: \"Choose a plan:\" |",
       "| added | | 3 | 4 units in one new table are not in the original or the author's wording. Confirm their source: \"Plan\" |",
-      counts(0, 1, 5, 0, 0, 0, 0, 0, 0),
+      counts(0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
       ...TAIL,
     ]);
   });
@@ -322,9 +325,11 @@ describe("a unit's text is its wording as a reader sees it", () => {
     expect(sorted(compareVersions(before, after, null)).kept).toEqual(["Pack the tools, cables etc.", "The van leaves at noon.", "Meet Dr. Smith there."]);
   });
 
-  test("case, punctuation, a number and a negation each change the unit", () => {
+  test("case, punctuation, a number and a negation each change the unit, which then reads as rewritten", () => {
     for (const changed of ["close the valve.", "Close the valve!", "Close valve 2.", "Do not close the valve."]) {
-      expect(sorted(compareVersions("Close the valve.\n", `${changed}\n`, null)), changed).toEqual(only({ dropped: ["Close the valve."], added: [changed] }));
+      const comparison = compareVersions("Close the valve.\n", `${changed}\n`, null);
+      expect(sorted(comparison), changed).toEqual(only({}));
+      expect(comparison.rewritten.map(pair => [pair.before.key, pair.after.key]), changed).toEqual([["Close the valve.", changed]]);
     }
   });
 
@@ -1013,6 +1018,10 @@ describe("the JSON report", () => {
       headingsGone: [{ line: 1, kind: "heading", excerpt: "Old" }],
       newLabels: [{ line: 3, kind: "item", excerpt: "Goal:" }],
       labelsGone: [{ line: 3, kind: "sentence", excerpt: "Aim:" }],
+      rewritten: [],
+      tables: [],
+      values: [],
+      weighed: true,
     });
   });
 

@@ -28,15 +28,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 21,
+  "fault": 23,
   "pass-only": 1,
   "not-read": 32,
-  "needs-two-versions": 9,
+  "needs-two-versions": 7,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 21;
+const FAULT_CLAUSES = 23;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -224,12 +224,21 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "fault",
     checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
     limits: [
-      "It compares wording, not meaning. A passage reworded is reported as dropped, as one removed is, so a finding does not say whether 20a or 20b failed.",
+      "It compares wording, not meaning. A passage reworded reads as dropped, as one removed does, unless 20b's check pairs it as rewritten or reads it with a new table, so a dropped row does not say whether 20a or 20b failed.",
       UNITS_READ_LIMIT,
       WORDS_SEEN_LIMIT,
     ],
   },
-  { id: "20b", demand: "On a restructure, no prose is rewritten.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+  {
+    id: "20b", demand: "On a restructure, no prose is rewritten.", state: "fault",
+    checks: [{ rule: "restructure-rewritten", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It pairs a unit of the original that has no unchanged copy with a unit of the new version left over, when the two share at least two words and at least half the words of the longer. A word counts as often as it stands, in any letter case, and a bold label such as `**Purpose:**` is set aside. It lists each pair as rewritten, for a person to check, and does not read whether the meaning changed. A unit reworded further reads as dropped and added, so `Close the valve.` becoming `Shut it.` is not paired.",
+      "It pairs only sentences, list items, table cells and image alternatives, never a heading, a code block, a unit that is one slot, or a unit that matches the author's wording. Of the pairs that qualify, the one sharing the largest part of the longer one's words is taken first, then the one sharing more words, then the earliest in the original, then the earliest in the new version, so it does not always make the most pairs. A pair is not read for order, so a unit reworded and moved reads as rewritten and not as moved.",
+      "A unit of the original left over with at least two, and at least half, of its different words among the words of a new table is read with that table. The table must keep no unit of the original, reword none, hold two or more units, and have at least half its own different words among those of the units read with it. It then prints one row, as restructured or rewritten, and its units are not listed as added. This was measured only on Part 5's own plans example and on constructed specimens, because this repository's history holds no sentence turned into a table.",
+      "When its searches for pairs, tables and values would take more than 20,000,000 steps, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
+    ],
+  },
   { id: "20c", demand: "On a restructure, the tone is unchanged.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   {
     id: "21a", demand: "Every moved sentence or block keeps its dependencies.", state: "fault",
@@ -248,7 +257,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
         + "When a label passes between two copies of a sentence, the pairs cross, and the copy that stood first in the original is named, labelled or not. "
         + "A short text that stands more than once, such as a number in a table, can pair with a copy beside another label, so a value moved to another row reads as moved, and the row cannot tell that from a move of the label. "
         + "When the copies of repeated texts would need more than 1,000,000 pairings, the texts with the most copies pair in document order, so a copy added or dropped can make another read as moved.",
-      "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as dropped and added, not as moved. "
+      "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as rewritten, or as dropped and added, not as moved. "
         + "A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
     ],
   },
@@ -274,7 +283,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "restructure-added", kind: "offline" }], needs: ["before"],
     limits: [
       "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. "
-        + "It compares wording, not meaning, so a promoted sentence that was reworded is reported, and a person must confirm its source.",
+        + "It compares wording, not meaning, so a promoted sentence that was reworded is reported, as rewritten when 20b's check pairs it with its original and as added otherwise, and a person must confirm its source. The units of a new table that 20b's check reads with units of the original are not listed one by one.",
       "A new heading is counted and not reported, and so is a bold label ending in a colon, such as `**Purpose:**`, before a sentence that is kept. "
         + "A unit that is one slot such as `[Author needed: reader]` is listed as a marked gap and not reported.",
     ],
@@ -284,12 +293,21 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   { id: "22d", demand: "Every promoted sentence stays complete.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "22e", demand: "Every mismatch is reported.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
   { id: "22f", demand: "Every gap is marked.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-  { id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+  {
+    id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "fault",
+    checks: [{ rule: "restructure-value", kind: "offline" }], needs: ["before"],
+    limits: [
+      "It reads a value as a number written in figures, or the text of a code span, in a sentence, list item, table cell or image alternative of the original that has no unchanged copy in the new version. It lists each value the new version does not hold, for a person to check, and does not read whether a value it finds kept its meaning or its place.",
+      "A number counts as held where the new version holds the same value in figures, with or without marks grouping its digits in threes, such as `1,000` and `1000`, with either a full stop or a comma as its decimal point, or in English words, such as `five`, `twenty-five` or `fifth`. A code span counts as held where its text stands in the new version, in a code span or not, and not inside a longer word. It reads the whole new file for this, front matter, HTML and link destinations included.",
+      "A value written another way is listed, as when `0.5` becomes `50%` or `half`. A number written only in words in the original, such as `five`, is not read, nor is a code span holding no letter or digit, such as `--`, nor a value in a heading or a code block. A value counts as held however many times it stood in the original, so cutting one of two copies of it lists nothing.",
+      "When its searches for pairs, tables and values would take more than 20,000,000 steps, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
+    ],
+  },
   {
     id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "fault",
     checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
     limits: [
-      "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too.",
+      "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too, unless 20b's check pairs it as rewritten or reads it with a new table.",
       UNITS_READ_LIMIT,
       WORDS_SEEN_LIMIT,
     ],
@@ -385,9 +403,11 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "17a": { text: `${GUIDE_OPENING}**Overview**\n\nOpen the box.\n\n${SIX_SECTIONS}`, reasons: { "overview-label": [NO_OVERVIEW] } },
   "19b": { text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [here](repair.md).\n", reasons: { "link-text": ["link text \"here\" describes no destination (repair.md)"] } },
   "20a": ONE_SENTENCE_DROPPED,
+  "20b": { before: "Close the valve now.\n", text: "Close the valve today.\n", reasons: { "restructure-rewritten": ["Close the valve today."] } },
   "21a": { before: "Fit the seal. Check the lip. This keeps water out.\n", text: "This keeps water out. Fit the seal. Check the lip.\n", reasons: { "restructure-moved": ["This keeps water out."] } },
   "21b": { before: "1. Close the valve.\n2. Open the vent.\n", text: "1. Open the vent.\n2. Close the valve.\n", reasons: { "restructure-step-order": ["Close the valve."] } },
   "22a": { before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", reasons: { "restructure-added": ["The valve is new."] } },
+  "23a": { before: "Keep it below 5 bar.\n", text: "Keep it below the limit.\n", reasons: { "restructure-value": ["5"] } },
   "23b": ONE_SENTENCE_DROPPED,
   "25a": { text: "Our layout follows ISO 24495-5.\n", reasons: { "provisional-label": [UNLABELLED] } },
 };
@@ -862,12 +882,13 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click here](repair.md \"Repair (advanced)\nmanual\").\n", found: ["link text \"click here\" describes no destination (repair.md \"Repair (advanced)"], control: { from: "(advanced)", to: "advanced", found: [] } },
   { clause: "19b", limit: 3, check: "link-text", text: "# Install guide\n\nVersion: 1.0\n\nFor repairs, read [click\nhere][here].\n\n[here]: repair.md\n", found: ["link text \"here\" describes no destination (here)"], control: { from: "here][here]", to: "here][r]", found: [] } },
   ...["20a", "23b"].flatMap(clause => [
-    { clause, limit: 1, check: "restructure-dropped", before: "Close the valve.\n", text: "Shut the valve.\n", found: ["Close the valve."], control: { from: "Shut", to: "Close", found: [] } },
+    { clause, limit: 1, check: "restructure-dropped", before: "Close the valve.\n", text: "Shut it.\n", found: ["Close the valve."], control: { from: "Shut it.", to: "Shut the valve.", found: [] } },
+    { clause, limit: 1, check: "restructure-dropped", before: "The Basic plan costs £5.\n", text: "| Plan | Price |\n|---|---|\n| Basic | £5 |\n", found: [], control: { before: "The Pro plan costs £15.\n", found: ["The Pro plan costs £15."] } },
     { clause, limit: 2, check: "restructure-dropped", before: "## Keep below 5 bar\n\nText.\n", text: "Text.\n", found: [], control: { before: "Keep below 5 bar.\n\nText.\n", found: ["Keep below 5 bar."] } },
     { clause, limit: 2, check: "restructure-dropped", before: "---\nsummary: Keep below 5 bar.\n---\n\nText.\n", text: "Text.\n", found: [], control: { before: "summary: Keep below 5 bar.\n\nText.\n", found: ["summary: Keep below 5 bar."] } },
     { clause, limit: 2, check: "restructure-dropped", before: "<pre>\nkeep below 5 bar\n</pre>\n\nText.\n", text: "Text.\n", found: [], control: { before: "```\nkeep below 5 bar\n```\n\nText.\n", found: ["keep below 5 bar"] } },
     { clause, limit: 2, check: "restructure-dropped", before: "<img src=\"c.png\" alt=\"Pressure chart\">\n\nText.\n", text: "Text.\n", found: [], control: { before: "![Pressure chart](c.png)\n\nText.\n", found: ["Pressure chart"] } },
-    { clause, limit: 3, check: "restructure-dropped", before: "Read [the guide](a.md).\n", text: "Read [the guide](b.md).\n", found: [], control: { from: "[the guide]", to: "[the manual]", found: ["Read the guide."] } },
+    { clause, limit: 3, check: "restructure-dropped", before: "Read [the guide](a.md).\n", text: "Read [the guide](b.md).\n", found: [], control: { from: "[the guide]", to: "[a manual]", found: ["Read the guide."] } },
     { clause, limit: 3, check: "restructure-dropped", before: "![Chart](a.png)\n", text: "![Chart](b.png)\n", found: [], control: { from: "![Chart]", to: "![Graph]", found: ["Chart"] } },
   ]),
   { clause: "21a", limit: 1, check: "restructure-moved", before: "Fit the seal. Check the lip. This keeps water out.\n", text: "This keeps water out. Fit the seal. Check the lip.\n", found: ["This keeps water out."], control: { from: "This keeps water out. Fit the seal. Check the lip.", to: "Fit the seal. Check the lip. This keeps water out.", found: [] } },
@@ -893,8 +914,35 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "22a", limit: 1, check: "restructure-added", before: "Close the valve.\n", text: "Close the valve.\n\nThe valve is new.\n", found: ["The valve is new."], control: { authorText: "The valve is new.\n", found: [] } },
   { clause: "22a", limit: 1, check: "restructure-added", before: "The valve is new and quiet.\n", text: "- **Purpose:** The valve is new.\n\nThe valve is new and quiet.\n", found: ["Purpose: The valve is new."], control: { before: "The valve is new.\n\nThe valve is new and quiet.\n", found: [] } },
   { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "## Overview\n\nText.\n", found: [], control: { from: "## Overview", to: "Overview.", found: ["Overview."] } },
-  { clause: "22a", limit: 2, check: "restructure-added", before: "Fix the pump.\n", text: "- **Purpose:** Fix the pump.\n", found: [], control: { from: "**Purpose:**", to: "Purpose", found: ["Purpose Fix the pump."] } },
+  { clause: "22a", limit: 1, check: "restructure-added", before: "Close the valve now.\n", text: "Close the valve today.\n", found: [], control: { from: "Close the valve today.", to: "Shut it.", found: ["Shut it."] } },
+  { clause: "22a", limit: 1, check: "restructure-added", before: "The Basic plan costs £5.\n", text: "| Plan | Price |\n|---|---|\n| Basic | £5 |\n", found: [], control: { before: "The Pro plan costs £15.\n", found: ["Plan", "Price", "Basic", "£5"] } },
+  { clause: "22a", limit: 2, check: "restructure-added", before: "Go.\n", text: "- **Purpose:** Go.\n", found: [], control: { from: "**Purpose:**", to: "Purpose", found: ["Purpose Go."] } },
   { clause: "22a", limit: 2, check: "restructure-added", before: "Text.\n", text: "Text.\n\n[Author needed: reader]\n", found: [], control: { from: "[Author needed: reader]", to: "Readers are fitters.", found: ["Readers are fitters."] } },
+  { clause: "20b", limit: 1, check: "restructure-rewritten", before: "Close the valve now.\n", text: "Close the valve today.\n", found: ["Close the valve today."], control: { from: "Close the valve today.", to: "Shut it.", found: [] } },
+  { clause: "20b", limit: 1, check: "restructure-rewritten", before: "Lead with the outcome.\n", text: "Opening states the outcome.\n", found: ["Opening states the outcome."], control: { from: "states", to: "states clearly", found: [] } },
+  { clause: "20b", limit: 1, check: "restructure-rewritten", before: "Close it.\n", text: "Close it!\n", found: ["Close it!"], control: { from: "it!", to: "now!", found: [] } },
+  { clause: "20b", limit: 1, check: "restructure-rewritten", before: "**Purpose:** Close the valve now.\n", text: "Close the valve today.\n", found: ["Close the valve today."], control: { before: "**Purpose:** Close it.\n", found: [] } },
+  { clause: "20b", limit: 2, check: "restructure-rewritten", before: "## Close the valve now\n\nText.\n", text: "## Close the valve today\n\nText.\n", found: [], control: { from: "## Close the valve today", to: "Close the valve today.", before: "Close the valve now.\n\nText.\n", found: ["Close the valve today."] } },
+  { clause: "20b", limit: 2, check: "restructure-rewritten", before: "```\nclose the valve now\n```\n", text: "```\nclose the valve today\n```\n", found: [], control: { from: "```\nclose the valve today\n```", to: "close the valve today", before: "close the valve now\n", found: ["close the valve today"] } },
+  { clause: "20b", limit: 2, check: "restructure-rewritten", before: "Close the valve now.\n", text: "Close the valve today.\n", authorText: "Close the valve today.\n", found: [], control: { authorText: "Something else.\n", found: ["Close the valve today."] } },
+  { clause: "20b", limit: 2, check: "restructure-rewritten", before: "Run step one now. Run step two now.\n", text: "Run step two today. Run step one today.\n", found: ["Run step one today.", "Run step two today."], control: { from: "Run step two today.", to: "Stop.", found: ["Run step one today."] } },
+  { clause: "20b", limit: 2, check: "restructure-rewritten", before: "Fit the seal. Check the lip. Close the valve now.\n", text: "Close the valve today. Fit the seal. Check the lip.\n", found: ["Close the valve today."], control: { from: "Close the valve today.", to: "Close the valve now.", found: [] } },
+  { clause: "20b", limit: 3, check: "restructure-rewritten", before: "The Basic plan costs £5.\n", text: "| Plan | Price |\n|---|---|\n| Basic | £5 |\n", found: ["The Basic plan costs £5."], control: { before: "The Pro plan costs £15.\n", found: [] } },
+  { clause: "20b", limit: 3, check: "restructure-rewritten", before: "The Basic plan costs £5.\n", text: "| Plan | Price | Owner | Region |\n|---|---|---|---|\n| Basic | £5 | Ann | North |\n", found: [], control: { from: " Owner | Region |\n|---|---|---|---|\n| Basic | £5 | Ann | North |", to: "\n|---|---|\n| Basic | £5 |", found: ["The Basic plan costs £5."] } },
+  { clause: "20b", limit: 3, check: "restructure-rewritten", before: "The Basic plan costs £5.\n\n| Plan |\n|---|\n", text: "| Plan | Price |\n|---|---|\n| Basic | £5 |\n", found: [], control: { before: "The Basic plan costs £5.\n", found: ["The Basic plan costs £5."] } },
+  { clause: "23a", limit: 1, check: "restructure-value", before: "Keep it below 5 bar.\n", text: "Keep it below the limit.\n", found: ["5"], control: { from: "the limit", to: "5 bar", found: [] } },
+  { clause: "23a", limit: 1, check: "restructure-value", before: "Run `npm test` before you merge.\n", text: "Run the tests before you merge.\n", found: ["npm test"], control: { from: "the tests", to: "`npm test`", found: [] } },
+  { clause: "23a", limit: 1, check: "restructure-value", before: "Close the valve. Keep it below 5 bar.\n", text: "Close the valve.\n\nThe limit is 5 bar.\n", found: [], control: { from: "5 bar", to: "6 bar", found: ["5"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "It takes 1,000 days now.\n", text: "It takes 1000 days today.\n", found: [], control: { from: "1000", to: "2000", found: ["1,000"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "It takes 5 days now.\n", text: "It takes five days today.\n", found: [], control: { from: "five", to: "several", found: ["5"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "It takes 2,5 days now.\n", text: "It takes 2.5 days today.\n", found: [], control: { from: "2.5", to: "25", found: ["2,5"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "Run `npm test` before you merge.\n", text: "Run the tests before you merge.\n\n```\nnpm test --watch\n```\n", found: [], control: { from: "npm test --watch", to: "npm tests", found: ["npm test"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "Read issue 22 today.\n", text: "---\nissue: 22\n---\n\nRead the issue today.\n", found: [], control: { from: "issue: 22", to: "issue: 23", found: ["22"] } },
+  { clause: "23a", limit: 3, check: "restructure-value", before: "The share is 0.5 now.\n", text: "The share is 50% today.\n", found: ["0.5"], control: { from: "50%", to: "0.50", found: [] } },
+  { clause: "23a", limit: 3, check: "restructure-value", before: "It takes five days now.\n", text: "It takes many days today.\n", found: [], control: { before: "It takes 5 days now.\n", found: ["5"] } },
+  { clause: "23a", limit: 3, check: "restructure-value", before: "Pass `--` before the name.\n", text: "Pass nothing before the name.\n", found: [], control: { before: "Pass `-x` before the name.\n", found: ["-x"] } },
+  { clause: "23a", limit: 3, check: "restructure-value", before: "## Step 4\n\nText.\n", text: "## Step five\n\nText.\n", found: [], control: { from: "## Step five", to: "Step five.", before: "Step 4.\n\nText.\n", found: ["4"] } },
+  { clause: "23a", limit: 3, check: "restructure-value", before: "Keep 5 bar now. Hold 5 bar later.\n", text: "Keep 5 bar now.\n", found: [], control: { before: "Keep 5 bar now. Hold 6 bar later.\n", found: ["6"] } },
   { clause: "25a", limit: 1, check: "provisional-label", text: "Our layout follows Part 5.\n", found: [], control: { from: "Part 5", to: "ISO 24495-5", found: [UNLABELLED] } },
   { clause: "25a", limit: 1, check: "provisional-label", text: "Run `iso-24495-5` on it.\n", found: [UNLABELLED], control: { from: "iso-24495-5", to: "iso-24495-4", found: [] } },
   { clause: "25a", limit: 1, check: "provisional-label", text: "Our layout follows ISO 24495-50.\n", found: [], control: { from: "24495-50", to: "24495-5", found: [UNLABELLED] } },
@@ -950,13 +998,18 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "15f": [1, 12, 19],
   "17a": [3, 11],
   "19b": [4, 2, 5],
-  "20a": [1, 4, 2],
+  "20a": [2, 4, 2],
+  "20b": [4, 5, 3, 0],
   "21a": [3, 2, 5, 2],
   "21b": [3, 5],
-  "22a": [2, 3],
-  "23b": [1, 4, 2],
+  "22a": [4, 3],
+  "23a": [3, 5, 5, 0],
+  "23b": [2, 4, 2],
   "25a": [9, 11, 11],
 };
+
+/** The test that shows the last limit of 20b and of 23a, which compares versions too large to weigh. */
+const WEIGHING_TEST = "past the weighing limit, the comparison pairs nothing, reads no table, lists no value and says so";
 
 /** The test that shows 15a's second limit, which runs both audits and reads what they print. */
 const PRINT_TEST = "a preview of either audit prints the opening-title finding, and a send that stops before it sends does not";
@@ -966,7 +1019,7 @@ const PRINT_TEST = "a preview of either audit prints the opening-title finding, 
  * clause and limit number, with the name of that test. Each has no limit
  * specimen.
  */
-const LIMITS_SHOWN_BY_A_TEST: Readonly<Record<string, string>> = { "15a.2": PRINT_TEST };
+const LIMITS_SHOWN_BY_A_TEST: Readonly<Record<string, string>> = { "15a.2": PRINT_TEST, "20b.4": WEIGHING_TEST, "23a.4": WEIGHING_TEST };
 
 /**
  * A digest of the limit specimens that back each limit, keyed by clause,
@@ -991,11 +1044,13 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "15f": ["463bba50c60651a7", "72c02ad5ffca09f8", "cbe52aeab5b5f019"],
   "17a": ["cfc121eded58bd56", "347357b868e06e98"],
   "19b": ["8d7374144d4bb978", "8e3c4f0d60d846d8", "a2f3adc83db9c51d"],
-  "20a": ["1d55b19365949e80", "694867c80cb848a9", "f2857480c3fb4e6d"],
+  "20a": ["33013b31c9957fad", "694867c80cb848a9", "07fa519e7ed2b7a3"],
+  "20b": ["eb1ab916de0f39e1", "27bfab238ead99db", "57cff3e6b60fcaf3", "4f53cda18c2baa0c"],
   "21a": ["3b17814a63e62b11", "3b754fa55057fc97", "0e60fa8f01851b96", "12d1c0838eff6d32"],
   "21b": ["e52f54e7545cd726", "b37773368f704475"],
-  "22a": ["0e4f938974d2501c", "0952c5bbd5bcde05"],
-  "23b": ["b9c14081a16f57c1", "22bbc5d504e85772", "9799b5f30bedb957"],
+  "22a": ["1224b0f4632021e6", "53d917c002246746"],
+  "23a": ["b23d11fe303c4398", "c947c9efb14baf64", "8845335f8979d3b5", "4f53cda18c2baa0c"],
+  "23b": ["a38dd81a0292b5e4", "22bbc5d504e85772", "98f759163397de5f"],
   "25a": ["e2349adc4cce5065", "7868d82e12361114", "722af960a8b0ab98"],
 };
 
@@ -1018,9 +1073,11 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "17a": "6371233b39f075a5",
   "19b": "44fdcbd1ca38383e",
   "20a": "a146fb876a677b53",
+  "20b": "f75b5601294ff0a5",
   "21a": "e5e214b5ae080f5c",
   "21b": "ca4561dc88636124",
   "22a": "0d7658fd5996b91b",
+  "23a": "f87806aa2421b71d",
   "23b": "a146fb876a677b53",
   "25a": "8147f5bfb7a185bc",
 };
@@ -1070,8 +1127,10 @@ function stubAnswer(question: string): unknown {
  * coverage counts, because a report lists no pass among its results. The
  * two-version comparison names `restructure-dropped` for the file after
  * when it drops a unit, `restructure-added` when it adds one,
- * `restructure-moved` when a kept unit moved, and `restructure-step-order`
- * when a kept unit of a step is out of order.
+ * `restructure-moved` when a kept unit moved, `restructure-step-order`
+ * when a kept unit of a step is out of order, `restructure-rewritten` when
+ * it pairs a reworded unit or reads one with a new table, and
+ * `restructure-value` when a value is not found.
  */
 function namedInReport(report: ReportJson): Map<string, Map<string, Check["kind"]>> {
   const named = new Map<string, Map<string, Check["kind"]>>();
@@ -1101,8 +1160,9 @@ function namedInReport(report: ReportJson): Map<string, Map<string, Check["kind"
 
 /**
  * The units a report's two-version comparison gives for each of its checks:
- * those dropped, those added, the kept units moved and the kept units of
- * steps out of order, each as its excerpt.
+ * those dropped, those added, the kept units moved, the kept units of steps
+ * out of order, and the units rewritten or read with a new table, each as
+ * its excerpt, then each value not found.
  */
 function restructureFindings(report: ReportJson): Array<[string, string[]]> {
   const restructure = report.restructure;
@@ -1112,6 +1172,8 @@ function restructureFindings(report: ReportJson): Array<[string, string[]]> {
     ["restructure-added", restructure.added.map(unit => unit.excerpt)],
     ["restructure-moved", restructure.moved.map(unit => unit.excerpt)],
     ["restructure-step-order", restructure.stepOrder.map(unit => unit.excerpt)],
+    ["restructure-rewritten", [...restructure.rewritten.map(pair => pair.excerpt), ...restructure.tables.map(table => table.excerpt)]],
+    ["restructure-value", restructure.values.map(value => value.value)],
   ];
 }
 
@@ -1159,6 +1221,9 @@ interface ReportJson {
     readonly added: ReadonlyArray<{ readonly excerpt: string }>;
     readonly moved: ReadonlyArray<{ readonly excerpt: string }>;
     readonly stepOrder: ReadonlyArray<{ readonly excerpt: string }>;
+    readonly rewritten: ReadonlyArray<{ readonly excerpt: string }>;
+    readonly tables: ReadonlyArray<{ readonly excerpt: string }>;
+    readonly values: ReadonlyArray<{ readonly value: string }>;
   };
 }
 
@@ -1456,6 +1521,8 @@ function limitFound(reading: LimitReading): string[] {
     const comparison = compareVersions(reading.before ?? "", reading.text ?? "", reading.authorText ?? null, reading.frontMatter === undefined ? {} : { frontMatter: reading.frontMatter });
     if (reading.check === "restructure-moved") return comparison.moved.map(pair => pair.after.key);
     if (reading.check === "restructure-step-order") return comparison.stepOrder.map(pair => pair.after.key);
+    if (reading.check === "restructure-rewritten") return [...comparison.rewritten.map(pair => pair.after.key), ...comparison.tables.map(table => table.sources[0]?.key ?? "")];
+    if (reading.check === "restructure-value") return comparison.values.map(value => value.value);
     return (reading.check === "restructure-dropped" ? comparison.dropped : comparison.added).map(unit => unit.key);
   }
   if (reading.answers !== undefined) {
@@ -1665,8 +1732,8 @@ describe("the Part 5 checklist clause registry", () => {
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 21 fault
-  // clauses, 252 cells, it compares the two runs on that clause's own
+  // one folder with its option and without it. For each of the 23 fault
+  // clauses, 276 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline
@@ -1676,7 +1743,7 @@ describe("the Part 5 checklist clause registry", () => {
   // What it does not establish: that the same holds on every input. It holds
   // for these specimens only, and it compares neither line numbers nor Jev
   // scores, only which Jev bands are named. No sweep gives --before, so the
-  // five clauses that need it are named on neither side; the sweep of
+  // seven clauses that need it are named on neither side; the sweep of
   // --author-text has a test of its own. On METADATA_PROBE,
   // --no-front-matter also changes what the link-text check of 12a and 19b
   // finds. The reading's claim of the clauses a run is set to use is about
@@ -1817,6 +1884,13 @@ describe("the Part 5 checklist clause registry", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  test(WEIGHING_TEST, () => {
+    const comparison = compareVersions("Close the valve 5 times.\n\n".repeat(2_500), "Close the valve now please.\n\n".repeat(2_500), null);
+    expect([comparison.weighed, comparison.rewritten.length, comparison.tables.length, comparison.values.length, comparison.dropped.length]).toEqual([false, 0, 0, 0, 2_500]);
+    const control = compareVersions("Close the valve 5 times.\n\n".repeat(1_000), "Close the valve now please.\n\n".repeat(1_000), null);
+    expect([control.weighed, control.rewritten.length, control.values.length, control.dropped.length]).toEqual([true, 1_000, 1_000, 0]);
   });
 
   test(PRINT_TEST, async () => {
