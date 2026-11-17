@@ -7,6 +7,16 @@ const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
 const OVERVIEW_LABEL = /^(?:overview|summary)$/i;
 const VERSION = /^(?:Version|Revision)\s*:?\s*v?\d+(?:\.\d+)+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
 const DATE_FIELD = /^(?:Date|Updated|Last updated|Reviewed)\s*:?\s*(.+)$/i;
+/**
+ * The wordings of a heading that promises to send the reader elsewhere, after
+ * `signpostWording`. Part 5 names related documents, other language versions
+ * and a person to ask. "References" lists sources, and "Next steps" carries on
+ * with this document, so neither is here.
+ */
+const SIGNPOST_LABELS: ReadonlySet<string> = new Set([
+  "related", "related documents", "related links", "related pages", "related reading", "related resources", "related topics",
+  "see also", "resources", "additional resources", "further reading", "other languages", "external links", "useful links", "links",
+]);
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 /**
  * What `layoutViolations` may be told besides the text. `fileName` exempts
@@ -16,7 +26,7 @@ export interface LayoutOptions extends Reading { fileName?: string }
 
 /**
  * The layout findings for one Markdown text: `opening-version-date`,
- * `bullet-depth`, `contents-list` and `overview-label`.
+ * `bullet-depth`, `empty-signpost`, `contents-list` and `overview-label`.
  *
  * The contents and overview rules apply only to a document with six or more
  * level-2 headings outside any list or quotation. The edition advisory
@@ -54,13 +64,200 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   for (const item of parsed.items) {
     if (item.depth > 2) findings.push({ rule: "bullet-depth", line: item.line, detail: `Unordered bullet depth ${item.depth} (limit 2). Flatten this item.` });
   }
+  // Before the section count below, which returns early for a short document.
+  for (const finding of emptySignpostViolations(text, parsed)) {
+    findings.push(finding);
+  }
   const sections = parsed.headings.filter(heading => heading.level === 2);
   if (sections.length < SECTION_LIMIT) return findings;
-  findings.push(...contentsFindings(parsed, sections, end));
+  // One finding for each contents link, too many to spread into one call.
+  for (const finding of contentsFindings(parsed, sections, end)) {
+    findings.push(finding);
+  }
   const firstContent = sections.find(heading => !CONTENTS_LABEL.test(label(heading.text)) && !OVERVIEW_LABEL.test(label(heading.text)));
   const overview = parsed.headings.some(heading => OVERVIEW_LABEL.test(label(heading.text)) && (firstContent === undefined || heading.line < firstContent.line));
   if (!overview) findings.push({ rule: "overview-label", line: start, detail: "Add an Overview or Summary heading before the first content section." });
   return findings;
+}
+
+/**
+ * The `empty-signpost` findings: each heading that promises a referral and
+ * has nothing beneath it.
+ *
+ * A heading is read when it sits outside every list and quotation and its
+ * whole wording, after `signpostWording`, is one of the signpost labels, such
+ * as "See also", "Related" or "Resources". Its section runs to the next such
+ * heading at its level or above, or to the end of the text.
+ *
+ * It reports a section only when it can tell that nothing in it shows, and
+ * counts every other form as content. So a form it does not know can cost a
+ * finding but never gives a false one. The section is empty when each
+ * stretch in it passes `stretchShowsNothing` and no deeper heading in it
+ * holds a link or an image.
+ *
+ * @param text The whole document, as `layoutViolations` was given it.
+ * @param parsed The structural reading of that text, as `structure` gives it.
+ * @returns One finding for each empty signpost, on the line its heading
+ *     starts, in document order. Empty when there is none.
+ */
+export function emptySignpostViolations(text: string, parsed: Pick<ReturnType<typeof structure>, "headings" | "markupLines" | "code">): Violation[] {
+  const { headings } = parsed;
+  const lines = toLines(text);
+  const codeStarts = new Set(parsed.code.map(block => block.line));
+  // Each stretch between one heading and the next is read at most once, and
+  // only when a signpost's section reaches it: 0 not yet read, 1 shows
+  // something, 2 shows nothing.
+  const read = new Int8Array(headings.length);
+  // Where each heading's section ends: the position of the next heading at
+  // its level or above. Each heading enters and leaves the stack once.
+  const sectionEnd = new Int32Array(headings.length).fill(headings.length);
+  const open: number[] = [];
+  headings.forEach((heading, position) => {
+    while (open.length > 0 && (headings[open[open.length - 1] ?? 0]?.level ?? 0) >= heading.level) {
+      sectionEnd[open.pop() ?? 0] = position;
+    }
+    open.push(position);
+  });
+  const findings: Violation[] = [];
+  headings.forEach((heading, position) => {
+    if (!SIGNPOST_LABELS.has(signpostWording(heading.text))) return;
+    // A stretch sits in the sections of at most six headings, one at each
+    // level, so no stretch or heading is read more than six times.
+    for (let stretch = position; stretch < (sectionEnd[position] ?? headings.length); stretch++) {
+      if (stretch > position && headingNamesDestination(lines, headings[stretch])) return;
+      if (read[stretch] === 0) read[stretch] = stretchShowsNothing(lines, parsed.markupLines, codeStarts, headings, stretch) ? 2 : 1;
+      if (read[stretch] === 1) return;
+    }
+    findings.push({
+      rule: "empty-signpost", line: heading.line,
+      detail: `The "${normaliseWording(heading.text)}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.`,
+    });
+  });
+  return findings;
+}
+
+/**
+ * Text a deeper heading's own lines hold when it may link somewhere: a
+ * bracket for a link, an image or a footnote, an angle bracket for HTML or
+ * an autolink, an address, or a web address with no brackets around it.
+ */
+const DESTINATION_MARK = /[[\]<>@]|:\/\/|www\./i;
+
+/**
+ * Whether a heading's own lines may hold a link or an image, which names
+ * somewhere to go. The structural reading's wording has lost link syntax, so
+ * the source lines are read instead, without a setext heading's underline.
+ */
+function headingNamesDestination(lines: readonly string[], heading: Heading | undefined): boolean {
+  if (heading === undefined) return true;
+  return lines.slice(heading.line - 1, heading.line - 1 + heading.lines).some(line => DESTINATION_MARK.test(line));
+}
+
+/** A line the parser reads as blank: spaces and tabs only. */
+const BLANK = /^[ \t]*$/;
+/** The start of an HTML comment block, as CommonMark has it. */
+const COMMENT_OPEN = /^ {0,3}<!--/;
+/** A thematic break, which a reader sees as a rule and nothing more. The parser's own pattern is not exported. */
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+/** The quotation markers at the start of a line, each with its optional space. */
+const QUOTE_MARKERS = /^(?: {0,3}> ?)+/;
+/**
+ * A character a reader can see: anything but white space, a control or format
+ * character, a character Unicode says to show as nothing, such as a zero-width
+ * space or a Hangul filler, or the blank braille pattern.
+ */
+const VISIBLE = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/u;
+
+/**
+ * Whether the lines between one heading and the next show a reader nothing.
+ * A setext heading's underline is part of the heading, not of the stretch.
+ *
+ * Each line must be one of these, and the structural reading must agree:
+ *
+ * - blank, with spaces and tabs only;
+ * - an HTML comment block, as `commentLine` reads it, which the structural
+ *   reading has blanked;
+ * - a link definition, which the structural reading has blanked and which
+ *   starts with a bracket;
+ * - a thematic break, after any quotation markers, which the structural
+ *   reading has left as written, unless a link definition is straight above;
+ * - text with no `VISIBLE` character and no NUL, left as written. A renderer
+ *   shows NUL as a replacement character.
+ *
+ * Any code block counts, so does a comment still open at the next heading,
+ * because then the structural reading and this one disagree. One still open
+ * at the end of the text runs to its end, as CommonMark has it.
+ *
+ * @param position Which heading the stretch follows, counted from 0.
+ */
+function stretchShowsNothing(
+  lines: readonly string[], markupLines: readonly string[], codeStarts: ReadonlySet<number>, headings: readonly Heading[], position: number,
+): boolean {
+  const heading = headings[position];
+  if (heading === undefined) return false;
+  const next = headings[position + 1];
+  const start = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0);
+  const end = next === undefined ? lines.length : next.line - 1;
+  let inComment = false;
+  // Whether the line above was a link definition. A renderer can read dashes
+  // straight below one as text, so they count.
+  let belowDefinition = false;
+  for (let index = start; index < end; index++) {
+    if (codeStarts.has(index + 1)) return false;
+    const source = lines[index] ?? "";
+    const markup = markupLines[index] ?? "";
+    const definitionAbove = belowDefinition;
+    belowDefinition = false;
+    if (inComment || COMMENT_OPEN.test(source)) {
+      const after = commentLine(source, inComment);
+      if (after === null || !BLANK.test(markup)) return false;
+      inComment = after.open;
+      continue;
+    }
+    if (BLANK.test(source)) continue;
+    if (BLANK.test(markup) && /^ {0,3}\[/.test(source)) {
+      belowDefinition = true;
+      continue;
+    }
+    if (markup !== source) return false;
+    if (!definitionAbove && THEMATIC_BREAK.test(source.replace(QUOTE_MARKERS, ""))) continue;
+    if (!VISIBLE.test(source) && !source.includes("\u0000")) continue;
+    return false;
+  }
+  return !inComment || next === undefined;
+}
+
+/**
+ * How one line of an HTML comment block reads. A comment ends at the first
+ * `-->`, and the line it ends on must hold nothing after it.
+ *
+ * @param open Whether a comment is open where the line starts. When it is
+ *     not, the line starts one.
+ * @returns Whether a comment is still open where the line ends. Null when
+ *     anything on the line could show: text or a second comment after the
+ *     end, or a comment a browser ends early, at `--!>` or at `<!-->`.
+ */
+function commentLine(source: string, open: boolean): { open: boolean } | null {
+  let from = 0;
+  if (!open) {
+    from = COMMENT_OPEN.exec(source)?.[0].length ?? 0;
+    if (source.startsWith(">", from) || source.startsWith("->", from)) return null;
+  }
+  const close = source.indexOf("-->", from);
+  if (source.slice(from, close === -1 ? source.length : close).includes("--!>")) return null;
+  if (close === -1) return { open: true };
+  return BLANK.test(source.slice(close + 3)) ? { open: false } : null;
+}
+
+/**
+ * A heading's wording in the form the signpost labels are written in.
+ *
+ * @returns The wording as `label` gives it, with any run of characters that
+ *     are neither letters nor numbers removed from each end, each run of
+ *     white space made one space, and every letter in lower case.
+ */
+function signpostWording(text: string): string {
+  return label(text).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").replace(/\s+/g, " ").toLowerCase();
 }
 
 /**

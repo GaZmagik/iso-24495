@@ -20,7 +20,7 @@ const RUN_FACT_KEYS = ["mode", "files", "markdownFiles", "refused", "frontMatter
 const NEED_NOTHING = ["1a", "6a", "12a", "12b", "12c", "13b", "19b", "25a"];
 
 /** The fault clauses of today's registry that need a Markdown file alone, in order. */
-const NEED_MARKDOWN = ["3a", "3b", "8c", "15f", "17a"];
+const NEED_MARKDOWN = ["3a", "3b", "8c", "15f", "17a", "19d"];
 
 /** The fault clauses of today's registry that need the original version, each unmet as no option but --before meets it. */
 const BEFORE_UNMET: Array<[string, readonly Need[]]> = [["20a", ["before"]], ["20b", ["before"]], ["21a", ["before"]], ["21b", ["before"]], ["22a", ["before"]], ["23a", ["before"]], ["23b", ["before"]]];
@@ -75,11 +75,11 @@ function unmet(facts: RunFacts): Array<[string, readonly Need[]]> {
 }
 
 describe("the tool reading counts every clause of the registry", () => {
-  test("today's registry has 64 clauses, 23 of them in the fault state, read as 0.36", () => {
+  test("today's registry has 64 clauses, 24 of them in the fault state, read as 0.38", () => {
     const reading = checklistReading(CHECKLIST, PLAIN_MARKDOWN);
     expect(reading.clauses).toBe(64);
-    expect(reading.reading).toBe("0.36");
-    expect(reading.tool).toEqual({ fault: 23, passOnly: 1, needsTwoVersions: 7, notCheckable: 1, notRead: 32 });
+    expect(reading.reading).toBe("0.38");
+    expect(reading.tool).toEqual({ fault: 24, passOnly: 1, needsTwoVersions: 7, notCheckable: 1, notRead: 31 });
   });
 
   test("the tool reading is the same whatever the run", () => {
@@ -92,7 +92,7 @@ describe("the tool reading counts every clause of the registry", () => {
         };
         const reading = checklistReading(CHECKLIST, facts);
         expect([reading.clauses, reading.reading, reading.tool]).toEqual([first.clauses, first.reading, first.tool]);
-        expect(reading.run.used.length + reading.run.notUsed.length).toBe(23);
+        expect(reading.run.used.length + reading.run.notUsed.length).toBe(24);
       }
     }
   });
@@ -120,9 +120,9 @@ describe("the tool reading counts every clause of the registry", () => {
 });
 
 describe("the this-run reading uses the fault clauses whose needs the run meets", () => {
-  test("a plain text audit of a Markdown file uses 13, and leaves the title and purpose to the Jev route", () => {
+  test("a plain text audit of a Markdown file uses 14, and leaves the title and purpose to the Jev route", () => {
     const reading = checklistReading(CHECKLIST, PLAIN_MARKDOWN);
-    expect(reading.run.used).toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "25a"]);
+    expect(reading.run.used).toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "19d", "25a"]);
     expect(unmet(PLAIN_MARKDOWN)).toEqual([["15a", ["jev-route"]], ["15c", ["jev-route", "send"]], ["15d", ["jev-route", "send"]], ...BEFORE_UNMET]);
   });
 
@@ -131,7 +131,7 @@ describe("the this-run reading uses the fault clauses whose needs the run meets"
     expect(checklistReading(CHECKLIST, facts).run.used).toEqual(NEED_NOTHING);
     expect(unmet(facts)).toEqual([
       ["3a", ["markdown"]], ["3b", ["markdown"]], ["8c", ["markdown"]], ["15a", ["markdown", "jev-route"]],
-      ["15c", ["markdown", "jev-route", "send"]], ["15d", ["markdown", "jev-route", "send"]], ["15f", ["markdown"]], ["17a", ["markdown"]], ...BEFORE_UNMET,
+      ["15c", ["markdown", "jev-route", "send"]], ["15d", ["markdown", "jev-route", "send"]], ["15f", ["markdown"]], ["17a", ["markdown"]], ["19d", ["markdown"]], ...BEFORE_UNMET,
     ]);
   });
 
@@ -150,14 +150,14 @@ describe("the this-run reading uses the fault clauses whose needs the run meets"
     expect(unmet(run({ mode: "design" }))).toEqual([["15c", ["send"]], ["15d", ["send"]], ...BEFORE_UNMET]);
     expect(unmet(run({ mode: "design", send: true }))).toEqual(BEFORE_UNMET);
     expect(checklistReading(CHECKLIST, run({ mode: "design", send: true })).run.used)
-      .toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15a", "15c", "15d", "15f", "17a", "19b", "25a"]);
+      .toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15a", "15c", "15d", "15f", "17a", "19b", "19d", "25a"]);
   });
 
   test("the plain text audit given --before uses the seven clauses that need the original version", () => {
     const reading = checklistReading(CHECKLIST, run({ before: true }));
-    expect(reading.run.used).toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "20a", "20b", "21a", "21b", "22a", "23a", "23b", "25a"]);
+    expect(reading.run.used).toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "19d", "20a", "20b", "21a", "21b", "22a", "23a", "23b", "25a"]);
     expect(unmet(run({ before: true }))).toEqual([["15a", ["jev-route"]], ["15c", ["jev-route", "send"]], ["15d", ["jev-route", "send"]]]);
-    expect(formatted(CHECKLIST, run({ before: true })).split("\n")[1]).toBe("This run was set to use 20 of the 23. 1 needs the Jev route. 2 need the Jev route and --send.");
+    expect(formatted(CHECKLIST, run({ before: true })).split("\n")[1]).toBe("This run was set to use 21 of the 24. 1 needs the Jev route. 2 need the Jev route and --send.");
     expect(checklistReading(CHECKLIST, run({ before: true, markdownFiles: 0 })).run.used).toEqual(["1a", "6a", "12a", "12b", "12c", "13b", "19b", "20a", "20b", "21a", "21b", "22a", "23a", "23b", "25a"]);
   });
 
@@ -186,7 +186,7 @@ describe("front matter read as text, a mixed selection and a refused document ea
     ]);
     expect(unmet(run({ frontMatter: false, markdownFiles: 0 })).find(entry => entry[0] === "15f")).toEqual(["15f", ["markdown", "front-matter"]]);
     expect(formatted(CHECKLIST, run({ frontMatter: false })).split("\n")[1])
-      .toBe("This run was set to use 12 of the 23. 1 needs the Jev route. 2 need the Jev route and --send. 1 needs front matter to be read. 7 need the original version.");
+      .toBe("This run was set to use 13 of the 24. 1 needs the Jev route. 2 need the Jev route and --send. 1 needs front matter to be read. 7 need the original version.");
   });
 
   test("a selection of Markdown and other files names the files the Markdown clauses do not reach", () => {
@@ -194,9 +194,9 @@ describe("front matter read as text, a mixed selection and a refused document ea
     expect(mixed.run.filesNotReached).toBe(2);
     expect(mixed.run.used).toEqual(checklistReading(CHECKLIST, PLAIN_MARKDOWN).run.used);
     expect(formatChecklistReading(mixed, CHECKLIST).split("\n")[1])
-      .toBe("This run was set to use 13 of the 23. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version. 2 selected files are not Markdown, so the 5 that need a Markdown file do not reach them.");
+      .toBe("This run was set to use 14 of the 24. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version. 2 selected files are not Markdown, so the 6 that need a Markdown file do not reach them.");
     expect(formatted(CHECKLIST, run({ mode: "design", send: true, files: 2, markdownFiles: 1 })).split("\n")[1])
-      .toBe("This run was set to use 16 of the 23. 7 need the original version. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it.");
+      .toBe("This run was set to use 17 of the 24. 7 need the original version. 1 selected file is not Markdown, so the 9 that need a Markdown file do not reach it.");
   });
 
   test("a selection with no Markdown file, or no file, adds no sentence about the files not reached", () => {
@@ -212,14 +212,14 @@ describe("front matter read as text, a mixed selection and a refused document ea
     const preview = checklistReading(CHECKLIST, run({ mode: "design", refused: 1 }));
     expect(preview.run.documentsNotSent).toBe(1);
     expect(formatChecklistReading(preview, CHECKLIST).split("\n")[1])
-      .toBe("This run was set to use 14 of the 23. 2 need --send. 7 need the original version. 1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.");
+      .toBe("This run was set to use 15 of the 24. 2 need --send. 7 need the original version. 1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.");
     expect(formatted(CHECKLIST, run({ mode: "design", send: true, files: 2, markdownFiles: 2, refused: 2 })).split("\n")[1])
-      .toBe("This run was set to use 16 of the 23. 7 need the original version. 2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.");
+      .toBe("This run was set to use 17 of the 24. 7 need the original version. 2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.");
   });
 
   test("a refused document beside a .txt file in a text Jev run names both", () => {
     expect(formatted(CHECKLIST, run({ jev: true, send: true, files: 3, markdownFiles: 2, refused: 1 })).split("\n")[1])
-      .toBe("This run was set to use 16 of the 23. 7 need the original version. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it. "
+      .toBe("This run was set to use 17 of the 24. 7 need the original version. 1 selected file is not Markdown, so the 9 that need a Markdown file do not reach it. "
         + "1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.");
   });
 
@@ -264,21 +264,21 @@ describe("the function reads the registry and the run facts, and nothing else", 
 describe("the printed reading is four lines in plain words", () => {
   test("a plain text audit of a Markdown file", () => {
     expect(formatted(CHECKLIST, PLAIN_MARKDOWN).split("\n")).toEqual([
-      "Part 5 checklist reading: checks can report a fault on 23 of 64 clauses (0.36), each within recorded limits.",
-      "This run was set to use 13 of the 23. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version.",
-      "Of the other 41 clauses: 1 can only pass, 7 need the original version and have no check yet, 1 is a judgement, 32 are not read.",
+      "Part 5 checklist reading: checks can report a fault on 24 of 64 clauses (0.38), each within recorded limits.",
+      "This run was set to use 14 of the 24. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version.",
+      "Of the other 40 clauses: 1 can only pass, 7 need the original version and have no check yet, 1 is a judgement, 31 are not read.",
       "This reading shows what the audit reads. It does not measure the document.",
     ]);
   });
 
   test("a run that uses every fault clause says so", () => {
     expect(formatted(CHECKLIST, run({ mode: "design", send: true })).split("\n")[1])
-      .toBe("This run was set to use 16 of the 23. 7 need the original version.");
+      .toBe("This run was set to use 17 of the 24. 7 need the original version.");
   });
 
   test("unused clauses are grouped by what they still need, in the order they first appear", () => {
     expect(formatted(CHECKLIST, run({ markdownFiles: 0 })).split("\n")[1])
-      .toBe("This run was set to use 8 of the 23. 5 need a Markdown file. 1 needs a Markdown file and the Jev route. 2 need a Markdown file, the Jev route and --send. 7 need the original version.");
+      .toBe("This run was set to use 8 of the 24. 6 need a Markdown file. 1 needs a Markdown file and the Jev route. 2 need a Markdown file, the Jev route and --send. 7 need the original version.");
     const probe = registry([{ state: "fault", needs: ["fact:audience", "before"] }, { state: "fault", needs: ["before"] }, { state: "fault", needs: ["before"] }]);
     expect(formatted(probe, PLAIN_MARKDOWN).split("\n")[1])
       .toBe("This run was set to use 0 of the 3. 1 needs the declared fact audience and the original version. 2 need the original version.");
@@ -339,21 +339,21 @@ describe("the printed reading is four lines in plain words", () => {
 // The tests below run both audits as a user would, with a stand-in for the
 // transport, and pin what they print with literal lines.
 
-const LINE_1 = "Part 5 checklist reading: checks can report a fault on 23 of 64 clauses (0.36), each within recorded limits.";
-const LINE_3 = "Of the other 41 clauses: 1 can only pass, 7 need the original version and have no check yet, 1 is a judgement, 32 are not read.";
+const LINE_1 = "Part 5 checklist reading: checks can report a fault on 24 of 64 clauses (0.38), each within recorded limits.";
+const LINE_3 = "Of the other 40 clauses: 1 can only pass, 7 need the original version and have no check yet, 1 is a judgement, 31 are not read.";
 const LINE_4 = "This reading shows what the audit reads. It does not measure the document.";
-const PLAIN_LINE_2 = "This run was set to use 13 of the 23. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version.";
-const PREVIEW_LINE_2 = "This run was set to use 14 of the 23. 2 need --send. 7 need the original version.";
-const SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version.";
-const TEXT_FILE_LINE_2 = "This run was set to use 8 of the 23. 5 need a Markdown file. 1 needs a Markdown file and the Jev route. 2 need a Markdown file, the Jev route and --send. 7 need the original version.";
-const NO_FRONT_MATTER_LINE_2 = "This run was set to use 12 of the 23. 1 needs the Jev route. 2 need the Jev route and --send. 1 needs front matter to be read. 7 need the original version.";
-const MIXED_LINE_2 = "This run was set to use 13 of the 23. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version. 1 selected file is not Markdown, so the 5 that need a Markdown file do not reach it.";
-const MIXED_PREVIEW_LINE_2 = "This run was set to use 14 of the 23. 2 need --send. 7 need the original version. 1 selected file is not Markdown, so the 6 that need a Markdown file do not reach it.";
-const REFUSED_PREVIEW_LINE_2 = "This run was set to use 14 of the 23. 2 need --send. 7 need the original version. 1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.";
-const REFUSED_SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version. 1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
-const REFUSED_MIXED_PREVIEW_LINE_2 = "This run was set to use 14 of the 23. 2 need --send. 7 need the original version. 1 selected file is not Markdown, so the 6 that need a Markdown file do not reach it. "
+const PLAIN_LINE_2 = "This run was set to use 14 of the 24. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version.";
+const PREVIEW_LINE_2 = "This run was set to use 15 of the 24. 2 need --send. 7 need the original version.";
+const SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version.";
+const TEXT_FILE_LINE_2 = "This run was set to use 8 of the 24. 6 need a Markdown file. 1 needs a Markdown file and the Jev route. 2 need a Markdown file, the Jev route and --send. 7 need the original version.";
+const NO_FRONT_MATTER_LINE_2 = "This run was set to use 13 of the 24. 1 needs the Jev route. 2 need the Jev route and --send. 1 needs front matter to be read. 7 need the original version.";
+const MIXED_LINE_2 = "This run was set to use 14 of the 24. 1 needs the Jev route. 2 need the Jev route and --send. 7 need the original version. 1 selected file is not Markdown, so the 6 that need a Markdown file do not reach it.";
+const MIXED_PREVIEW_LINE_2 = "This run was set to use 15 of the 24. 2 need --send. 7 need the original version. 1 selected file is not Markdown, so the 7 that need a Markdown file do not reach it.";
+const REFUSED_PREVIEW_LINE_2 = "This run was set to use 15 of the 24. 2 need --send. 7 need the original version. 1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.";
+const REFUSED_SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version. 1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
+const REFUSED_MIXED_PREVIEW_LINE_2 = "This run was set to use 15 of the 24. 2 need --send. 7 need the original version. 1 selected file is not Markdown, so the 7 that need a Markdown file do not reach it. "
   + "1 selected file is not sent because of its front matter, so the 1 that needs the Jev route does not reach it.";
-const TEXT_FILE_ROUTE_LINE_2 = "This run was set to use 8 of the 23. 6 need a Markdown file. 2 need a Markdown file and --send. 7 need the original version.";
+const TEXT_FILE_ROUTE_LINE_2 = "This run was set to use 8 of the 24. 7 need a Markdown file. 2 need a Markdown file and --send. 7 need the original version.";
 
 /** A Markdown document with a title, an opening and one block, so a send makes three requests. */
 const GUIDE = "# Guide\n\nThis guide helps you fix the pump.\n\nRed text marks the risky steps.\n";
@@ -482,10 +482,10 @@ describe("both audits print the reading after the mechanical findings", () => {
       expect(compared.exit).toBe(0);
       expect(compared.out).toHaveLength(3);
       expect(compared.out[1]).toStartWith("Restructure comparison: ");
-      expect(compared.out[2]).toBe(printedReading("This run was set to use 20 of the 23. 1 needs the Jev route. 2 need the Jev route and --send."));
+      expect(compared.out[2]).toBe(printedReading("This run was set to use 21 of the 24. 1 needs the Jev route. 2 need the Jev route and --send."));
       const report = JSON.parse(readFileSync(json, "utf8"));
       expect(Object.keys(report)).toEqual(["configHash", "files", "totals", "skipped", "restructure", "checklist"]);
-      expect(report.checklist.run.used).toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "20a", "20b", "21a", "21b", "22a", "23a", "23b", "25a"]);
+      expect(report.checklist.run.used).toEqual(["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "19d", "20a", "20b", "21a", "21b", "22a", "23a", "23b", "25a"]);
     });
   });
 
@@ -648,10 +648,10 @@ describe("a Jev route run that stops after its mechanical findings print has alr
 describe("the --json report of each audit gains a checklist key, and nothing else", () => {
   const plainChecklist = {
     clauses: 64,
-    reading: "0.36",
-    tool: { fault: 23, passOnly: 1, needsTwoVersions: 7, notCheckable: 1, notRead: 32 },
+    reading: "0.38",
+    tool: { fault: 24, passOnly: 1, needsTwoVersions: 7, notCheckable: 1, notRead: 31 },
     run: {
-      used: ["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "25a"],
+      used: ["1a", "3a", "3b", "6a", "8c", "12a", "12b", "12c", "13b", "15f", "17a", "19b", "19d", "25a"],
       notUsed: [{ clause: "15a", needs: ["jev-route"] }, { clause: "15c", needs: ["jev-route", "send"] }, { clause: "15d", needs: ["jev-route", "send"] }, ...BEFORE_NOT_USED],
       filesNotReached: 0,
       documentsNotSent: 0,
@@ -677,7 +677,7 @@ describe("the --json report of each audit gains a checklist key, and nothing els
       const preview = JSON.parse(readFileSync(json, "utf8"));
       expect(Object.keys(preview)).toEqual(["mechanical", "jev", "preview", "checklist"]);
       expect(preview.checklist.run).toEqual({
-        used: [...plainChecklist.run.used.slice(0, 9), "15a", "15f", "17a", "19b", "25a"], notUsed: [{ clause: "15c", needs: ["send"] }, { clause: "15d", needs: ["send"] }, ...BEFORE_NOT_USED],
+        used: [...plainChecklist.run.used.slice(0, 9), "15a", "15f", "17a", "19b", "19d", "25a"], notUsed: [{ clause: "15c", needs: ["send"] }, { clause: "15d", needs: ["send"] }, ...BEFORE_NOT_USED],
         filesNotReached: 0, documentsNotSent: 0,
       });
       expect((await designAudit([join(directory, "doc.md"), "--project-dir", directory, "--send", "--yes", "--json", json], stubbed(NEITHER, [], []))).exit).toBe(0);
@@ -813,15 +813,15 @@ interface SendCase {
   readonly line2: string;
 }
 
-const TWO_REFUSED_SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version. 2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.";
-const ONE_TEXT_FILE_SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it.";
-const TEXT_FILES_AND_REFUSED_SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version. 2 selected files are not Markdown, so the 8 that need a Markdown file do not reach them. "
+const TWO_REFUSED_SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version. 2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.";
+const ONE_TEXT_FILE_SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version. 1 selected file is not Markdown, so the 9 that need a Markdown file do not reach it.";
+const TEXT_FILES_AND_REFUSED_SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version. 2 selected files are not Markdown, so the 9 that need a Markdown file do not reach them. "
   + "1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
-const TEXT_FILE_AND_REFUSED_SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it. "
+const TEXT_FILE_AND_REFUSED_SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version. 1 selected file is not Markdown, so the 9 that need a Markdown file do not reach it. "
   + "1 selected file is not sent because of its front matter, so the 3 that need the Jev route do not reach it.";
-const TEXT_FILE_AND_TWO_REFUSED_SEND_LINE_2 = "This run was set to use 16 of the 23. 7 need the original version. 1 selected file is not Markdown, so the 8 that need a Markdown file do not reach it. "
+const TEXT_FILE_AND_TWO_REFUSED_SEND_LINE_2 = "This run was set to use 17 of the 24. 7 need the original version. 1 selected file is not Markdown, so the 9 that need a Markdown file do not reach it. "
   + "2 selected files are not sent because of their front matter, so the 3 that need the Jev route do not reach them.";
-const ONLY_TEXT_FILES_SEND_LINE_2 = "This run was set to use 8 of the 23. 8 need a Markdown file. 7 need the original version.";
+const ONLY_TEXT_FILES_SEND_LINE_2 = "This run was set to use 8 of the 24. 9 need a Markdown file. 7 need the original version.";
 
 /** Design sends of a folder. The design audit reads no .txt file, so none is selected. */
 const DESIGN_SENDS: readonly SendCase[] = [

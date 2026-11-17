@@ -114,10 +114,11 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 ## Audit proxy notes
 
-The text audit adds four local Markdown layout rules; they are recognition proxies rather than claims of ISO conformance.
+The text audit adds five local Markdown layout rules; they are recognition proxies rather than claims of ISO conformance.
 Its six-section trigger counts root H2 headings, including Contents, and ignores H3 headings and headings inside lists or quotations.
 Contents may cover part of the document in a different order, using lists, paragraphs, tables or resolved reference links.
 Wording mismatches are checked only at six sections, against resolved H2 targets.
+An empty signpost is reported at any section count: a referral heading such as See also with nothing beneath it.
 
 The version or date proxy asks whether a titled document needs edition metadata when none is recognised.
 Standalone lines, metadata table rows, final parenthesised title suffixes and accessible badge text qualify.
