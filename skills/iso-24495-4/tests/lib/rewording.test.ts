@@ -150,6 +150,13 @@ describe("a reworded unit is paired with its original", () => {
     expect(copies.dropped.map(unit => unit.line)).toEqual([3]);
   });
 
+  test("two units sharing one word do not pair, even where that word is the rarer word of each", () => {
+    const apart = compareVersions("Close valves.\n\nShut valves.\n\nFix valves.\n", "Close pumps.\n\nRun pumps.\n\nTest pumps.\n", null);
+    expect(rewritten(apart)).toEqual([]);
+    const together = compareVersions("Close the valves.\n\nShut valves.\n\nFix valves.\n", "Close the pumps.\n\nRun pumps.\n\nTest pumps.\n", null);
+    expect(rewritten(together)).toEqual([["Close the valves.", "Close the pumps.", 2, 3]]);
+  });
+
   test("taking the closest pair first can make fewer pairs than another pairing would", () => {
     // Pairing the first with the second new unit, and the second with the first, would make two pairs.
     const comparison = compareVersions("Close the red valve now.\n\nShut the red valve today.\n", "Close the red valve today.\n\nClose the blue pump now.\n", null);
@@ -265,6 +272,7 @@ describe("a value of the original that the new version does not hold", () => {
 
   test("a code span that stands only inside a longer word is listed", () => {
     expect(lost("Use `a-b` now.\n", "Use xa-b and a today.\n")).toEqual(["a-b"]);
+    expect(lost("Use `a-b` now.\n", "Use a-bc and b today.\n")).toEqual(["a-b"]);
     expect(lost("Use `a-b` now.\n", "Use a-b and a today.\n")).toEqual([]);
   });
 
@@ -365,6 +373,20 @@ describe("a unit turned into a new table", () => {
       counts({ tables: 1, added: 1 }),
       ...TAIL,
     ]);
+  });
+
+  test("a unit is read with a table only with at least half, and at least two, of its different words there", () => {
+    // A quarter of the unit's twelve different words is in the table, and every word of the table is from the unit.
+    expect(compareVersions("The Basic plan costs £5 per month for every user in the team.\n", "| Plan | Basic | £5 |\n|---|---|---|\n", null).tables).toEqual([]);
+    expect(compareVersions("The Basic plan costs £5 now.\n", "| Plan | Basic | £5 |\n|---|---|---|\n", null).tables.map(table => table.sources.length)).toEqual([1]);
+    // One word is too few, even when it is all the unit holds.
+    expect(compareVersions("Done.\n", "| Done | Done |\n|---|---|\n", null).tables).toEqual([]);
+    expect(compareVersions("Done twice.\n", "| Done | twice |\n|---|---|\n", null).tables.map(table => table.sources.length)).toEqual([1]);
+  });
+
+  test("a table of one unit is not a new table, however many of a unit's words it holds", () => {
+    expect(compareVersions("Basic plan now.\n", "| plan plan plan basic basic |\n|---|\n", null).tables).toEqual([]);
+    expect(compareVersions("Basic plan now.\n", "| plan plan plan basic basic | x |\n|---|---|\n", null).tables.map(table => table.cells.length)).toEqual([2]);
   });
 
   test("two units turned into one new table print one row, which says each shares at least half of its words with it", () => {
@@ -514,12 +536,15 @@ describe("on random documents", () => {
     const subjects = ["valve", "pump", "seal", "gauge"];
     const verbs = ["Close", "Open", "Check", "Fit"];
     const tails = ["now", "today", "with care", "at once", "before noon"];
-    const numbers = ["5", "12", "1,000", "2.5", "50%"];
-    // Each number written another way that holds the same value.
-    const sameValue: Readonly<Record<string, readonly string[]>> = { "5": ["five", "05"], "12": ["twelve"], "1,000": ["1000", "one thousand", "1 000"], "2.5": ["2,5"], "50%": ["50 per cent", "fifty per cent"] };
+    const numbers = ["5", "12", "1,000", "2.5", "50%", "10.30", "09"];
+    // Each number written another way that holds the same value, by its runs of digits or by a month's name too.
+    const sameValue: Readonly<Record<string, readonly string[]>> = {
+      "5": ["five", "05"], "12": ["twelve", "Dec"], "1,000": ["1000", "one thousand", "1 000"], "2.5": ["2,5", "2 - 5"], "50%": ["50 per cent", "fifty per cent"], "10.30": ["10:30", "10, 30"], "09": ["September", "9"],
+    };
     const spans = ["npm test", "make all", "x=1"];
     let paired = 0;
     let listed = 0;
+    let tablesRead = 0;
     for (let trial = 0; trial < 600; trial++) {
       const count = 2 + Math.floor(random() * 6);
       const drawn = Array.from({ length: count }, () => {
@@ -547,14 +572,18 @@ describe("on random documents", () => {
         return random() < 0.5 ? sentence : `${pick(verbs, random)} it.`;
       });
       const doubled = random() < 0.3 ? [...changed, changed[0] ?? ""] : changed;
+      // One sentence with its words split across the cells of a new table, as Part 5's plans example splits one.
+      const split = doubled.length > 1 && random() < 0.35 ? Math.floor(random() * doubled.length) : -1;
+      const rest = doubled.filter((unused, index) => index !== split);
       const asList = random() < 0.35;
       const asTable = !asList && random() < 0.25;
       const heading = random() < 0.3 ? `## ${pick(verbs, random)} the ${pick(subjects, random)}\n\n` : "";
-      const body = asTable ? `| Step |\n|---|\n${doubled.map(sentence => `| ${sentence} |`).join("\n")}\n` : `${doubled.map(sentence => (asList ? `- ${sentence}` : sentence)).join("\n\n")}\n`;
+      const body = asTable ? `| Step |\n|---|\n${rest.map(sentence => `| ${sentence} |`).join("\n")}\n` : `${rest.map(sentence => (asList ? `- ${sentence}` : sentence)).join("\n\n")}\n`;
+      const splitTable = split === -1 ? "" : `\n${splitIntoTable(doubled[split] ?? "")}`;
       const block = moved.length > 0 ? `\n\`\`\`\n${moved.join("\n")}\n\`\`\`\n` : "";
       const ends = random() < 0.25 ? "\r\n" : "\n";
       const before = `${random() < 0.3 ? `## ${pick(verbs, random)} the ${pick(subjects, random)}\n\n` : ""}${sentences.join("\n\n")}\n`.replaceAll("\n", ends);
-      const after = `${heading}${body}${block}`.replaceAll("\n", ends);
+      const after = `${heading}${body}${splitTable}${block}`.replaceAll("\n", ends);
       const comparison = compareVersions(before, after, null);
       const label = JSON.stringify([before, after]);
       // Every unit of either version not kept, as the comparison held them before it paired any.
@@ -563,6 +592,7 @@ describe("on random documents", () => {
       const made = comparison.rewritten.map(pair => [pair.before.line, pair.before.key, pair.after.line, pair.after.key]);
       expect(made, label).toEqual(pairsByHand(left, over).map(([one, other]) => [one.line, one.key, other.line, other.key]));
       paired += made.length;
+      tablesRead += comparison.tables.length;
       // Each value of a unit not kept that nothing in the new version could be read as must be listed.
       const listedHere = new Set(comparison.values.map(value => `${value.unit.line} ${value.unit.key} ${value.value}`));
       for (const unit of [...comparison.dropped.filter(isProse), ...comparison.rewritten.map(pair => pair.before), ...comparison.tables.flatMap(table => table.sources)]) {
@@ -577,8 +607,16 @@ describe("on random documents", () => {
     // The run must exercise both checks, or it tests nothing.
     expect(paired).toBeGreaterThan(300);
     expect(listed).toBeGreaterThan(100);
+    expect(tablesRead).toBeGreaterThan(10);
   });
 });
+
+/** A sentence's words two to a cell, as the header row of a new table. */
+function splitIntoTable(sentence: string): string {
+  const words = sentence.replace(/\.$/, "").split(" ");
+  const cells = Array.from({ length: Math.ceil(words.length / 2) }, (unused, index) => words.slice(2 * index, 2 * index + 2).join(" "));
+  return `| ${cells.join(" | ")} |\n|${cells.map(() => "---").join("|")}|\n`;
+}
 
 /** Whether a unit can be paired or hold a value looked for, for the random documents here, which hold no slot. */
 function isProse(unit: Unit): boolean {
@@ -655,7 +693,7 @@ function figuresOutside(text: string, codes: readonly string[]): string[] {
 }
 
 /** English number words, any of which could hold a number's value. */
-const NUMBER_WORD = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred|thousand|million|half)\b/i;
+const NUMBER_WORD = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred|thousand|million|half|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\b/i;
 
 /**
  * Whether nothing in the new version could be read as a value: for code, its
