@@ -341,8 +341,24 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     item: 21,
     line: "- [ ] **Safe moves:** Did every moved sentence or block keep its dependencies, its order against neighbouring steps, and the claim it qualifies?",
     clauses: [
-      { id: "21a", demand: "Every moved sentence or block keeps its dependencies.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
-      { id: "21b", demand: "Every moved sentence or block keeps its order against neighbouring steps.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "21a", demand: "Every moved sentence or block keeps its dependencies.", state: "fault",
+        checks: [{ rule: "restructure-moved", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It lists each unit kept word for word that now stands outside the longest order the kept units share with the original, for a person to check. A unit of a step out of order against the other steps of its list is listed by 21b's check instead, and not also here. It does not read whether a moved unit keeps what it depends on, except that a moved sentence, list item or table cell opening with `This`, `It` or `These` gets a question about what that word refers to. The same rows are where to look for 21c, which no check reads. A row clears only when the unit is back in its original order against the units kept around it.",
+          "Where two orders keep as many units, it names the unit that stood first in the original, so of two sentences that swap places, the first is listed. Otherwise it names the part with fewer kept units, so when a heading and the text beside it change places, the heading can be the unit listed. Units next to each other in both versions share one row, and only the first of them gets the question.",
+          "Copies of one text pair by whole wording first, and no comparison keeps fewer units than whole wording alone, nor fewer in order when it keeps as many. When repeated wording and labels both change, a unit that another pairing would keep in place can read as moved. When a label passes between two copies of a sentence, the pairs cross, and the copy that stood first in the original is named, labelled or not. A short text that stands more than once, such as a number in a table, can pair with a copy beside another label, so a value moved to another row reads as moved, and the row cannot tell that from a move of the label. When the copies of repeated texts would need more than 1,000,000 pairings, the texts with the most copies pair in document order, so a copy added or dropped can make another read as moved.",
+          "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as dropped and added, not as moved. A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
+        ],
+      },
+      {
+        id: "21b", demand: "Every moved sentence or block keeps its order against neighbouring steps.", state: "fault",
+        checks: [{ rule: "restructure-step-order", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It reads a step as an item of an ordered list in the original, with everything the item holds: its paragraphs, bullets, tables, headings and code. It reports each kept unit of a step that now stands in another order against the kept units of the other steps of its list, wherever it now stands, in a list or not. Units that change places inside one step are listed as moved instead. A unit it reports is not also listed as moved. A row clears when the steps keep their original order, whatever their numbers or markers.",
+          "It does not read steps written as prose, such as `First, open the box. Then lift the lid.`, or numbers typed into a paragraph, so a sequence that is an ordered list only in the new version is read as moved. Of two steps that swap places, it names the one with fewer kept units. When they have as many, it names one outside the longest order of the whole document, and otherwise the one that stood first in the original. When repeated wording and labels both change, a step that another pairing would keep in order can read as out of order. A unit is read against the 10 innermost ordered lists around it and no more.",
+        ],
+      },
       { id: "21c", demand: "Every moved sentence or block keeps the claim it qualifies.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
     ],
   },
@@ -441,9 +457,10 @@ export type ClauseState = "fault" | "pass-only" | "not-read" | "needs-two-versio
 /**
  * A rule or a Jev gate that can report on a clause. An offline rule is named
  * as its findings name it. The two-version comparison reports the units it
- * dropped and those it added, named here `restructure-dropped` and
- * `restructure-added`. A Jev gate is named by its identifier in the
- * calibration record.
+ * dropped, those it added, the kept units it moved and the kept units of
+ * steps out of order, named here `restructure-dropped`, `restructure-added`,
+ * `restructure-moved` and `restructure-step-order`. A Jev gate is named by
+ * its identifier in the calibration record.
  */
 export interface Check {
   readonly rule: string;
