@@ -51,11 +51,11 @@ describe("calibrated engine", () => {
   test("plans every repository-owned specimen exactly as the plan pin records", () => {
     const planned = planPinEntries();
     expect(Object.keys(planned), PIN_REBUILD).toEqual(Object.keys(PLAN_PIN));
-    expect(Object.keys(planned).length).toBeGreaterThanOrEqual(342);
+    expect(Object.keys(planned).length).toBeGreaterThanOrEqual(348);
     const changed = Object.keys(planned).filter(name => JSON.stringify(planned[name]) !== JSON.stringify(PLAN_PIN[name]));
     expect(changed, PIN_REBUILD).toEqual([]);
     const requests = Object.values(planned).reduce((sum, record) => sum + record.candidates.length, 0);
-    expect(requests, "the pin must hold requests to protect").toBeGreaterThan(342);
+    expect(requests, "the pin must hold requests to protect").toBeGreaterThan(348);
   });
   test("the plan pin's rebuild command reproduces its fixture, and writes it when told nowhere", () => {
     const fixture = join(import.meta.dir, "../../fixtures/plan-pin.ts");

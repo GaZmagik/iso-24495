@@ -1,6 +1,7 @@
 import { markdownLinks, normaliseReference, structure, toLines, type Heading, type Reading } from "./parse.ts";
 import type { Violation } from "./types.ts";
 import { renderInline } from "./inline-wording.ts";
+import { adjacentAlertViolations } from "./alerts.ts";
 
 const SECTION_LIMIT = 6;
 const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
@@ -26,7 +27,8 @@ export interface LayoutOptions extends Reading { fileName?: string }
 
 /**
  * The layout findings for one Markdown text: `opening-version-date`,
- * `bullet-depth`, `empty-signpost`, `contents-list` and `overview-label`.
+ * `bullet-depth`, `empty-signpost`, `adjacent-alerts`, `contents-list` and
+ * `overview-label`.
  *
  * The contents and overview rules apply only to a document with six or more
  * level-2 headings outside any list or quotation. The edition advisory
@@ -66,6 +68,9 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
   }
   // Before the section count below, which returns early for a short document.
   for (const finding of emptySignpostViolations(text, parsed)) {
+    findings.push(finding);
+  }
+  for (const finding of adjacentAlertViolations(text, parsed)) {
     findings.push(finding);
   }
   const sections = parsed.headings.filter(heading => heading.level === 2);
