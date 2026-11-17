@@ -153,8 +153,10 @@ It reads no unit from front matter, a raw HTML block such as `<pre>`, or the alt
 A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.
 
 A number counts as held where the new version holds the same value in figures or in English words.
-It also counts as held where the same runs of digits stand with only marks or spaces between them, as `10:30` holds `10.30`.
-That holds even inside a longer figure, so `0.3.1` holds `0.3`, and any `one` holds 1. A month's name that opens with a capital holds the month's number.
+A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
+Between each run and the next there may be at most three marks or spaces, as in `10:30`, and they must stand in one unit or one line.
+That holds even inside a longer figure, so `0.3.1` holds `0.3`, and any `one` holds 1.
+A month's name, in full or cut to three letters, holds the month's number when it opens with a capital.
 
 A code span counts as held only where its exact text stands, so `<thinking>` that becomes `thinking` is listed.
 Values are looked for in the whole new file, front matter, HTML and link destinations included.

@@ -310,7 +310,7 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "restructure-value", kind: "offline" }], needs: ["before"],
     limits: [
       "It reads a value as a number written in figures, or the text of a code span, in a sentence, list item, table cell or image alternative of the original that has no unchanged copy in the new version. It lists each value the new version does not hold, for a person to check, and does not read whether a value it finds kept its meaning or its place.",
-      "A number counts as held where the new version holds the same value in figures, with or without marks grouping its digits in threes, such as `1,000` and `1000`, or with either a full stop or a comma as its decimal point. It also counts as held in English words, such as `five`, `twenty-five` or `fifth`, wherever they stand, so any `one` holds 1. It counts as held where its runs of digits stand in the same order with only marks or spaces between them, even inside a longer figure, so `10:30` holds `10.30` and `0.3.1` holds `0.3`. A month's name that opens with a capital holds the month's number, so `September` holds `09`, and a sentence opening with `May` holds `5`. A code span counts as held where its text stands in the new version, in a code span or not, and not inside a longer word. It reads the whole new file for this, front matter, HTML and link destinations included.",
+      "A number counts as held where the new version holds the same value in figures, with or without marks grouping its digits in threes, such as `1,000` and `1000`, or with either a full stop or a comma as its decimal point. It also counts as held in English words, such as `five`, `twenty-five` or `fifth`, wherever they stand, so any `one` holds 1. A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order in one unit or one line, with at most three marks or spaces between each and the next. That holds even inside a longer figure, so `10:30` holds `10.30` and `0.3.1` holds `0.3`, but `10 --- 30` does not. A month's name that opens with a capital, in full or cut to three letters, holds the month's number, so `September` and `Sep` hold `09`, and a sentence opening with `May` holds `5`. A code span counts as held where its text stands in the new version, in a code span or not, and not inside a longer word. It reads the whole new file for this, front matter, HTML and link destinations included.",
       "A value written another way is listed, as when `0.5` becomes `50%` or `half`, or `4.2` becomes `4 point 2`. A code span's marks are part of its text, so `<thinking>` that becomes `thinking` is listed. A number written only in words in the original, such as `five`, is not read, nor is a code span holding no letter or digit, such as `--`, nor a value in a heading or a code block. A value counts as held however many times it stood in the original, so cutting one of two copies of it lists nothing, and a value not held is listed once for each unit it stood in.",
       "When its searches for pairs, tables and values would take more than 20,000,000 steps, as when the original holds 2,500 copies of one sentence and the new version 2,500 copies of a sentence rewording it, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
     ],
@@ -991,6 +991,9 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "23a", limit: 2, check: "restructure-value", before: "Use version 0.3 now.\n", text: "Use version 0.3.1 today.\n", found: [], control: { from: "0.3.1", to: "0.4.1", found: ["0.3"] } },
   { clause: "23a", limit: 2, check: "restructure-value", before: "Released on 2026-09-28 now.\n", text: "Released on 28 September 2026 today.\n", found: [], control: { from: "September", to: "october", found: ["09"] } },
   { clause: "23a", limit: 2, check: "restructure-value", before: "Due in 2026-05 now.\n", text: "May it be due in 2026, then.\n", found: [], control: { from: "May it", to: "may it", found: ["05"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "Pick 3,4 now.\n", text: "Pick 3 - 4 today.\n", found: [], control: { from: "3 - 4", to: "3 --- 4", found: ["3,4"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "Due on 2026-09-28 now.\n", text: "Due on 28 Sep 2026 today.\n", found: [], control: { from: "Sep", to: "sep", found: ["09"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "Read page 13 now.\n", text: "Read page 1.13.0 today.\n", found: ["13"], control: { from: "1.13.0", to: "13", found: [] } },
   { clause: "23a", limit: 3, check: "restructure-value", before: "The share is 0.5 now.\n", text: "The share is 50% today.\n", found: ["0.5"], control: { from: "50%", to: "0.50", found: [] } },
   { clause: "23a", limit: 3, check: "restructure-value", before: "It takes five days now.\n", text: "It takes many days today.\n", found: [], control: { before: "It takes 5 days now.\n", found: ["5"] } },
   { clause: "23a", limit: 3, check: "restructure-value", before: "Pass `--` before the name.\n", text: "Pass nothing before the name.\n", found: [], control: { before: "Pass `-x` before the name.\n", found: ["-x"] } },
@@ -1060,7 +1063,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "21a": [3, 2, 5, 2],
   "21b": [3, 5],
   "22a": [4, 3],
-  "23a": [3, 10, 8, 0],
+  "23a": [3, 13, 8, 0],
   "23b": [2, 4, 2],
   "25a": [9, 11, 11],
 };
@@ -1107,7 +1110,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "21a": ["3b17814a63e62b11", "3b754fa55057fc97", "0e60fa8f01851b96", "12d1c0838eff6d32"],
   "21b": ["e52f54e7545cd726", "b37773368f704475"],
   "22a": ["1224b0f4632021e6", "53d917c002246746"],
-  "23a": ["b23d11fe303c4398", "01c87c8ee92007de", "4d78b41dc52a75ba", "4f53cda18c2baa0c"],
+  "23a": ["b23d11fe303c4398", "821d7953cfbe8fb4", "4d78b41dc52a75ba", "4f53cda18c2baa0c"],
   "23b": ["a38dd81a0292b5e4", "22bbc5d504e85772", "98f759163397de5f"],
   "25a": ["e2349adc4cce5065", "7868d82e12361114", "722af960a8b0ab98"],
 };
