@@ -79,7 +79,7 @@ const REWORDED_KINDS: ReadonlySet<UnitKind> = new Set(["sentence", "item", "cell
 const WEIGHED_LINE = "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.";
 
 /** What the printed comparison says when its searches passed `WEIGHING_BUDGET`. */
-const NOT_WEIGHED_LINE = "It found too many shared words to weigh, so it paired no reworded unit, read no new table and traced no value.";
+const NOT_WEIGHED_LINE = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
 
 /**
  * How many pairings of repeated texts the comparison weighs, at most, when
@@ -696,7 +696,8 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
   const sources = new Set(read.flatMap(table => table.sources));
   const cells = new Set(read.flatMap(table => table.cells));
   const dropped = stillDropped.filter(unit => !sources.has(unit));
-  const found = foundIn(comparison.after.map(unit => unit.key), afterSource, meter);
+  // Built only once a value needs it, so a comparison with no value to trace reads nothing more.
+  let found: Found | null = null;
   const checked: Array<{ unit: Unit; after: number | null; table: number }> = [
     ...dropped.filter(isReworded).map(unit => ({ unit, after: null, table: -1 })),
     ...pairs.map(pair => ({ unit: pair.before, after: pair.after.line, table: -1 })),
@@ -709,6 +710,7 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
   const values: MissingValue[] = [];
   for (const { unit, after, table } of checked) {
     for (const value of valuesOf(unit)) {
+      found ??= foundIn(comparison.after.map(other => other.key), afterSource, meter);
       const anywhere = valueFound(value, found);
       const inTable = table === -1 ? false : valueFound(value, inTables[table] ?? found);
       if (anywhere === null || inTable === null) return unweighed;

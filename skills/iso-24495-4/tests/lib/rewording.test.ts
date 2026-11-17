@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { compareVersions, comparisonReport, formatComparison, type Comparison, type Unit } from "../../scripts/lib/restructure.ts";
-import { figureValues, foundIn, numberWords, pairReworded, wordsOf, WEIGHING_BUDGET, type Meter } from "../../scripts/lib/rewording.ts";
+import { compareUnits, compareVersions, comparisonReport, formatComparison, type Comparison, type Unit } from "../../scripts/lib/restructure.ts";
+import { figureFound, figureValues, foundIn, numberWords, pairReworded, wordsOf, WEIGHING_BUDGET, type Meter } from "../../scripts/lib/rewording.ts";
 
 /** The paths every printed comparison here names. */
 const PATHS = { before: "old.md", after: "new.md", authorText: null };
@@ -15,7 +15,7 @@ const TAIL = [
 ];
 
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
-const NOT_WEIGHED = "It found too many shared words to weigh, so it paired no reworded unit, read no new table and traced no value.";
+const NOT_WEIGHED = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
 
 /** The printed comparison of two texts. */
 function printed(before: string, after: string): string[] {
@@ -50,6 +50,11 @@ function meter(limit = WEIGHING_BUDGET): Meter {
   return { spent: 0, limit };
 }
 
+/** A sentence unit for each text, each a paragraph of its own, as a file of them separated by blank lines would give. */
+function sentencesOf(texts: readonly string[]): Unit[] {
+  return texts.map((key, index) => ({ kind: "sentence", line: 2 * index + 1, key, block: index }));
+}
+
 /** The steps pairing `count` reworded units takes, each unit pairing once. */
 function spentFor(count: number): number {
   const before = Array.from({ length: count }, (unused, index) => ({ kind: "sentence" as const, line: index + 1, key: `Step ${index} now.`, block: index }));
@@ -70,7 +75,11 @@ function seeded(seed: number): () => number {
   };
 }
 
-/** One of the items, drawn from `random`. */
+/**
+ * One of the items, drawn from `random`.
+ *
+ * @throws {Error} When there are no items.
+ */
 function pick<T>(items: readonly T[], random: () => number): T {
   const item = items[Math.floor(random() * items.length)];
   if (item === undefined) throw new Error("pick needs at least one item");
@@ -229,6 +238,29 @@ describe("a value of the original that the new version does not hold", () => {
     }
   });
 
+  test("a figure is found where its runs of digits stand in the same order with only marks or spaces between them", () => {
+    const sameRuns: Array<[string, string]> = [["3,4", "3, 4"], ["10.30", "10:30"], ["2026-09-28", "2026/09/28"], ["1.2.3", "1 - 2 - 3"], ["4.2", "4|2"], ["3,4", "3,\n4"]];
+    for (const [figure, written] of sameRuns) {
+      expect(lost(`Use ${figure} now.\n`, `Use ${written} today.\n`), `${figure} written as ${written}`).toEqual([]);
+    }
+    // A word between the runs, other runs or another order is not the same figure.
+    const notSame: Array<[string, string, string[]]> = [["4.2", "4 point 2", ["4.2"]], ["2.5", "2.7", ["2.5"]], ["10.30", "30.10", ["10.30"]], ["0.7.0", "0.7", ["0.7.0"]]];
+    for (const [figure, written, listed] of notSame) {
+      expect(lost(`Use ${figure} now.\n`, `Use ${written} today.\n`), `${figure} written as ${written}`).toEqual(listed);
+    }
+  });
+
+  test("a date's month is found as the month's name, in full or cut to three letters", () => {
+    expect(lost("Released on 2026-09-28 now.\n", "Released on 28 September 2026 today.\n")).toEqual([]);
+    expect(lost("Released on 28/09/2026 now.\n", "Released on 28 Sep 2026 today.\n")).toEqual([]);
+    expect(lost("Released on 2026-09-28 now.\n", "Released on 28 October 2026 today.\n")).toEqual(["09"]);
+  });
+
+  test("a code span that stands only inside a longer word is listed", () => {
+    expect(lost("Use `a-b` now.\n", "Use xa-b and a today.\n")).toEqual(["a-b"]);
+    expect(lost("Use `a-b` now.\n", "Use a-b and a today.\n")).toEqual([]);
+  });
+
   test("a code span is compared exactly, and a number inside one is not read on its own", () => {
     expect(lost("Set `limit=1,000` now.\n", "Set `limit=1000` now.\n")).toEqual(["limit=1,000"]);
     expect(lost("Set `limit=1000` now.\n", "Set `limit=1000` today.\n")).toEqual([]);
@@ -245,6 +277,7 @@ describe("a value of the original that the new version does not hold", () => {
   test("a code span in a table cell keeps an escaped pipe as the cell shows it", () => {
     expect(lost("| Command |\n|---|\n| Run `a \\| b` now |\n", "| Command |\n|---|\n| Run it |\n")).toEqual(["a | b"]);
     expect(lost("| Command |\n|---|\n| Run `a \\| b` now |\n", "Use a | b instead.\n")).toEqual([]);
+    expect(lost("Set `a|b` now.\n", "| Command | Use |\n|---|---|\n| `a\\|b` | yes |\n")).toEqual([]);
   });
 
   test("a value in a code block, a heading, a slot or a kept unit is not checked", () => {
@@ -287,6 +320,7 @@ describe("number words and figures", () => {
     expect([...numberWords("It took twenty-five days, then one hundred and five, then a third.")].sort()).toEqual(["1", "100", "105", "20", "25", "3", "5"]);
     expect([...numberWords("Two thousand and ten people; the second.")].sort()).toEqual(["10", "1000", "2", "2000", "2010"]);
     expect([...numberWords("No numbers here.")]).toEqual([]);
+    expect([...numberWords("Due in Sep, or by May, or in SEPTEMBER, but not in a separate month.")].sort()).toEqual(["5", "9"]);
   });
 
   test("a figure is read with either mark as the decimal point where the other groups digits in threes", () => {
@@ -358,6 +392,32 @@ describe("weighing has a limit", () => {
     expect(comparisonReport(comparison, PATHS).weighed).toBe(false);
     const under = compareVersions("Close the valve 5 times.\n\n".repeat(1_000), "Close the valve now please.\n\n".repeat(1_000), null);
     expect([under.weighed, under.rewritten.length]).toEqual([true, 1_000]);
+  });
+
+  test("a lookup that passes the limit answers null, and a comparison whose value search does so weighs nothing", () => {
+    expect(foundIn(["A line holding w and x and more words."], "", meter(5)).code("w-x")).toBeNull();
+    const runs = foundIn(["Open at 10:30."], "", meter(0));
+    expect(runs.runs(["10", "30"])).toBeNull();
+    const figure = figureValues("10.30", [])[0];
+    expect(figure === undefined ? "no figure" : figureFound(figure, runs)).toBeNull();
+    // Ten code spans whose words stand in every one of 2,000 long lines, and whose text stands in none.
+    const codes = ["w-x", "x-w", "w.x", "x.w", "w/x", "x/w", "w:x", "x:w", "w+x", "x+w"];
+    const before = codes.map(code => `Run \`${code}\` now.`).join("\n\n");
+    const line = `Then ${"w and x and y and z, ".repeat(48)}end.`;
+    const comparison = compareVersions(`${before}\n`, `${Array.from({ length: 2_000 }, () => line).join("\n\n")}\n`, null);
+    expect([comparison.weighed, comparison.values.length, comparison.dropped.length]).toEqual([false, 0, 10]);
+    const fewer = compareVersions(`${before}\n`, `${Array.from({ length: 20 }, () => line).join("\n\n")}\n`, null);
+    expect([fewer.weighed, fewer.values.length]).toEqual([true, 10]);
+  });
+
+  test("two versions of 100,000 units each, alike but for one reworded unit, are weighed, and the reworded unit pairs", () => {
+    const keys = Array.from({ length: 100_000 }, (unused, index) => `Sentence ${index} says the valve shuts before the pump starts.`);
+    const same = compareUnits(sentencesOf(keys), sentencesOf(keys), [], keys.join("\n\n"));
+    expect([same.weighed, same.kept.length, same.rewritten.length, same.values.length]).toEqual([true, 100_000, 0, 0]);
+    const changed = [...keys];
+    changed[500] = "Sentence 500 says the valve shuts before the pump starts again.";
+    const one = compareUnits(sentencesOf(keys), sentencesOf(changed), [], changed.join("\n\n"));
+    expect([one.weighed, one.kept.length, one.rewritten.length, one.values.length, one.dropped.length, one.added.length]).toEqual([true, 99_999, 1, 0, 0, 0]);
   });
 
   test("pairing 100,000 reworded units takes steps in proportion to their words", () => {

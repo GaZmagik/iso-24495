@@ -11,23 +11,28 @@
 // And each number and code span of a unit not kept is looked for in the
 // whole new version.
 //
-// Every search here counts its steps on one meter. Past the meter's limit the
-// comparison uses none of what was found, so a finding never rests on a
-// search that stopped partway.
+// Every search here that can grow faster than the files it reads counts its
+// steps on one meter. Past the meter's limit the comparison uses none of what
+// was found, so a finding never rests on a search that stopped partway.
 
 import type { CodeSpan, Unit } from "./restructure.ts";
 
 /**
- * How many steps the searches of one comparison may take: each word read,
- * each entry of an index visited and each word compared counts one.
+ * How many steps the searches of one comparison may take: each entry of an
+ * index visited, each word compared between two units, and each character
+ * read while looking for a code span counts one. Building the indexes is not
+ * counted, because it reads each text once.
  */
 export const WEIGHING_BUDGET = 20_000_000;
 
 /** An escaped pipe, which a table shows as a pipe. */
-export const PIPE_ESCAPE = "\\|";
+export const PIPE_ESCAPE = String.raw`\|`;
 
 /** A figure, as `figureValues` reads one. */
 const FIGURE = /\d{1,3}(?:[ \u00A0\u202F]\d{3})+(?!\d|[.,]\d)|\d+(?:[.,]\d+)*/g;
+
+/** Runs of digits with at most three characters between each and the next, none of them a letter, a digit or a line break. */
+const SEQUENCE = /\d+(?:[^\p{L}\p{N}\r\n]{1,3}\d+)*/gu;
 
 /** The space that joins the groups of a figure such as `1 000`. */
 const SPACE_GROUP = /[ \u00A0\u202F]/;
@@ -40,6 +45,13 @@ const SMALL_NUMBERS: ReadonlyMap<string, number> = new Map([
     .map((word, value): [string, number] => [word, value]),
   ...["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"].map((word, index): [string, number] => [word, 20 + 10 * index]),
   ...["twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth"].map((word, index): [string, number] => [word, 20 + 10 * index]),
+]);
+
+/** The names of the months, in full and cut to three letters, and their numbers. */
+const MONTHS: ReadonlyMap<string, number> = new Map([
+  ...["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+    .flatMap((month, index): Array<[string, number]> => [[month, index + 1], [month.slice(0, 3), index + 1]]),
+  ["sept", 9],
 ]);
 
 /** English words for a hundred and more, with ordinals, and their values. */
@@ -77,12 +89,20 @@ export interface FigureValue {
   readonly readings: ReadonlySet<string>;
   /** For a figure grouped by spaces, such as `1 000`, the readings of each group; empty otherwise. */
   readonly groups: ReadonlyArray<ReadonlySet<string>>;
+  /** Its runs of digits, each without leading zeros, so `10.30` has `10` and `30`. */
+  readonly runs: readonly string[];
 }
 
 /** What the new version holds, to look a value up in. */
 export interface Found {
   /** Whether the new version holds a number with one of these readings, in figures or in words. */
   number(readings: ReadonlySet<string>): boolean;
+  /**
+   * Whether the new version holds these runs of digits in this order, with
+   * only marks or spaces between them, or null when the meter passed its
+   * limit while looking.
+   */
+  runs(runs: readonly string[]): boolean | null;
   /** Whether the new version holds this text anywhere, or null when the meter passed its limit while looking. */
   code(text: string): boolean | null;
 }
@@ -108,9 +128,8 @@ export interface Found {
 export function pairReworded(before: readonly Unit[], after: readonly Unit[], meter: Meter): ReworkedPair[] | null {
   const tokens = new Map<string, number>();
   const frequency: number[] = [];
-  const beforeTokens = before.map(unit => tokensOf(unit, tokens, frequency, meter));
-  const afterTokens = after.map(unit => tokensOf(unit, tokens, frequency, meter));
-  if (meter.spent > meter.limit) return null;
+  const beforeTokens = before.map(unit => tokensOf(unit, tokens, frequency));
+  const afterTokens = after.map(unit => tokensOf(unit, tokens, frequency));
   const index = new Map<number, number[]>();
   for (const [position, held] of beforeTokens.entries()) {
     for (const token of rarestFirst(held, frequency).slice(0, prefixLength(held.length))) {
@@ -173,7 +192,6 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
   const tableWords = tables.map(cells => new Set(cells.flatMap(cell => wordsOf(withoutLabel(cell)))));
   const tablesWith = new Map<string, number[]>();
   for (const [position, words] of tableWords.entries()) {
-    meter.spent += words.size;
     for (const word of words) {
       appendTo(tablesWith, word, position);
     }
@@ -185,7 +203,7 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
     const touched: number[] = [];
     for (const word of words) {
       const holding = tablesWith.get(word) ?? [];
-      meter.spent += 1 + holding.length;
+      meter.spent += holding.length;
       for (const position of holding) {
         if (counts[position] === 0) touched.push(position);
         counts[position] = (counts[position] ?? 0) + 1;
@@ -208,11 +226,10 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
     const words = tableWords[position] ?? new Set<string>();
     if (read.length === 0) continue;
     const from = new Set(read.flatMap(unit => wordsOf(withoutLabel(unit))));
-    meter.spent += from.size + words.size;
     const held = [...words].filter(word => from.has(word)).length;
     if (2 * held >= words.size) found.push({ sources: read, cells: tables[position] ?? [] });
   }
-  return meter.spent > meter.limit ? null : found;
+  return found;
 }
 
 /**
@@ -220,7 +237,10 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
  * front matter, HTML and link destinations included.
  *
  * A number is found when one of its readings is the reading of a figure the
- * text holds, or the value of English number words it holds. A code span is
+ * text holds, or the value of English number words it holds, or when the
+ * text holds its runs of digits in the same order with only marks or spaces
+ * between them, so `10.30` is found in `10:30` and `3,4` in `3, 4`. Each
+ * place a figure's first run stands counts one step on the meter. A code span is
  * found when its text stands in a unit or a line of the text, and not inside
  * a longer word, so `pre` is not found in `prefix`. One holding no letter or
  * digit counts as found, because such text stands almost anywhere and the
@@ -234,8 +254,10 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
   const lines = [...keys, ...source.split(/\r\n|\r|\n/).map(line => line.trim().replace(/\s+/gu, " "))];
   // A table shows an escaped pipe as a pipe, inside a code span too, so each text is also read that way.
   const texts = [...lines, ...lines.filter(line => line.includes(PIPE_ESCAPE)).map(line => line.replaceAll(PIPE_ESCAPE, "|"))];
+  // Each run of digits that has only marks or spaces between it and the next, by its digits, so a figure is found by its runs.
+  const sequences: string[][] = [];
+  const startingWith = new Map<string, Array<[number, number]>>();
   for (const text of [...keys, source]) {
-    meter.spent += text.length;
     for (const figure of figureValues(text, [])) {
       for (const reading of [...figure.readings, ...figure.groups.flatMap(group => [...group])]) {
         numbers.add(reading);
@@ -244,11 +266,17 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
     for (const value of numberWords(text)) {
       numbers.add(value);
     }
+    for (const match of text.matchAll(SEQUENCE)) {
+      const runs = digitRuns(match[0]);
+      for (const [offset, run] of runs.entries()) {
+        appendTo(startingWith, run, [sequences.length, offset]);
+      }
+      sequences.push(runs);
+    }
   }
   // Each text, by the words it holds, so a code span is looked for only where its rarest word stands.
   const holding = new Map<string, number[]>();
   for (const [position, text] of texts.entries()) {
-    meter.spent += text.length;
     for (const word of new Set(wordsOf(text))) {
       appendTo(holding, word, position);
     }
@@ -256,6 +284,12 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
   const answers = new Map<string, boolean | null>();
   return {
     number: readings => [...readings].some(reading => numbers.has(reading)),
+    runs: runs => {
+      const places = startingWith.get(runs[0] ?? "") ?? [];
+      meter.spent += places.length;
+      if (meter.spent > meter.limit) return null;
+      return places.some(([sequence, offset]) => runs.every((run, step) => sequences[sequence]?.[offset + step] === run));
+    },
     code: text => {
       const known = answers.get(text);
       if (known !== undefined) return known;
@@ -283,9 +317,15 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
   };
 }
 
-/** Whether a figure is found by its readings or, when it is grouped by spaces, by each of its groups. */
-export function figureFound(figure: FigureValue, found: Found): boolean {
-  return found.number(figure.readings) || figure.groups.length > 0 && figure.groups.every(group => found.number(group));
+/**
+ * Whether a figure is found by its readings, by its runs of digits when it
+ * has two or more, or, when it is grouped by spaces, by each of its groups.
+ *
+ * @returns Null when the meter passed its limit while looking for its runs.
+ */
+export function figureFound(figure: FigureValue, found: Found): boolean | null {
+  if (found.number(figure.readings) || figure.groups.length > 0 && figure.groups.every(group => found.number(group))) return true;
+  return figure.runs.length > 1 ? found.runs(figure.runs) : false;
 }
 
 /**
@@ -315,6 +355,7 @@ export function figureValues(text: string, spans: readonly CodeSpan[]): FigureVa
       start: match.index,
       readings: groups.length > 1 ? new Set([canonical(groups.join(""), "")]) : readingsOf(written),
       groups: groups.length > 1 ? groups.map(readingsOf) : [],
+      runs: digitRuns(written),
     });
   }
   return figures;
@@ -324,7 +365,8 @@ export function figureValues(text: string, spans: readonly CodeSpan[]): FigureVa
  * The values English number words in a text give: each word's own, and the
  * value of each run of them so far, so `twenty-five` gives 20, 5 and 25,
  * and `one hundred and five` gives 1, 100, 5 and 105. Ordinals count, so
- * `third` gives 3. Letter case is ignored.
+ * `third` gives 3. A month's name, in full or cut to three letters, gives
+ * its number, so `September` and `Sep` give 9. Letter case is ignored.
  */
 export function numberWords(text: string): Set<string> {
   const values = new Set<string>();
@@ -342,6 +384,8 @@ export function numberWords(text: string): Set<string> {
     if (word === "and" && inRun) continue;
     const small = SMALL_NUMBERS.get(word);
     const scale = SCALES.get(word);
+    const month = MONTHS.get(word);
+    if (month !== undefined) values.add(String(month));
     if (small === undefined && scale === undefined) {
       inRun = false;
       continue;
@@ -399,7 +443,7 @@ function prefixLength(count: number): number {
  *
  * @returns The unit's tokens in ascending order.
  */
-function tokensOf(unit: Unit, tokens: Map<string, number>, frequency: number[], meter: Meter): number[] {
+function tokensOf(unit: Unit, tokens: Map<string, number>, frequency: number[]): number[] {
   const seen = new Map<string, number>();
   const held: number[] = [];
   for (const word of wordsOf(withoutLabel(unit))) {
@@ -414,7 +458,6 @@ function tokensOf(unit: Unit, tokens: Map<string, number>, frequency: number[], 
     frequency[token] = (frequency[token] ?? 0) + 1;
     held.push(token);
   }
-  meter.spent += held.length;
   return held.sort((first, second) => first - second);
 }
 
@@ -454,6 +497,11 @@ function readingsOf(figure: string): Set<string> {
   }
   if (readings.size === 0) readings.add(figure);
   return readings;
+}
+
+/** The runs of digits of a text, each without leading zeros. */
+function digitRuns(text: string): string[] {
+  return (text.match(/\d+/g) ?? []).map(run => run.replace(/^0+(?=\d)/, ""));
 }
 
 /** Adds a value to the list a map holds under a key, starting the list when there is none. */
