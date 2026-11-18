@@ -202,11 +202,16 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       ["<div>\n<details>\n</div>\n\n", ""],
       ["<div></div>\n```\n<details>\n```\n\n", ""],
       ["<script>let tag = \"<details>\";\n\n", ""],
-      // Raw text runs to its own end tag, so the alerts between are text.
-      ["Text <style>\n\n", "\n</style>\n"],
-      ["Text <script>\n\n", ""],
-      ["Text <style>\n[x]: </style>\n\n", ""],
-      ["Text <style></style foo>\n\n", ""],
+      // GitHub shows a script, style or textarea tag as text, so a tag inside one is read.
+      ["Text <script>\n<details>\n</script>\n\n", ""],
+      ["<script>\n<details>\n</script>\n\n", ""],
+      ["<textarea>\n<div>\n</textarea>\n\n", ""],
+      ["<script>\nlet tag = \"<details>\";\n</script>\n\n", ""],
+      // A raw block opened by a tag that ends on a later line, and a CDATA section, run on over blank lines.
+      ["<script\n  id=\"y\">\n\n", ""],
+      ["<![CDATA[\n<details>\n\n", ""],
+      // An end tag of pre closes only the innermost pre.
+      ["<pre>\n<pre>\n<details>\n</pre>\n\n", ""],
       // A comment Markdown does not end, or one that seems to run over a blank line, may hide a tag.
       ["Text <!-- open\n\n", ""],
       ["Text <!-- a\n\n<details>\n\n# Head -->\n\n", ""],
@@ -230,9 +235,6 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       // CommonMark ends a comment only at `-->`, and a raw block at any of its end tags, even inside a comment.
       ["<!-- a --!>\n\n", ""],
       ["<pre>\n<!-- </pre> -->\n\n", ""],
-      // Markdown reads the text inside raw text, so its end tag may be a link destination.
-      ["Text <script>\n[x](</script>)\n\n", ""],
-      ["Text <style>x</script> y\n\n", ""],
       // An end tag of an element Markdown writes for a block may close Markdown's own.
       ["Text <li>\n- Item </li>\n\n", ""],
       // A label of a full reference, and a definition's title on a later line, are not HTML.
@@ -251,7 +253,7 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
   test("an end tag that may be text closes nothing, so an alert after it is not read", () => {
     const backslash = String.fromCharCode(92);
     for (const closing of ["Use `</details>` to end it.", "Use ``a `</details>` b`` to end it.", "Use `a\n</details>` to end it.", `${backslash}</details>`, "<!-- </details> -->",
-      "[End](</details>)", "[End]( </details> )", "[End](url \"x </details>\")", "[End](a(b) </details>)", "[end]: </details>", "[end]:\n  </details>", "<script>\"</details>\"</script>", "</details foo=\"bar\">",
+      "[End](</details>)", "[End]( </details> )", "[End](url \"x </details>\")", "[End](a(b) </details>)", "[end]: </details>", "[end]:\n  </details>","</details foo=\"bar\">",
       "# Notes <!-- </details> -->", "</details\n\n", "# Use `</details>` now", "Setext `</details>`\n===", `# Head ${backslash}</details>`,
       "| Tag |\n|---|\n| `</details>` |", `| Tag |\n|---|\n| ${backslash}</details> |`, "# Run <style>`</style>` now",
       // HTML closes nothing outside a table cell from inside it, and a row needs no pipe.
@@ -267,9 +269,9 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     for (const before of ["<details>\n<summary>Notes</summary>\n\nBody.\n\n</details>", "<p align=\"center\"><a href=\"https://example.org\"><img src=\"logo.png\" alt=\"Logo\"></a></p>",
       "<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\" />\n</p>", "<picture>\n<source media=\"(prefers-color-scheme: dark)\" srcset=\"dark.png\" />\n<img alt=\"Chart\" src=\"light.png\">\n</picture>",
       "Press <kbd>Ctrl</kbd> and <kbd>C</kbd>.<br>Then wait.", "Use `<details>` to fold text.", `Write ${backslash}<details> to fold text.`, "See <https://example.org> or <a@example.org>.",
-      "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<script>\nlet tag = \"<details>\";\n</script>", "<div title=\"</div>\">\nBody.\n</div>",
+      "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<div title=\"</div>\">\nBody.\n</div>",
       "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "<div>\n\nText </div>", "1. Open the page at\n   <https://example.org/home> to start.", "<details>\n\n- Item </details>",
-      "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", `${String.fromCharCode(0x130).repeat(4)} <style>x</style> after.`, "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
+      "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", `${String.fromCharCode(0x130).repeat(4)} <style>x</style> after.`, "Text <style>x</style> after.", "Text <script>\n\nMore.", "Text <script>a</scripts> b</script> more."]) {
       expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([adjacent("NOTE", before.split("\n").length + 2, before.split("\n").length + 5)]);
     }
     // HTML inside the earlier alert, closed there, leaves the later one read.
@@ -443,8 +445,15 @@ function unconfirmed(renderer: MarkdownRenderer, text: string): string[] {
 
 
 /**
+ * The tags GitHub's Markdown specification filters, by replacing their `<`
+ * with `&lt;`. Bun does not, so the oracle does it to Bun's HTML.
+ */
+const GITHUB_TAG_FILTER = /<(\/?)(title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)(?=[\s/>]|$)/gi;
+
+/**
  * For each quotation `structure` lists, in order, whether the HTML Bun
- * renders the text as holds it inside no element at all. Bun's callback tree
+ * renders the text as, with GitHub's tag filter applied, holds it inside no
+ * element at all. Bun's callback tree
  * shows raw HTML as nodes beside a quotation, never around it, so this reads
  * the rendered HTML instead, with Bun's HTMLRewriter. The quotations are
  * matched in order to the rendered quotations that no list item or other
@@ -464,7 +473,7 @@ async function topLevelQuotations(renderer: MarkdownRenderer, text: string): Pro
     .on("li blockquote", markLast(rendered, "inContainer"))
     .on("blockquote blockquote", markLast(rendered, "inContainer"))
     .on("* blockquote", markLast(rendered, "inElement"))
-    .transform(new Response(renderer.html(text))).text();
+    .transform(new Response(renderer.html(text).replace(GITHUB_TAG_FILTER, "&lt;$1$2"))).text();
   const outside = rendered.filter(quotation => !quotation.inContainer);
   if (outside.length !== structure(text).quotations.length) return null;
   return outside.map(quotation => !quotation.inElement);

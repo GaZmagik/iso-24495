@@ -128,7 +128,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads it only for start tags that HTML may read there;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads it only for tags and comments that may leave HTML open;
 - tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, and `adjacent-alerts` reads the HTML tags in one. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
 - YAML front matter, which is metadata, unless the audit is told the text has none;
 - a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;

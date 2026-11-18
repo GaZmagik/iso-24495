@@ -51,10 +51,16 @@ const MARKDOWN_BLOCKS = new Set(["p", "li", "ul", "ol", "blockquote", "h1", "h2"
 /** The start of a raw HTML block as CommonMark has it, and the end tags that end one. */
 const RAW_BLOCK_START = /^ {0,3}<(pre|script|style|textarea)(?=[ \t>]|$)/i;
 const RAW_BLOCK_END = /<\/(pre|script|style|textarea)>/i;
+/** A start tag of an element that an end tag of pre may leave open: another pre, or one HTML's scope stops at. */
+const OUTLASTS_PRE = /<(?:pre|table|caption|td|th|tr|template|svg|math|object|applet|marquee|html)(?=[ \t/>]|$)/i;
 /** The end tag of a raw HTML block that the structural reading hides whole. */
 const RAW_END = /<\/(?:pre|script|style|textarea)\s*>/gi;
-/** The elements whose content HTML reads as text up to their own end tag. */
-const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"]);
+/**
+ * The tags GitHub shows as text, by replacing their `<` with `&lt;`, as its
+ * Markdown specification's tag filter says. What stands between a start tag
+ * and an end tag of one of these is read as any other text.
+ */
+const GITHUB_FILTERED = new Set(["title", "textarea", "style", "xmp", "iframe", "noembed", "noframes", "script", "plaintext"]);
 /**
  * A line that may start an HTML block, in which Markdown is not read up to
  * the next blank line: a start or end tag whose name, as CommonMark writes
@@ -69,8 +75,6 @@ const NAME_CHARACTER = /[A-Za-z0-9-]/;
 /** The characters the element reading acts on, and the same with a line break. */
 const MARK = /[<`\\[\]]/g;
 const MARK_OR_BREAK = /[<`\\[\]\n]/g;
-/** The end tag of an element whose content HTML reads as raw text, found in any letter case. */
-const RAW_TEXT_END = /<\/(script|style|textarea|title|xmp|iframe|noembed|noframes)(?=[ \t\n/>])/gi;
 /** What ends a comment in HTML, searched from where the comment starts. */
 const COMMENT_END = /--!?>/g;
 
@@ -242,17 +246,15 @@ function linesHeldByElements(lines: readonly string[], markup: readonly string[]
       reading.sure = false;
       break;
     }
-    let end = tag.end;
+    if (tag.kind !== "skip" && GITHUB_FILTERED.has(tag.name)) {
+      // GitHub shows the tag as text, so it opens and closes nothing, and the
+      // reading goes on just after its `<`, as HTML may stand in its attributes.
+      at++;
+      continue;
+    }
+    const end = tag.end;
     if (tag.kind === "close" && endTagCertain(reading, at)) {
       closeElement(reading, tag.name);
-    } else if (tag.kind === "open" && RAW_TEXT_ELEMENTS.has(tag.name)) {
-      // Nothing inside is a tag, up to the element's own end tag.
-      const closing = rawTextEnd(text, tag.name, tag.end);
-      const ending = closing === -1 ? null : readTag(text, closing, false);
-      // Markdown still reads the text between, so the end tag may stand in a link or code.
-      readMarkdownOver(reading, at, Math.max(closing, at));
-      if (ending === null || ending.kind !== "close" || !endTagCertain(reading, closing)) reading.sure = false;
-      end = ending?.kind === "close" ? ending.end : end;
     } else if (tag.kind === "open" && !VOID_ELEMENTS.has(tag.name)) {
       reading.open.push({ name: tag.name, run: reading.runs[reading.line - 1] ?? 0 });
       reading.openCount.set(tag.name, (reading.openCount.get(tag.name) ?? 0) + 1);
@@ -319,14 +321,6 @@ function readMarkdown(reading: ElementReading, at: number): number {
   return 1;
 }
 
-/** Reads the Markdown in a stretch of text the element reading moves past, as `readMarkdown` does at each offset. */
-function readMarkdownOver(reading: ElementReading, from: number, to: number): void {
-  for (let at = from; at < to;) {
-    const step = readMarkdown(reading, at);
-    at += step === 0 ? 1 : step;
-  }
-}
-
 /** Records what holds each line that starts at or before this offset, as the reading stands. */
 function recordUntil(reading: ElementReading, until: number): void {
   for (; reading.line < reading.held.length && (reading.starts[reading.line] ?? 0) <= until; reading.line++) {
@@ -335,7 +329,7 @@ function recordUntil(reading: ElementReading, until: number): void {
   }
 }
 
-/** Marks as held each line that starts before this offset, where a tag, a comment or raw text ends. */
+/** Marks as held each line that starts before this offset, where a tag or a comment ends. */
 function coverUntil(reading: ElementReading, end: number): void {
   for (; reading.line < reading.held.length && (reading.starts[reading.line] ?? 0) < end; reading.line++) {
     reading.held[reading.line] = 1;
@@ -508,19 +502,6 @@ function blankLineAt(text: string, from: number): boolean {
 }
 
 /**
- * The offset of the end tag that ends raw text of this element, or -1 when
- * none does: `</`, the name in any letter case, and white space, `/` or `>`.
- * It searches the text itself, as a copy in lower case can be longer.
- */
-function rawTextEnd(text: string, name: string, from: number): number {
-  RAW_TEXT_END.lastIndex = from;
-  for (let match = RAW_TEXT_END.exec(text); match !== null; match = RAW_TEXT_END.exec(text)) {
-    if ((match[1] ?? "").toLowerCase() === name) return match.index;
-  }
-  return -1;
-}
-
-/**
  * Where a link's destination and title end, from the offset after its `](`:
  * after the `)` that closes the `(`, at a blank line, or at the end of the
  * text. A quote runs to the next quote of its kind, which may reach further
@@ -566,7 +547,10 @@ function linkTailEnd(text: string, from: number): number {
  *   the rest of the line its end tag stands on, so a hidden line with a
  *   start tag after such an end tag is marked. CommonMark ends such a block
  *   at any of its four end tags, even in a comment, where HTML does not end
- *   the element, so the line that ends one that way is marked too.
+ *   the element, so the line that ends one that way is marked too. GitHub
+ *   shows a `script`, `style` or `textarea` tag as text, so a line of such a
+ *   block that holds a start tag is marked, and so is a line of a pre block
+ *   that opens another pre or a table, which its end tag cannot close.
  * - `closingNothing`: 1 where an end tag closes nothing opened before it, as
  *   far as the rule can tell, up to the next blank line. One such run starts
  *   at a line that starts with `[` and holds `]:`, as a link definition's
@@ -611,7 +595,12 @@ function lineFacts(lines: readonly string[], markup: readonly string[], blocks: 
       // CommonMark ends the block at any of the four end tags, even inside a
       // comment. HTML ends the element only at its own, outside a comment.
       const end = RAW_BLOCK_END.exec(rest);
-      raw.inComment = commentOpenAfter(raw.inComment, end === null ? rest : rest.slice(0, end.index));
+      const inside = end === null ? rest : rest.slice(0, end.index);
+      raw.inComment = commentOpenAfter(raw.inComment, inside);
+      // GitHub shows a script, style or textarea tag as text, so a tag inside one is read.
+      if (GITHUB_FILTERED.has(raw.name) && startTagCount(inside) > 0) facts.hidden[index] = 1;
+      // An end tag of pre closes only the innermost pre, and nothing past a table or the like.
+      if (raw.name === "pre" && OUTLASTS_PRE.test(inside)) facts.hidden[index] = 1;
       if (end !== null) {
         if (raw.inComment || (end[1] ?? "").toLowerCase() !== raw.name) facts.hidden[index] = 1;
         raw = null;
