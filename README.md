@@ -124,7 +124,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Five layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, `empty-signpost` an empty referral heading, and `adjacent-alerts` an alert that becomes one. The Jev route's `opening-title` finding reads them as well. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Five layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, `empty-signpost` an empty referral heading, and `adjacent-alerts` an underline that may make an alert one. The Jev route's `opening-title` finding reads them as well. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 

@@ -97,9 +97,9 @@ function readableAlert(reading: AlertReading, quotation: Quotation): boolean {
 }
 
 /**
- * Whether a line after an alert's marker line, up to the next blank line, is
- * an underline of equals signs or a row of dashes, colons and pipes, with or
- * without a quotation marker. Each may make the marker's paragraph a heading
+ * Whether a line after an alert's marker line, up to the next line of only
+ * spaces or tabs, is an underline of equals signs or a row of dashes, colons
+ * and pipes, with or without a quotation marker. Each may make the marker's paragraph a heading
  * or a table header, and the structural reading can take the line above one
  * for a table row where CommonMark makes a heading. So the rule reads no
  * alert with one, though some such alerts render.
@@ -111,8 +111,11 @@ function underlinedRun(lines: readonly string[], markerLine: number): boolean {
   for (let index = markerLine; index < lines.length; index++) {
     const line = lines[index] ?? "";
     const marker = QUOTE_MARKER.exec(line);
-    const rest = (marker === null ? line : line.slice(marker[0].length)).trim();
-    if (rest === "") return false;
+    const after = marker === null ? line : line.slice(marker[0].length);
+    // CommonMark ends a paragraph only at a line of spaces or tabs, so a
+    // no-break space alone carries it on, though `trim` removes one.
+    if (BLANK.test(after)) return false;
+    const rest = after.trim();
     if (UNDERLINE.test(rest) || (rest.includes("-") && DELIMITER_ROW.test(rest))) return true;
   }
   return false;

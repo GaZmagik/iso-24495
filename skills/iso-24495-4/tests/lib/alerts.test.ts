@@ -168,6 +168,14 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       expect(alerts(`> [!NOTE]\n> One.\n${body}\n\n> [!NOTE]\n> Two.\n`), body).toEqual([]);
       expect(alerts(`> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n${body}\n`), `second ${body}`).toEqual([]);
     }
+    // CommonMark ends a paragraph only at a line of spaces or tabs, so a line of a no-break space, a form feed,
+    // a vertical tab, a byte order mark or an em space carries it on to the underline.
+    for (const character of [NBSP, String.fromCharCode(12), String.fromCharCode(11), String.fromCharCode(0xfeff), String.fromCharCode(0x2003)]) {
+      for (const body of [`>${character}\n> ---`, `${character}\n> ---`]) {
+        expect(alerts(`> [!NOTE]\n> One.\n${body}\n\n> [!NOTE]\n> Two.\n`), JSON.stringify(body)).toEqual([]);
+        expect(alerts(`> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n${body}\n`), `second ${JSON.stringify(body)}`).toEqual([]);
+      }
+    }
     // One below a blank line leaves it alone.
     expect(alerts("> [!NOTE]\n> One.\n>\n> More.\n> ===\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 7)]);
     expect(alerts("> [!NOTE]\n> One.\n> More.\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 5)]);
@@ -194,7 +202,7 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     }
   });
 
-  test("an alert inside an HTML element that an earlier line opened is not read", () => {
+  test("an alert inside an HTML element that an earlier line opened is not read, nor one after it closes", () => {
     const wrappers: Array<[string, string]> = [
       ["<details>\n<summary>Notes</summary>\n\n", "\n</details>\n"],
       ["<div>\n\n", "\n</div>\n"],
@@ -237,7 +245,7 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       // A start tag that holds a `<`, or runs over a blank line, may swallow a tag that HTML reads.
       ["Text <b c\n<details>\n</b>\n\n", ""],
       ["<div title=\"a\n\n<details>\n\n\" >\n\n</div>\n\n", ""],
-      // An end tag of an element opened before the last one leaves the rule unsure, though here HTML closes both.
+      // HTML closes both elements here, and the alerts would render, but a < above them stops them being read.
       ["<div>\n<span>\n</div>\n</span>\n</div>\n\n", ""],
       // CommonMark ends a comment only at `-->`, and a raw block at any of its end tags, even inside a comment.
       ["<!-- a --!>\n\n", ""],
@@ -272,7 +280,7 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     expect(alerts("<div>\n\n> [!NOTE]\n> One.\n\n</div>\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
   });
 
-  test("an end tag that may be text closes nothing, so an alert after it is not read", () => {
+  test("an end tag above the alerts, even one that may be text, leaves them unread", () => {
     const backslash = String.fromCharCode(92);
     for (const closing of ["Use `</details>` to end it.", "Use ``a `</details>` b`` to end it.", "Use `a\n</details>` to end it.", `${backslash}</details>`, "<!-- </details> -->",
       "[End](</details>)", "[End]( </details> )", "[End](url \"x </details>\")", "[End](a(b) </details>)", "[end]: </details>", "[end]:\n  </details>","</details foo=\"bar\">",
