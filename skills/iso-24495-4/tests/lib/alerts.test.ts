@@ -175,6 +175,9 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     expect(alerts(`<pre>\n</pre>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 4, 7)]);
     expect(alerts(`<!-- c -->\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
     expect(alerts(`<![CDATA[ x ]]>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    expect(alerts(`<?php x ?>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    // CommonMark ends a processing instruction only at `?>`, so a `>` in a table row above the alerts does not.
+    expect(alerts(`<?php\n\n| </div> |\n|---|\n\n${pair("NOTE", "NOTE")}`)).toEqual([]);
     // Four spaces in is code.
     expect(alerts(`    <pre\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
     // A tag whose end is not on its line is not read as closed: HTML reads
@@ -208,6 +211,17 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       ["Text <!-- open\n\n", ""],
       ["Text <!-- a\n\n<details>\n\n# Head -->\n\n", ""],
       ["<details\n<!-- c -->\n\n", ""],
+      // HTML ignores the end tag of a `span` or `kbd` from inside a later paragraph or list item.
+      ["<span>\n\nText </span>\n\n", ""],
+      ["<kbd>\n\n- Item </kbd>\n\n", ""],
+      ["<b>\n\nText </b>\n\n", ""],
+      // HTML reads the rest of the line a raw block's end tag stands on, which the structural reading hides.
+      ["<pre>\nx\n</pre><details>\n\n", ""],
+      ["<pre>x</pre><details>\n\n", ""],
+      // Inside an HTML block HTML reads a wider tag name than CommonMark.
+      ["<div></div>\n<my_tag>\n\n", ""],
+      ["<div></div>\n<o:p>\n\n", ""],
+      ["<div></div>\n<a.b>\n\n", ""],
     ];
     for (const [before, after] of wrappers) {
       expect(alerts(`${before}${pair("NOTE", "NOTE")}${after}`), before).toEqual([]);
@@ -217,11 +231,13 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
   test("an end tag that may be text closes nothing, so an alert after it is not read", () => {
     const backslash = String.fromCharCode(92);
     for (const closing of ["Use `</details>` to end it.", "Use ``a `</details>` b`` to end it.", "Use `a\n</details>` to end it.", `${backslash}</details>`, "<!-- </details> -->",
-      "[End](</details>)", "[End]( </details> )", "[End](url \"x </details>\")", "[end]: </details>", "[end]:\n  </details>", "<script>\"</details>\"</script>", "</details foo=\"bar\">",
+      "[End](</details>)", "[End]( </details> )", "[End](url \"x </details>\")", "[End](a(b) </details>)", "[end]: </details>", "[end]:\n  </details>", "<script>\"</details>\"</script>", "</details foo=\"bar\">",
       "# Notes <!-- </details> -->", "</details\n\n", "# Use `</details>` now", "Setext `</details>`\n===", `# Head ${backslash}</details>`,
       "| Tag |\n|---|\n| `</details>` |", `| Tag |\n|---|\n| ${backslash}</details> |`, "# Run <style>`</style>` now",
       // HTML closes nothing outside a table cell from inside it, and a row needs no pipe.
-      "| Notes |\n|---|\n| End </details> |", "| Notes |\n|---|\nEnd </details>"]) {
+      "| Notes |\n|---|\n| End </details> |", "| Notes |\n|---|\nEnd </details>",
+      // An image's alternative text is not HTML.
+      "![End </details>](end.png)", "![a [b] </details>](end.png)"]) {
       expect(alerts(`<details>\n\n${closing}\n\n${pair("NOTE", "NOTE")}`), closing).toEqual([]);
     }
   });
@@ -232,14 +248,16 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       "<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\" />\n</p>", "<picture>\n<source media=\"(prefers-color-scheme: dark)\" srcset=\"dark.png\" />\n<img alt=\"Chart\" src=\"light.png\">\n</picture>",
       "Press <kbd>Ctrl</kbd> and <kbd>C</kbd>.<br>Then wait.", "Use `<details>` to fold text.", `Write ${backslash}<details> to fold text.`, "See <https://example.org> or <a@example.org>.",
       "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<script>\nlet tag = \"<details>\";\n</script>", "<div title=\"</div>\">\nBody.\n</div>",
-      "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
+      "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "<div>\n\nText </div>", "<details>\n\n- Item </details>",
+      "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
       expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([adjacent("NOTE", before.split("\n").length + 2, before.split("\n").length + 5)]);
     }
     // HTML inside the earlier alert, closed there, leaves the later one read.
     expect(alerts("> [!NOTE]\n> Press <kbd>Ctrl</kbd>.\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 4)]);
     // A tag, an end tag or a link left unfinished at the end of the text holds nothing above it.
+    // The tag above makes the rule read HTML at all.
     for (const tail of ["<details open", "</details   ", "[a](x"]) {
-      expect(alerts(`${pair("NOTE", "NOTE")}\n${tail}`), tail).toEqual([adjacent("NOTE", 1, 4)]);
+      expect(alerts(`<b>Bold</b>\n\n${pair("NOTE", "NOTE")}\n${tail}`), tail).toEqual([adjacent("NOTE", 3, 6)]);
     }
   });
 
@@ -758,6 +776,9 @@ describe("adjacent-alerts takes time in proportion to the text", () => {
     const text = `> [!NOTE]\n> One.\n${"\n".repeat(1_000_000)}> [!NOTE]\n> Two.\n`;
     expect(alerts(text)).toEqual([adjacent("NOTE", 1, 1_000_003)]);
     expect(fastestScan(text, 1)).toBeLessThan(3 * parseTime(text));
+    // A tag above them makes the rule read HTML on every line.
+    const tagged = `<b>Bold</b>\n\n${text}`;
+    expect(fastestScan(tagged, 1)).toBeLessThan(3 * parseTime(tagged));
   }, 120_000);
 
   test("a million characters of unclosed labels and long body lines scan as fast", () => {
@@ -788,16 +809,23 @@ describe("adjacent-alerts takes time in proportion to the text", () => {
   // Each tail is HTML the rule reads for elements left open: runs of
   // openings, of end tags, of comments and quotes never closed, and of code
   // spans and link tails, each of which could send a search to the end of
-  // the text from every place it starts.
+  // the text from every place it starts. The larger size runs first, where
+  // such a search costs nine times what it does at the smaller one.
   test("100,000 and 300,000 characters of tags, comments, quotes, code spans and link tails above the alerts scan as fast", () => {
-    for (const size of [100_000, 300_000]) {
+    for (const size of [300_000, 100_000]) {
       const tails = [
         "<details>".repeat(size / 9), "</details>".repeat(size / 10), "<!--".repeat(size / 4), "<a ".repeat(size / 3), "<a x=\"".repeat(size / 6), "</".repeat(size / 2),
         "<kbd>x</kbd>".repeat(size / 12), "<script>".repeat(size / 8), "`".repeat(size), "` <b>".repeat(size / 5), "](".repeat(size / 2), "[x]: ".repeat(size / 5),
         ">".repeat(size), "[!".repeat(size / 2), `<a title="${"x".repeat(size)}`, "<a\n".repeat(size / 3),
+        // The structural reading keeps comments and raw text in a heading, so these reach the rule.
+        // Its own reading of comments there takes more than linear time, so they come last.
+        `# Head ${"<?>".repeat(size / 3)}`, `# Head ${"<!x>".repeat(size / 4)}`, `# Head ${"<style>x</style>".repeat(size / 16)}`, `# Head ${"<!-- x -->".repeat(size / 10)}`,
+        // End tags of no open element, below many open ones.
+        `${"<details>".repeat(size / 18)}\n${"</b>".repeat(size / 8)}`, `![${"[".repeat(size)}`,
       ];
       for (const tail of tails) {
-        const text = `${tail}\n\n${pair("NOTE", "NOTE")}`;
+        // A tag first makes the rule read HTML at all.
+        const text = `<b>Bold</b>\n\n${tail}\n\n${pair("NOTE", "NOTE")}`;
         const found = adjacentAlertViolations(text, structure(text)).length;
         expect(fastestScan(text, found), `${tail.slice(0, 8)} ${size}`).toBeLessThan(3 * parseTime(text));
         const balanced = `<kbd>x</kbd>`.repeat(size / 12);
