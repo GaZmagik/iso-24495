@@ -331,6 +331,19 @@ describe("a value of the original that the new version does not hold", () => {
     }
   });
 
+  test("a tag is read to the next angle bracket, so markup holding one can split a number a reader sees whole, but a number standing whole is held", () => {
+    const before = "The total is 42 units.\n";
+    // Each splits 42 with markup that holds an angle bracket, written or as a reference.
+    for (const markup of ["<span title=\">\">", "<span title=\"&gt;\">", "<span title=\"<\">", "<!-- > -->"]) {
+      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual(["42"]);
+      expect(lost(before, `Something else.\n\n<pre>4${markup}2 and 42</pre>\n`), `${markup}, then 42 whole`).toEqual([]);
+    }
+    // Controls: the same markup with no angle bracket inside is removed, and the number held.
+    for (const markup of ["<span title=\"x\">", "<!-- x -->", "<b>"]) {
+      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual([]);
+    }
+  });
+
   test("a value in a code block, a heading, a slot or a kept unit is not checked", () => {
     expect(lost("```\nport 8080\n```\n", "```\nport 9090\n```\n")).toEqual([]);
     expect(lost("## Step 4\n\nText.\n", "## Step five\n\nText.\n")).toEqual([]);

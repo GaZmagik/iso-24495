@@ -155,6 +155,9 @@ A hard line break inside a heading underlined on the next line reads as a backsl
 A number counts as held where its text stands anywhere in the new file, even inside a longer figure, so `13` is held by `1.13.0`.
 The file is read as written, with character references decoded, then with HTML tags removed as well, and as the units the comparison reads.
 So front matter, HTML, link destinations and image alternatives all count.
+A tag is read from its `<` to the next `>`, so a `<` or `>` inside a quoted attribute or a comment ends it early.
+A number that such markup splits, as when `42` becomes `4<span title=">">2</span>`, may be listed although a reader sees it whole.
+A number whose text stands whole anywhere in the file is always held.
 
 A number also counts as held where the new version holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
