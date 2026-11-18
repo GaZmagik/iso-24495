@@ -162,29 +162,36 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     expect(alerts("> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n> ===\n")).toEqual([]);
     expect(alerts("> [!NOTE]\n> |---|\n> | x |\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
     expect(alerts("> [!NOTE]\n> :---:|\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
-    // An underline below a later block leaves the marker's paragraph alone.
-    expect(alerts("> [!NOTE]\n> ## Head\n> More.\n> ===\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 6)]);
+    // The structural reading can take a line above an underline for a table row, where CommonMark makes a heading.
+    // So an underline or a row of dashes anywhere up to the next blank line stops the alert being read, even below a later block.
+    for (const body of ["> | a |\n> ---", "> |---|\n> ---", "> |---|\n> Setext\n===", "> More.\n---", "> ## Head\n> More.\n> ===", "> - Item\n> ---", "Lazy\n> ==="]) {
+      expect(alerts(`> [!NOTE]\n> One.\n${body}\n\n> [!NOTE]\n> Two.\n`), body).toEqual([]);
+      expect(alerts(`> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n${body}\n`), `second ${body}`).toEqual([]);
+    }
+    // One below a blank line leaves it alone.
+    expect(alerts("> [!NOTE]\n> One.\n>\n> More.\n> ===\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 7)]);
     expect(alerts("> [!NOTE]\n> One.\n> More.\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 5)]);
   });
 
-  test("an alert inside an HTML block that runs over blank lines is not read", () => {
+  test("an alert below any line that holds a < is not read, closed HTML, code and comments included", () => {
     for (const opening of ["<pre", "<PRE", "<script", "<style", "<textarea", "<pre class=\"x\"", "<![CDATA[", "<!--", "<?php", "<!DOCTYPE", "   <pre"]) {
       expect(alerts(`${opening}\n\n${pair("NOTE", "NOTE")}`), opening).toEqual([]);
     }
-    // A block closed above the alerts leaves them to be read.
-    expect(alerts(`<pre>\n</pre>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 4, 7)]);
-    expect(alerts(`<!-- c -->\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
-    expect(alerts(`<![CDATA[ x ]]>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
-    expect(alerts(`<?php x ?>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
-    // CommonMark ends a processing instruction only at `?>`, so a `>` in a table row above the alerts does not.
-    expect(alerts(`<?php\n\n| </div> |\n|---|\n\n${pair("NOTE", "NOTE")}`)).toEqual([]);
-    // Four spaces in is code.
-    expect(alerts(`    <pre\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
-    // A tag whose end is not on its line is not read as closed: HTML reads
-    // `<pre` and the next line `</pre>` as one start tag, so the pre holds the
-    // alerts. Inside a list item the item may end it, but the rule is not sure.
-    expect(alerts(`<pre\n</pre>\n\n${pair("NOTE", "NOTE")}`)).toEqual([]);
-    expect(alerts(`- <pre\n\n${pair("NOTE", "NOTE")}`)).toEqual([]);
+    // HTML closed above the alerts, code, and text that is no HTML at all count as well.
+    for (const above of ["<pre>\n</pre>", "<!-- c -->", "<![CDATA[ x ]]>", "<?php x ?>", "    <pre", "a < b", "<", "```\n<\n```", "Use `<details>` here.", "See <https://example.org>.", "---\ntitle: <x>\n---"]) {
+      expect(alerts(`${above}\n\n${pair("NOTE", "NOTE")}`), above).toEqual([]);
+    }
+    // A < two lines above the later alert, in the earlier alert's body, counts too.
+    expect(alerts("> [!NOTE]\n> One.\n> a < b\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
+    expect(alerts("> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n\n> [!NOTE]\n> Three <b>.\n\n> [!NOTE]\n> Four.\n")).toEqual([adjacent("NOTE", 1, 4), adjacent("NOTE", 4, 7)]);
+  });
+
+  test("a < only on or below the later alert's marker leaves the pair read", () => {
+    expect(alerts(`${pair("NOTE", "NOTE")}\n<details>\n<b>open\n`)).toEqual([adjacent("NOTE", 1, 4)]);
+    expect(alerts("> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n> Then <b>this</b>.\n")).toEqual([adjacent("NOTE", 1, 4)]);
+    for (const tail of ["<details open", "</details   ", "<!--", "<script>", "[a](x"]) {
+      expect(alerts(`# Guide\n\n${pair("NOTE", "NOTE")}\n${tail}`), tail).toEqual([adjacent("NOTE", 3, 6)]);
+    }
   });
 
   test("an alert inside an HTML element that an earlier line opened is not read", () => {
@@ -242,9 +249,24 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       ["<details>\n\n[d]:\n  /u\n  \"</details>\"\n\n", ""],
       // A complete pre holds both.
       ["<pre>\n", "</pre>\n"],
+      // Review round two: a comment before a filtered tag, a slash after a filtered tag name, and a heading's unended instruction.
+      ["<!-- c --><script><details></script>\n\n", ""],
+      ["<!-- c --><style><details></style>\n\n", ""],
+      ["<!-- c --><textarea><details></textarea>\n\n", ""],
+      ["<!-- c --><my_tag>\n\n", ""],
+      ["<div></div>\n<script/x>\n\n", ""],
+      ["</a>\n<style/x>\n\n", ""],
+      ["<details>\n<title/x>\n</details>\n</title>\n\n", ""],
+      ["<details>\n<plaintext//>\n</details>\n</plaintext>\n\n", ""],
+      ["# Heading <?x\n<details>\n\n", ""],
+      ["# Heading <![CDATA[\n<details>\n\n", ""],
+      ["<a title=\"<!--\"><details>\n\n", ""],
+      ["<details><!-- c -->\n\n", ""],
     ];
     for (const [before, after] of wrappers) {
       expect(alerts(`${before}${pair("NOTE", "NOTE")}${after}`), before).toEqual([]);
+      // The same HTML below the pair cannot hold it, so the pair is read.
+      expect(alerts(`${pair("NOTE", "NOTE")}\n${before}`), `below ${before}`).toEqual([adjacent("NOTE", 1, 4)]);
     }
     // HTML that closes between the alerts still holds the first.
     expect(alerts("<div>\n\n> [!NOTE]\n> One.\n\n</div>\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
@@ -264,7 +286,9 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     }
   });
 
-  test("HTML closed above the alerts, void or written as text leaves them to be read", () => {
+  // The rule gives up these alerts, which render as alerts, so that no HTML
+  // it reads wrongly can make a finding. Each one missed is a missed finding.
+  test("HTML closed above the alerts, void or written as text still stops them being read", () => {
     const backslash = String.fromCharCode(92);
     for (const before of ["<details>\n<summary>Notes</summary>\n\nBody.\n\n</details>", "<p align=\"center\"><a href=\"https://example.org\"><img src=\"logo.png\" alt=\"Logo\"></a></p>",
       "<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\" />\n</p>", "<picture>\n<source media=\"(prefers-color-scheme: dark)\" srcset=\"dark.png\" />\n<img alt=\"Chart\" src=\"light.png\">\n</picture>",
@@ -272,15 +296,10 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<div title=\"</div>\">\nBody.\n</div>",
       "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "<div>\n\nText </div>", "1. Open the page at\n   <https://example.org/home> to start.", "<details>\n\n- Item </details>",
       "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", `${String.fromCharCode(0x130).repeat(4)} <style>x</style> after.`, "Text <style>x</style> after.", "Text <script>\n\nMore.", "Text <script>a</scripts> b</script> more."]) {
-      expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([adjacent("NOTE", before.split("\n").length + 2, before.split("\n").length + 5)]);
+      expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([]);
     }
-    // HTML inside the earlier alert, closed there, leaves the later one read.
-    expect(alerts("> [!NOTE]\n> Press <kbd>Ctrl</kbd>.\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 4)]);
-    // A tag, an end tag or a link left unfinished at the end of the text holds nothing above it.
-    // The tag above makes the rule read HTML at all.
-    for (const tail of ["<details open", "</details   ", "[a](x"]) {
-      expect(alerts(`<b>Bold</b>\n\n${pair("NOTE", "NOTE")}\n${tail}`), tail).toEqual([adjacent("NOTE", 3, 6)]);
-    }
+    // HTML inside the earlier alert, closed there, stops the later one too.
+    expect(alerts("> [!NOTE]\n> Press <kbd>Ctrl</kbd>.\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
   });
 
   test("HTML on the marker line makes it no marker", () => {
@@ -444,74 +463,6 @@ function unconfirmed(renderer: MarkdownRenderer, text: string): string[] {
 }
 
 
-/**
- * The tags GitHub's Markdown specification filters, by replacing their `<`
- * with `&lt;`. Bun does not, so the oracle does it to Bun's HTML.
- */
-const GITHUB_TAG_FILTER = /<(\/?)(title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)(?=[\s/>]|$)/gi;
-
-/**
- * For each quotation `structure` lists, in order, whether the HTML Bun
- * renders the text as, with GitHub's tag filter applied, holds it inside no
- * element at all. Bun's callback tree
- * shows raw HTML as nodes beside a quotation, never around it, so this reads
- * the rendered HTML instead, with Bun's HTMLRewriter. The quotations are
- * matched in order to the rendered quotations that no list item or other
- * quotation holds.
- *
- * @returns One entry for each quotation, or null when the two counts differ
- *     and the quotations cannot be matched.
- */
-async function topLevelQuotations(renderer: MarkdownRenderer, text: string): Promise<boolean[] | null> {
-  const rendered: RenderedQuotation[] = [];
-  await new HTMLRewriter()
-    .on("blockquote", {
-      element: () => {
-        rendered.push({ inContainer: false, inElement: false });
-      },
-    })
-    .on("li blockquote", markLast(rendered, "inContainer"))
-    .on("blockquote blockquote", markLast(rendered, "inContainer"))
-    .on("* blockquote", markLast(rendered, "inElement"))
-    .transform(new Response(renderer.html(text).replace(GITHUB_TAG_FILTER, "&lt;$1$2"))).text();
-  const outside = rendered.filter(quotation => !quotation.inContainer);
-  if (outside.length !== structure(text).quotations.length) return null;
-  return outside.map(quotation => !quotation.inElement);
-}
-
-/** A quotation in Bun's rendered HTML: whether a list item or another quotation holds it, and whether any element does. */
-interface RenderedQuotation { inContainer: boolean; inElement: boolean }
-
-/** An HTMLRewriter handler that marks the quotation last met as held in one of the two ways. */
-function markLast(rendered: RenderedQuotation[], field: keyof RenderedQuotation): { element: () => void } {
-  return {
-    element: () => {
-      const last = rendered[rendered.length - 1];
-      if (last !== undefined) last[field] = true;
-    },
-  };
-}
-
-/**
- * The findings of the rule on a text whose alerts, the later or the earlier,
- * Bun's rendered HTML puts inside an element, or whose quotations it cannot
- * match.
- */
-async function nestedFindings(renderer: MarkdownRenderer, text: string): Promise<string[]> {
-  const findings = adjacentAlertViolations(text, structure(text));
-  if (findings.length === 0) return [];
-  const top = await topLevelQuotations(renderer, text);
-  const lines = structure(text).quotations.map(quotation => quotation.line);
-  const nested: string[] = [];
-  for (const finding of findings) {
-    const earlier = Number(/on line (\d+)/.exec(finding.detail)?.[1]);
-    for (const line of [earlier, finding.line]) {
-      if (top === null || top[lines.indexOf(line)] !== true) nested.push(`${JSON.stringify(text)} line ${line}`);
-    }
-  }
-  return nested;
-}
-
 describe("adjacent-alerts checked against Bun's renderer, a test oracle", () => {
   // Bun before 1.3.8 has no renderer, so these tests are skipped there. The
   // skip shows in the test count; it is not a pass. The rule never calls it.
@@ -542,8 +493,8 @@ describe("adjacent-alerts checked against Bun's renderer, a test oracle", () => 
       }
     }
     expect(shown).toEqual([]);
-    // The specimens above held 19 findings when this was written.
-    expect(checked).toBeGreaterThanOrEqual(19);
+    // The specimens above held 83 findings when this was written.
+    expect(checked).toBeGreaterThanOrEqual(83);
   });
 
   test.skipIf(renderer === undefined)("every finding in the seeded documents below shows as adjacent alerts of one kind in Bun's rendering", () => {
@@ -560,29 +511,19 @@ describe("adjacent-alerts checked against Bun's renderer, a test oracle", () => 
     expect(checked).toBeGreaterThanOrEqual(1_000);
   }, 120_000);
 
-  test.skipIf(renderer === undefined)("the HTML oracle shows a quotation inside an element as held, and one after the element closes as not", async () => {
-    if (renderer === undefined) return;
-    const twice = pair("NOTE", "NOTE");
-    expect(await topLevelQuotations(renderer, `<details>\n<summary>Notes</summary>\n\n${twice}\n</details>\n`)).toEqual([false, false]);
-    expect(await topLevelQuotations(renderer, `<div>\n\n${twice}\n</div>\n`)).toEqual([false, false]);
-    expect(await topLevelQuotations(renderer, `<table><tr><td>\n\n${twice}\n</td></tr></table>\n`)).toEqual([false, false]);
-    expect(await topLevelQuotations(renderer, `<pre\n</pre>\n\n${twice}`)).toEqual([false, false]);
-    expect(await topLevelQuotations(renderer, `<div>\n\n> [!NOTE]\n> One.\n\n</div>\n\n> [!NOTE]\n> Two.\n`)).toEqual([false, true]);
-    expect(await topLevelQuotations(renderer, `<details>\n\nBody.\n\n</details>\n\n${twice}`)).toEqual([true, true]);
-    expect(await topLevelQuotations(renderer, `- > [!NOTE]\n  > One.\n\n${twice}`)).toEqual([true, true]);
-  });
-
-  test.skipIf(renderer === undefined)("no finding on a specimen above or a seeded document stands inside an element in Bun's rendered HTML", async () => {
-    if (renderer === undefined) return;
-    const nested: string[] = [];
+  // Every HTML block, element, comment and tag starts with a `<`, so this
+  // is the whole of what keeps HTML from holding a reported pair.
+  test("no finding on a specimen above or a seeded document has a < on any line above its later alert", () => {
+    const above: string[] = [];
     let checked = 0;
     for (const text of [...SPECIMENS, ...seededDocuments().map(generated => generated.text)]) {
-      checked += adjacentAlertViolations(text, structure(text)).length;
-      for (const finding of await nestedFindings(renderer, text)) {
-        nested.push(finding);
+      const lines = toLines(text);
+      for (const finding of adjacentAlertViolations(text, structure(text))) {
+        checked++;
+        if (lines.slice(0, finding.line - 1).some(line => line.includes("<"))) above.push(`${JSON.stringify(text)} line ${finding.line}`);
       }
     }
-    expect(nested.slice(0, 5)).toEqual([]);
+    expect(above.slice(0, 5)).toEqual([]);
     expect(checked).toBeGreaterThanOrEqual(1_000);
   }, 120_000);
 });
@@ -610,7 +551,7 @@ const AXES = {
   ending: ["\n", `${CR}\n`, CR],
   definition: ["none", "other", "same"],
   after: ["", "paragraph", "lazy"],
-  html: ["none", "closed-above", "badge", "code-span", "details", "div", "table-cell", "blockquote", "span-open", "unclosed-tag"],
+  html: ["none", "below", "closed-above", "badge", "code-span", "details", "div", "table-cell", "blockquote", "span-open", "unclosed-tag"],
 } as const;
 type Axis = keyof typeof AXES;
 type Choice = { [axis in Axis]: (typeof AXES)[axis][number]; };
@@ -680,12 +621,12 @@ function shouldReport(choice: Choice): boolean {
   const bodies = text.includes(choice.firstBody) && text.includes(choice.secondBody);
   const gap = ["one", "two", "spaces", "tab"].includes(choice.gap);
   const above = ["blank", "start", "front-matter-blank"].includes(choice.above);
-  const html = ["none", "closed-above", "badge", "code-span"].includes(choice.html);
+  const html = ["none", "below"].includes(choice.html);
   // A line without a marker carries on a paragraph, but not a closed fence
   // or a heading, so after those it is a paragraph between the two alerts.
   const lazyBetween = choice.extra === "lazy" && (choice.firstBody === "fence" || choice.firstBody === "heading");
-  // An underline below the text that follows a marker makes the marker part of a heading.
-  const underlined = (choice.extra === "underline" || choice.extra === "dashes-below") && (choice.firstBody === "text" || choice.secondBody === "text");
+  // An underline or a row of dashes up to the next blank line stops either alert being read.
+  const underlined = choice.extra === "underline" || choice.extra === "dashes-below";
   return known && markers && bodies && gap && above && html && !lazyBetween && !underlined && choice.container === "none" && choice.definition !== "same";
 }
 
@@ -707,7 +648,7 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
   const above = aboves[choice.above] ?? [];
   // HTML around the whole document: lines before it and lines after it.
   const wrappers: Record<string, [string[], string[]]> = {
-    none: [[], []], "closed-above": [["<details>", "<summary>Notes</summary>", "", "Body.", "", "</details>", ""], []],
+    none: [[], []], below: [[], ["", "<details>", "<b>open"]], "closed-above": [["<details>", "<summary>Notes</summary>", "", "Body.", "", "</details>", ""], []],
     badge: [["<p align=\"center\"><a href=\"https://example.org\"><img src=\"logo.png\" alt=\"Logo\"></a></p>", ""], []], "code-span": [["Use `<details>` here.", ""], []],
     details: [["<details>", "<summary>Notes</summary>", ""], ["", "</details>"]], div: [["<div>", ""], ["", "</div>"]],
     "table-cell": [["<table><tr><td>", ""], ["", "</td></tr></table>"]], blockquote: [["<blockquote>", ""], ["", "</blockquote>"]],
@@ -731,7 +672,7 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
 /**
  * 7,000 documents from a fixed seed. Each axis keeps its first value unless
  * the generator varies it, which it does for one axis in four, so about one
- * document in six holds a reported pair, 1,175 in all, and every value of
+ * document in six holds a reported pair, 1,079 in all, and every value of
  * every axis is met.
  */
 function seededDocuments(): SeededDocument[] {
@@ -780,7 +721,7 @@ describe("adjacent-alerts on seeded documents that vary every distinction it key
       ["indent", ["", " ", "  ", "   "]], ["afterMarker", [" ", "", TAB, "  ", "    "]], ["markerEnd", ["", "  ", "tab"]], ["markerEndOn", AXES.markerEndOn],
       ["firstBody", ["text", "list", "heading", "fence"]], ["secondBody", ["text", "list", "heading", "fence"]], ["extra", ["", "more", "spaced", "lazy"]], ["gap", ["one", "two", "spaces", "tab"]],
       ["above", ["blank", "start", "front-matter-blank"]], ["container", ["none"]], ["ending", AXES.ending], ["definition", ["none", "other"]], ["after", AXES.after],
-      ["html", ["none", "closed-above", "badge", "code-span"]],
+      ["html", ["none", "below"]],
     ];
     const neverReported: string[] = [];
     for (const [axis, values] of reportable) {
@@ -805,9 +746,6 @@ describe("adjacent-alerts takes time in proportion to the text", () => {
     const text = `> [!NOTE]\n> One.\n${"\n".repeat(1_000_000)}> [!NOTE]\n> Two.\n`;
     expect(alerts(text)).toEqual([adjacent("NOTE", 1, 1_000_003)]);
     expect(fastestScan(text, 1)).toBeLessThan(3 * parseTime(text));
-    // A tag above them makes the rule read HTML on every line.
-    const tagged = `<b>Bold</b>\n\n${text}`;
-    expect(fastestScan(tagged, 1)).toBeLessThan(3 * parseTime(tagged));
   }, 120_000);
 
   test("a million characters of unclosed labels and long body lines scan as fast", () => {
@@ -835,42 +773,11 @@ describe("adjacent-alerts takes time in proportion to the text", () => {
     }
   }, 120_000);
 
-  // Each tail is HTML the rule reads for elements left open: runs of
-  // openings, of end tags, of comments and quotes never closed, and of code
-  // spans and link tails, each of which could send a search to the end of
-  // the text from every place it starts. The larger size runs first, where
-  // such a search costs nine times what it does at the smaller one.
-  test("100,000 and 300,000 characters of tags, comments, quotes, code spans and link tails above the alerts scan as fast", () => {
-    for (const size of [300_000, 100_000]) {
-      const tails = [
-        "<details>".repeat(size / 9), "</details>".repeat(size / 10), "<!--".repeat(size / 4), "<a ".repeat(size / 3), "<a x=\"".repeat(size / 6), "</".repeat(size / 2),
-        "<kbd>x</kbd>".repeat(size / 12), "<script>".repeat(size / 8), "`".repeat(size), "` <b>".repeat(size / 5), "](".repeat(size / 2), "[x]: ".repeat(size / 5),
-        ">".repeat(size), "[!".repeat(size / 2), `<a title="${"x".repeat(size)}`, "<a\n".repeat(size / 3),
-        // The structural reading keeps comments and raw text in a heading, so these reach the rule.
-        // Its own reading of comments there takes more than linear time, so they come last.
-        `# Head ${"<?>".repeat(size / 3)}`, `# Head ${"<!x>".repeat(size / 4)}`, `# Head ${"<style>x</style>".repeat(size / 16)}`, `# Head ${"<!-- x -->".repeat(size / 10)}`,
-        // End tags of no open element, below many open ones.
-        `${"<details>".repeat(size / 18)}\n${"</b>".repeat(size / 8)}`, `![${"[".repeat(size)}`,
-      ];
-      for (const tail of tails) {
-        // A tag first makes the rule read HTML at all.
-        const text = `<b>Bold</b>\n\n${tail}\n\n${pair("NOTE", "NOTE")}`;
-        const found = adjacentAlertViolations(text, structure(text)).length;
-        expect(fastestScan(text, found), `${tail.slice(0, 8)} ${size}`).toBeLessThan(3 * parseTime(text));
-        const balanced = `<kbd>x</kbd>`.repeat(size / 12);
-        if (tail === balanced) expect(found).toBe(1);
-      }
-    }
-  }, 120_000);
-
-  test("100,000 HTML blocks and elements opened and closed, and one left open, scan as fast", () => {
-    const closed = `${"<div>\n</div>\n".repeat(100_000)}\n${pair("NOTE", "NOTE")}`;
-    expect(fastestScan(closed, 1)).toBeLessThan(3 * parseTime(closed));
-    // HTML reads `<pre` and `</pre>` on the next line as one start tag, so these hold the alerts.
-    const unended = `${"<pre\n</pre>\n".repeat(100_000)}\n${pair("NOTE", "NOTE")}`;
-    expect(fastestScan(unended, 0)).toBeLessThan(3 * parseTime(unended));
-    const open = `<!--\n\n${pair("NOTE", "NOTE").repeat(50_000)}`;
-    expect(fastestScan(open, 0)).toBeLessThan(3 * parseTime(open));
+  test("a < on the last of a million lines, or on the first, scans as fast", () => {
+    const last = `${pair("NOTE", "NOTE")}${"Text.\n".repeat(1_000_000)}<b>\n`;
+    expect(fastestScan(last, 1)).toBeLessThan(3 * parseTime(last));
+    const first = `<b>\n\n${pair("NOTE", "NOTE").repeat(100_000)}`;
+    expect(fastestScan(first, 0)).toBeLessThan(3 * parseTime(first));
   }, 120_000);
 });
 

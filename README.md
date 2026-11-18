@@ -128,9 +128,9 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads it only for tags and comments that may leave HTML open;
-- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, and `adjacent-alerts` reads the HTML tags in one. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
-- YAML front matter, which is metadata, unless the audit is told the text has none;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, and `adjacent-alerts` reads no alert below a `<` in one. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
+- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it;
 - a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;
 - a task marker, which is a control rather than two words.
 
@@ -178,9 +178,9 @@ It found none in 822 third-party Markdown files or in this repository's own docu
 
 The `adjacent-alerts` rule reports a GitHub alert, such as `> [!NOTE]`, that follows an alert of the same kind with only blank lines between.
 Alerts of different kinds, and alerts with anything else between them, are not reported.
-It reports only alerts it is sure of, so an alert straight below a line that is not blank, or whose next line is not text, goes unreported.
+It reports only alerts it is sure of, so it misses some, such as any below a `<` or straight below a line that is not blank.
 To clear it, merge the two alerts; when they serve different purposes, the finding can stand, because the rule does not read what they say.
-It found 3 in 2 of 822 third-party Markdown files, each two alerts of one kind with only a blank line between, and none in this repository's own documents.
+It found 2 in 1 of 822 third-party Markdown files, each two alerts of one kind with only a blank line between, and none in this repository's own documents.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 
