@@ -134,9 +134,9 @@ Case, punctuation, numbers and the contents of code blocks, tabs included, do ma
 It prints a row for each of these:
 
 - **Dropped:** a unit of the original with no unchanged copy in the new version.
-- **Value:** a number written in figures, or the text of a code span, that is not found as written in the new version. It comes from a sentence, list item, table cell or image alternative that was dropped, rewritten or restructured. Each value is listed once for its unit, and figures that read as the same value, such as `5` and `5.0`, are one value. The row asks a person to confirm that the value was not cut or changed.
+- **Value:** a number written in figures that is not found in the new version, as written or as the same value. It comes from a sentence, list item, table cell or image alternative that was dropped, rewritten or restructured. Each number is listed once for its unit, and figures that read as the same value, such as `5` and `5.0`, are one value. The row asks a person to confirm that the number was not cut or changed.
 - **Rewritten:** a unit of the original with no unchanged copy, paired with a unit of the new version left over. The two share at least two words, and at least half the words of the longer. Of the pairs that qualify, the one sharing the largest part of its words is taken first. The row quotes both and says how many words they share.
-- **Restructured or rewritten:** units of the original with at least half their different words among those of a new table that keeps nothing of the original. The table prints one row, which says how many of their numbers and code spans are in the table, elsewhere in the new version, and nowhere. Its units are not listed as added.
+- **Restructured or rewritten:** units of the original with at least half their different words among those of a new table that keeps nothing of the original. The table prints one row, which says how many of their numbers are in the table, elsewhere in the new version, and nowhere. Its units are not listed as added.
 - **Added:** a unit of the new version found in neither the original nor the author's wording. The added units of a new list or table that keeps nothing of the original share one row, which says how many units it stands for.
 - **From the author:** a unit that matches the author's wording.
 - **Marked gap:** a unit that is one `[Author needed: ...]` slot and nothing else. A full stop inside the slot does not split it.
@@ -152,9 +152,8 @@ A rewritten pair is not read for order, so a sentence reworded and moved reads a
 It reads no unit from front matter, a raw HTML block such as `<pre>`, or the alternative text of an HTML image, and it does not compare link destinations.
 A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.
 
-A value counts as held where its text stands anywhere in the new file, even inside a longer word or figure, so `pre` is held by `prefix`.
-White space is made single first, so a code span whose spacing alone changed is not listed.
-The file is read as written, with character references decoded, backslash escapes read and HTML tags removed, and as the units the comparison reads.
+A number counts as held where its text stands anywhere in the new file, even inside a longer figure, so `13` is held by `1.13.0`.
+The file is read as written, with character references decoded, then with HTML tags removed as well, and as the units the comparison reads.
 So front matter, HTML, link destinations and image alternatives all count.
 
 A number also counts as held where the new version holds the same value in figures, or in English words up to the billions.
@@ -163,8 +162,8 @@ Between each run and the next there may be at most three marks or spaces, as in 
 That holds even inside a longer figure, so `0.3.1` holds `0.3`, and any `one` holds 1.
 A month's name, in full or cut to three letters, holds the month's number when it opens with a capital.
 
-A code span's marks are part of its text, so `<thinking>` that becomes `thinking` is listed.
-A code span that a full stop splits across two sentences is one value.
+The comparison reads numbers only, and does not trace code spans yet.
+So a command such as `npm test` that becomes `npm run test` is not listed, and nor is a number inside a code span.
 In an image alternative, a code span is read as prose and a number inside it as a number.
 When the searches for pairs, tables and values would take more than 20,000,000 steps, none of them is read, and the comparison says so.
 
@@ -185,7 +184,7 @@ A difference after those 60 characters shows in neither the printed rows nor the
 
 Under `rewritten` it gives both lines, the new unit's kind, the first 60 characters of each unit, the words shared and the words of the longer.
 Under `values` it gives the line of the value's unit, and the line of the unit or table that unit went to, or null.
-It also gives the value's kind, and the first 60 characters of the value and of its unit.
+It also gives the value's kind, which is `number`, and the first 60 characters of the value and of its unit.
 Under `tables` it gives the lines of the units read with each table, the table's first line and how many units it holds.
 It also gives the first 60 characters of the first unit read with it, and its counts of values.
 

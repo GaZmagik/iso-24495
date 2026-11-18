@@ -537,7 +537,7 @@ describe("the two-version comparison, given --before", () => {
         "| added | | 4 | Not in the original or the author's wording. Confirm its source: \"Check the gauge.\" |",
         "Kept 2: moved 0, steps out of order 0. Rewritten 0. Into new tables 0. Dropped 1. Added 1. Values not found 0. From the author 0. Marked gaps 0. New headings 0. Headings gone 0. New labels 0. Labels gone 0.",
         "The comparison reads wording, not meaning.",
-        "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
+        "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures as values, not code spans.",
       ]);
       expect(output.stdout[2]).toStartWith("Part 5 checklist reading: ");
       const report = JSON.parse(readFileSync(json, "utf8")) as Record<string, unknown>;
