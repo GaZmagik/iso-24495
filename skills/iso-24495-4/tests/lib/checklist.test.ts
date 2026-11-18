@@ -1003,7 +1003,7 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "23a", limit: 2, check: "restructure-value", before: "Due on 2026-09-28 now.\n", text: "Due on 28 Sep 2026 today.\n", found: [], control: { from: "Sep", to: "sep", found: ["09"] } },
   { clause: "23a", limit: 2, check: "restructure-value", before: "Read page 13 now.\n", text: "Read page 1.13.0 today.\n", found: [], control: { from: "1.13.0", to: "1.14.0", found: ["13"] } },
   { clause: "23a", limit: 2, check: "restructure-value", before: "Use `pre` now.\n", text: "Use the prefix today.\n", found: [], control: { from: "prefix", to: "suffix", found: ["pre"] } },
-  { clause: "23a", limit: 2, check: "restructure-value", before: "Run `npm test` first.\n", text: "<p><b>npm</b> test</p>\n\nRun it first.\n", found: [], control: { from: "<b>npm</b> test", to: "<b>npm</b> run", found: ["npm test"] } },
+  { clause: "23a", limit: 2, check: "restructure-value", before: "Run `npm test` first.\n", text: "<pre>\n<b>npm</b> test\n</pre>\n\nRun it first.\n", found: [], control: { from: "<b>npm</b> test", to: "<b>npm</b> run", found: ["npm test"] } },
   { clause: "23a", limit: 3, check: "restructure-value", before: "The share is 0.5 now.\n", text: "The share is 50% today.\n", found: ["0.5"], control: { from: "50%", to: "0.50", found: [] } },
   { clause: "23a", limit: 3, check: "restructure-value", before: "It takes five days now.\n", text: "It takes many days today.\n", found: [], control: { before: "It takes 5 days now.\n", found: ["5"] } },
   { clause: "23a", limit: 3, check: "restructure-value", before: "Pass `--` before the name.\n", text: "Pass nothing before the name.\n", found: [], control: { before: "Pass `-x` before the name.\n", found: ["-x"] } },
@@ -1125,7 +1125,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "21a": ["3b17814a63e62b11", "3b754fa55057fc97", "0e60fa8f01851b96", "12d1c0838eff6d32"],
   "21b": ["e52f54e7545cd726", "b37773368f704475"],
   "22a": ["1224b0f4632021e6", "53d917c002246746"],
-  "23a": ["1e3e25d1894ce859", "d1c743e588493a24", "88aa0673449e05c1", "4f53cda18c2baa0c"],
+  "23a": ["1e3e25d1894ce859", "1298c759f423a44b", "88aa0673449e05c1", "4f53cda18c2baa0c"],
   "23b": ["a38dd81a0292b5e4", "22bbc5d504e85772", "98f759163397de5f"],
   "25a": ["e2349adc4cce5065", "7868d82e12361114", "722af960a8b0ab98"],
 };

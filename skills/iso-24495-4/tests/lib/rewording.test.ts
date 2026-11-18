@@ -319,7 +319,7 @@ describe("a value of the original that the new version does not hold", () => {
     const before = "Run `npm test` first.\n";
     const places = [
       "![Run npm test](x.png)", "[npm test](guide.md)", "[the guide](https://example.org/npm test)", "## npm test", "<div>\nnpm test\n</div>",
-      "<p><b>npm</b> test</p>", "---\ncommand: &#110;pm test\n---", "Run `npm\ntest` there.",
+      "<pre>\n<b>npm</b> test\n</pre>", "---\ncommand: &#110;pm test\n---", "Run `npm\ntest` there.",
     ];
     for (const place of places) {
       const after = place.startsWith("---") ? `${place}\n\nRun it first.\n` : `Run it first.\n\n${place}\n`;
@@ -625,7 +625,7 @@ describe("on random documents", () => {
     // Each of the after file's places, other than a unit of prose, that a value can stand in.
     const places: ReadonlyArray<(value: string) => string> = [
       value => `![See ${value} here](x.png)`, value => `[${value}](guide.md)`, value => `[the guide](<${value}.md>)`, value => `## ${value}`,
-      value => `<div>\n${value}\n</div>`, value => `<p><b>${value.slice(0, 1)}</b>${value.slice(1)}</p>`,
+      value => `<div>\n${value}\n</div>`, value => `<pre>\n<b>${value.slice(0, 1)}</b>${value.slice(1)}\n</pre>`,
       value => `<div>\n${[...value].map(character => `&#${character.codePointAt(0)};`).join("")}\n</div>`,
     ];
     const figures = numbers.map(number => number.replace("%", ""));
