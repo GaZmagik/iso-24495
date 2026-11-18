@@ -382,6 +382,24 @@ describe("a value of the original that the new version does not hold", () => {
     expect(lost("Run the pump 12 times today.\n", "<pre>\npump 12\n</pre>\n\nRun it today.\n")).toEqual([]);
   });
 
+  test("outside every unit, a number is held by its value too: in other figures, in words or by its runs", () => {
+    // Front matter and an HTML block hold no unit, so only the whole file can hold these.
+    const held: Array<[string, string]> = [["1,000", "---\ndays: 1000\n---"], ["5", "---\ndays: five\n---"], ["10.30", "<pre>\nopen 10:30\n</pre>"]];
+    for (const [number, place] of held) {
+      const after = place.startsWith("---") ? `${place}\n\nIt takes long today.\n` : `It takes long today.\n\n${place}\n`;
+      expect(lost(`It takes ${number} days now.\n`, after), place).toEqual([]);
+    }
+    // Control: another value there is not the same number.
+    expect(lost("It takes 1,000 days now.\n", "---\ndays: 2000\n---\n\nIt takes long today.\n")).toEqual(["1,000"]);
+  });
+
+  test("a figure grouped by spaces is held where each of its groups stands as a number, because the space may part two numbers", () => {
+    expect(lost("Score 3 500 now.\n", "Score 3 then 500 today.\n")).toEqual([]);
+    expect(lost("Score 3 500 now.\n", "Score 3500 today.\n")).toEqual([]);
+    // Control: one group gone.
+    expect(lost("Score 3 500 now.\n", "Score 3 then 600 today.\n")).toEqual(["3 500"]);
+  });
+
   test("a reworded unit whose values all survive lists no value", () => {
     const comparison = compareVersions("Keep it below 5 bar with `valve-a` shut.\n", "Keep it under 5 bar, with `valve-a` shut.\n", null);
     expect([comparison.rewritten.length, comparison.values.length]).toEqual([1, 0]);
@@ -464,6 +482,9 @@ describe("a unit turned into a new table", () => {
     expect(comparison.tables.map(table => [table.inTable, table.elsewhere, table.notFound])).toEqual([[5, 1, 1]]);
     expect(values(comparison)).toEqual([["number", "7"]]);
     expect(comparison.values[0]?.after).toBe(3);
+    // Two numbers elsewhere and one nowhere, so the two counts cannot be swapped unseen.
+    const moreAfter = after.replace("| £15 |", "| £16 |").replace("40 plans", "40 plans, from 15 offers,");
+    expect(compareVersions(PLANS_BEFORE.replace("1 TB", "1 TB for 7 users"), moreAfter, null).tables.map(table => [table.inTable, table.elsewhere, table.notFound])).toEqual([[4, 2, 1]]);
   });
 
   test("a table that keeps a unit of the original, or holds one unit, is not read with a unit", () => {
