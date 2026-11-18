@@ -26,15 +26,17 @@ const SPACES = /[ \t]/g;
  * The HTML blocks that run on over blank lines, as CommonMark has them, that
  * the structural reading can leave unread, each with what ends it. One is
  * opened by `<pre`, `<script`, `<style` or `<textarea`, which the reading
- * misses when the tag name ends its line. Another is a CDATA section. The
- * last is a processing instruction, which the reading ends at the first `>`
- * though CommonMark ends it at `?>`. The reading hides comments and
- * declarations itself.
+ * misses when the tag name ends its line. Another is a CDATA section. A
+ * processing instruction is another, which the reading ends at the first `>`
+ * though CommonMark ends it at `?>`. The last is a comment, which the reading
+ * can end at `--!>` though CommonMark ends it only at `-->`. The reading
+ * hides declarations itself.
  */
 const RAW_HTML: ReadonlyArray<{ open: RegExp; close: RegExp }> = [
   { open: /^ {0,3}<(?:pre|script|style|textarea)(?:[ \t>]|$)/i, close: /<\/(?:pre|script|style|textarea)>/i },
   { open: /^ {0,3}<!\[CDATA\[/, close: /\]\]>/ },
   { open: /^ {0,3}<\?/, close: /\?>/ },
+  { open: /^ {0,3}<!--/, close: /-->/ },
 ];
 /** The elements HTML gives no end tag, so they hold nothing. */
 const VOID_ELEMENTS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
@@ -44,6 +46,11 @@ const VOID_ELEMENTS = new Set(["area", "base", "br", "col", "embed", "hr", "img"
  * open, short of a table cell.
  */
 const CLOSED_FROM_ANYWHERE = new Set(["address", "article", "aside", "blockquote", "button", "center", "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure", "footer", "header", "hgroup", "listing", "main", "menu", "nav", "ol", "pre", "search", "section", "summary", "ul"]);
+/** The elements Markdown writes for a paragraph, a list, a quotation and a heading. */
+const MARKDOWN_BLOCKS = new Set(["p", "li", "ul", "ol", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6"]);
+/** The start of a raw HTML block as CommonMark has it, and the end tags that end one. */
+const RAW_BLOCK_START = /^ {0,3}<(pre|script|style|textarea)(?=[ \t>]|$)/i;
+const RAW_BLOCK_END = /<\/(pre|script|style|textarea)>/i;
 /** The end tag of a raw HTML block that the structural reading hides whole. */
 const RAW_END = /<\/(?:pre|script|style|textarea)\s*>/gi;
 /** The elements whose content HTML reads as text up to their own end tag. */
@@ -60,8 +67,10 @@ const TAG_NAME_END = /[ \t\n/>]/;
 const LETTER = /[A-Za-z]/;
 const NAME_CHARACTER = /[A-Za-z0-9-]/;
 /** The characters the element reading acts on, and the same with a line break. */
-const MARK = /[<`\\![\]]/g;
-const MARK_OR_BREAK = /[<`\\![\]\n]/g;
+const MARK = /[<`\\[\]]/g;
+const MARK_OR_BREAK = /[<`\\[\]\n]/g;
+/** The end tag of an element whose content HTML reads as raw text, found in any letter case. */
+const RAW_TEXT_END = /<\/(script|style|textarea|title|xmp|iframe|noembed|noframes)(?=[ \t\n/>])/gi;
 /** What ends a comment in HTML, searched from where the comment starts. */
 const COMMENT_END = /--!?>/g;
 
@@ -208,13 +217,12 @@ function linesHeldByElements(lines: readonly string[], markup: readonly string[]
   const text = markup.join("\n");
   const reading: ElementReading = {
     ...lineFacts(lines, markup, blocks), text, held: new Uint8Array(markup.length),
-    open: [], openCount: new Map(), sure: true, line: 0, asked: 0, linkEnd: -1, lastMark: -1, altDepth: 0,
+    open: [], openCount: new Map(), sure: true, line: 0, asked: 0, linkEnd: -1, lastMark: -1, bracketDepth: 0,
   };
-  const lower = text.toLowerCase();
   let at = 0;
   while (at < text.length) {
-    // Only these characters change the reading; a line break only inside an image's alternative text.
-    const marks = reading.altDepth > 0 ? MARK_OR_BREAK : MARK;
+    // Only these characters change the reading; a line break only inside square brackets.
+    const marks = reading.bracketDepth > 0 ? MARK_OR_BREAK : MARK;
     marks.lastIndex = at;
     const found = marks.exec(text);
     if (found === null) break;
@@ -239,9 +247,10 @@ function linesHeldByElements(lines: readonly string[], markup: readonly string[]
       closeElement(reading, tag.name);
     } else if (tag.kind === "open" && RAW_TEXT_ELEMENTS.has(tag.name)) {
       // Nothing inside is a tag, up to the element's own end tag.
-      const closing = rawTextEnd(lower, tag.name, tag.end);
+      const closing = rawTextEnd(text, tag.name, tag.end);
       const ending = closing === -1 ? null : readTag(text, closing, false);
-      noteMarks(reading, at, Math.max(closing, at));
+      // Markdown still reads the text between, so the end tag may stand in a link or code.
+      readMarkdownOver(reading, at, Math.max(closing, at));
       if (ending === null || ending.kind !== "close" || !endTagCertain(reading, closing)) reading.sure = false;
       end = ending?.kind === "close" ? ending.end : end;
     } else if (tag.kind === "open" && !VOID_ELEMENTS.has(tag.name)) {
@@ -281,14 +290,17 @@ interface ElementReading extends LineFacts {
    * code or escaped.
    */
   lastMark: number;
-  /** How many brackets of an image's alternative text are open. Its text is not HTML. */
-  altDepth: number;
+  /**
+   * How many square brackets are open. Text inside one may be an image's
+   * alternative text or a link's label, which are not HTML.
+   */
+  bracketDepth: number;
 }
 
 /**
  * Reads the Markdown at this offset that can make a later end tag text: a
- * backtick or backslash, an image's alternative text, a link's destination
- * and title, and the blank line that ends them.
+ * backtick or backslash, a square bracket, a link's destination and title,
+ * and the blank line that ends them.
  *
  * @returns How many characters the reading moves past, or 0 at a `<`.
  */
@@ -297,18 +309,22 @@ function readMarkdown(reading: ElementReading, at: number): number {
   const character = text[at];
   if (character === "<") return 0;
   if (character === "`" || character === "\\") reading.lastMark = at;
-  if (character === "\n" && blankLineAt(text, at + 1)) reading.altDepth = 0;
-  if (character === "!" && text[at + 1] === "[") {
-    reading.altDepth++;
-    return 2;
-  }
-  if (character === "[" && reading.altDepth > 0) reading.altDepth++;
-  if (character === "]" && reading.altDepth > 0) reading.altDepth--;
+  if (character === "\n" && blankLineAt(text, at + 1)) reading.bracketDepth = 0;
+  if (character === "[") reading.bracketDepth++;
+  if (character === "]" && reading.bracketDepth > 0) reading.bracketDepth--;
   if (character === "]" && text[at + 1] === "(" && at >= reading.linkEnd) {
     reading.linkEnd = linkTailEnd(text, at + 2);
     return 2;
   }
   return 1;
+}
+
+/** Reads the Markdown in a stretch of text the element reading moves past, as `readMarkdown` does at each offset. */
+function readMarkdownOver(reading: ElementReading, from: number, to: number): void {
+  for (let at = from; at < to;) {
+    const step = readMarkdown(reading, at);
+    at += step === 0 ? 1 : step;
+  }
 }
 
 /** Records what holds each line that starts at or before this offset, as the reading stands. */
@@ -336,15 +352,16 @@ function noteMarks(reading: ElementReading, from: number, to: number): void {
 
 /**
  * Whether an end tag at this offset is certainly a tag that may close an
- * element: outside a link's destination and title and an image's
- * alternative text, on a line where an end tag can close one, and after no
- * backtick or backslash on its line.
+ * element: outside a link's destination and title and outside square
+ * brackets, which may hold an image's alternative text or a link's label,
+ * on a line where an end tag can close one, and after no backtick or
+ * backslash on its line.
  */
 function endTagCertain(reading: ElementReading, at: number): boolean {
   while (reading.asked + 1 < reading.starts.length && (reading.starts[reading.asked + 1] ?? 0) <= at) {
     reading.asked++;
   }
-  return at >= reading.linkEnd && reading.altDepth === 0 && reading.closingNothing[reading.asked] !== 1 && reading.lastMark < (reading.starts[reading.asked] ?? 0);
+  return at >= reading.linkEnd && reading.bracketDepth === 0 && reading.closingNothing[reading.asked] !== 1 && reading.lastMark < (reading.starts[reading.asked] ?? 0);
 }
 
 /**
@@ -352,11 +369,15 @@ function endTagCertain(reading: ElementReading, at: number): boolean {
  * it from where the end tag stands. HTML closes an element such as `div` or
  * `details` from inside a paragraph, a list item or a heading, but ignores
  * the end tag of a `span` there, so an element of any other name closes only
- * from the run of lines its start tag stands in. An end tag of an element
- * opened before the last one leaves the reading unsure, as HTML may then
- * close more than one. An end tag of no open element closes none.
+ * from the run of lines its start tag stands in. Markdown writes its own
+ * paragraph, list, quotation and heading elements, and an end tag of one of
+ * those names may close Markdown's instead, so it closes nothing outside an
+ * HTML block. An end tag of an element opened before the last one leaves
+ * the reading unsure, as HTML may then close more than one. An end tag of
+ * no open element closes none.
  */
 function closeElement(reading: ElementReading, name: string): void {
+  if (MARKDOWN_BLOCKS.has(name) && reading.htmlRuns[reading.asked] !== 1) return;
   const last = reading.open[reading.open.length - 1];
   if (last?.name === name) {
     if (!CLOSED_FROM_ANYWHERE.has(name) && last.run !== reading.runs[reading.asked]) return;
@@ -487,17 +508,16 @@ function blankLineAt(text: string, from: number): boolean {
 }
 
 /**
- * The offset of the end tag that ends raw text of this element, in the text
- * in lower case, or -1 when none does: `</`, the name, and white space, `/`
- * or `>`.
+ * The offset of the end tag that ends raw text of this element, or -1 when
+ * none does: `</`, the name in any letter case, and white space, `/` or `>`.
+ * It searches the text itself, as a copy in lower case can be longer.
  */
-function rawTextEnd(lower: string, name: string, from: number): number {
-  const opening = `</${name}`;
-  let at = lower.indexOf(opening, from);
-  while (at !== -1 && !TAG_NAME_END.test(lower[at + opening.length] ?? "")) {
-    at = lower.indexOf(opening, at + 1);
+function rawTextEnd(text: string, name: string, from: number): number {
+  RAW_TEXT_END.lastIndex = from;
+  for (let match = RAW_TEXT_END.exec(text); match !== null; match = RAW_TEXT_END.exec(text)) {
+    if ((match[1] ?? "").toLowerCase() === name) return match.index;
   }
-  return at;
+  return -1;
 }
 
 /**
@@ -544,21 +564,25 @@ function linkTailEnd(text: string, from: number): number {
  *   start tag may begin than its shown text is marked. The reading also
  *   hides the whole of a raw HTML block such as `<pre>`, though HTML reads
  *   the rest of the line its end tag stands on, so a hidden line with a
- *   start tag after such an end tag is marked.
+ *   start tag after such an end tag is marked. CommonMark ends such a block
+ *   at any of its four end tags, even in a comment, where HTML does not end
+ *   the element, so the line that ends one that way is marked too.
  * - `closingNothing`: 1 where an end tag closes nothing opened before it, as
- *   far as the rule can tell. One such line is where a link definition's
- *   destination may stand: each line whose shown text starts with `[` and
- *   holds `]:`, and the line after it. Another is a line of a table, up to
- *   the next blank line, as a row needs no pipe: there an end tag stands in a
+ *   far as the rule can tell, up to the next blank line. One such run starts
+ *   at a line that starts with `[` and holds `]:`, as a link definition's
+ *   destination and title may stand on the lines after it. Another starts at
+ *   a line of a table, as a row needs no pipe: there an end tag stands in a
  *   cell, and HTML closes nothing outside a cell from inside it.
  */
 function lineFacts(lines: readonly string[], markup: readonly string[], blocks: ReadonlyMap<number, { kind: string }>): LineFacts {
   const count = markup.length;
-  const facts: LineFacts = { starts: [], runs: new Uint32Array(count), htmlRuns: new Uint8Array(count), hidden: new Uint8Array(count), closingNothing: new Uint8Array(count + 1) };
+  const facts: LineFacts = { starts: [], runs: new Uint32Array(count), htmlRuns: new Uint8Array(count), hidden: new Uint8Array(count), closingNothing: new Uint8Array(count) };
   let offset = 0;
   let run = 0;
   let html = false;
-  let table = false;
+  let closesNothing = false;
+  // The raw HTML block CommonMark reads the line in, and whether a comment is open in it.
+  let raw: { name: string; inComment: boolean } | null = null;
   for (let index = 0; index < count; index++) {
     const line = lines[index] ?? "";
     const shown = markup[index] ?? "";
@@ -567,7 +591,7 @@ function lineFacts(lines: readonly string[], markup: readonly string[], blocks: 
     if (BLANK.test(line)) {
       run++;
       html = false;
-      table = false;
+      closesNothing = false;
     }
     facts.runs[index] = run;
     const shownBlank = BLANK.test(shown);
@@ -575,13 +599,28 @@ function lineFacts(lines: readonly string[], markup: readonly string[], blocks: 
     if (html) facts.htmlRuns[index] = 1;
     if (html && startTagCount(line) > startTagCount(shown)) facts.hidden[index] = 1;
     if (shownBlank && line.includes("</") && startTagCount(line.slice(rawEndAfter(line))) > 0) facts.hidden[index] = 1;
-    const trimmed = shown.trimStart();
-    if (trimmed.startsWith("[") && trimmed.includes("]:")) {
-      facts.closingNothing[index] = 1;
-      facts.closingNothing[index + 1] = 1;
+    let rest = line;
+    if (raw === null) {
+      const start = RAW_BLOCK_START.exec(line);
+      if (start !== null) {
+        raw = { name: (start[1] ?? "").toLowerCase(), inComment: false };
+        rest = line.slice(start[0].length);
+      }
     }
-    if (!shownBlank && blocks.get(index)?.kind === "table") table = true;
-    if (table) facts.closingNothing[index] = 1;
+    if (raw !== null) {
+      // CommonMark ends the block at any of the four end tags, even inside a
+      // comment. HTML ends the element only at its own, outside a comment.
+      const end = RAW_BLOCK_END.exec(rest);
+      raw.inComment = commentOpenAfter(raw.inComment, end === null ? rest : rest.slice(0, end.index));
+      if (end !== null) {
+        if (raw.inComment || (end[1] ?? "").toLowerCase() !== raw.name) facts.hidden[index] = 1;
+        raw = null;
+      }
+    }
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("[") && trimmed.includes("]:")) closesNothing = true;
+    if (!shownBlank && blocks.get(index)?.kind === "table") closesNothing = true;
+    if (closesNothing) facts.closingNothing[index] = 1;
   }
   return facts;
 }
@@ -603,6 +642,17 @@ function rawEndAfter(line: string): number {
     after = match.index + match[0].length;
   }
   return after;
+}
+
+/**
+ * Whether a comment is open after a stretch of text, given whether one was
+ * open before it. A comment opens at `<!--` and ends at the next `-->`.
+ */
+function commentOpenAfter(open: boolean, text: string): boolean {
+  const opened = text.lastIndexOf("<!--");
+  const closed = text.lastIndexOf("-->");
+  if (opened !== -1 && opened + 1 >= closed) return true;
+  return closed === -1 ? open : false;
 }
 
 /** How many places in a line HTML may start a tag: `<` and a letter. */

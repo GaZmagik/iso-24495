@@ -227,10 +227,25 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       ["<div title=\"a\n\n<details>\n\n\" >\n\n</div>\n\n", ""],
       // An end tag of an element opened before the last one leaves the rule unsure, though here HTML closes both.
       ["<div>\n<span>\n</div>\n</span>\n</div>\n\n", ""],
+      // CommonMark ends a comment only at `-->`, and a raw block at any of its end tags, even inside a comment.
+      ["<!-- a --!>\n\n", ""],
+      ["<pre>\n<!-- </pre> -->\n\n", ""],
+      // Markdown reads the text inside raw text, so its end tag may be a link destination.
+      ["Text <script>\n[x](</script>)\n\n", ""],
+      ["Text <style>x</script> y\n\n", ""],
+      // An end tag of an element Markdown writes for a block may close Markdown's own.
+      ["Text <li>\n- Item </li>\n\n", ""],
+      // A label of a full reference, and a definition's title on a later line, are not HTML.
+      ["<details>\n\n[x][</details>]\n\n[</details>]: /u\n\n", ""],
+      ["<details>\n\n[d]:\n  /u\n  \"</details>\"\n\n", ""],
+      // A complete pre holds both.
+      ["<pre>\n", "</pre>\n"],
     ];
     for (const [before, after] of wrappers) {
       expect(alerts(`${before}${pair("NOTE", "NOTE")}${after}`), before).toEqual([]);
     }
+    // HTML that closes between the alerts still holds the first.
+    expect(alerts("<div>\n\n> [!NOTE]\n> One.\n\n</div>\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
   });
 
   test("an end tag that may be text closes nothing, so an alert after it is not read", () => {
@@ -254,7 +269,7 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       "Press <kbd>Ctrl</kbd> and <kbd>C</kbd>.<br>Then wait.", "Use `<details>` to fold text.", `Write ${backslash}<details> to fold text.`, "See <https://example.org> or <a@example.org>.",
       "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<script>\nlet tag = \"<details>\";\n</script>", "<div title=\"</div>\">\nBody.\n</div>",
       "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "<div>\n\nText </div>", "1. Open the page at\n   <https://example.org/home> to start.", "<details>\n\n- Item </details>",
-      "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
+      "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", `${String.fromCharCode(0x130).repeat(4)} <style>x</style> after.`, "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
       expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([adjacent("NOTE", before.split("\n").length + 2, before.split("\n").length + 5)]);
     }
     // HTML inside the earlier alert, closed there, leaves the later one read.
