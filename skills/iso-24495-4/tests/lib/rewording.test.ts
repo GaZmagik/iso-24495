@@ -301,6 +301,13 @@ describe("a value of the original that the new version does not hold", () => {
     expect(hidden.values.map(value => [value.value, value.unit.key])).toEqual([["a. b", "b now."]]);
   });
 
+  test("a code span that ends its prose is traced, as a list item or a table cell that is only code", () => {
+    expect(lost("- `npm test`\n", "- Run it.\n")).toEqual(["npm test"]);
+    expect(lost("| Command |\n|---|\n| `make all` |\n", "| Command |\n|---|\n| make it |\n")).toEqual(["make all"]);
+    expect(lost("Run `npm  test`\n", "Run it.\n")).toEqual(["npm test"]);
+    expect(lost("- `npm test`\n", "- Run `npm test`.\n")).toEqual([]);
+  });
+
   test("a character reference in the prose does not move a code span", () => {
     expect(lost("Use &#57344;fake&#57345; and `--send` now.\n", "Use other and --send now.\n")).toEqual([]);
     expect(lost("Use &#57344;fake&#57345; and `--send` now.\n", "Use other now.\n")).toEqual(["--send"]);
