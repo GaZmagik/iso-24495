@@ -270,7 +270,7 @@ describe("Part 5's own examples of a restructure read as kept", () => {
     expect(printed(before, after)).toEqual([
       ...HEAD,
       "| dropped | 1 | | No unchanged copy is in the new version: \"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
-      "| value | 1 | | A number of the original is found in the new version neither in figures nor in words. Check that it was not cut or changed: \"10\" in \"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
+      "| value | 1 | | A number of the original is not found as written in the new version, nor as the same value in figures or words. Confirm that it was not cut or changed: \"10\" in \"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
       "| added | | 1 | Not in the original or the author's wording. Confirm its source: \"Choose a plan:\" |",
       "| added | | 3 | 4 units in one new table are not in the original or the author's wording. Confirm their source: \"Plan\" |",
       counts(0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),

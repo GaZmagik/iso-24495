@@ -134,7 +134,7 @@ Case, punctuation, numbers and the contents of code blocks, tabs included, do ma
 It prints a row for each of these:
 
 - **Dropped:** a unit of the original with no unchanged copy in the new version.
-- **Value:** a number written in figures, or the text of a code span, that the new version holds nowhere. It comes from a sentence, list item, table cell or image alternative that was dropped, rewritten or restructured. Each value is listed once for its unit.
+- **Value:** a number written in figures, or the text of a code span, that is not found as written in the new version. It comes from a sentence, list item, table cell or image alternative that was dropped, rewritten or restructured. Each value is listed once for its unit, and figures that read as the same value, such as `5` and `5.0`, are one value. The row asks a person to confirm that the value was not cut or changed.
 - **Rewritten:** a unit of the original with no unchanged copy, paired with a unit of the new version left over. The two share at least two words, and at least half the words of the longer. Of the pairs that qualify, the one sharing the largest part of its words is taken first. The row quotes both and says how many words they share.
 - **Restructured or rewritten:** units of the original with at least half their different words among those of a new table that keeps nothing of the original. The table prints one row, which says how many of their numbers and code spans are in the table, elsewhere in the new version, and nowhere. Its units are not listed as added.
 - **Added:** a unit of the new version found in neither the original nor the author's wording. The added units of a new list or table that keeps nothing of the original share one row, which says how many units it stands for.
@@ -152,14 +152,20 @@ A rewritten pair is not read for order, so a sentence reworded and moved reads a
 It reads no unit from front matter, a raw HTML block such as `<pre>`, or the alternative text of an HTML image, and it does not compare link destinations.
 A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.
 
-A number counts as held where the new version holds the same value in figures or in English words.
+A value counts as held where its text stands anywhere in the new file, even inside a longer word or figure, so `pre` is held by `prefix`.
+White space is made single first, so a code span whose spacing alone changed is not listed.
+The file is read as written, with character references decoded, backslash escapes read and HTML tags removed, and as the units the comparison reads.
+So front matter, HTML, link destinations and image alternatives all count.
+
+A number also counts as held where the new version holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
 Between each run and the next there may be at most three marks or spaces, as in `10:30`, and they must stand in one unit or one line.
 That holds even inside a longer figure, so `0.3.1` holds `0.3`, and any `one` holds 1.
 A month's name, in full or cut to three letters, holds the month's number when it opens with a capital.
 
-A code span counts as held only where its exact text stands, so `<thinking>` that becomes `thinking` is listed.
-Values are looked for in the whole new file, front matter, HTML and link destinations included.
+A code span's marks are part of its text, so `<thinking>` that becomes `thinking` is listed.
+A code span that a full stop splits across two sentences is one value.
+In an image alternative, a code span is read as prose and a number inside it as a number.
 When the searches for pairs, tables and values would take more than 20,000,000 steps, none of them is read, and the comparison says so.
 
 A moved row asks a person to check the move, because Part 5 allows a move that keeps its dependencies and the claim it qualifies.

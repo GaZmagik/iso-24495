@@ -9,19 +9,21 @@
 // unit of the original that shares at least half of its different words with
 // a new table is read with that table, because Part 5's own example turns a sentence into one.
 // And each number and code span of a unit not kept is looked for in the
-// whole new version.
+// whole new version. One is listed only when its text, as the original
+// writes it, stands nowhere in the new file, read raw or as a reader sees it.
 //
 // Every search here that can grow faster than the files it reads counts its
 // steps on one meter. Past the meter's limit the comparison uses none of what
 // was found, so a finding never rests on a search that stopped partway.
 
-import type { CodeSpan, Unit } from "./restructure.ts";
+import { decodeEntities } from "./inline-wording.ts";
+import type { Unit } from "./restructure.ts";
 
 /**
  * How many steps the searches of one comparison may take: each entry of an
  * index visited, each word compared between two units, and each character
- * read while looking for a code span counts one. Building the indexes is not
- * counted, because it reads each text once.
+ * read while looking for a value's text counts one. Building the indexes and
+ * the texts searched is not counted, because it reads each text once.
  */
 export const WEIGHING_BUDGET = 20_000_000;
 
@@ -63,6 +65,12 @@ const SCALES: ReadonlyMap<string, number> = new Map([
 /** A letter, a mark or a digit: a character a word is made of. */
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 
+/** An HTML tag, read as far as the next angle bracket so a stray `<` costs no more than its own text. */
+const TAG = /<[^<>]*>/g;
+
+/** A backslash escape: a backslash before a mark of ASCII punctuation, which a reader sees as the mark alone. */
+const ESCAPED = /\\([!-/:-@[-`{-~])/g;
+
 /** The steps a comparison's searches have taken, and how many they may take. */
 export interface Meter {
   spent: number;
@@ -103,8 +111,18 @@ export interface Found {
    * limit while looking.
    */
   runs(runs: readonly string[]): boolean | null;
-  /** Whether the new version holds this text anywhere, or null when the meter passed its limit while looking. */
+  /**
+   * Whether the new version holds a code span's text, as `text` looks for
+   * it, or holds no letter or digit at all, or null when the meter passed
+   * its limit while looking.
+   */
   code(text: string): boolean | null;
+  /**
+   * Whether this text, its white space made single, stands anywhere in the
+   * new version, even inside a longer word, or null when the meter passed
+   * its limit while looking.
+   */
+  text(text: string): boolean | null;
 }
 
 /**
@@ -240,20 +258,28 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
  * text holds, or the value of English number words it holds, or when the
  * text holds its runs of digits in the same order with only marks or spaces
  * between them, so `10.30` is found in `10:30` and `3,4` in `3, 4`. Each
- * place a figure's first run stands counts one step on the meter. A code span is
- * found when its text stands in a unit or a line of the text, and not inside
- * a longer word, so `pre` is not found in `prefix`. One holding no letter or
- * digit counts as found, because such text stands almost anywhere and the
- * search for it reads too much.
+ * place a figure's first run stands counts one step on the meter.
+ *
+ * Text is found where it stands anywhere in the version, even inside a
+ * longer word, so `pre` is found in `prefix`, once white space is made single
+ * in both. It is looked for in the units joined by spaces and in the whole
+ * text as written. It is looked for again in the whole text with its
+ * backslash escapes read as the characters they escape and its character
+ * references decoded, with and without its HTML tags. And it is looked for in
+ * each of these with an escaped pipe read as the pipe a table shows. Each
+ * character read counts one step, and each text is looked for once. A code
+ * span holding no letter or digit counts as found, because such text stands
+ * almost anywhere.
  *
  * @param keys The text of each unit of the version.
  * @param source The version's whole text.
  */
 export function foundIn(keys: readonly string[], source: string, meter: Meter): Found {
   const numbers = new Set<string>();
-  const lines = [...keys, ...source.split(/\r\n|\r|\n/).map(line => line.trim().replace(/\s+/gu, " "))];
+  const decoded = decodeEntities(source.replace(ESCAPED, "$1"));
+  const whole = [keys.join(" "), source, decoded, decoded.replace(TAG, "")].map(singleSpace);
   // A table shows an escaped pipe as a pipe, inside a code span too, so each text is also read that way.
-  const texts = [...lines, ...lines.filter(line => line.includes(PIPE_ESCAPE)).map(line => line.replaceAll(PIPE_ESCAPE, "|"))];
+  const texts = [...whole, ...whole.filter(text => text.includes(PIPE_ESCAPE)).map(text => text.replaceAll(PIPE_ESCAPE, "|"))];
   // Each run of digits that has only marks or spaces between it and the next, by its digits, so a figure is found by its runs.
   const sequences: string[][] = [];
   const startingWith = new Map<string, Array<[number, number]>>();
@@ -274,13 +300,6 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
       sequences.push(runs);
     }
   }
-  // Each text, by the words it holds, so a code span is looked for only where its rarest word stands.
-  const holding = new Map<string, number[]>();
-  for (const [position, text] of texts.entries()) {
-    for (const word of new Set(wordsOf(text))) {
-      appendTo(holding, word, position);
-    }
-  }
   const answers = new Map<string, boolean | null>();
   return {
     number: readings => [...readings].some(reading => numbers.has(reading)),
@@ -290,30 +309,8 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
       if (meter.spent > meter.limit) return null;
       return places.some(([sequence, offset]) => runs.every((run, step) => sequences[sequence]?.[offset + step] === run));
     },
-    code: text => {
-      const known = answers.get(text);
-      if (known !== undefined) return known;
-      const words = wordsOf(text);
-      let answer: boolean | null = true;
-      if (words.length > 0) {
-        const rarest = words.reduce((first, second) => (holding.get(second)?.length ?? 0) < (holding.get(first)?.length ?? 0) ? second : first);
-        answer = false;
-        for (const position of holding.get(rarest) ?? []) {
-          const candidate = texts[position] ?? "";
-          meter.spent += candidate.length;
-          if (meter.spent > meter.limit) {
-            answer = null;
-            break;
-          }
-          if (standsIn(candidate, text)) {
-            answer = true;
-            break;
-          }
-        }
-      }
-      answers.set(text, answer);
-      return answer;
-    },
+    code: text => (WORD_CHARACTER.test(text) ? textIn(texts, text, answers, meter) : true),
+    text: text => textIn(texts, text, answers, meter),
   };
 }
 
@@ -332,20 +329,25 @@ export function figureFound(figure: FigureValue, found: Found): boolean | null {
  * The numbers written in figures in a text, outside its code spans. A
  * figure is a run of digits, with any full stops or commas between digits,
  * or groups of three digits after the first, joined by single spaces, such
- * as `1 000`. Only the digits 0 to 9 are read.
+ * as `1 000`. Only the digits 0 to 9 are read, from the first, so `.5` is
+ * read as `5`.
  *
  * A figure is read as a value with a full stop as the decimal point and
  * commas grouping its digits in threes, and again with the marks the other
  * way round, wherever the grouping holds, so `1,000` reads as 1000 or as 1.
  * A figure that holds neither way, such as `0.7.0`, reads only as itself.
  *
- * @param spans Where the code spans stand in the text.
+ * @param spans Where the code spans stand in the text, in order and not
+ *     overlapping. The text is read once, with each made spaces.
  */
-export function figureValues(text: string, spans: readonly CodeSpan[]): FigureValue[] {
-  let masked = text;
+export function figureValues(text: string, spans: ReadonlyArray<{ readonly start: number; readonly end: number }>): FigureValue[] {
+  let masked = "";
+  let from = 0;
   for (const span of spans) {
-    masked = masked.slice(0, span.start) + " ".repeat(span.end - span.start) + masked.slice(span.end);
+    masked += text.slice(from, span.start) + " ".repeat(span.end - span.start);
+    from = span.end;
   }
+  masked += text.slice(from);
   const figures: FigureValue[] = [];
   for (const match of masked.matchAll(FIGURE)) {
     const written = match[0];
@@ -518,19 +520,37 @@ function appendTo<T>(map: Map<string, T[]>, key: string, value: T): void {
 }
 
 /**
- * Whether a text holds another, with no letter, mark or digit just before or
- * after it where it starts or ends with one, so the match is not part of a
- * longer word.
+ * Whether text, its white space made single, stands in any of the texts
+ * given, reading them in order until it is found. Each character read counts
+ * one step on the meter, and each answer is kept, so a text is looked for once.
+ *
+ * @param answers The answers given so far, by the text made single.
+ * @returns Null when the meter passed its limit while looking.
  */
-function standsIn(text: string, wanted: string): boolean {
-  const opens = WORD_CHARACTER.test(wanted.charAt(0));
-  const closes = WORD_CHARACTER.test(Array.from(wanted).at(-1) ?? "");
-  for (let at = text.indexOf(wanted); at !== -1; at = text.indexOf(wanted, at + 1)) {
-    const before = Array.from(text.slice(Math.max(0, at - 2), at)).at(-1) ?? "";
-    const after = Array.from(text.slice(at + wanted.length, at + wanted.length + 2))[0] ?? "";
-    if ((!opens || !WORD_CHARACTER.test(before)) && (!closes || !WORD_CHARACTER.test(after))) return true;
+function textIn(texts: readonly string[], text: string, answers: Map<string, boolean | null>, meter: Meter): boolean | null {
+  const wanted = singleSpace(text);
+  const known = answers.get(wanted);
+  if (known !== undefined) return known;
+  let answer: boolean | null = false;
+  for (const candidate of texts) {
+    const at = candidate.indexOf(wanted);
+    meter.spent += at === -1 ? candidate.length : at + wanted.length;
+    if (meter.spent > meter.limit) {
+      answer = null;
+      break;
+    }
+    if (at !== -1) {
+      answer = true;
+      break;
+    }
   }
-  return false;
+  answers.set(wanted, answer);
+  return answer;
+}
+
+/** Text with each run of white space made one space. */
+function singleSpace(text: string): string {
+  return text.replace(/\s+/gu, " ");
 }
 
 /** A value written with no leading zero before its digits and no trailing zero after its decimal point. */

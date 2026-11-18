@@ -28,7 +28,7 @@
 // as dropped and added, and a sentence kept word for word whose meaning
 // changed in its new place reads as kept.
 
-import { renderInline } from "./inline-wording.ts";
+import { renderInline, renderInlineCode } from "./inline-wording.ts";
 import { figureFound, figureValues, foundIn, pairReworded, PIPE_ESCAPE, tablesFrom, WEIGHING_BUDGET, type FigureValue, type Found, type Meter, type ReworkedPair } from "./rewording.ts";
 import { inlineText, locateSentences, markdownLinks, normaliseReference, structure, tableCells, type ListStep, type LocatedSentence, type MarkdownLink, type Reading } from "./parse.ts";
 import { safeCell, safePathCode } from "./safe-text.ts";
@@ -321,9 +321,9 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
   }
   for (const value of comparison.values) {
     const finding = value.kind === "number"
-      ? "A number of the original is found in the new version neither in figures nor in words."
-      : "A code span of the original is not found in the new version.";
-    lines.push(`| value | ${value.unit.line} | ${value.after === null ? "" : `${value.after} `}| ${finding} Check that it was not cut or changed: ${quoted(value.value)} in ${quoted(value.unit.key)} |`);
+      ? "A number of the original is not found as written in the new version, nor as the same value in figures or words."
+      : "A code span of the original is not found as written in the new version.";
+    lines.push(`| value | ${value.unit.line} | ${value.after === null ? "" : `${value.after} `}| ${finding} Confirm that it was not cut or changed: ${quoted(value.value)} in ${quoted(value.unit.key)} |`);
   }
   for (const row of afterRows(comparison)) {
     lines.push(row);
@@ -406,14 +406,23 @@ export interface Unit {
   readonly label?: string;
   /** The items of ordered lists the unit stands in, outermost first. Absent outside every ordered list. */
   readonly steps?: readonly ListStep[];
-  /** Where the contents of each code span stand in `key`, in order. Absent when the unit holds none. */
+  /** The code spans that stand in `key`, in order, each as much of it as `key` holds. Absent when the unit holds none. */
   readonly spans?: readonly CodeSpan[];
 }
 
-/** Where a piece of a unit's text starts, and where it ends, just past its last character. */
+/**
+ * A code span of a unit: where the part of it the unit holds starts in the
+ * unit's `key`, and where that part ends, just past its last character.
+ */
 export interface CodeSpan {
   readonly start: number;
   readonly end: number;
+  /**
+   * The whole span, its white space made single. A span that a sentence's
+   * end splits runs into two units, and both hold this same object, so it
+   * is traced once.
+   */
+  readonly whole: { readonly text: string };
 }
 
 /**
@@ -676,9 +685,12 @@ function runs(kept: readonly KeptPair[], flagged: Uint8Array, rank: Int32Array, 
  *    describes, and neither they nor the table's units are then listed.
  * 3. Each number and code span of a unit dropped, rewritten or read with a
  *    table is looked for in the whole new version, as `foundIn` describes,
- *    once for each unit however often it stands there, and each not found
- *    is listed. One of a unit read with a table is
- *    counted as in the table, elsewhere or not found.
+ *    and each not found is listed. A value is looked for once for each unit
+ *    however often it stands there, and figures that read as the same value,
+ *    such as `5` and `5.0`, are one value. A code span that runs into two
+ *    units is one value, looked for with the first of them read here. A
+ *    value of a unit read with a table is counted as in the table, elsewhere
+ *    or not found.
  *
  * When the searches pass `WEIGHING_BUDGET` steps, none of this is used: the
  * comparison keeps its units dropped and added, and says it weighed nothing.
@@ -709,13 +721,19 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
   const inTables = read.map(table => foundIn(table.cells.map(cell => cell.key), "", meter));
   const tallies = read.map(() => ({ inTable: 0, elsewhere: 0, notFound: 0 }));
   const values: MissingValue[] = [];
+  const spansRead = new Set<CodeSpan["whole"]>();
   for (const { unit, after, table } of checked) {
-    // Each value once for its unit, so "14 of 14" lists one 14.
+    // Each value once for its unit, so "14 of 14" lists one 14, and "5 or 5.0" one 5.
     const read = new Set<string>();
     for (const value of valuesOf(unit)) {
+      if (value.whole !== undefined) {
+        if (spansRead.has(value.whole)) continue;
+        spansRead.add(value.whole);
+      }
       const kind = value.figure === undefined ? "code" : "number";
-      if (read.has(`${kind} ${value.text}`)) continue;
-      read.add(`${kind} ${value.text}`);
+      const same = value.figure === undefined ? `code ${value.text}` : `number ${[...value.figure.readings].sort().join(" ")}`;
+      if (read.has(same)) continue;
+      read.add(same);
       found ??= foundIn(comparison.after.map(other => other.key), afterSource, meter);
       const anywhere = valueFound(value, found);
       const inTable = table === -1 ? false : valueFound(value, inTables[table] ?? found);
@@ -776,16 +794,16 @@ function newTables(after: readonly Unit[], added: readonly Unit[]): Unit[][] {
 
 /**
  * The numbers in figures and the code spans of a unit, in the order they
- * stand in it. A code span's text is as the unit holds it, its white space
- * made single, and a number inside one is not read on its own. In a table
- * cell, an escaped pipe in a code span is read as the pipe a table shows.
+ * stand in it. A code span's text is the whole span, its white space made
+ * single, even where it runs into another unit, and a number inside one is
+ * not read on its own. In a table cell, an escaped pipe in a code span is
+ * read as the pipe a table shows.
  */
-function valuesOf(unit: Unit): Array<{ text: string; start: number; figure?: FigureValue }> {
+function valuesOf(unit: Unit): Array<{ text: string; start: number; figure?: FigureValue; whole?: CodeSpan["whole"] }> {
   const spans = unit.spans ?? [];
-  const values: Array<{ text: string; start: number; figure?: FigureValue }> = spans.map(span => {
-    const text = unit.key.slice(span.start, span.end);
-    return { text: unit.kind === "cell" ? text.replaceAll(PIPE_ESCAPE, "|") : text, start: span.start };
-  });
+  const values: Array<{ text: string; start: number; figure?: FigureValue; whole?: CodeSpan["whole"] }> = spans.map(span => ({
+    text: unit.kind === "cell" ? span.whole.text.replaceAll(PIPE_ESCAPE, "|") : span.whole.text, start: span.start, whole: span.whole,
+  }));
   for (const figure of figureValues(unit.key, spans)) {
     values.push({ text: figure.text, start: figure.start, figure });
   }
@@ -794,12 +812,15 @@ function valuesOf(unit: Unit): Array<{ text: string; start: number; figure?: Fig
 
 /**
  * Whether a value of a unit, as `valuesOf` gives it, is found in what a
- * version holds, as `foundIn` describes.
+ * version holds, as `foundIn` describes. A number not found by its value is
+ * looked for again as it is written.
  *
- * @returns Null when the meter passed its limit while looking for a code span.
+ * @returns Null when the meter passed its limit while looking.
  */
 function valueFound(value: { text: string; figure?: FigureValue }, where: Found): boolean | null {
-  return value.figure === undefined ? where.code(value.text) : figureFound(value.figure, where);
+  if (value.figure === undefined) return where.code(value.text);
+  const byValue = figureFound(value.figure, where);
+  return byValue === false ? where.text(value.text) : byValue;
 }
 
 /**
@@ -1105,7 +1126,8 @@ function proseUnits(source: string, firstLine: number, kind: UnitKind, block: nu
     from = image.end;
   }
   prose += source.slice(from);
-  const sentences = sentenceUnits(renderInline(inlineText(prose, references), STRIKE), firstLine, kind, block, boldLabel(prose, references), codeSpans(prose, references));
+  const rendered = renderInlineCode(inlineText(prose, references), STRIKE);
+  const sentences = sentenceUnits(rendered.text, firstLine, kind, block, boldLabel(prose, references), rendered.code);
   if (alternatives.length === 0) return sentences.map(sentence => sentence.unit);
   marked += source.slice(from);
   const places = markPlaces(renderInline(inlineText(marked, references), STRIKE), mark);
@@ -1128,42 +1150,6 @@ function proseUnits(source: string, firstLine: number, kind: UnitKind, block: nu
     }
   }
   return units;
-}
-
-/**
- * Where the contents of each code span of prose stand in its rendered text,
- * once white space is made single as `singleSpaced` makes it. A code span's
- * contents begin at their first character that is not white space, and end
- * just past their last. Prose with no backtick holds none, and nor does
- * prose that holds every character `absentMark` could mark with.
- */
-function codeSpans(prose: string, references: ReadonlySet<string>): CodeSpan[] {
-  if (!prose.includes("`")) return [];
-  const open = absentMark(prose);
-  const close = absentMark(prose + open);
-  if (open === "" || close === "") return [];
-  const marked = renderInline(inlineText(prose, references), { strike: true, code: [open, close] });
-  const spans: CodeSpan[] = [];
-  let length = 0;
-  let space = false;
-  // -1 outside a span, -2 inside one before its first character, and otherwise where it starts.
-  let start = -1;
-  for (const character of marked) {
-    if (character === open) {
-      start = -2;
-    } else if (character === close) {
-      if (start >= 0) spans.push({ start, end: length });
-      start = -1;
-    } else if (/\s/u.test(character)) {
-      space = length > 0;
-    } else {
-      if (space) length++;
-      space = false;
-      if (start === -2) start = length;
-      length += character.length;
-    }
-  }
-  return spans;
 }
 
 /**
@@ -1234,22 +1220,25 @@ function boldLabel(prose: string, references: ReadonlySet<string>): string | nul
  * @param firstLine The line its first character stands on.
  * @param label The label the text opens with, given to the first sentence
  *     when that sentence holds more than the label. Null for none.
- * @param spans Where the code spans stand in the single-spaced text, in
- *     order. Each unit holds the part of each that falls inside it.
+ * @param code Where the contents of each code span stand in the rendered
+ *     text, in order, as `renderInlineCode` gives them. Each unit holds the
+ *     part of each that falls inside it, with the whole span.
  */
-function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, block: number, label: string | null, spans: readonly CodeSpan[] = []): Array<{ unit: Unit; start: number }> {
-  const { text, lines } = singleSpaced(rendered);
+function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, block: number, label: string | null, code: ReadonlyArray<{ start: number; end: number }> = []): Array<{ unit: Unit; start: number }> {
+  const { text, lines, spans } = singleSpaced(rendered, code);
+  const whole = spans.map(span => ({ ...span, whole: { text: text.slice(span.start, span.end) } }));
   let next = 0;
   return wholeSlots(text, locateSentences(text)).map((sentence, index) => {
     const end = sentence.start + sentence.text.length;
-    while (next < spans.length && (spans[next]?.end ?? 0) <= sentence.start) {
+    while (next < whole.length && (whole[next]?.end ?? 0) <= sentence.start) {
       next++;
     }
     const held: CodeSpan[] = [];
-    for (let span = next; span < spans.length && (spans[span]?.start ?? end) < end; span++) {
-      const from = Math.max(spans[span]?.start ?? 0, sentence.start);
-      const to = Math.min(spans[span]?.end ?? 0, end);
-      if (from < to) held.push({ start: from - sentence.start, end: to - sentence.start });
+    for (let span = next; span < whole.length && (whole[span]?.start ?? end) < end; span++) {
+      const from = Math.max(whole[span]?.start ?? 0, sentence.start);
+      const to = Math.min(whole[span]?.end ?? 0, end);
+      const shared = whole[span]?.whole;
+      if (from < to && shared !== undefined) held.push({ start: from - sentence.start, end: to - sentence.start, whole: shared });
     }
     const unit = { kind, line: firstLine + (lines[sentence.start] ?? 0), key: sentence.text, block, ...(held.length > 0 ? { spans: held } : {}) };
     return { unit: index === 0 && label !== null && sentence.text.startsWith(`${label} `) ? { ...unit, label } : unit, start: sentence.start };
@@ -1308,13 +1297,33 @@ function slotSpans(text: string): Array<{ start: number; end: number }> {
 /**
  * Text with each run of white space made one space and the ends trimmed, and
  * for each code unit kept, how many line breaks stood before it.
+ *
+ * @param ranges Pieces of the rendered text, in order and not overlapping,
+ *     each as the offset of its first code unit and the offset just past its
+ *     last.
+ * @returns Also where each piece stands in the text made single, from its
+ *     first character that is not white space to just past its last. A piece
+ *     of white space alone has no place, and is left out.
  */
-function singleSpaced(rendered: string): { text: string; lines: number[] } {
+function singleSpaced(rendered: string, ranges: ReadonlyArray<{ start: number; end: number }> = []): { text: string; lines: number[]; spans: Array<{ start: number; end: number }> } {
   let text = "";
   const lines: number[] = [];
+  const spans: Array<{ start: number; end: number }> = [];
   let breaks = 0;
   let space = false;
+  // The range being read, and where its first and last characters went in the text, or -1 before its first.
+  let range = 0;
+  let first = -1;
+  let last = -1;
+  let offset = 0;
   for (const character of rendered) {
+    const at = offset;
+    offset += character.length;
+    while (range < ranges.length && (ranges[range]?.end ?? 0) <= at) {
+      if (first !== -1) spans.push({ start: first, end: last });
+      first = -1;
+      range++;
+    }
     if (/\s/u.test(character)) {
       if (character === "\n") breaks++;
       space = text !== "";
@@ -1325,12 +1334,19 @@ function singleSpaced(rendered: string): { text: string; lines: number[] } {
       lines.push(breaks);
       space = false;
     }
+    const inside = range < ranges.length && (ranges[range]?.start ?? at + 1) <= at;
+    if (inside && first === -1) first = text.length;
     text += character;
+    if (inside) last = text.length;
     // A character past the basic plane takes two code units, and each needs its entry.
     lines.push(breaks);
     if (character.length > 1) lines.push(breaks);
   }
-  return { text, lines };
+  for (; range < ranges.length; range++) {
+    if (first !== -1) spans.push({ start: first, end: last });
+    first = -1;
+  }
+  return { text, lines, spans };
 }
 
 /** How many line breaks a text holds. */
@@ -1440,7 +1456,7 @@ function afterRows(comparison: Comparison): string[] {
     }
   }
   for (const pair of comparison.rewritten) {
-    const finding = `Reworded, keeping ${pair.shared} of ${pair.longer} words. Check that it still says what the original said: ${quoted(pair.after.key)}, from ${quoted(pair.before.key)}`;
+    const finding = `Reworded, keeping ${pair.shared} of ${pair.longer} words. Confirm that it still says what the original said: ${quoted(pair.after.key)}, from ${quoted(pair.before.key)}`;
     rows.push({ line: pair.after.line, text: `| rewritten | ${pair.before.line} | ${pair.after.line} | ${finding} |` });
   }
   for (const table of comparison.tables) {
@@ -1450,7 +1466,7 @@ function afterRows(comparison: Comparison): string[] {
     const who = table.sources.length === 1 ? "A unit of the original shares at least half of its different words" : `${table.sources.length} units of the original each share at least half of their different words`;
     const whose = table.sources.length === 1 ? "Its" : "Their";
     const traced = `${whose} numbers and code spans: ${table.inTable} in the table, ${table.elsewhere} elsewhere in the new version, ${table.notFound} not found:`;
-    rows.push({ line, text: `| restructured or rewritten | ${first.line} | ${line} | ${who} with a new table of ${table.cells.length} units, which are not listed one by one. Check that nothing was cut or reworded. ${traced} ${quoted(first.key)} |` });
+    rows.push({ line, text: `| restructured or rewritten | ${first.line} | ${line} | ${who} with a new table of ${table.cells.length} units, which are not listed one by one. Confirm that nothing was cut or reworded. ${traced} ${quoted(first.key)} |` });
   }
   for (const unit of comparison.fromAuthor) {
     rows.push({ line: unit.line, text: `| from the author | | ${unit.line} | Matches the author's wording: ${quoted(unit.key)} |` });
