@@ -48,8 +48,13 @@ const CLOSED_FROM_ANYWHERE = new Set(["address", "article", "aside", "blockquote
 const RAW_END = /<\/(?:pre|script|style|textarea)\s*>/gi;
 /** The elements whose content HTML reads as text up to their own end tag. */
 const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"]);
-/** A line that may start an HTML block, in which Markdown is not read up to the next blank line. */
-const MAY_START_HTML = /^[ \t]*<[A-Za-z/!?]/;
+/**
+ * A line that may start an HTML block, in which Markdown is not read up to
+ * the next blank line: a start or end tag whose name, as CommonMark writes
+ * one, ends at white space, `/`, `>` or the end of the line. So an autolink
+ * such as `<https://example.org>` starts none.
+ */
+const MAY_START_HTML = /^[ \t]*<\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t/>]|$)/;
 /** What may follow a tag name: white space, `/` or `>`. */
 const TAG_NAME_END = /[ \t\n/>]/;
 const LETTER = /[A-Za-z]/;

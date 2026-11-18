@@ -222,6 +222,11 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       ["<div></div>\n<my_tag>\n\n", ""],
       ["<div></div>\n<o:p>\n\n", ""],
       ["<div></div>\n<a.b>\n\n", ""],
+      // A start tag that holds a `<`, or runs over a blank line, may swallow a tag that HTML reads.
+      ["Text <b c\n<details>\n</b>\n\n", ""],
+      ["<div title=\"a\n\n<details>\n\n\" >\n\n</div>\n\n", ""],
+      // An end tag of an element opened before the last one leaves the rule unsure, though here HTML closes both.
+      ["<div>\n<span>\n</div>\n</span>\n</div>\n\n", ""],
     ];
     for (const [before, after] of wrappers) {
       expect(alerts(`${before}${pair("NOTE", "NOTE")}${after}`), before).toEqual([]);
@@ -248,7 +253,7 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
       "<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Logo\" />\n</p>", "<picture>\n<source media=\"(prefers-color-scheme: dark)\" srcset=\"dark.png\" />\n<img alt=\"Chart\" src=\"light.png\">\n</picture>",
       "Press <kbd>Ctrl</kbd> and <kbd>C</kbd>.<br>Then wait.", "Use `<details>` to fold text.", `Write ${backslash}<details> to fold text.`, "See <https://example.org> or <a@example.org>.",
       "<!-- <details> -->", "<DETAILS>\n\nBody.\n\n</details >", "<script>\nlet tag = \"<details>\";\n</script>", "<div title=\"</div>\">\nBody.\n</div>",
-      "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "<div>\n\nText </div>", "<details>\n\n- Item </details>",
+      "# Notes <!-- <details> -->", "# Notes <!--> <!---> done", "<details>\n\nBody.\n\n# Notes </details>", "<div>\n\nText </div>", "1. Open the page at\n   <https://example.org/home> to start.", "<details>\n\n- Item </details>",
       "<span>\nText </span>", "<details>\n\n![Logo](logo.png) </details>", "Text <script>let tag = \"<details>\";</script> more.", "Text <script>a</scripts> b</script> more."]) {
       expect(alerts(`${before}\n\n${pair("NOTE", "NOTE")}`), before).toEqual([adjacent("NOTE", before.split("\n").length + 2, before.split("\n").length + 5)]);
     }
