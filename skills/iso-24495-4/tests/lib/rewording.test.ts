@@ -338,6 +338,12 @@ describe("a value of the original that the new version does not hold", () => {
       expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual(["42"]);
       expect(lost(before, `Something else.\n\n<pre>4${markup}2 and 42</pre>\n`), `${markup}, then 42 whole`).toEqual([]);
     }
+    // Only tags are removed, not what a browser hides.
+    expect(lost(before, "Something else.\n\n<pre>4<script>x</script>2</pre>\n")).toEqual(["42"]);
+    // HTML text is searched for the number as written, not for its other forms; in prose the units hold them.
+    expect(lost("The total is 2,500 units.\n", "Something else.\n\n<pre>2<b>500</b></pre>\n")).toEqual(["2,500"]);
+    expect(lost("The total is 2,500 units.\n", "Something else.\n\n<pre>2&#53;00</pre>\n")).toEqual(["2,500"]);
+    expect(lost("The total is 2,500 units.\n", "Something else, 2<b>500</b> in all.\n")).toEqual([]);
     // Controls: the same markup with no angle bracket inside is removed, and the number held.
     for (const markup of ["<span title=\"x\">", "<!-- x -->", "<b>"]) {
       expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual([]);
