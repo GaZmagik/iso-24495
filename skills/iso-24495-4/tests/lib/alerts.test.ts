@@ -202,6 +202,72 @@ describe("adjacent-alerts: two alerts of one kind with only blank lines between"
     }
   });
 
+  // The structural reading takes a line below an empty nested quotation for a
+  // lazy line of the quotation around it. CommonMark makes it a paragraph,
+  // which stands between the two alerts.
+  test("an empty nested quotation in the earlier alert, however it is spaced, leaves the pair unread", () => {
+    for (const empty of ["> >", ">>", "> > ", `>>${TAB}`, ">>>", `> >${TAB} `, " >>"]) {
+      expect(alerts(`> [!NOTE]\n> One.\n${empty}\nBetween.\n\n> [!NOTE]\n> Two.\n`), JSON.stringify(empty)).toEqual([]);
+      expect(alerts(`> [!NOTE]\n> One.\n${empty}\nBetween.\n\n> [!NOTE]\n> Two.\n`.replaceAll("\n", `${CR}\n`)), `${JSON.stringify(empty)} with CRLF`).toEqual([]);
+    }
+  });
+
+  test("an empty list item in the earlier alert, or an empty quotation in an item, leaves the pair unread", () => {
+    for (const empty of [">\n> -", ">\n> 1.", ">\n> *  ", ">\n> 2)", "> - >", "> 1. >"]) {
+      expect(alerts(`> [!NOTE]\n> One.\n${empty}\nBetween.\n\n> [!NOTE]\n> Two.\n`), JSON.stringify(empty)).toEqual([]);
+    }
+  });
+
+  // The structural reading counts the padding after an empty marker into the
+  // item's column, so it loses the list and lists the item's quotations on
+  // their own. CommonMark keeps them inside the item.
+  test("an empty list marker with padding above alerts in its item leaves them unread", () => {
+    for (const marker of [`- ${TAB}`, "-  ", `1.${TAB}`, "*   ", `+${TAB}`]) {
+      const indent = marker.startsWith("1.") ? "   " : "  ";
+      const text = `${marker}\n${indent}Item.\n\n${indent}> [!NOTE]\n${indent}> One.\n\n${indent}> [!NOTE]\n${indent}> Two.\n`;
+      expect(alerts(text), JSON.stringify(marker)).toEqual([]);
+    }
+  });
+
+  test("a line that opens an empty container counts wherever it stands above the later alert, in code and as a thematic break too", () => {
+    for (const above of ["```\n>>\n```", "    - ", "- - -", "* * *", "-", "1.", "> > [!NOTE]\n> >\n> > One."]) {
+      expect(alerts(`${above}\n\n${pair("NOTE", "NOTE")}`), above).toEqual([]);
+    }
+    // In the gap it counts too, though it opens a quotation that is no alert.
+    expect(alerts("> [!NOTE]\n> One.\n\n>>\n\n> [!NOTE]\n> Two.\n")).toEqual([]);
+  });
+
+  test("a lone >, an empty container only on or below the later marker, and a padded marker with text leave the pair read", () => {
+    // A lone `>` inside the alert is a blank line of it, not an empty quotation.
+    expect(alerts("> [!NOTE]\n> One.\n>\n> More.\n\n> [!NOTE]\n> Two.\n")).toEqual([adjacent("NOTE", 1, 6)]);
+    expect(alerts(`>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    expect(alerts(`${pair("NOTE", "NOTE")}> >\nLazy.\n`)).toEqual([adjacent("NOTE", 1, 4)]);
+    expect(alerts(`${pair("NOTE", "NOTE")}\n- ${TAB}\n  Item.\n`)).toEqual([adjacent("NOTE", 1, 4)]);
+    // A marker followed by text opens no empty container, whatever its padding.
+    expect(alerts(`-  Item.\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    expect(alerts(`>> Quoted.\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    expect(alerts(`---\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    expect(alerts(`a > b\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+    // A no-break space is text, so `>` and a no-break space and `>` is a quotation of text.
+    expect(alerts(`> ${NBSP}>\n\n${pair("NOTE", "NOTE")}`)).toEqual([adjacent("NOTE", 3, 6)]);
+  });
+
+  test("the controls on an empty nested quotation and a padded marker give what CommonMark gives, or nothing", () => {
+    const nested = "> [!NOTE]\n> One.\n> >\nBetween.\n\n> [!NOTE]\n> Two.\n";
+    // Removing the empty quotation makes the line a lazy line of the first alert, so the pair is read.
+    expect(alerts(nested.replace("> >\n", ""))).toEqual([adjacent("NOTE", 1, 5)]);
+    // A blank line before the paragraph makes it a paragraph either way.
+    expect(alerts(nested.replace("\nBetween.", "\n\nBetween."))).toEqual([]);
+    // Quoting the paragraph keeps the alerts adjacent in CommonMark, but the empty quotation still stops them being read.
+    expect(alerts(nested.replace("\nBetween.", "\n> Between."))).toEqual([]);
+    const padded = `- ${TAB}\n  Item.\n\n  > [!NOTE]\n  > One.\n\n  > [!NOTE]\n  > Two.\n`;
+    // One space after the empty marker, or the item's text four columns in, keeps the list, so its alerts are not read.
+    expect(alerts(padded.replace(`- ${TAB}`, "- "))).toEqual([]);
+    expect(alerts(padded.replaceAll("\n  ", "\n    "))).toEqual([]);
+    // Moved to the start of the line, the alerts leave the item and render as a pair, but the marker above still stops them being read.
+    expect(alerts(padded.replaceAll("\n  >", "\n>"))).toEqual([]);
+  });
+
   test("an alert inside an HTML element that an earlier line opened is not read, nor one after it closes", () => {
     const wrappers: Array<[string, string]> = [
       ["<details>\n<summary>Notes</summary>\n\n", "\n</details>\n"],
@@ -534,7 +600,34 @@ describe("adjacent-alerts checked against Bun's renderer, a test oracle", () => 
     expect(above.slice(0, 5)).toEqual([]);
     expect(checked).toBeGreaterThanOrEqual(1_000);
   }, 120_000);
+
+  // The structural reading misreads what follows a line that opens an empty
+  // container, so this is the whole of what keeps such a line from moving a
+  // reported pair's bounds. The test reads such a line by its own pattern.
+  test("no finding on a specimen above or a seeded document has a line that opens an empty container above its later alert", () => {
+    const above: string[] = [];
+    let checked = 0;
+    for (const text of [...SPECIMENS, ...seededDocuments().map(generated => generated.text)]) {
+      const lines = toLines(text);
+      for (const finding of adjacentAlertViolations(text, structure(text))) {
+        checked++;
+        if (lines.slice(0, finding.line - 1).some(opensEmptyContainer)) above.push(`${JSON.stringify(text)} line ${finding.line}`);
+      }
+    }
+    expect(above.slice(0, 5)).toEqual([]);
+    expect(checked).toBeGreaterThanOrEqual(1_000);
+  }, 120_000);
 });
+
+/** A line of only `>`, list markers, spaces and tabs. */
+const MARKERS_ONLY = /^(?:[ \t]|>|(?:[-*+]|\d+[.)])(?=[ \t]|$))*$/;
+/** A list marker, at the start or after a space, a tab or a `>`. */
+const LIST_MARKER = /(?:^|[ \t>])(?:[-*+]|\d+[.)])(?=[ \t]|$)/;
+
+/** Whether a line is only container markers and holds a list marker or two or more `>`, as the rule's limits say. */
+function opensEmptyContainer(line: string): boolean {
+  return MARKERS_ONLY.test(line) && (LIST_MARKER.test(line) || line.split(">").length > 2);
+}
 
 /**
  * The ways each seeded document varies, each with its values. The first
@@ -560,6 +653,7 @@ const AXES = {
   definition: ["none", "other", "same"],
   after: ["", "paragraph", "lazy"],
   html: ["none", "below", "closed-above", "badge", "code-span", "details", "div", "table-cell", "blockquote", "span-open", "unclosed-tag"],
+  emptyContainer: ["none", "below", "nested", "nested-lazy", "list-item", "padded-item", "code"],
 } as const;
 type Axis = keyof typeof AXES;
 type Choice = { [axis in Axis]: (typeof AXES)[axis][number]; };
@@ -635,20 +729,27 @@ function shouldReport(choice: Choice): boolean {
   const lazyBetween = choice.extra === "lazy" && (choice.firstBody === "fence" || choice.firstBody === "heading");
   // An underline or a row of dashes up to the next blank line stops either alert being read.
   const underlined = choice.extra === "underline" || choice.extra === "dashes-below";
-  return known && markers && bodies && gap && above && html && !lazyBetween && !underlined && choice.container === "none" && choice.definition !== "same";
+  // A line that opens an empty quotation or list item stops every alert below it being read.
+  const empty = ["none", "below"].includes(choice.emptyContainer);
+  return known && markers && bodies && gap && above && html && empty && !lazyBetween && !underlined && choice.container === "none" && choice.definition !== "same";
 }
 
 /** One seeded document from a choice of a value on every axis. */
 function seededDocument(choice: Choice, index: number): SeededDocument {
   const secondKind = choice.secondKind === "same" ? choice.firstKind : choice.secondKind;
+  // An empty quotation or list item: in the earlier alert, above the document or below the pair.
+  const inFirst: Record<string, string[]> = { nested: ["> >"], "nested-lazy": ["> >", `Lazy ${index}.`], "list-item": [">", "> -"] };
+  const onTop: Record<string, string[]> = { "padded-item": [`- ${TAB}`, "  Item.", ""], code: ["```", ">>", "```", ""] };
+  const firstEmpty = inFirst[choice.emptyContainer] ?? [];
   const block = [
     markerLine(choice, choice.firstKind, choice.firstCase, "first"),
     ...bodyLines(choice.firstBody, `a${index}x`, choice.extra),
+    ...firstEmpty,
     ...gapLines(choice.gap),
     markerLine(choice, secondKind, choice.secondCase, "second"),
     ...bodyLines(choice.secondBody, `b${index}x`, choice.extra),
   ];
-  const secondOffset = 1 + bodyLines(choice.firstBody, "", choice.extra).length + gapLines(choice.gap).length;
+  const secondOffset = 1 + bodyLines(choice.firstBody, "", choice.extra).length + firstEmpty.length + gapLines(choice.gap).length;
   const aboves: Record<string, string[]> = {
     blank: ["# Guide", ""], start: [], "front-matter-blank": ["---", "title: Guide", "---", ""], paragraph: ["Text."], heading: ["# Guide"], div: ["<div>"], "front-matter": ["---", "title: Guide", "---"],
     "pre-closed": ["<pre", "</pre>", ""], "pre-open": ["<pre", ""], "cdata-open": ["<![CDATA[", ""], "comment-open": ["<!--", ""],
@@ -671,22 +772,24 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
   if (choice.container === "comment") [wrapped, shift] = [["<!--", ...block, "-->"], 1];
   const definitionKind = choice.definition === "same" ? cased(choice.firstKind, choice.firstCase) : choice.firstKind === "TIP" ? "NOTE" : "TIP";
   const after: Record<string, string[]> = { "": [], paragraph: ["", "After."], lazy: ["After, lazily."] };
-  const lines = [...htmlBefore, ...above, ...wrapped, ...(after[choice.after] ?? []), ...htmlAfter, ...(choice.definition === "none" ? [] : ["", `[!${definitionKind}]: https://example.org`])];
-  const firstLine = htmlBefore.length + above.length + shift + 1;
+  const top = onTop[choice.emptyContainer] ?? [];
+  const below = choice.emptyContainer === "below" ? ["", "> >", "Lazy below."] : [];
+  const lines = [...top, ...htmlBefore, ...above, ...wrapped, ...(after[choice.after] ?? []), ...below, ...htmlAfter, ...(choice.definition === "none" ? [] : ["", `[!${definitionKind}]: https://example.org`])];
+  const firstLine = top.length + htmlBefore.length + above.length + shift + 1;
   const report = shouldReport(choice);
   return { text: lines.join(choice.ending) + choice.ending, expected: report ? [firstLine + secondOffset] : [], choice };
 }
 
 /**
- * 7,000 documents from a fixed seed. Each axis keeps its first value unless
+ * 9,000 documents from a fixed seed. Each axis keeps its first value unless
  * the generator varies it, which it does for one axis in four, so about one
- * document in six holds a reported pair, 1,079 in all, and every value of
+ * document in eight holds a reported pair, 1,141 in all, and every value of
  * every axis is met.
  */
 function seededDocuments(): SeededDocument[] {
   const random = seededRandom(24_495);
   const documents: SeededDocument[] = [];
-  for (let index = 0; index < 7_000; index++) {
+  for (let index = 0; index < 9_000; index++) {
     const choice: Record<string, string> = {};
     for (const [axis, values] of Object.entries(AXES)) {
       const vary = random() < 0.25;
@@ -729,7 +832,7 @@ describe("adjacent-alerts on seeded documents that vary every distinction it key
       ["indent", ["", " ", "  ", "   "]], ["afterMarker", [" ", "", TAB, "  ", "    "]], ["markerEnd", ["", "  ", "tab"]], ["markerEndOn", AXES.markerEndOn],
       ["firstBody", ["text", "list", "heading", "fence"]], ["secondBody", ["text", "list", "heading", "fence"]], ["extra", ["", "more", "spaced", "lazy"]], ["gap", ["one", "two", "spaces", "tab"]],
       ["above", ["blank", "start", "front-matter-blank"]], ["container", ["none"]], ["ending", AXES.ending], ["definition", ["none", "other"]], ["after", AXES.after],
-      ["html", ["none", "below"]],
+      ["html", ["none", "below"]], ["emptyContainer", ["none", "below"]],
     ];
     const neverReported: string[] = [];
     for (const [axis, values] of reportable) {
