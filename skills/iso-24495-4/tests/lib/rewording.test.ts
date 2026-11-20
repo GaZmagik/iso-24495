@@ -241,6 +241,13 @@ describe("a value of the original that the new version does not hold", () => {
     expect(lost(before, "Run it first.\n\n<pre>np<span title=\">\">m</span> tset</pre>\n")).toEqual(["npm test"]);
   });
 
+  test("markup is taken out before character references are decoded, so a tag written as references is text a reader sees", () => {
+    const before = "Use `<thinking> now` here.\n";
+    expect(lost(before, "Use it.\n\n<pre>&lt;thinking&gt; <i>now</i></pre>\n")).toEqual([]);
+    // Control: the code span's last word changed.
+    expect(lost(before, "Use it.\n\n<pre>&lt;thinking&gt; <i>later</i></pre>\n")).toEqual(["<thinking> now"]);
+  });
+
   test("a value found anywhere in the new version is not listed: in another unit, a new table or a code block", () => {
     expect(lost("Close the valve. Keep it below 5 bar.\n", "Close the valve.\n\nThe limit is 5 bar.\n")).toEqual([]);
     expect(lost("Keep it below 5 bar.\n", "Keep it low.\n\n| Limit | Pressure |\n|---|---|\n| 5 bar | high |\n")).toEqual([]);

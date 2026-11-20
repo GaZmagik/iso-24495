@@ -8,6 +8,8 @@
 // compositions beside them. `../reference/build-html-text.ts` records
 // whether the reference shows each value whole.
 
+import { itemAt } from "../../scripts/lib/item-at.ts";
+
 /** One document: its family, the value, and the new version's text. */
 export interface HtmlTextDocument {
   readonly family: string;
@@ -93,42 +95,84 @@ const LEAD = "Run it first.\n\n";
 /** Every document, in a fixed order. */
 export function htmlTextDocuments(): HtmlTextDocument[] {
   const documents: HtmlTextDocument[] = [];
-  const add = (family: string, value: string, body: string): void => {
-    documents.push({ family, value, text: `${LEAD}${body}` });
-  };
   for (const [wrap, wrapper] of WRAPPERS) {
-    for (const first of SPLITTERS) for (const second of SPLITTERS) add(`pair/${wrap}`, CODE, wrapper(`np${first}m${second} test`));
-    for (const first of SPLITTERS) for (const second of SPLITTERS) add(`number/${wrap}`, "42", wrapper(`4${first}2${second}`));
-    for (const piece of ["m", "&#109;", "&#x6D;", "&#109", "&#x6d"]) for (const first of SPLITTERS) add(`reference/${wrap}`, CODE, wrapper(`np${first}${piece} test`));
-    for (const ampersand of ["&", "&amp;", "&amp", "&#38;", "&AMP", "&ampx"]) for (const first of SPLITTERS) add(`ampersand/${wrap}`, "a&b", wrapper(`a${first}${ampersand}b`));
+    for (const first of SPLITTERS) {
+      for (const second of SPLITTERS) {
+        documents.push(made(`pair/${wrap}`, CODE, wrapper(`np${first}m${second} test`)));
+      }
+    }
+    for (const first of SPLITTERS) {
+      for (const second of SPLITTERS) {
+        documents.push(made(`number/${wrap}`, "42", wrapper(`4${first}2${second}`)));
+      }
+    }
+    for (const piece of ["m", "&#109;", "&#x6D;", "&#109", "&#x6d"]) {
+      for (const first of SPLITTERS) {
+        documents.push(made(`reference/${wrap}`, CODE, wrapper(`np${first}${piece} test`)));
+      }
+    }
+    for (const ampersand of ["&", "&amp;", "&amp", "&#38;", "&AMP", "&ampx"]) {
+      for (const first of SPLITTERS) {
+        documents.push(made(`ampersand/${wrap}`, "a&b", wrapper(`a${first}${ampersand}b`)));
+      }
+    }
   }
   for (const [wrap, wrapper] of WRAPPERS.filter(([name]) => ["paragraph", "quote", "pre", "div-block"].includes(name))) {
-    for (const context of CONTEXTS) for (const suffix of SUFFIXES) for (const first of SPLITTERS) for (const glue of ["\n\n", "\n"]) {
-      add(`context/${wrap}`, CODE, `${context}${glue}${wrapper(`np${first}m test`)}${suffix === "" ? "" : `\n${suffix}\n`}`);
+    for (const context of CONTEXTS) {
+      for (const suffix of SUFFIXES) {
+        for (const first of SPLITTERS) {
+          for (const glue of ["\n\n", "\n"]) {
+            documents.push(made(`context/${wrap}`, CODE, `${context}${glue}${wrapper(`np${first}m test`)}${suffix === "" ? "" : `\n${suffix}\n`}`));
+          }
+        }
+      }
     }
   }
   for (const [wrap, wrapper] of [...WRAPPERS, ...CONTAINERS]) {
     for (const first of [...SPLITTERS, ...MULTILINE]) {
-      for (const second of MULTILINE) add(`multiline/${wrap}`, CODE, wrapper(`np${first}m${second} test`));
+      for (const second of MULTILINE) {
+        documents.push(made(`multiline/${wrap}`, CODE, wrapper(`np${first}m${second} test`)));
+      }
       const upper = first.replace(/<\/?[a-z]+/g, tag => tag.toUpperCase()).replace(/title=/g, "TITLE=");
-      add(`upper/${wrap}`, CODE, wrapper(`np${upper}m test`));
-      for (const written of ["&lt;b&gt;", "&lt;b>", "&#60;b&#62;", "&ltb&gt", "&LT;b&GT;"]) add(`literal-tag/${wrap}`, "a<b>c", wrapper(`a${written}${first}c`));
+      documents.push(made(`upper/${wrap}`, CODE, wrapper(`np${upper}m test`)));
+      for (const written of ["&lt;b&gt;", "&lt;b>", "&#60;b&#62;", "&ltb&gt", "&LT;b&GT;"]) {
+        documents.push(made(`literal-tag/${wrap}`, "a<b>c", wrapper(`a${written}${first}c`)));
+      }
     }
-    for (const opener of DOUBT_OPENERS) for (const closer of DOUBT_CLOSERS) for (const first of ["<b>", "<span title=\">\">", "<!-- x -->", ""]) {
-      add(`doubt/${wrap}`, CODE, wrapper(`Use ${opener}then np${first}m test ${closer} now.`));
+    for (const opener of DOUBT_OPENERS) {
+      for (const closer of DOUBT_CLOSERS) {
+        for (const first of ["<b>", "<span title=\">\">", "<!-- x -->", ""]) {
+          documents.push(made(`doubt/${wrap}`, CODE, wrapper(`Use ${opener}then np${first}m test ${closer} now.`)));
+        }
+      }
     }
   }
   for (const [wrap, wrapper] of CONTAINERS) {
-    for (const first of [...SPLITTERS, ...MULTILINE]) for (const second of ["", "<b>", "<span title=\">\">", "<!-- > -->", "<script>x</script>", "<b \"c>"]) {
-      add(`container/${wrap}`, CODE, wrapper(`np${first}m${second} test`));
+    for (const first of [...SPLITTERS, ...MULTILINE]) {
+      for (const second of ["", "<b>", "<span title=\">\">", "<!-- > -->", "<script>x</script>", "<b \"c>"]) {
+        documents.push(made(`container/${wrap}`, CODE, wrapper(`np${first}m${second} test`)));
+      }
     }
   }
   for (const [wrap, wrapper] of EVERY_LINE) {
-    for (const first of [...SPLITTERS, ...MULTILINE]) for (const second of [...MULTILINE, "", "<b>", "<span title=\">\">"]) add(`markers/${wrap}`, CODE, wrapper(`np${first}m${second} test`));
-    for (const opener of DOUBT_OPENERS) for (const closer of DOUBT_CLOSERS) add(`markers-doubt/${wrap}`, CODE, wrapper(`Use ${opener}then np<b>m test ${closer} now.`));
+    for (const first of [...SPLITTERS, ...MULTILINE]) {
+      for (const second of [...MULTILINE, "", "<b>", "<span title=\">\">"]) {
+        documents.push(made(`markers/${wrap}`, CODE, wrapper(`np${first}m${second} test`)));
+      }
+    }
+    for (const opener of DOUBT_OPENERS) {
+      for (const closer of DOUBT_CLOSERS) {
+        documents.push(made(`markers-doubt/${wrap}`, CODE, wrapper(`Use ${opener}then np<b>m test ${closer} now.`)));
+      }
+    }
   }
-  for (const document of randomDocuments()) documents.push(document);
+  documents.push(...randomDocuments());
   return documents;
+}
+
+/** A document of a family, its new version opening with `LEAD`. */
+function made(family: string, value: string, body: string): HtmlTextDocument {
+  return { family, value, text: `${LEAD}${body}` };
 }
 
 /**
@@ -137,31 +181,43 @@ export function htmlTextDocuments(): HtmlTextDocument[] {
  * in a random block.
  */
 function randomDocuments(): HtmlTextDocument[] {
-  let state = 24495;
-  const random = (): number => {
+  const random = seeded(24495);
+  const pool = [...SPLITTERS, ...MULTILINE, ...DOUBT_OPENERS, ...DOUBT_CLOSERS, ...CONTEXTS.map(context => ` ${context} `), "\n", "\n\n", "\n> ", "\n- ", "`", "\\", "&", "&amp;", "<", ">", "\"", "'"];
+  const wrappers = [...WRAPPERS, ...CONTAINERS, ...EVERY_LINE];
+  const documents: HtmlTextDocument[] = [];
+  for (let trial = 0; trial < RANDOM_DOCUMENTS; trial++) {
+    const value = pick([CODE, "a&b", "a<b>c", "42"], random);
+    const characters = [...value];
+    const cuts = new Set(Array.from({ length: 1 + Math.floor(random() * 3) }, () => 1 + Math.floor(random() * (characters.length - 1))));
+    const opening = pick(pool, random);
+    let body = pick(["", opening], random);
+    for (const [index, character] of characters.entries()) {
+      if (cuts.has(index)) body += Array.from({ length: 1 + Math.floor(random() * 2) }, () => pick(pool, random)).join("");
+      body += character === "&" ? pick(["&", "&amp;", "&amp", "&#38;"], random) : character === "<" ? pick(["&lt;", "&#60;", "\\<"], random) : character === ">" ? pick([">", "&gt;"], random) : character;
+    }
+    const fromPool = pick(pool, random);
+    const closer = pick(DOUBT_CLOSERS, random);
+    body += pick(["", fromPool, closer], random);
+    const [wrap, wrapper] = pick(wrappers, random);
+    documents.push({ family: `random/${wrap}`, value, text: `${LEAD}${wrapper(body)}` });
+  }
+  return documents;
+}
+
+/** A source of numbers from 0 to 1 that gives the same run for the same seed. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
     state = (state + 0x6D2B79F5) >>> 0;
     let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
     mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
     return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
   };
-  const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)] as T;
-  const pool = [...SPLITTERS, ...MULTILINE, ...DOUBT_OPENERS, ...DOUBT_CLOSERS, ...CONTEXTS.map(context => ` ${context} `), "\n", "\n\n", "\n> ", "\n- ", "`", "\\", "&", "&amp;", "<", ">", "\"", "'"];
-  const wrappers = [...WRAPPERS, ...CONTAINERS, ...EVERY_LINE];
-  const documents: HtmlTextDocument[] = [];
-  for (let trial = 0; trial < RANDOM_DOCUMENTS; trial++) {
-    const value = pick([CODE, "a&b", "a<b>c", "42"]);
-    const characters = [...value];
-    const cuts = new Set(Array.from({ length: 1 + Math.floor(random() * 3) }, () => 1 + Math.floor(random() * (characters.length - 1))));
-    let body = pick(["", pick(pool)]);
-    for (const [index, character] of characters.entries()) {
-      if (cuts.has(index)) body += Array.from({ length: 1 + Math.floor(random() * 2) }, () => pick(pool)).join("");
-      body += character === "&" ? pick(["&", "&amp;", "&amp", "&#38;"]) : character === "<" ? pick(["&lt;", "&#60;", "\\<"]) : character === ">" ? pick([">", "&gt;"]) : character;
-    }
-    body += pick(["", pick(pool), pick(DOUBT_CLOSERS)]);
-    const [wrap, wrapper] = pick(wrappers);
-    documents.push({ family: `random/${wrap}`, value, text: `${LEAD}${wrapper(body)}` });
-  }
-  return documents;
+}
+
+/** One of the items, drawn from `random`. */
+function pick<T extends NonNullable<unknown>>(items: readonly T[], random: () => number): T {
+  return itemAt(items, Math.floor(random() * items.length));
 }
 
 /** A digest of every document's value and text, so a recording can show which documents it is of. */

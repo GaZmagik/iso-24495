@@ -17,15 +17,24 @@
 // HTML decodes them, and not inside markup.
 //
 // A Markdown file is not all HTML, so it is read twice. Read as HTML, every
-// `<` the tokenizer reads as markup is markup. Read as Markdown, code spans
-// and code blocks show their text as written, and backslash escapes are
-// read. A value is held when either reading holds it, so where the two
-// disagree it is treated as held.
+// `<` the tokenizer reads as markup is markup. Read as Markdown, the file is
+// read as CommonMark passes it to a browser: quotation and list markers are
+// taken off, code spans and code blocks show their text as written,
+// backslash escapes are read, an HTML block is read as HTML, and in prose
+// only markup of CommonMark's form is markup. A value is held when either
+// reading holds it, so where the two disagree it is treated as held.
 //
 // Markup is read only inside its block. A block runs to the next blank line,
 // or, for a raw HTML block that CommonMark lets hold blank lines, to the line
-// that ends it. Markup that does not end inside its block is read as text,
-// so a stray `<` in prose deletes nothing after it.
+// that ends it. In the Markdown reading a block also ends where CommonMark
+// ends a quotation or opens a deeper one. Markup that does not end inside its
+// block is read as text, so a stray `<` in prose deletes nothing after it,
+// with two exceptions. The content of an element a browser never shows runs
+// to its end tag wherever that stands, as a browser hides it. And in the
+// Markdown reading a tag an HTML block leaves open ends with the block,
+// because the markup CommonMark writes next closes it. Other markup a browser
+// reads on into that markup, such as a comment an HTML block leaves open, is
+// not read on.
 //
 // The work grows in proportion to the file. Each character is looked at a
 // fixed number of times, and `steps` counts every look, so a test can hold
@@ -49,12 +58,8 @@ export const STEPS_PER_CHARACTER = 64;
 export function readerTexts(source: string, steps: { count: number } = { count: 0 }): string[] {
   const text = source.replace(/\r\n?/g, "\n");
   const lower = text.replace(/[A-Z]+/g, upper => upper.toLowerCase());
-  const asHtml = readAsHtml(new Pass(text, lower, lower, steps));
-  const blocksOfCode = codeBlocks(text, steps);
-  const code = literalCode(text, blocksOfCode, steps);
-  const quotation = unquote(text, lower, blocksOfCode, steps);
-  const view = markdownView(quotation.text.replace(/[A-Z]+/g, upper => upper.toLowerCase()), code);
-  const asMarkdown = readAsMarkdown(new Pass(quotation.text, view, lower, steps, quotation.cuts), code);
+  const asHtml = readAsHtml(text, lower, steps);
+  const asMarkdown = readAsMarkdown(text, lower, steps);
   return asMarkdown === asHtml ? [asHtml] : [asHtml, asMarkdown];
 }
 
@@ -151,46 +156,6 @@ const LIST_MARKERS = /^(?: {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+)+/;
 /** What may follow the name of an end tag that closes a raw text element. */
 const END_TAG_FOLLOWER = /[\t\n\f />]/;
 
-/** The file read as HTML, block by block. A block that hidden content runs into is read from where that content ends. */
-function readAsHtml(pass: Pass): string {
-  let read = "";
-  let resume = 0;
-  for (const { start, end } of pass.blocks(0, pass.text.length)) {
-    if (end <= resume) continue;
-    const block = pass.readAsHtml(Math.max(start, resume), end);
-    read += block.read;
-    resume = block.resume;
-  }
-  return read;
-}
-
-/**
- * The file read as Markdown: code spans and code blocks show their text as
- * written. Elsewhere only what CommonMark passes to a browser as HTML is
- * markup: a tag, a comment, a processing instruction, a declaration or a
- * CDATA section of the form CommonMark gives, and any other `<` is text.
- * Backslash escapes are read, and only the character references CommonMark
- * decodes are decoded. Code that hidden content runs over is hidden with it.
- *
- * @param code The file's code, as `literalCode` gives it.
- */
-function readAsMarkdown(pass: Pass, code: ReadonlyArray<{ start: number; end: number; shown: string }>): string {
-  let read = "";
-  let from = 0;
-  let resume = 0;
-  for (const literal of [...code, { start: pass.text.length, end: pass.text.length, shown: "" }]) {
-    for (const { start, end } of pass.blocks(from, literal.start)) {
-      if (end <= resume) continue;
-      const block = pass.readAsMarkdown(Math.max(start, resume), end);
-      read += block.read;
-      resume = block.resume;
-    }
-    if (literal.start >= resume) read += literal.shown;
-    from = literal.end;
-  }
-  return read;
-}
-
 /**
  * The file as the Markdown reading searches it for markup: in lower case,
  * with each code span, each code block and each `<` a backslash escapes made
@@ -235,7 +200,9 @@ function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ star
     const next = newline === -1 ? text.length : newline + 1;
     const lineEnd = newline === -1 ? text.length : newline;
     steps.count += next - line;
-    while (code < blocksOfCode.length && (blocksOfCode[code]?.end ?? 0) <= line) code++;
+    while (code < blocksOfCode.length && (blocksOfCode[code]?.end ?? 0) <= line) {
+      code++;
+    }
     if ((blocksOfCode[code]?.start ?? text.length) <= line) {
       unquoted += text.slice(line, next);
       line = next;
@@ -359,7 +326,9 @@ function literalCode(text: string, blocksOfCode: ReadonlyArray<{ start: number; 
 /** How many backticks stand in a row from `start`. */
 function tickRunLength(text: string, start: number): number {
   let end = start;
-  while (text[end] === "`") end++;
+  while (text[end] === "`") {
+    end++;
+  }
   return end - start;
 }
 
@@ -410,6 +379,27 @@ function codeBlocks(text: string, steps: { count: number }): Array<{ start: numb
   if (indented !== null) found.push(indented);
   if (open !== null) found.push({ start: open.start, end: text.length, shown: open.shown });
   return found;
+}
+
+/**
+ * The next place a mark stands in a text. Each answer is kept, so a search
+ * from a later place starts where the last one stopped.
+ */
+class Finder {
+  private asked = -1;
+  private answer = -1;
+
+  constructor(private readonly text: string, private readonly mark: string, private readonly steps: { count: number }) {}
+
+  /** The first place at or after `from` where the mark stands, or -1 for none. */
+  from(from: number): number {
+    if (this.asked !== -1 && from >= this.asked && (this.answer === -1 || from <= this.answer)) return this.answer;
+    const found = this.text.indexOf(this.mark, from);
+    this.steps.count += (found === -1 ? this.text.length : found + this.mark.length) - from;
+    this.asked = from;
+    this.answer = found;
+    return found;
+  }
 }
 
 /**
@@ -722,8 +712,12 @@ class Pass {
   private closingTagEnd(from: number, end: number): number {
     if (!/[A-Za-z]/.test(this.text.charAt(from))) return -1;
     let at = from + 1;
-    while (at < end && /[A-Za-z0-9-]/.test(this.text.charAt(at))) at++;
-    while (at < end && /[ \t\n]/.test(this.text.charAt(at))) at++;
+    while (at < end && /[A-Za-z0-9-]/.test(this.text.charAt(at))) {
+      at++;
+    }
+    while (at < end && /[ \t\n]/.test(this.text.charAt(at))) {
+      at++;
+    }
     this.steps.count += at - from + 1;
     return at < end && this.text.charAt(at) === ">" ? at + 1 : -1;
   }
@@ -857,30 +851,53 @@ class Pass {
   }
 }
 
-/** Whether `<script` or `</script`, as `opening` gives, stands at `at` as a whole tag name. */
-function scriptTagAt(lower: string, at: number, opening: string): boolean {
-  return lower.startsWith(opening, at) && END_TAG_FOLLOWER.test(lower.charAt(at + opening.length));
+/** The file read as HTML, block by block. A block that hidden content runs into is read from where that content ends. */
+function readAsHtml(text: string, lower: string, steps: { count: number }): string {
+  const pass = new Pass(text, lower, lower, steps);
+  let read = "";
+  let resume = 0;
+  for (const { start, end } of pass.blocks(0, pass.text.length)) {
+    if (end <= resume) continue;
+    const block = pass.readAsHtml(Math.max(start, resume), end);
+    read += block.read;
+    resume = block.resume;
+  }
+  return read;
 }
 
 /**
- * The next place a mark stands in a text. Each answer is kept, so a search
- * from a later place starts where the last one stopped.
+ * The file read as Markdown: code spans and code blocks show their text as
+ * written. Elsewhere only what CommonMark passes to a browser as HTML is
+ * markup: a tag, a comment, a processing instruction, a declaration or a
+ * CDATA section of the form CommonMark gives, and any other `<` is text.
+ * Backslash escapes are read, and only the character references CommonMark
+ * decodes are decoded. Code that hidden content runs over is hidden with it.
  */
-class Finder {
-  private asked = -1;
-  private answer = -1;
-
-  constructor(private readonly text: string, private readonly mark: string, private readonly steps: { count: number }) {}
-
-  /** The first place at or after `from` where the mark stands, or -1 for none. */
-  from(from: number): number {
-    if (this.asked !== -1 && from >= this.asked && (this.answer === -1 || from <= this.answer)) return this.answer;
-    const found = this.text.indexOf(this.mark, from);
-    this.steps.count += (found === -1 ? this.text.length : found + this.mark.length) - from;
-    this.asked = from;
-    this.answer = found;
-    return found;
+function readAsMarkdown(text: string, lower: string, steps: { count: number }): string {
+  const blocksOfCode = codeBlocks(text, steps);
+  const code = literalCode(text, blocksOfCode, steps);
+  const quotation = unquote(text, lower, blocksOfCode, steps);
+  const view = markdownView(quotation.text.replace(/[A-Z]+/g, upper => upper.toLowerCase()), code);
+  const pass = new Pass(quotation.text, view, lower, steps, quotation.cuts);
+  let read = "";
+  let from = 0;
+  let resume = 0;
+  for (const literal of [...code, { start: pass.text.length, end: pass.text.length, shown: "" }]) {
+    for (const { start, end } of pass.blocks(from, literal.start)) {
+      if (end <= resume) continue;
+      const block = pass.readAsMarkdown(Math.max(start, resume), end);
+      read += block.read;
+      resume = block.resume;
+    }
+    if (literal.start >= resume) read += literal.shown;
+    from = literal.end;
   }
+  return read;
+}
+
+/** Whether `<script` or `</script`, as `opening` gives, stands at `at` as a whole tag name. */
+function scriptTagAt(lower: string, at: number, opening: string): boolean {
+  return lower.startsWith(opening, at) && END_TAG_FOLLOWER.test(lower.charAt(at + opening.length));
 }
 
 /**

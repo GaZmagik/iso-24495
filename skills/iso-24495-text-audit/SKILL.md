@@ -157,14 +157,15 @@ A hard line break inside a heading underlined on the next line reads as a backsl
 
 A value counts as held where its text stands anywhere in the new file, even inside a longer word or figure, so `pre` is held by `prefix`.
 White space is made single first, so a code span whose spacing alone changed is not listed.
-The file is read as written, with character references decoded, backslash escapes read and HTML tags removed, and as the units the comparison reads.
+The file is read as written, with character references decoded and backslash escapes read, as a reader sees it once its markup is taken out, and as the units the comparison reads.
 So front matter, HTML, link destinations and image alternatives all count.
 
-A tag is read from its `<` to the next `>`, so a `<` or `>` inside a quoted attribute or a comment ends it early.
-A number that such markup splits, as when `42` becomes `4<span title=">">2</span>`, may be listed although a reader sees it whole.
-A number whose text stands whole anywhere in the file is always held.
-Only tags are removed, not what a browser hides, so `42` that becomes `4<script>x</script>2` is listed.
-With references decoded or tags removed, only the number as the original writes it is looked for, so `2,500` that becomes `2<b>500</b>` in an HTML block is listed.
+Markup is taken out as HTML reads it, and again as CommonMark passes Markdown to a browser, and a value either reading holds is held.
+A quoted attribute holding `>` does not end its tag, so `npm test` that becomes `np<span title=">">m</span> test` is held.
+Comments are not text, and nor is the content of `script`, `style` and the other elements a browser that runs scripts hides.
+Text that an attribute or a style hides is read as text, so `42` that becomes `4<span hidden>x</span>2` is listed.
+Other markup left open where an HTML block, list item or quotation ends is not read on into the next block, though a browser may read it on.
+With references decoded or markup taken out, only the number as the original writes it is looked for, so `2,500` that becomes `2<b>500</b>` in an HTML block is listed.
 
 A number also counts as held where the file as written, or its units, holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
@@ -194,7 +195,7 @@ A difference after those 60 characters shows in neither the printed rows nor the
 
 Under `rewritten` it gives both lines, the new unit's kind, the first 60 characters of each unit, the words shared and the words of the longer.
 Under `values` it gives the line of the value's unit, and the line of the unit or table that unit went to, or null.
-It also gives the value's kind, and the first 60 characters of the value and of its unit.
+It also gives the value's kind, `number` or `code`, and the first 60 characters of the value and of its unit.
 Under `tables` it gives the lines of the units read with each table, the table's first line and how many units it holds.
 It also gives the first 60 characters of the first unit read with it, and its counts of values.
 

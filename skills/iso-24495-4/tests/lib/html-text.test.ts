@@ -23,18 +23,30 @@ function read(text: string): string[] {
   return readerTexts(text).map(reading => single(reading).trim());
 }
 
-/** The text Bun's HTMLRewriter gives of HTML, outside comments and the elements a browser never shows. */
+/**
+ * The text Bun's HTMLRewriter gives of HTML, outside comments and the
+ * elements a browser never shows. Each chunk of text reaches the handler of
+ * the element holding it before the document's, so a chunk a hidden element
+ * holds is marked before it is read.
+ */
 function rewriterText(html: string): string {
-  let text = "";
-  let hidden = false;
+  const reading = { text: "", hidden: false };
   new HTMLRewriter()
-    .on("script, style, title, iframe, noembed, noframes, noscript", { text() { hidden = true; } })
-    .onDocument({ text(chunk) {
-      if (!hidden) text += chunk.text;
-      hidden = false;
-    } })
+    .on("script, style, title, iframe, noembed, noframes, noscript", { text: () => markHidden(reading) })
+    .onDocument({ text: chunk => keepUnlessHidden(reading, chunk.text) })
     .transform(new Response(html));
-  return text;
+  return reading.text;
+}
+
+/** Marks the next chunk of text as held by a hidden element. */
+function markHidden(reading: { hidden: boolean }): void {
+  reading.hidden = true;
+}
+
+/** Keeps a chunk of text unless it was marked hidden, and clears the mark. */
+function keepUnlessHidden(reading: { text: string; hidden: boolean }, chunk: string): void {
+  if (!reading.hidden) reading.text += chunk;
+  reading.hidden = false;
 }
 
 describe("a value a reader sees whole is held", () => {

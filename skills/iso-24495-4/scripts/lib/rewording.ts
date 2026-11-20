@@ -24,7 +24,8 @@ import type { Unit } from "./restructure.ts";
  * How many steps the searches of one comparison may take: each entry of an
  * index visited, each word compared between two units, and each character
  * read while looking for a value's text counts one. Building the indexes and
- * the texts searched is not counted, because it reads each text once.
+ * the texts searched is not counted, because it reads each text a fixed
+ * number of times.
  */
 export const WEIGHING_BUDGET = 20_000_000;
 
@@ -263,7 +264,8 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
  * in both. It is looked for in the units joined by spaces and in the whole
  * text as written. It is looked for again in the whole text with its
  * backslash escapes read as the characters they escape and its character
- * references decoded, with and without its HTML tags. And it is looked for in
+ * references decoded, and in the text a reader sees once its markup is
+ * taken out, as `readerTexts` reads it. And it is looked for in
  * each of these with an escaped pipe read as the pipe a table shows. Each
  * character read counts one step, and each text is looked for once. A code
  * span holding no letter or digit counts as found, because such text stands
