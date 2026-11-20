@@ -145,6 +145,9 @@ const CONTAINER_PREFIX = /^(?: {0,3}(?:> ?|(?:[-+*]|\d{1,9}[.)])[ \t]+))* {0,3}/
 /** The opening of an HTML block of CommonMark's kind 6: a block element's start or end tag, as commonmark.js 0.31.2 lists them. */
 const BLOCK_TAG = /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|search|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|\/?>|$)/;
 
+/** The list markers that open a line, each with the spaces after it. */
+const LIST_MARKERS = /^(?: {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+)+/;
+
 /** What may follow the name of an end tag that closes a raw text element. */
 const END_TAG_FOLLOWER = /[\t\n\f />]/;
 
@@ -176,9 +179,9 @@ function readAsMarkdown(pass: Pass, code: ReadonlyArray<{ start: number; end: nu
   let from = 0;
   let resume = 0;
   for (const literal of [...code, { start: pass.text.length, end: pass.text.length, shown: "" }]) {
-    for (const { start, end, cut } of pass.blocks(from, literal.start)) {
+    for (const { start, end } of pass.blocks(from, literal.start)) {
       if (end <= resume) continue;
-      const block = pass.readAsMarkdown(Math.max(start, resume), end, cut);
+      const block = pass.readAsMarkdown(Math.max(start, resume), end);
       read += block.read;
       resume = block.resume;
     }
@@ -204,8 +207,8 @@ function markdownView(lower: string, code: ReadonlyArray<{ start: number; end: n
 }
 
 /**
- * The file with the quotation markers CommonMark takes off each line made
- * spaces, and the lines where the Markdown reading must end a block, because
+ * The file with the quotation and list markers CommonMark takes off each
+ * line made spaces, and the lines where the Markdown reading must end a block, because
  * CommonMark ends a quotation or opens a deeper one there and the markup it
  * writes closes a tag left open.
  *
@@ -254,7 +257,9 @@ function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ star
       kept = depth;
     }
     const content = kept === 0 ? line : markers[kept - 1] ?? line;
-    unquoted += " ".repeat(content - line) + text.slice(content, next);
+    // Outside an HTML block, a list item's marker is not text a reader sees either.
+    const shown = html !== null ? content : content + (LIST_MARKERS.exec(text.slice(content, lineEnd))?.[0].length ?? 0);
+    unquoted += " ".repeat(shown - line) + text.slice(shown, next);
     const blank = /^[ \t]*$/.test(text.slice(content, lineEnd));
     if (html !== null) {
       if (html.length === 0 && blank) {
@@ -427,6 +432,8 @@ class Pass {
   /** The last place asked about, and the next blank line from it or -1, as `passedComment` keeps them. */
   private blankAsked = -1;
   private blankAnswer = -1;
+  /** Where the comment CommonMark passed whole that a script's content entered ends, or -1, as `scriptEnd` leaves it. */
+  private passedUntil = -1;
   /** For each place in a script's content, the states found to reach no end tag from it. */
   private readonly scriptDeadEnds: Uint8Array;
 
@@ -456,11 +463,10 @@ class Pass {
    * CommonMark lets hold blank lines runs on to the end of the line that
    * closes it, or to the end of the stretch.
    *
-   * A block also ends before each line in `cuts`, as `unquote` gives them,
-   * and is then marked `cut`.
+   * A block also ends before each line in `cuts`, as `unquote` gives them.
    */
-  blocks(start: number, end: number): Array<{ start: number; end: number; cut: boolean }> {
-    const found: Array<{ start: number; end: number; cut: boolean }> = [];
+  blocks(start: number, end: number): Array<{ start: number; end: number }> {
+    const found: Array<{ start: number; end: number }> = [];
     let blockStart = start;
     let line = start;
     let rawUntil = -1;
@@ -470,19 +476,19 @@ class Pass {
       const next = Math.min(lineEnd + 1, end);
       this.steps.count += next - line;
       if (this.cuts.has(line) && line > blockStart) {
-        found.push({ start: blockStart, end: line, cut: true });
+        found.push({ start: blockStart, end: line });
         blockStart = line;
         rawUntil = -1;
       }
       if (line >= rawUntil && /^[ \t]*$/.test(this.text.slice(line, lineEnd))) {
-        found.push({ start: blockStart, end: next, cut: false });
+        found.push({ start: blockStart, end: next });
         blockStart = next;
       } else if (line >= rawUntil) {
         rawUntil = this.rawBlockEnd(line, lineEnd, end) ?? -1;
       }
       line = next;
     }
-    if (blockStart < end) found.push({ start: blockStart, end, cut: false });
+    if (blockStart < end) found.push({ start: blockStart, end });
     return found;
   }
 
@@ -502,21 +508,23 @@ class Pass {
    * is read as CommonMark passes it to a browser. The HTML block is read as
    * the HTML tokenizer reads it, because a browser is given it as written.
    * One of CommonMark's kinds 6 and 7 runs to the end of the block, and one
-   * of kinds 1 to 5 to the end of the line that closes it.
-   *
-   * @param cut Whether the block ends where CommonMark's own markup closes a
-   *     tag left open, as `blocks` marks it.
+   * of kinds 1 to 5 to the end of the line that closes it. A tag the HTML
+   * block leaves open ends with it, because the markup CommonMark writes next
+   * closes it. CommonMark shows a tag that prose leaves open as text.
    */
-  readAsMarkdown(start: number, end: number, cut: boolean): { read: string; resume: number } {
+  readAsMarkdown(start: number, end: number): { read: string; resume: number } {
     let read = "";
     let stretch = start;
     let line = start;
     // Only a line that opens a block, or follows an HTML block, may open one of kind 7.
     let opensBlock = true;
+    // Reading that starts where hidden content ended may start partway through a line, which opens no HTML block there.
+    let partway = start > 0 && this.text.charAt(start - 1) !== "\n";
     while (line < end) {
       const newline = this.nextNewline.from(line);
       const lineEnd = newline === -1 || newline >= end ? end : newline;
-      const htmlEnd = this.rawBlockEnd(line, lineEnd, end) ?? (this.opensHtmlBlock(line, lineEnd, opensBlock) ? end : null);
+      const htmlEnd = partway ? null : this.rawBlockEnd(line, lineEnd, end) ?? (this.opensHtmlBlock(line, lineEnd, opensBlock) ? end : null);
+      partway = false;
       if (htmlEnd === null) {
         opensBlock = false;
         line = Math.min(lineEnd + 1, end);
@@ -525,14 +533,16 @@ class Pass {
       const prose = this.readStretch(stretch, line, true);
       read += prose.read;
       if (prose.resume >= end) return { read, resume: prose.resume };
-      const html = this.readStretch(Math.max(line, prose.resume), Math.max(htmlEnd, prose.resume), false, cut && htmlEnd === end);
+      // The markup CommonMark writes after an HTML block closes a tag the block leaves open.
+      const html = this.readStretch(Math.max(line, prose.resume), Math.max(htmlEnd, prose.resume), false, true);
       read += html.read;
       if (html.resume >= end) return { read, resume: html.resume };
       stretch = html.resume;
       line = html.resume;
       opensBlock = true;
+      partway = this.text.charAt(line - 1) !== "\n";
     }
-    const prose = this.readStretch(stretch, end, true, cut);
+    const prose = this.readStretch(stretch, end, true);
     return { read: read + prose.read, resume: prose.resume };
   }
 
@@ -550,7 +560,7 @@ class Pass {
     let at = this.nextLess.from(start);
     while (at !== -1 && at < end) {
       this.steps.count += 1;
-      closes ??= commonMark ? commonMarkCloses(this.text, start, end, cut, this.steps) : tagCloses(this.text, start, end, cut, this.steps);
+      closes ??= commonMark ? commonMarkCloses(this.text, start, end, this.steps) : tagCloses(this.text, start, end, cut, this.steps);
       const markup = commonMark ? this.commonMarkAt(at, start, end, closes) : this.markupAt(at, start, end, closes);
       if (markup !== null) {
         read += decode(this.text.slice(pending, at)) + markup.shown;
@@ -697,11 +707,11 @@ class Pass {
    * shows. The text is read as HTML, with markup that does not end inside it
    * read as text.
    */
-  private asBrowserReads(markup: { end: number; shown: string } | null, at: number): { end: number; shown: string } | null {
+  private asBrowserReads(markup: { end: number; shown: string } | null, at: number, before = ""): { end: number; shown: string } | null {
     if (markup === null) return null;
     const shown = this.readStretch(at, markup.end, false).read;
     this.commonMark = true;
-    return { end: markup.end, shown };
+    return { end: markup.end, shown: before + shown };
   }
 
   /**
@@ -747,7 +757,11 @@ class Pass {
     if (endTag === -1 && hidden && !this.commonMark) endTag = this.tagEndFrom(content + 2);
     if (endTag === -1) return { end: close, shown: "" };
     const written = this.text.slice(close, content);
-    return { end: endTag, shown: kind === "shown" ? written : kind === "decoded" ? decodeHtml(written) : "" };
+    const shown = kind === "shown" ? written : kind === "decoded" ? decodeHtml(written) : "";
+    // A script that ends inside a comment CommonMark passed whole leaves the rest of that comment to the browser as HTML.
+    const passed = this.passedUntil;
+    if (this.commonMark && passed > endTag) return this.asBrowserReads({ end: passed, shown }, endTag, shown) ?? { end: endTag, shown };
+    return { end: endTag, shown };
   }
 
   /**
@@ -796,6 +810,7 @@ class Pass {
   private scriptEnd(from: number, end: number): number {
     const lower = this.lower;
     let state = SCRIPT_DATA;
+    this.passedUntil = -1;
     const read: Array<[number, number]> = [];
     for (let at = from; at < end; at++) {
       this.steps.count += 1;
@@ -804,6 +819,7 @@ class Pass {
       const character = lower.charAt(at);
       if (character === "-" && lower.startsWith("-->", at)) {
         state = SCRIPT_DATA;
+        this.passedUntil = -1;
         continue;
       }
       if (character !== "<") continue;
@@ -812,6 +828,7 @@ class Pass {
         state = SCRIPT_ESCAPED;
       } else if (state === SCRIPT_DATA && lower.startsWith("<!--", at) && (!this.commonMark || this.passedComment(at))) {
         state = SCRIPT_ESCAPED;
+        if (this.commonMark) this.passedUntil = this.nextCommentEnd.from(at + 4) + 3;
         // The dashes of `<!--` can also end it, as in `<!-->`, so they are read next.
         at += 1;
       } else if (state === SCRIPT_ESCAPED && scriptTagAt(lower, at, "<script")) {
@@ -894,9 +911,8 @@ function tagCloses(text: string, start: number, end: number, cut: boolean, steps
  * each state of `commonMarkStep`, as `tagCloses` gives a tag's end: -1 where
  * the grammar fails first or the block ends.
  */
-function commonMarkCloses(text: string, start: number, end: number, cut: boolean, steps: { count: number }): Int32Array {
+function commonMarkCloses(text: string, start: number, end: number, steps: { count: number }): Int32Array {
   const closes = new Int32Array((end - start + 1) * CM_STATES).fill(-1);
-  if (cut) closeAtCut(closes, end - start, end, CM_STATES, [CM_DOUBLE_QUOTED, CM_SINGLE_QUOTED]);
   for (let at = end - 1; at >= start; at--) {
     const character = text.charAt(at);
     const offset = (at - start) * CM_STATES;
