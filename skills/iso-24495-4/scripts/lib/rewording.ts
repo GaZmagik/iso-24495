@@ -16,7 +16,7 @@
 // steps on one meter. Past the meter's limit the comparison uses none of what
 // was found, so a finding never rests on a search that stopped partway.
 
-import { readerTexts } from "./html-text.ts";
+import { valueReading } from "./html-text.ts";
 import { decodeEntities } from "./inline-wording.ts";
 import type { Unit } from "./restructure.ts";
 
@@ -66,6 +66,9 @@ const SCALES: ReadonlyMap<string, number> = new Map([
 
 /** A letter, a mark or a digit: a character a word is made of. */
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
+
+/** What a version in doubt, as `valueReading` describes it, holds: every value. */
+const HELD: Found = { number: () => true, runs: () => true, code: () => true, text: () => true };
 
 /** A backslash escape: a backslash before a mark of ASCII punctuation, which a reader sees as the mark alone. */
 const ESCAPED = /\\([!-/:-@[-`{-~])/g;
@@ -265,7 +268,7 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
  * text as written. It is looked for again in the whole text with its
  * backslash escapes read as the characters they escape and its character
  * references decoded, and in the text a reader sees once its markup is
- * taken out, as `readerTexts` reads it. And it is looked for in
+ * taken out, as `valueReading` reads it. And it is looked for in
  * each of these with an escaped pipe read as the pipe a table shows. Each
  * character read counts one step, and each text is looked for once. A code
  * span holding no letter or digit counts as found, because such text stands
@@ -275,9 +278,11 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
  * @param source The version's whole text.
  */
 export function foundIn(keys: readonly string[], source: string, meter: Meter): Found {
+  const reading = valueReading(source);
+  if (reading.inDoubt) return HELD;
   const numbers = new Set<string>();
   const decoded = decodeEntities(source.replace(ESCAPED, "$1"));
-  const whole = [keys.join(" "), source, decoded, ...readerTexts(source)].map(singleSpace);
+  const whole = [keys.join(" "), source, decoded, ...reading.texts].map(singleSpace);
   // A table shows an escaped pipe as a pipe, inside a code span too, so each text is also read that way.
   const texts = [...whole, ...whole.filter(text => text.includes(PIPE_ESCAPE)).map(text => text.replaceAll(PIPE_ESCAPE, "|"))];
   // Each run of digits that has only marks or spaces between it and the next, by its digits, so a figure is found by its runs.

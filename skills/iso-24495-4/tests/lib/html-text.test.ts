@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readerTexts, STEPS_PER_CHARACTER } from "../../scripts/lib/html-text.ts";
+import { readerTexts, STEPS_PER_CHARACTER, valueReading } from "../../scripts/lib/html-text.ts";
 import { documentsDigest, htmlTextDocuments, MULTILINE, SPLITTERS } from "../fixtures/html-text-documents.ts";
 import { HTML_TEXT_DOCUMENTS_DIGEST, VALUE_SHOWN } from "../fixtures/html-text-renderings.ts";
 
@@ -13,9 +13,19 @@ function single(text: string): string {
   return text.replace(/\s+/gu, " ");
 }
 
-/** Whether a reading of the file, or the file as written, holds `value` whole once white space is made single. */
+/**
+ * Whether the value search holds `value` in a file: the file is in doubt, or
+ * a text it reads, or the file as written, holds the value whole once white
+ * space is made single.
+ */
 function holds(text: string, value: string): boolean {
-  return readerTexts(text).some(reading => single(reading).includes(value)) || single(text).includes(value);
+  const reading = valueReading(text);
+  return reading.inDoubt || reading.texts.some(texts => single(texts).includes(value)) || single(text).includes(value);
+}
+
+/** Whether the value search reads a file as in doubt. */
+function inDoubt(text: string): boolean {
+  return valueReading(text).inDoubt;
 }
 
 /** The readings of a file, each with its white space made single and trimmed. */
@@ -98,14 +108,97 @@ describe("a value a reader sees whole is held", () => {
     expect(read("4<!--\n\n--><!-- x -->2")).toEqual(["4<!-- -->2"]);
   });
 
-  test("where Markdown's containers make a browser read markup left open differently, a value a reader sees can be missed", () => {
+});
+
+// Each specimen below shows its value to a reader, as commonmark.js and parse5
+// render it, and each control does not. Without the doubt, every specimen of
+// the first test was a value listed though a reader sees it.
+describe("markup left open across the end of a block puts the file in doubt, and every value is then held", () => {
+  test("a browser reads it on into what CommonMark writes next, which no reading here follows", () => {
     // A browser ends the comment only at a `-->` CommonMark passes as HTML, so it hides the x.
-    expect(holds("Something else.\n\n<div>4<!--\n\n-->x<!-- x -->2</div>\n", "42")).toBe(false);
+    expect(holds("Something else.\n\n<div>4<!--\n\n-->x<!-- x -->2</div>\n", "42")).toBe(true);
     // In a tight list CommonMark writes no paragraph tag, so a browser reads the open tag on to the next `>`.
-    expect(holds("Something else.\n\n- <pre></pre>4<b\n  c=\"x <i>2</i>\n", "42")).toBe(false);
-    // Controls: no x, and no quotation mark to hide the `>` from the readings.
-    expect(holds("Something else.\n\n<div>4<!--\n\n--><!-- x -->2</div>\n", "42")).toBe(true);
-    expect(holds("Something else.\n\n- <pre></pre>4<b\n  c=x <i>2</i>\n", "42")).toBe(true);
+    expect(holds("Something else.\n\n- <pre></pre>4<b\n  c=\"x <i>2</i>\n", "42")).toBe(true);
+    // The open tag takes the paragraph tag CommonMark writes next, so the text joins with no space.
+    expect(holds("Run it first.\n\n> <style></style>npm tes<b\n>t\n", "npm test")).toBe(true);
+    // The script CommonMark leaves open at the end of the list item hides the paragraph after the list.
+    expect(holds("Run it first.\n\n- <script>\n\nx\n\n</script>npm test\n", "npm test")).toBe(true);
+    // Controls: the same blocks with their markup closed leave no doubt, so a value they cut is listed.
+    expect(holds("Something else.\n\n<div>4<!-- x -->x2</div>\n", "42")).toBe(false);
+    expect(holds("Something else.\n\n- <pre></pre>4<b>\n  c=\"x <i>3</i>\n", "42")).toBe(false);
+    expect(holds("Run it first.\n\n> <style></style>npm tes<b>\n>x\n", "npm test")).toBe(false);
+    expect(holds("Run it first.\n\n- <script>x</script>npm tset\n", "npm test")).toBe(false);
+  });
+
+  test("a tag an HTML block leaves open puts the file in doubt, whether the block's end closes it or it stands in a quoted value", () => {
+    expect(inDoubt("<div>a<b\n\nc")).toBe(true);
+    expect(holds("Run it first.\n\n<div>np<span title=\"x\n\n<b c=\"y\">m test</b></div>\n", "npm test")).toBe(true);
+    expect(inDoubt("<div>a</b\n\nc")).toBe(true);
+    // Controls: a tag closed at the block's last character, and a tag left open in prose, which CommonMark shows as text.
+    expect(inDoubt("<div>a<b>")).toBe(false);
+    expect(inDoubt("<div>a<b>\n\nc")).toBe(false);
+    expect(inDoubt("a<b\n\nc")).toBe(false);
+    expect(holds("Run it first.\n\n<div>np<span title=\"x\">\n\n<b c=\"y\">m tset</b></div>\n", "npm test")).toBe(false);
+  });
+
+  test("a comment, declaration or processing instruction an HTML block leaves open puts the file in doubt", () => {
+    expect(inDoubt("<div>a<!--\n\n-->b")).toBe(true);
+    expect(inDoubt("<div>a<!x\n\nb")).toBe(true);
+    expect(inDoubt("<div>a<?x\n\nb")).toBe(true);
+    // Controls: closed inside the block, and left open in prose.
+    expect(inDoubt("<div>a<!-- x --><!x><?x?>\n\nb")).toBe(false);
+    expect(inDoubt("a<!--\n\n-->b")).toBe(false);
+  });
+
+  test("content a browser reads to its end tag puts the file in doubt when that tag is not in the block, and so does plaintext", () => {
+    expect(inDoubt("np<script>\n\nx\n\n</script>m test")).toBe(true);
+    expect(inDoubt("a<style>\n\nx</style>")).toBe(true);
+    expect(inDoubt("<div>a<textarea>x\n\ny</textarea>b")).toBe(true);
+    expect(inDoubt("np<xmp>m\n\ntest</xmp>")).toBe(true);
+    expect(inDoubt("a<plaintext>b")).toBe(true);
+    // Hidden content that runs to the end of the file hides the rest from a browser too, so it leaves no doubt.
+    expect(inDoubt("a<script>x")).toBe(false);
+    // Controls: each closed inside its block.
+    expect(inDoubt("a<script>x</script><style>y</style><textarea>z</textarea><xmp>w</xmp>b")).toBe(false);
+  });
+
+  test("an HTML block or fence opened in a list item or quotation puts the file in doubt when a line falls out of the container before the block ends", () => {
+    // The pre's line after the marker is not indented to the item's content, so the item ends there and the HTML block with it.
+    expect(holds("Run it first.\n\n- <pre>\nnpm test</pre>\n", "npm test")).toBe(true);
+    // The fence's next line is indented two columns where the item's content starts at three.
+    expect(holds("Something else.\n\n-  ```\n  <a title=\"\n  ``` 4<span title=\"<\">2`\n", "42")).toBe(true);
+    // A closing fence that falls out of the item does not close the item's fence.
+    expect(inDoubt("- ```\n  x\n```\nnpm test\n")).toBe(true);
+    // A line without the quotation's marker ends the quotation and the fence in it, and a blank line without one does too.
+    expect(inDoubt("> ```\n> x\nnpm test\n> ```\n")).toBe(true);
+    expect(inDoubt("> ```\n\n> x\n> ```\n")).toBe(true);
+    expect(inDoubt("1. <div>\nx\n")).toBe(true);
+    // Controls: every line indented to the item's content or held in the quotation, and a fence outside any container.
+    expect(holds("Run it first.\n\n- <pre>\n  npm tset</pre>\n", "npm test")).toBe(false);
+    expect(holds("Something else.\n\n-  ```\n   <a title=\"\n   ```\n  4<span title=\"<\">3`\n", "42")).toBe(false);
+    expect(inDoubt("- ```\n\n  x\n  ```\n> ```\n>\n> x\n> ```\n```\nx\n```\n- a\n\n  ```\n  b\n  ```\n")).toBe(false);
+  });
+});
+
+describe("the value search reads the file a third time", () => {
+  test("as HTML with each line's quotation and list markers, and a backslash that ends a line, taken off", () => {
+    // CommonMark reads no code span inside an HTML block.
+    expect(holds("Run it first.\n\n<pre> Use `\"` here. npm t<b\n><o:p>est</pre>\n", "npm test")).toBe(true);
+    // A quotation's marker after a list item's.
+    expect(holds("Run it first.\n\nnpm\n- > te<b>st\n", "npm test")).toBe(true);
+    // A backslash before a line break is a hard line break, not text.
+    expect(holds(`Run it first.\n\nnp<b>m${BACKSLASH}\ntest\n`, "npm test")).toBe(true);
+    // Controls: the same files with the value cut.
+    expect(holds("Run it first.\n\n<pre> Use `\"` here. npm t<b\n><o:p>sst</pre>\n", "npm test")).toBe(false);
+    expect(holds("Run it first.\n\nnpm\n- > tx<b>st\n", "npm test")).toBe(false);
+    expect(holds(`Run it first.\n\nnp<b>m${BACKSLASH}\ntset\n`, "npm test")).toBe(false);
+  });
+
+  test("and gives it only when it differs from both readings", () => {
+    const texts = (text: string): string[] => valueReading(text).texts.map(reading => single(reading).trim());
+    expect(texts("np<b>m test")).toEqual(["npm test"]);
+    expect(texts(`a${BACKSLASH}\nb`)).toEqual([`a${BACKSLASH} b`, "a b"]);
+    expect(texts("> `<b>`")).toEqual(["> ``", "<b>", "``"]);
   });
 });
 
@@ -282,7 +375,7 @@ describe("the work grows in proportion to the file", () => {
       const perCharacter = [1_000, 8_000].map(count => {
         const text = make(count);
         const steps = { count: 0 };
-        readerTexts(text, steps);
+        valueReading(text, steps);
         return steps.count / text.length;
       });
       expect(Math.max(...perCharacter), name).toBeLessThanOrEqual(STEPS_PER_CHARACTER);

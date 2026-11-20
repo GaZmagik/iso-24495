@@ -24,8 +24,11 @@
 // read as CommonMark passes it to a browser: quotation and list markers are
 // taken off, code spans and code blocks show their text as written,
 // backslash escapes are read, an HTML block is read as HTML, and in prose
-// only markup of CommonMark's form is markup. A value is held when either
-// reading holds it, so where the two disagree it is treated as held.
+// only markup of CommonMark's form is markup. For the value search the file
+// is read a third time, as HTML once each line's quotation and list markers,
+// and a backslash that ends a line, are taken off, because a browser is never
+// given them. A value is held when any reading holds it, so where the
+// readings disagree it is treated as held.
 //
 // Markup is read only inside its block. A block runs to the next blank line,
 // or, for a raw HTML block that CommonMark lets hold blank lines, to the line
@@ -38,6 +41,17 @@
 // because the markup CommonMark writes next closes it, and a comment the
 // block leaves open runs on to its end wherever that stands, as a browser
 // reads it on.
+//
+// Markup left open across the end of a block is read on by a browser into
+// whatever CommonMark writes next, and what that is turns on Markdown's
+// containers, which these readings do not follow. So the value search holds
+// every value of a file in doubt in this way. The Markdown reading finds the
+// doubt where markup does not end in the block it opens in: a tag, comment
+// or other markup an HTML block leaves open, the content of an element read
+// to its end tag where that tag is not in the block, unless it runs to the end
+// of the file, and `plaintext`. It finds it too where an HTML block or a fence
+// opens inside a list item or a quotation and a line before its end falls out
+// of the container, because the container's end then ends the block first.
 //
 // The work grows in proportion to the file. Each character is looked at a
 // fixed number of times, and `steps` counts every look, so a test can hold
@@ -59,11 +73,41 @@ export const STEPS_PER_CHARACTER = 64;
  * @param steps Counts each look at a character, when given.
  */
 export function readerTexts(source: string, steps: { count: number } = { count: 0 }): string[] {
+  return readTwice(source, steps).texts;
+}
+
+/** What the value search reads of a file, as `valueReading` gives it. */
+export interface ValueReading {
+  /** The texts a reader may see: those `readerTexts` gives, then the file read as HTML with its line marks taken off, when that differs. */
+  readonly texts: readonly string[];
+  /** Whether markup left open across the end of a block puts what a reader sees in doubt, so every value is held. */
+  readonly inDoubt: boolean;
+}
+
+/**
+ * What the value search reads of a file: the two readings, the third reading
+ * of HTML with each line's quotation and list markers and a backslash that
+ * ends a line taken off, and whether the file is in doubt, as this module's
+ * opening comment describes.
+ *
+ * @param source The whole file.
+ * @param steps Counts each look at a character, when given.
+ */
+export function valueReading(source: string, steps: { count: number } = { count: 0 }): ValueReading {
+  const twice = readTwice(source, steps);
+  steps.count += twice.text.length;
+  const unmarked = twice.text.replace(LINE_MARKS, marks => " ".repeat(marks.length)).replace(/\\(?=\n)/g, " ");
+  const asUnmarked = readAsHtml(unmarked, unmarked.replace(/[A-Z]+/g, upper => upper.toLowerCase()), steps);
+  return { texts: twice.texts.includes(asUnmarked) ? twice.texts : [...twice.texts, asUnmarked], inDoubt: twice.inDoubt };
+}
+
+/** The two readings of a file, the file with its line endings made `\n`, and whether the Markdown reading found it in doubt. */
+function readTwice(source: string, steps: { count: number }): { text: string; texts: string[]; inDoubt: boolean } {
   const text = source.replace(/\r\n?/g, "\n");
   const lower = text.replace(/[A-Z]+/g, upper => upper.toLowerCase());
   const asHtml = readAsHtml(text, lower, steps);
   const asMarkdown = readAsMarkdown(text, lower, steps);
-  return asMarkdown === asHtml ? [asHtml] : [asHtml, asMarkdown];
+  return { text, texts: asMarkdown.read === asHtml ? [asHtml] : [asHtml, asMarkdown.read], inDoubt: asMarkdown.inDoubt };
 }
 
 /** What the content of an element the tokenizer reads to its end tag is to a reader. */
@@ -156,6 +200,15 @@ const BLOCK_TAG = /^<\/?(?:address|article|aside|base|basefont|blockquote|body|c
 /** The list markers that open a line, each with the spaces after it. */
 const LIST_MARKERS = /^(?: {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+)+/;
 
+/** The quotation and list markers that open each line, as the third reading takes them off. */
+const LINE_MARKS = /^(?: {0,3}(?:> ?|(?:[-+*]|\d{1,9}[.)])[ \t]+))+/gm;
+
+/** What stands before a fence on its line: spaces, tabs, quotation markers and list markers. */
+const FENCE_PREFIX = /^(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*/;
+
+/** The quotation markers that open a line, as a fence's later lines are read for them. */
+const QUOTE_MARKERS = / {0,3}> ?/y;
+
 /** What may follow the name of an end tag that closes a raw text element. */
 const END_TAG_FOLLOWER = /[\t\n\f />]/;
 
@@ -187,12 +240,15 @@ function markdownView(lower: string, code: ReadonlyArray<{ start: number; end: n
  * continues a paragraph, as a lazy line does. Lines of code blocks are left
  * as they are.
  */
-function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ start: number; end: number }>, steps: { count: number }): { text: string; cuts: ReadonlySet<number> } {
+function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ start: number; end: number }>, steps: { count: number }): { text: string; cuts: ReadonlySet<number>; fallsOut: boolean } {
   const cuts = new Set<number>();
   let unquoted = "";
   let depth = 0;
   // The marks that end the HTML block a line stands in, none for one a blank line ends, or null outside every HTML block.
   let html: readonly string[] | null = null;
+  // How far the HTML block's `<` stands into its line after the quotation's markers, and whether a line before its end falls short of it.
+  let column = 0;
+  let fallsOut = false;
   let afterBlank = true;
   // Whether a line may open an HTML block of kind 7: after a blank line, or after an HTML block.
   let opensBlock = true;
@@ -232,6 +288,8 @@ function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ star
     unquoted += " ".repeat(shown - line) + text.slice(shown, next);
     const blank = /^[ \t]*$/.test(text.slice(content, lineEnd));
     if (html !== null) {
+      // A line indented less than the block's `<` falls out of the list item it opened in, which ends the block first.
+      if (!blank && (/^[ \t]*/.exec(text.slice(content, lineEnd))?.[0].length ?? 0) < column) fallsOut = true;
       if (html.length === 0 && blank) {
         html = null;
         afterBlank = true;
@@ -253,6 +311,7 @@ function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ star
     if (markers.length > depth && !afterBlank) cuts.add(line);
     if (markers.length >= depth || opensBlock) depth = markers.length;
     html = htmlBlockOpened(text, lower, content, lineEnd, opensBlock);
+    column = CONTAINER_PREFIX.exec(lower.slice(content, lineEnd))?.[0].length ?? 0;
     opensBlock = false;
     // A block of kinds 1 to 5 that ends on the line it opens is over.
     if (html !== null && html.length > 0 && html.some(mark => lower.slice(content + 2, lineEnd).includes(mark))) {
@@ -262,7 +321,7 @@ function unquote(text: string, lower: string, blocksOfCode: ReadonlyArray<{ star
     afterBlank = false;
     line = next;
   }
-  return { text: unquoted, cuts };
+  return { text: unquoted, cuts, fallsOut };
 }
 
 /**
@@ -343,12 +402,18 @@ function tickRunLength(text: string, start: number): number {
  * after a blank line, another such line or the start of the file, and shows
  * them without those columns. Spaces, tabs, quotation markers and list
  * markers may stand before a fence.
+ *
+ * `fallsOut` is true when a fence opens behind such marks and a line up to
+ * its closing fence falls out of the container: it holds fewer quotation
+ * markers than the fence's line, or, past them, is not blank and is indented
+ * less than the fence stands.
  */
-function codeBlocks(text: string, steps: { count: number }): Array<{ start: number; end: number; shown: string }> {
+function codeBlocks(text: string, steps: { count: number }): { blocks: Array<{ start: number; end: number; shown: string }>; fallsOut: boolean } {
   const found: Array<{ start: number; end: number; shown: string }> = [];
-  const prefix = /^(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*/;
+  const prefix = FENCE_PREFIX;
+  let fallsOut = false;
   let line = 0;
-  let open: { start: number; mark: string; shown: string } | null = null;
+  let open: { start: number; mark: string; shown: string; quotes: number; column: number } | null = null;
   let indented: { start: number; end: number; shown: string } | null = null;
   let afterBlank = true;
   while (line < text.length) {
@@ -361,6 +426,7 @@ function codeBlocks(text: string, steps: { count: number }): Array<{ start: numb
     const fence = /^(`{3,}|~{3,})/.exec(stripped)?.[1];
     const indent = /^(?: {4}| {0,3}\t)/.exec(content)?.[0];
     if (open !== null) {
+      if (open.quotes > 0 || open.column > 0) fallsOut ||= fallsOutOf(content, open.quotes, open.column);
       if (fence !== undefined && fence.startsWith(open.mark.charAt(0)) && fence.length >= open.mark.length && stripped.slice(fence.length).trim() === "") {
         found.push({ start: open.start, end: next, shown: open.shown });
         open = null;
@@ -374,14 +440,42 @@ function codeBlocks(text: string, steps: { count: number }): Array<{ start: numb
     } else {
       if (indented !== null) found.push(indented);
       indented = null;
-      if (fence !== undefined && !(fence.startsWith("`") && stripped.slice(fence.length).includes("`"))) open = { start: line, mark: fence, shown: "" };
+      if (fence !== undefined && !(fence.startsWith("`") && stripped.slice(fence.length).includes("`"))) {
+        const before = content.slice(0, content.length - stripped.length);
+        const quotes = quotationMarkers(before);
+        open = { start: line, mark: fence, shown: "", quotes: quotes.count, column: before.length - quotes.width };
+      }
     }
     afterBlank = blank;
     line = next;
   }
   if (indented !== null) found.push(indented);
   if (open !== null) found.push({ start: open.start, end: text.length, shown: open.shown });
-  return found;
+  return { blocks: found, fallsOut };
+}
+
+/** How many quotation markers open a line, as many as `most` at most, and how wide they are. */
+function quotationMarkers(line: string, most = Number.POSITIVE_INFINITY): { count: number; width: number } {
+  let count = 0;
+  let width = 0;
+  QUOTE_MARKERS.lastIndex = 0;
+  while (count < most && QUOTE_MARKERS.exec(line) !== null) {
+    count++;
+    width = QUOTE_MARKERS.lastIndex;
+  }
+  return { count, width };
+}
+
+/**
+ * Whether a line inside a fence falls out of the container the fence opened
+ * in: it holds fewer than `quotes` quotation markers, or past them it is not
+ * blank and is indented less than `column`.
+ */
+function fallsOutOf(line: string, quotes: number, column: number): boolean {
+  const markers = quotationMarkers(line, quotes);
+  if (markers.count < quotes) return true;
+  const rest = line.slice(markers.width).replace(/\n$/, "");
+  return rest.trim() !== "" && (/^[ \t]*/.exec(rest)?.[0].length ?? 0) < column;
 }
 
 /**
@@ -434,6 +528,8 @@ class Pass {
   private passedUntil = -1;
   /** For each place in a script's content, the states found to reach no end tag from it. */
   private readonly scriptDeadEnds: Uint8Array;
+  /** Whether markup read here did not end in the block it opened in, as this module's opening comment describes the doubt. */
+  leftOpen = false;
 
   /**
    * @param text The text read: the file, or for the Markdown reading the
@@ -564,7 +660,10 @@ class Pass {
       if (markup !== null) {
         read += decode(this.text.slice(pending, at)) + markup.shown;
         pending = markup.end;
-        if (markup.end > end) return { read, resume: markup.end };
+        if (markup.end > end) {
+          this.leftOpen = true;
+          return { read, resume: markup.end };
+        }
       }
       at = this.nextLess.from(markup === null ? at + 1 : markup.end);
     }
@@ -647,13 +746,13 @@ class Pass {
   private markupAt(at: number, start: number, end: number, closes: Int32Array): { end: number; shown: string } | null {
     const next = this.text.charAt(at + 1);
     if (/[A-Za-z]/.test(next)) {
-      const close = tagClose(closes, start, end, at + 2);
+      const close = this.noteCut(tagClose(closes, start, end, at + 2), end);
       return close === -1 ? null : this.contentAfter(at, close, start, end, closes);
     }
     if (next === "/") {
       const after = this.text.charAt(at + 2);
       if (/[A-Za-z]/.test(after)) {
-        const close = tagClose(closes, start, end, at + 3);
+        const close = this.noteCut(tagClose(closes, start, end, at + 3), end);
         return close === -1 ? null : { end: close, shown: "" };
       }
       if (after === ">") return at + 3 <= end ? { end: at + 3, shown: "" } : null;
@@ -670,6 +769,16 @@ class Pass {
       return this.closedBy(bang === -1 || ending < bang ? ending + 3 : bang + 4, end);
     }
     return next === "?" ? this.through(this.nextGreater, at + 1, end, 1) : null;
+  }
+
+  /**
+   * A tag's end as `tagClose` gives it, noting that the tag was left open
+   * when, in an HTML block of the Markdown reading, the block's end closes it
+   * or it does not end in the block.
+   */
+  private noteCut(close: number, end: number): number {
+    if (this.runOn && (close === -1 || close === end && this.text.charAt(end - 1) !== ">")) this.leftOpen = true;
+    return close;
   }
 
   /**
@@ -768,14 +877,19 @@ class Pass {
     const name = /^[a-z]+/.exec(this.lower.slice(at + 1, Math.min(at + 11, close)))?.[0] ?? "";
     const kind = RAW_TEXT.get(name);
     if (kind === undefined || !END_TAG_FOLLOWER.test(this.lower.charAt(at + 1 + name.length))) return { end: close, shown: "" };
-    // Nothing ends `plaintext`, so the rest of its block is text as written.
-    if (kind === "plaintext") return { end, shown: this.text.slice(close, end) };
+    // Nothing ends `plaintext`, so the rest of its block is text as written, and a browser reads it on.
+    if (kind === "plaintext") {
+      this.leftOpen = true;
+      return { end, shown: this.text.slice(close, end) };
+    }
     const hidden = kind === "hidden" || kind === "script";
     const limit = hidden ? this.text.length : end;
     const content = kind === "script" ? this.scriptEnd(close, limit) : this.endTag(name, close, limit);
+    if (content === -1 && !hidden) this.leftOpen = true;
     if (content === -1) return hidden ? { end: limit, shown: "" } : { end: close, shown: "" };
     let endTag = this.commonMark ? this.closingTagEnd(content + 2, this.text.length) : tagClose(closes, start, end, content + 2);
     if (endTag === -1 && hidden && !this.commonMark) endTag = this.tagEndFrom(content + 2);
+    if (endTag === -1) this.leftOpen = true;
     if (endTag === -1) return { end: close, shown: "" };
     const written = this.text.slice(close, content);
     const shown = kind === "shown" ? written : kind === "decoded" ? decodeHtml(written) : "";
@@ -899,9 +1013,11 @@ function readAsHtml(text: string, lower: string, steps: { count: number }): stri
  * CDATA section of the form CommonMark gives, and any other `<` is text.
  * Backslash escapes are read, and only the character references CommonMark
  * decodes are decoded. Code that hidden content runs over is hidden with it.
+ * `inDoubt` is true where the reading finds the file in doubt, as this
+ * module's opening comment describes.
  */
-function readAsMarkdown(text: string, lower: string, steps: { count: number }): string {
-  const blocksOfCode = codeBlocks(text, steps);
+function readAsMarkdown(text: string, lower: string, steps: { count: number }): { read: string; inDoubt: boolean } {
+  const { blocks: blocksOfCode, fallsOut } = codeBlocks(text, steps);
   const code = literalCode(text, blocksOfCode, steps);
   const quotation = unquote(text, lower, blocksOfCode, steps);
   const view = markdownView(quotation.text.replace(/[A-Z]+/g, upper => upper.toLowerCase()), code);
@@ -919,7 +1035,7 @@ function readAsMarkdown(text: string, lower: string, steps: { count: number }): 
     if (literal.start >= resume) read += literal.shown;
     from = literal.end;
   }
-  return read;
+  return { read, inDoubt: fallsOut || quotation.fallsOut || pass.leftOpen };
 }
 
 /** Whether `<script` or `</script`, as `opening` gives, stands at `at` as a whole tag name. */
