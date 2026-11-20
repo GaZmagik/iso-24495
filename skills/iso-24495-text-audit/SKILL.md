@@ -172,7 +172,7 @@ With references decoded or markup taken out, only the number as the original wri
 Where markup is left open across the end of a block, the readings cannot follow how a browser reads it on, so no value of that file is listed.
 That covers a tag or comment passed to a browser as HTML that does not end in its block, and an element such as `script` with no end tag there.
 It also covers a list item or quotation that ends inside an HTML block or a fence.
-Where a reading misplaces an HTML block's start or end, a value can still be listed though a reader sees it.
+A reading can find a block's start or end, or the markers that open a line, other than where CommonMark finds them. A value can then still be listed though a reader sees it.
 
 A number also counts as held where the file as written, or its units, holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
