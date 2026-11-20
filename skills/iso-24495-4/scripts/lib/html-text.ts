@@ -12,7 +12,10 @@
 // runs scripts builds it. Tags and comments are not text. Nor is the content
 // of `script`, `style`, `title`, `iframe`, `noembed`, `noframes` and
 // `noscript`, which such a browser never shows. The content of `textarea`,
-// `xmp` and `plaintext` is text. A tag is removed with nothing in its place, so
+// `xmp` and `plaintext` is text, and so is text that other elements,
+// attributes or styles hide, such as the content of `template`. Text is read
+// in the order the file writes it, though a browser moves some, as from
+// inside a table to before it. A tag is removed with nothing in its place, so
 // `np<b>m</b>` reads as `npm`. Character references are decoded in text, as
 // HTML decodes them, and not inside markup.
 //

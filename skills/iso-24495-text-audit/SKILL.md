@@ -164,7 +164,8 @@ Markup is taken out as HTML reads it, and again as CommonMark passes Markdown to
 A quoted attribute holding `>` does not end its tag, so `npm test` that becomes `np<span title=">">m</span> test` is held.
 Comments are not text, and nor is the content of `script`, `style` and the other elements a browser that runs scripts hides.
 
-Text that an attribute or a style hides is read as text, so `42` that becomes `4<span hidden>x</span>2` is listed.
+Text that `template`, an attribute or a style hides is read as text, so `42` that becomes `4<span hidden>x</span>2` is listed.
+Text a browser moves, as out of a table, is read where the file writes it.
 Other markup left open where an HTML block, list item or quotation ends is not read on into the next block, though a browser may read it on.
 With references decoded or markup taken out, only the number as the original writes it is looked for, so `2,500` that becomes `2<b>500</b>` in an HTML block is listed.
 

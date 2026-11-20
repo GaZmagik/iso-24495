@@ -686,7 +686,13 @@ describe("on random documents", () => {
       value => `![See ${value} here](x.png)`, value => `[${value}](guide.md)`, value => `[the guide](<${value}.md>)`, value => `## ${value}`,
       value => `<div>\n${value}\n</div>`, value => `<pre>\n<b>${value.slice(0, 1)}</b>${value.slice(1)}\n</pre>`,
       value => `<div>\n${[...value].map(character => `&#${character.codePointAt(0)};`).join("")}\n</div>`,
+      // Markup a reader does not see, which a tag read only to its next `>` would end early or leave in.
+      value => `<pre>${value.slice(0, 1)}<span title=">">${value.slice(1)}</span></pre>`,
+      value => `<pre>${value.slice(0, 1)}<!-- > -->${value.slice(1)}</pre>`,
+      value => `<pre>${value.slice(0, 1)}<script>x</script>${value.slice(1)}</pre>`,
     ];
+    // The places from here on show the value whole to a reader only once their markup is read as HTML reads it.
+    const firstMarkupPlace = places.length - 3;
     const figures = numbers.map(number => number.replace("%", ""));
     let paired = 0;
     let listed = 0;
@@ -699,6 +705,7 @@ describe("on random documents", () => {
     let cellPairs = 0;
     let copiesPaired = 0;
     let labelled = 0;
+    let markupCleared = 0;
     for (let trial = 0; trial < 600; trial++) {
       const count = 2 + Math.floor(random() * 6);
       const drawn = Array.from({ length: count }, () => {
@@ -744,12 +751,16 @@ describe("on random documents", () => {
         ...(sentence.replace(/`[^`]*`/g, " ").match(/\d[\d.,]*/g) ?? []),
       ]);
       const placed = valuesBefore.length > 0 && random() < 0.7 ? pick(valuesBefore, random) : null;
+      // Half the values placed go to a markup place, so that axis is read often enough to count.
+      const place = placed === null ? -1 : random() < 0.5 ? firstMarkupPlace + Math.floor(random() * 3) : Math.floor(random() * firstMarkupPlace);
       const afterBody = `${heading}${body}${splitTable}${block}`;
-      const after = `${afterBody}${placed === null ? "" : `\n${pick(places, random)(placed)}\n`}`.replaceAll("\n", ends);
+      const after = `${afterBody}${placed === null ? "" : `\n${(places[place] ?? String)(placed)}\n`}`.replaceAll("\n", ends);
       const comparison = compareVersions(before, after, null);
       const label = JSON.stringify([before, after]);
       // A value is listed only when its text, white space made single, stands nowhere in the new file, and only as the original wrote it.
       const oracle = oracleTexts(after, comparison.after);
+      // A reader sees the value whole in a markup place, so the oracle holds it as written.
+      if (placed !== null && place >= firstMarkupPlace) oracle.push(singleSpace(placed));
       for (const value of comparison.values) {
         expect(oracle.some(text => text.includes(singleSpace(value.value))), `${label}: ${value.value} stands in the new version`).toBe(false);
         expect((value.kind === "code" ? spans.map(singleSpace) : figures).includes(value.value), `${label}: ${value.value} is not a value the original wrote`).toBe(true);
@@ -757,6 +768,7 @@ describe("on random documents", () => {
       if (placed !== null && compareVersions(before, afterBody.replaceAll("\n", ends), null).values.some(value => value.value === placed)) {
         expect(comparison.values.some(value => value.value === placed), `${label}: ${placed}`).toBe(false);
         cleared++;
+        if (place >= firstMarkupPlace) markupCleared++;
       }
       if (/&[#a-z]/.test(before) && comparison.values.some(value => value.kind === "code")) traced++;
       // Every unit of either version not kept, as the comparison held them before it paired any.
@@ -796,6 +808,7 @@ describe("on random documents", () => {
     expect(Math.min(itemPairs, cellPairs)).toBeGreaterThan(80);
     expect(copiesPaired).toBeGreaterThan(50);
     expect(labelled).toBeGreaterThan(60);
+    expect(markupCleared).toBeGreaterThan(10);
   });
 });
 
