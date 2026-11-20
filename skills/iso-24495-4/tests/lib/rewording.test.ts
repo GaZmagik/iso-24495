@@ -768,7 +768,8 @@ describe("on random documents", () => {
       if (placed !== null && compareVersions(before, afterBody.replaceAll("\n", ends), null).values.some(value => value.value === placed)) {
         expect(comparison.values.some(value => value.value === placed), `${label}: ${placed}`).toBe(false);
         cleared++;
-        if (place >= firstMarkupPlace) markupCleared++;
+        // Counted only where a tag read to its next `>` could not hold the value, so plain markup in these places counts nothing.
+        if (place >= firstMarkupPlace && cannotHold(oracleTexts(after, comparison.after), placed, spans.map(singleSpace).includes(placed))) markupCleared++;
       }
       if (/&[#a-z]/.test(before) && comparison.values.some(value => value.kind === "code")) traced++;
       // Every unit of either version not kept, as the comparison held them before it paired any.
@@ -808,7 +809,7 @@ describe("on random documents", () => {
     expect(Math.min(itemPairs, cellPairs)).toBeGreaterThan(80);
     expect(copiesPaired).toBeGreaterThan(50);
     expect(labelled).toBeGreaterThan(60);
-    expect(markupCleared).toBeGreaterThan(10);
+    expect(markupCleared).toBeGreaterThan(5);
   });
 });
 
