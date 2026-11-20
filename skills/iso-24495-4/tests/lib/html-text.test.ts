@@ -23,6 +23,11 @@ function holds(text: string, value: string): boolean {
   return reading.inDoubt || reading.texts.some(texts => single(texts).includes(value)) || single(text).includes(value);
 }
 
+/** The texts the value search reads of a file, each with its white space made single and trimmed. */
+function valueTexts(text: string): string[] {
+  return valueReading(text).texts.map(reading => single(reading).trim());
+}
+
 /** Whether the value search reads a file as in doubt. */
 function inDoubt(text: string): boolean {
   return valueReading(text).inDoubt;
@@ -198,10 +203,9 @@ describe("the value search reads the file a third time", () => {
   });
 
   test("and gives it only when it differs from both readings", () => {
-    const texts = (text: string): string[] => valueReading(text).texts.map(reading => single(reading).trim());
-    expect(texts("np<b>m test")).toEqual(["npm test"]);
-    expect(texts(`a${BACKSLASH}\nb`)).toEqual([`a${BACKSLASH} b`, "a b"]);
-    expect(texts("> `<b>`")).toEqual(["> ``", "<b>", "``"]);
+    expect(valueTexts("np<b>m test")).toEqual(["npm test"]);
+    expect(valueTexts(`a${BACKSLASH}\nb`)).toEqual([`a${BACKSLASH} b`, "a b"]);
+    expect(valueTexts("> `<b>`")).toEqual(["> ``", "<b>", "``"]);
   });
 });
 

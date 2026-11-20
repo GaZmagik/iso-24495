@@ -96,7 +96,7 @@ export interface ValueReading {
 export function valueReading(source: string, steps: { count: number } = { count: 0 }): ValueReading {
   const twice = readTwice(source, steps);
   steps.count += twice.text.length;
-  const unmarked = twice.text.replace(LINE_MARKS, marks => " ".repeat(marks.length)).replace(/\\(?=\n)/g, " ");
+  const unmarked = withoutLineMarks(twice.text);
   const asUnmarked = readAsHtml(unmarked, unmarked.replace(/[A-Z]+/g, upper => upper.toLowerCase()), steps);
   return { texts: twice.texts.includes(asUnmarked) ? twice.texts : [...twice.texts, asUnmarked], inDoubt: twice.inDoubt };
 }
@@ -202,6 +202,11 @@ const LIST_MARKERS = /^(?: {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+)+/;
 
 /** The quotation and list markers that open each line, as the third reading takes them off. */
 const LINE_MARKS = /^(?: {0,3}(?:> ?|(?:[-+*]|\d{1,9}[.)])[ \t]+))+/gm;
+
+/** A file with each line's quotation and list markers, and a backslash that ends a line, made spaces, for the third reading. */
+function withoutLineMarks(text: string): string {
+  return text.replace(LINE_MARKS, marks => " ".repeat(marks.length)).replace(/\\(?=\n)/g, " ");
+}
 
 /** What stands before a fence on its line: spaces, tabs, quotation markers and list markers. */
 const FENCE_PREFIX = /^(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*/;
