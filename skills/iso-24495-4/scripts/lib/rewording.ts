@@ -8,11 +8,9 @@
 // the longer one's words or more, for a person to check the rewording. A
 // unit of the original that shares at least half of its different words with
 // a new table is read with that table, because Part 5's own example turns a sentence into one.
-// And each number in figures of a unit not kept is looked for in the whole
-// new version. One is listed only when the new version holds neither its
-// value nor its text as the original writes it, read raw, with character
-// references decoded, with HTML tags removed, or as its units. Code spans are
-// not traced yet.
+// And each number and code span of a unit not kept is looked for in the
+// whole new version. One is listed only when its text, as the original
+// writes it, stands nowhere in the new file, read raw or as a reader sees it.
 //
 // Every search here that can grow faster than the files it reads counts its
 // steps on one meter. Past the meter's limit the comparison uses none of what
@@ -28,6 +26,9 @@ import type { Unit } from "./restructure.ts";
  * the texts searched is not counted, because it reads each text once.
  */
 export const WEIGHING_BUDGET = 20_000_000;
+
+/** An escaped pipe, which a table shows as a pipe. */
+export const PIPE_ESCAPE = String.raw`\|`;
 
 /** A figure, as `figureValues` reads one. */
 const FIGURE = /\d{1,3}(?:[ \u00A0\u202F]\d{3})+(?!\d|[.,]\d)|\d+(?:[.,]\d+)*/g;
@@ -61,12 +62,14 @@ const SCALES: ReadonlyMap<string, number> = new Map([
   ["million", 1_000_000], ["millionth", 1_000_000], ["billion", 1_000_000_000], ["billionth", 1_000_000_000],
 ]);
 
-/**
- * An HTML tag, read as far as the next angle bracket so a stray `<` costs no
- * more than its own text. A `<` or `>` inside a tag or a comment, as in a
- * quoted attribute, ends it there.
- */
+/** A letter, a mark or a digit: a character a word is made of. */
+const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
+
+/** An HTML tag, read as far as the next angle bracket so a stray `<` costs no more than its own text. */
 const TAG = /<[^<>]*>/g;
+
+/** A backslash escape: a backslash before a mark of ASCII punctuation, which a reader sees as the mark alone. */
+const ESCAPED = /\\([!-/:-@[-`{-~])/g;
 
 /** The steps a comparison's searches have taken, and how many they may take. */
 export interface Meter {
@@ -108,6 +111,12 @@ export interface Found {
    * limit while looking.
    */
   runs(runs: readonly string[]): boolean | null;
+  /**
+   * Whether the new version holds a code span's text, as `text` looks for
+   * it, or holds no letter or digit at all, or null when the meter passed
+   * its limit while looking.
+   */
+  code(text: string): boolean | null;
   /**
    * Whether this text, its white space made single, stands anywhere in the
    * new version, even inside a longer word, or null when the meter passed
@@ -252,20 +261,25 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
  * place a figure's first run stands counts one step on the meter.
  *
  * Text is found where it stands anywhere in the version, even inside a
- * longer word or figure, so `13` is found in `1.13.0`, once white space is
- * made single in both. It is looked for in the units joined by spaces and in
- * the whole text as written. It is looked for again in the whole text with
- * its character references decoded, and then with its HTML tags removed as
- * `TAG` reads them. Each character read counts one step, and each text is
- * looked for once.
+ * longer word, so `pre` is found in `prefix`, once white space is made single
+ * in both. It is looked for in the units joined by spaces and in the whole
+ * text as written. It is looked for again in the whole text with its
+ * backslash escapes read as the characters they escape and its character
+ * references decoded, with and without its HTML tags. And it is looked for in
+ * each of these with an escaped pipe read as the pipe a table shows. Each
+ * character read counts one step, and each text is looked for once. A code
+ * span holding no letter or digit counts as found, because such text stands
+ * almost anywhere.
  *
  * @param keys The text of each unit of the version.
  * @param source The version's whole text.
  */
 export function foundIn(keys: readonly string[], source: string, meter: Meter): Found {
   const numbers = new Set<string>();
-  const decoded = decodeEntities(source);
-  const texts = [keys.join(" "), source, decoded, decoded.replace(TAG, "")].map(singleSpace);
+  const decoded = decodeEntities(source.replace(ESCAPED, "$1"));
+  const whole = [keys.join(" "), source, decoded, decoded.replace(TAG, "")].map(singleSpace);
+  // A table shows an escaped pipe as a pipe, inside a code span too, so each text is also read that way.
+  const texts = [...whole, ...whole.filter(text => text.includes(PIPE_ESCAPE)).map(text => text.replaceAll(PIPE_ESCAPE, "|"))];
   // Each run of digits that has only marks or spaces between it and the next, by its digits, so a figure is found by its runs.
   const sequences: string[][] = [];
   const startingWith = new Map<string, Array<[number, number]>>();
@@ -295,6 +309,7 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
       if (meter.spent > meter.limit) return null;
       return places.some(([sequence, offset]) => runs.every((run, step) => sequences[sequence]?.[offset + step] === run));
     },
+    code: text => (WORD_CHARACTER.test(text) ? textIn(texts, text, answers, meter) : true),
     text: text => textIn(texts, text, answers, meter),
   };
 }
