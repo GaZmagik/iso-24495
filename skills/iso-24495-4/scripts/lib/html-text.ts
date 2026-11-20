@@ -894,7 +894,6 @@ class Pass {
     if (content === -1) return hidden ? { end: limit, shown: "" } : { end: close, shown: "" };
     let endTag = this.commonMark ? this.closingTagEnd(content + 2, this.text.length) : this.noteCut(tagClose(closes, start, end, content + 2), end);
     if (endTag === -1 && hidden && !this.commonMark) endTag = this.tagEndFrom(content + 2);
-    if (endTag === -1) this.leftOpen = true;
     if (endTag === -1) return { end: close, shown: "" };
     const written = this.text.slice(close, content);
     const shown = kind === "shown" ? written : kind === "decoded" ? decodeHtml(written) : "";
