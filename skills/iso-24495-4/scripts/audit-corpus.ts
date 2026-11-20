@@ -210,11 +210,11 @@ const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
 /**
  * Every mechanical finding in one text.
  *
- * The five layout rules (`contents-list`, `opening-version-date`,
- * `bullet-depth`, `empty-signpost` and `overview-label`) run only when
- * `options.markdown` is true. It defaults to false, so a caller that passes
- * no options gets the other rules alone, and nothing in the result says that
- * layout was skipped.
+ * The six layout rules (`contents-list`, `opening-version-date`,
+ * `bullet-depth`, `empty-signpost`, `adjacent-alerts` and `overview-label`)
+ * run only when `options.markdown` is true. It defaults to false, so a
+ * caller that passes no options gets the other rules alone, and nothing in
+ * the result says that layout was skipped.
  *
  * @param text The whole document, with any line ending.
  * @param options `markdown` turns the layout rules on; pass true for a

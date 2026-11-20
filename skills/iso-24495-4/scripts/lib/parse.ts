@@ -99,6 +99,10 @@ const TABLE_DIVIDER = /^\|?[\s:|-]*-[\s:|-]*\|?$/;
 // which is why its label starts with "^" and it is not here.
 const BLOCK_INVISIBLE_OPEN = /^ {0,3}(?:<!--|<\?|<![A-Z])/;
 const ALERT_MARKER = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+// The marker as the structural reading names an alert: up to three spaces
+// before it and only spaces or tabs after. Trimming took a no-break space
+// for a space, though CommonMark keeps it as text.
+const STRICT_ALERT_MARKER = /^ {0,3}\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i;
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 
 /**
@@ -384,6 +388,20 @@ interface Parsed {
   code: CodeBlock[];
   /** The ordered steps each block's first line stands in. Filled only for the structural reading. */
   steps: Map<number, ListStep[]>;
+  /** Each quotation outside every container. Filled only for the structural reading. */
+  quotations: Quotation[];
+}
+
+/**
+ * A quotation that stands outside every list and every other quotation: the
+ * line its first marker stands on and the last line it holds, both counted
+ * from 1, and the kind of GitHub alert its first line names, in capitals, or
+ * null when that line names none.
+ */
+export interface Quotation {
+  line: number;
+  end: number;
+  alert: string | null;
 }
 
 /**
@@ -507,6 +525,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   const tableRows = new Map<number, string[]>();
   const code: CodeBlock[] = [];
   const steps = new Map<number, ListStep[]>();
+  const quotations: Quotation[] = [];
   const stack: Container[] = [];
   const frontMatter = reading.frontMatter === false ? null : frontMatterRange(lines);
 
@@ -521,8 +540,17 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
   let tableUntil = -1;
   let invisible: { until: string; depth: number } | null = null;
   let rawCode: { closing: RegExp; depth: number } | null = null;
+  // The quotation outside every container that the line before stood in, if
+  // the reading is structural. A quotation holds each line until its own
+  // marker has left the stack.
+  let quotation: { container: Container; record: Quotation } | null = null;
 
   for (const [i, source] of lines.entries()) {
+    if (quotation !== null && stack[0] === quotation.container) {
+      quotation.record.end = i;
+    } else {
+      quotation = null;
+    }
     if (frontMatter !== null && i <= frontMatter.end) {
       hidden.add(i);
       readable[i] = "";
@@ -619,8 +647,14 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
         if (quote !== null) {
           paragraph = null;
           text = text.slice(quote[0].length);
-          stack.push({ kind: "quote", column: 0 });
+          const container: Container = { kind: "quote", column: 0 };
+          stack.push(container);
           openedQuote = true;
+          if (structural && stack.length === 1) {
+            const record: Quotation = { line: i + 1, end: i + 1, alert: null };
+            quotations.push(record);
+            quotation = { container, record };
+          }
           continue;
         }
         // A thematic break outranks a list marker, so "- - -" is a rule across
@@ -652,6 +686,11 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     // the quotation. Later inside the same quotation GitHub renders it as
     // ordinary text, and a reader meets it as a word.
     if (openedQuote && stack.length === 1 && ALERT_MARKER.test(text.trim())) {
+      // Four columns past the quotation's marker is code, so the structural
+      // reading names no alert there. The calibrated reading skips the line
+      // all the same, and keeps doing so.
+      const kind = STRICT_ALERT_MARKER.exec(text)?.[1];
+      if (quotation !== null && kind !== undefined) quotation.record.alert = kind.toUpperCase();
       continue;
     }
 
@@ -826,6 +865,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     blocks.set(i, { id: list?.listId ?? paragraph.line - 1, kind: list === undefined ? "paragraph" : "list", data: true });
     paragraph.lines.push(text.trimStart());
   }
+  if (quotation !== null && stack[0] === quotation.container) quotation.record.end = lines.length;
 
   for (const block of paragraphs) {
     const source = block.lines.join("\n");
@@ -844,7 +884,7 @@ function parse(lines: string[], reading: Reading = {}, structural = false): Pars
     heading.text = visibleText(heading.text, references);
   }
 
-  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows, code, steps };
+  return { paragraphs, headings: found, hidden, tables, readable, markup, references, destinations, rootLines, navigationLines, rootHeadingLines, items, blocks, tableRows, code, steps, quotations };
 }
 
 /**
@@ -937,6 +977,12 @@ function indentedCode(
  *   stands in, outermost first. A bulleted list adds no item, so a line of a
  *   bullet inside an ordered item stands in that item. A line in no ordered
  *   item has no entry.
+ * - `quotations`: each quotation outside every list and every other
+ *   quotation, in order. Its `line` is where its first marker stands and its
+ *   `end` the last line it holds, a line carried on without a marker among
+ *   them. `alert` is the kind its first line names, such as `NOTE` for
+ *   `> [!note]`, or null when that line holds anything else or stands four
+ *   columns in. Only spaces and tabs may stand after the marker.
  *
  * Empty text gives one empty line and nothing else.
  */
@@ -950,11 +996,12 @@ export function structure(text: string, reading: Reading = {}): {
   code: Array<{ line: number; text: string }>;
   paragraphs: ProseBlock[];
   steps: ReadonlyMap<number, readonly ListStep[]>;
+  quotations: readonly Quotation[];
 } {
   const parsed = parse(toLines(text), reading, true);
   return { headings: parsed.headings.filter(heading => parsed.rootHeadingLines.has(heading.line)), allHeadings: parsed.headings,
     lines: parsed.readable, markupLines: parsed.markup, rootLines: parsed.rootLines, navigationLines: parsed.navigationLines, destinations: parsed.destinations, items: parsed.items, blocks: parsed.blocks, tableRows: parsed.tableRows,
-    code: parsed.code.map(block => ({ line: block.line, text: block.lines.join("\n") })), paragraphs: parsed.paragraphs, steps: parsed.steps };
+    code: parsed.code.map(block => ({ line: block.line, text: block.lines.join("\n") })), paragraphs: parsed.paragraphs, steps: parsed.steps, quotations: parsed.quotations };
 }
 
 /**

@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRequest, planDocument, classify } from "../../../scripts/lib/jev/engine.ts";
 import { calibrationEvidence, sha256 } from "../../../scripts/lib/jev/catalogue.ts";
 import { add, ONE, parseDecimal, subtract, type Decimal } from "../../../scripts/lib/jev/decimal.ts";
+import { PLAN_PIN } from "../../fixtures/plan-pin.ts";
+import { planPinEntries } from "../../reference/plan-pin-entries.ts";
+
+/** What a failure of the plan pin tells its reader to do. */
+const PIN_REBUILD = "A Jev request changed. If that was meant, rebuild with: bun skills/iso-24495-4/tests/reference/build-plan-pin.ts";
 
 /**
  * The environment variable that names the folder holding `requests.json` and
@@ -38,6 +44,37 @@ describe("calibrated engine", () => {
       checked += fixture.states.length;
     }
     expect(checked).toBe(46005);
+  }, 60000);
+  // The two tests above are skipped wherever the calibration files are
+  // absent, the gate among them. This one always runs, on documents this
+  // repository owns, so a parser edit that alters a request fails the gate.
+  test("plans every repository-owned specimen exactly as the plan pin records", () => {
+    const planned = planPinEntries();
+    expect(Object.keys(planned), PIN_REBUILD).toEqual(Object.keys(PLAN_PIN));
+    expect(Object.keys(planned).length).toBeGreaterThanOrEqual(348);
+    const changed = Object.keys(planned).filter(name => JSON.stringify(planned[name]) !== JSON.stringify(PLAN_PIN[name]));
+    expect(changed, PIN_REBUILD).toEqual([]);
+    const requests = Object.values(planned).reduce((sum, record) => sum + record.candidates.length, 0);
+    expect(requests, "the pin must hold requests to protect").toBeGreaterThan(348);
+  });
+  test("the plan pin's rebuild command reproduces its fixture, and writes it when told nowhere", () => {
+    const fixture = join(import.meta.dir, "../../fixtures/plan-pin.ts");
+    const builder = join(import.meta.dir, "../../reference/build-plan-pin.ts");
+    const workspace = mkdtempSync(join(tmpdir(), "iso-plan-pin-"));
+    const before = readFileSync(fixture, "utf8");
+    try {
+      const rebuilt = join(workspace, "plan-pin.ts");
+      expect(Bun.spawnSync(["bun", builder, rebuilt]).exitCode).toBe(0);
+      expect(asWritten(readFileSync(rebuilt, "utf8")), "a rebuild on an unchanged tree must reproduce the fixture").toBe(asWritten(before));
+      // A mark left in the fixture shows whether the command with no
+      // argument writes this file rather than somewhere else.
+      writeFileSync(fixture, "// replaced by a test, and rebuilt below\n", "utf8");
+      expect(Bun.spawnSync(["bun", builder]).exitCode).toBe(0);
+      expect(asWritten(readFileSync(fixture, "utf8")), "the command with no argument must write this fixture").toBe(asWritten(before));
+    } finally {
+      writeFileSync(fixture, before, "utf8");
+      rmSync(workspace, { recursive: true, force: true });
+    }
   }, 60000);
   test("classifies exact boundaries without rounding or normalisation", () => {
     const probability = parseDecimal;
@@ -90,6 +127,15 @@ describe("calibrated engine", () => {
     expect(() => classify("block", {})).toThrow(TypeError);
   });
 });
+
+/**
+ * A file's text with each carriage return before a line feed removed. A
+ * checkout decides line endings, and the plan pin's builder writes line
+ * feeds alone.
+ */
+function asWritten(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
 
 /**
  * Makes a function that classifies an opening from the four purpose

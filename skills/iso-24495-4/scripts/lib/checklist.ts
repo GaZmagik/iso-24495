@@ -142,7 +142,16 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     line: "- [ ] **Callouts:** Does each change what the reader does, with adjacent ones merged and each named in a word?",
     clauses: [
       { id: "9a", demand: "Each callout changes what the reader does.", state: "not-read", checks: [], needs: [], limits: [] },
-      { id: "9b", demand: "Adjacent callouts are merged.", state: "not-read", checks: [], needs: [], limits: [] },
+      {
+        id: "9b", demand: "Adjacent callouts are merged.", state: "fault",
+        checks: [{ rule: "adjacent-alerts", kind: "offline" }], needs: ["markdown"],
+        limits: [
+          "It reads a GitHub alert as a callout: a quotation outside every list and quotation whose first line is its marker alone, such as `> [!NOTE]`, with only spaces or tabs after it. The marker may name `NOTE`, `TIP`, `IMPORTANT`, `WARNING` or `CAUTION`, in any letter case. Other callouts are not read, such as a bold `**Note:**` line, an HTML `<div>` or an admonition such as `!!! note`.",
+          "It reports an alert that follows an alert of the same kind with only blank lines between, on the later alert's marker line, so three in a row give two findings. Alerts of different kinds are not reported, even with nothing between them, such as a `NOTE` and then a `WARNING`. Nor are alerts with anything else between them, such as a paragraph, a comment, a link definition, a thematic break or a zero-width space.",
+          "It reports only alerts it is sure of, so some adjacent alerts are not reported. One example is an alert straight below a line that is not blank, such as a heading or `<div>`. Another is an alert whose next line is not text in it, such as `> ---`, `>`, `> |---|` or `> <b>Note</b> said.`. So is an alert with an underline or a row of dashes, such as `> ===` or `> ---`, on any line up to the next blank line. So is an alert with text after its marker. So is every alert of a kind the text also defines as a link label, such as `[!NOTE]: notes.md`. So is every alert below a line that holds a `<`, as all HTML starts with one. A `<` counts wherever it stands: in closed HTML such as `<kbd>Ctrl</kbd>`, in a comment, in code, or in text such as `a < b`. So is every alert below a line that opens an empty quotation or list item, such as `> >`, `>>`, `-` or `> 1.`. That is a line of only markers, spaces and tabs that holds a list marker or two or more `>`, though a lone `>` does not count. Such a line counts wherever it stands, in code too and as a thematic break such as `- - -`.",
+          "It does not read what the alerts say, so two alerts on unrelated subjects are reported, though the clause asks to merge only those serving one purpose.",
+        ],
+      },
       { id: "9c", demand: "Each callout is named in a word.", state: "not-read", checks: [], needs: [], limits: [] },
     ],
   },

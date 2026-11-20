@@ -28,15 +28,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 24,
+  "fault": 25,
   "pass-only": 1,
-  "not-read": 31,
+  "not-read": 30,
   "needs-two-versions": 7,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 24;
+const FAULT_CLAUSES = 25;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -112,7 +112,16 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   },
   { id: "8d", demand: "Longer material is promoted to a subsection.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "9a", demand: "Each callout changes what the reader does.", state: "not-read", checks: [], needs: [], limits: [] },
-  { id: "9b", demand: "Adjacent callouts are merged.", state: "not-read", checks: [], needs: [], limits: [] },
+  {
+    id: "9b", demand: "Adjacent callouts are merged.", state: "fault",
+    checks: [{ rule: "adjacent-alerts", kind: "offline" }], needs: ["markdown"],
+    limits: [
+      "It reads a GitHub alert as a callout: a quotation outside every list and quotation whose first line is its marker alone, such as `> [!NOTE]`, with only spaces or tabs after it. The marker may name `NOTE`, `TIP`, `IMPORTANT`, `WARNING` or `CAUTION`, in any letter case. Other callouts are not read, such as a bold `**Note:**` line, an HTML `<div>` or an admonition such as `!!! note`.",
+      "It reports an alert that follows an alert of the same kind with only blank lines between, on the later alert's marker line, so three in a row give two findings. Alerts of different kinds are not reported, even with nothing between them, such as a `NOTE` and then a `WARNING`. Nor are alerts with anything else between them, such as a paragraph, a comment, a link definition, a thematic break or a zero-width space.",
+      "It reports only alerts it is sure of, so some adjacent alerts are not reported. One example is an alert straight below a line that is not blank, such as a heading or `<div>`. Another is an alert whose next line is not text in it, such as `> ---`, `>`, `> |---|` or `> <b>Note</b> said.`. So is an alert with an underline or a row of dashes, such as `> ===` or `> ---`, on any line up to the next blank line. So is an alert with text after its marker. So is every alert of a kind the text also defines as a link label, such as `[!NOTE]: notes.md`. So is every alert below a line that holds a `<`, as all HTML starts with one. A `<` counts wherever it stands: in closed HTML such as `<kbd>Ctrl</kbd>`, in a comment, in code, or in text such as `a < b`. So is every alert below a line that opens an empty quotation or list item, such as `> >`, `>>`, `-` or `> 1.`. That is a line of only markers, spaces and tabs that holds a list marker or two or more `>`, though a lone `>` does not count. Such a line counts wherever it stands, in code too and as a thematic break such as `- - -`.",
+      "It does not read what the alerts say, so two alerts on unrelated subjects are reported, though the clause asks to merge only those serving one purpose.",
+    ],
+  },
   { id: "9c", demand: "Each callout is named in a word.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "10a", demand: "Each device carries one meaning.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "10b", demand: "No two devices carry the same meaning.", state: "not-read", checks: [], needs: [], limits: [] },
@@ -366,6 +375,7 @@ const PROSE_RANKS = "enumeration ranks 1, 2, 3 in prose; consider a list";
 const BULLET_THREE = "Unordered bullet depth 3 (limit 2). Flatten this item.";
 const EMPTY_HEADER = "table header has an empty column name";
 const EMPTY_SEE_ALSO = emptySignpost("See also");
+const ADJACENT_NOTE = adjacentAlert("NOTE", 1);
 const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it";
 
 /** A non-breaking hyphen, which looks like the hyphen in 24495-5 and is another character. */
@@ -375,6 +385,11 @@ const NON_BREAKING_HYPHEN = String.fromCharCode(0x2011);
 const DOTTED_CAPITAL_I = String.fromCharCode(0x130);
 
 /** What `generic-alt` says of alternative text that is one word naming the kind of image. */
+/** The adjacent-alerts finding for an alert of this kind, on the line after the one given, three lines on. */
+function adjacentAlert(kind: string, first: number): string {
+  return `This ${kind} alert follows the ${kind} alert on line ${first} with only blank lines between. If the two serve one purpose, merge them into one alert.`;
+}
+
 /** The empty-signpost finding for a heading with this wording. */
 function emptySignpost(wording: string): string {
   return `The "${wording}" heading has nothing beneath it. List where else to go beneath it, or remove the heading when nothing else exists.`;
@@ -412,6 +427,7 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "3b": { text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${SIX_SECTIONS}`, reasons: { "contents-list": [CONTENTS_WORDING] } },
   "6a": { text: "First, open the box. Second, lift the lid. Third, read the note.\n", reasons: { "prose-enumeration": [PROSE_RANKS] } },
   "8c": { text: "- One\n  - Two\n    - Three\n", reasons: { "bullet-depth": [BULLET_THREE] } },
+  "9b": { text: "# Install guide\n\nVersion: 1.0\n\n> [!NOTE]\n> Close the valve.\n\n> [!NOTE]\n> Open the vent.\n", reasons: { "adjacent-alerts": [adjacentAlert("NOTE", 5)] } },
   "10c": { text: `${GUIDE_OPENING}The valve opens when the pressure rises.\n`, reasons: {} },
   "12a": { text: "Read the guide [here](https://example.org/guide).\n", reasons: { "link-text": ["link text \"here\" describes no destination (https://example.org/guide)"] } },
   "12b": { text: "![](chart.png)\n\n![image](graph.png)\n", reasons: { "image-alt": ["image has no alternative text (chart.png)"], "generic-alt": [kindOfImage("image")] } },
@@ -665,6 +681,49 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "8c", limit: 1, check: "bullet-depth", text: "- Outer\n  > - Inner\n  >   - Deep\n", found: [BULLET_THREE], control: { from: "  >   - Deep\n", to: "", found: [] } },
   { clause: "8c", limit: 1, check: "bullet-depth", text: "<ul><li>One<ul><li>Two<ul><li>Three</li></ul></li></ul></li></ul>\n", found: [], control: { from: "<ul><li>One<ul><li>Two<ul><li>Three</li></ul></li></ul></li></ul>", to: "- One\n  - Two\n    - Three", found: [BULLET_THREE] } },
   { clause: "8c", limit: 1, check: "bullet-depth", text: "-\n  -\n    - Three\n", found: [], control: { from: "  -\n", to: "  - Two\n", found: [BULLET_THREE] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> [!note]\n> One.\n\n> [!Note]\n> Two.\n", found: [ADJACENT_NOTE], control: { from: "[!Note]", to: "[!Danger]", found: [] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> [!CAUTION]\n> One.\n\n> [!CAUTION]\n> Two.\n", found: [adjacentAlert("CAUTION", 1)], control: { from: "> [!CAUTION]\n> Two.", to: "> [!WARNING]\n> Two.", found: [] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> [!TIP]\t\n> One.\n\n> [!TIP]\n> Two.\n", found: [adjacentAlert("TIP", 1)], control: { from: "[!TIP]\t", to: "[!TIP] Tab.", found: [] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n**Note:** Two.\n", found: [], control: { from: "**Note:** Two.", to: "> [!NOTE]\n> Two.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n<div class=\"note\">Two.</div>\n", found: [], control: { from: "<div class=\"note\">Two.</div>", to: "> [!NOTE]\n> Two.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n!!! note\n    Two.\n", found: [], control: { from: "!!! note\n    Two.", to: "> [!NOTE]\n> Two.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "- > [!NOTE]\n  > One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "- > [!NOTE]\n  > One.", to: "> [!NOTE]\n> One.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 1, check: "adjacent-alerts", text: "> > [!NOTE]\n> > One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "> > [!NOTE]\n> > One.", to: "> [!NOTE]\n> One.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!TIP]\n> One.\n\n> [!TIP]\n> Two.\n\n> [!TIP]\n> Three.\n", found: [adjacentAlert("TIP", 1), adjacentAlert("TIP", 4)], control: { from: "\n\n> [!TIP]\n> Three.", to: "", found: [adjacentAlert("TIP", 1)] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n   \n\n> [!NOTE]\n> Two.\n", found: [ADJACENT_NOTE], control: { from: "   \n", to: "   \nText.\n", found: [] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n> [!WARNING]\n> Two.\n", found: [], control: { from: "[!WARNING]", to: "[!NOTE]", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\nBetween.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "Between.\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n<!-- Between. -->\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<!-- Between. -->\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n[guide]: guide.md\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "[guide]: guide.md\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n---\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "---\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 2, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\u200B\n> [!NOTE]\n> Two.\n", found: [], control: { from: "\u200B", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "# Guide\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "# Guide\n", to: "# Guide\n\n", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "<div>\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<div>\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> ---\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "> ---\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n>\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: ">\n> One.", to: "> One.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> <b>Note</b> said.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<b>Note</b> said.", to: "Note said.", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE] Read this.\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: " Read this.", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n\n[!NOTE]: notes.md\n", found: [], control: { from: "[!NOTE]: notes.md", to: "[notes]: notes.md", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> |---|\n> | One |\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "> |---|\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n> ===\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "> ===\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n> | a |\n> ---\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "> ---\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "<pre\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n</pre>\n", found: [], control: { from: "<pre\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "<details>\n<summary>Notes</summary>\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n\n</details>\n", found: [], control: { from: "<details>\n<summary>Notes</summary>\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "Press <kbd>Ctrl</kbd>.\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<kbd>Ctrl</kbd>", to: "Ctrl", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "<!-- c -->\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<!-- c -->", to: "c", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "Use `<details>` to fold text.\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "`<details>`", to: "`details`", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "If a < b, stop.\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "a < b", to: "a is less than b", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "| Command |\n|---|\n| `make BRANCH=<name>` |\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<name>", to: "name", found: [adjacentAlert("NOTE", 5)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> Press <kbd>Ctrl</kbd>.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<kbd>Ctrl</kbd>", to: "Ctrl", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "<!-- c --><script><details></script>\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<!-- c --><script><details></script>", to: "Text.", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "<div></div>\n<script/x>\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "<div></div>\n<script/x>", to: "Text.", found: [adjacentAlert("NOTE", 3)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n\n<details>\n", found: [ADJACENT_NOTE], control: { from: "> [!NOTE]\n> One.", to: "<details>\n\n> [!NOTE]\n> One.", found: [] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n> >\nBetween.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "> >\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n>\n> 1.\nBetween.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: ">\n> 1.\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "- \t\n  Item.\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: "- \t\n  Item.\n\n", to: "", found: [ADJACENT_NOTE] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "```\n>>\n```\n\n> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n", found: [], control: { from: ">>", to: "x", found: [adjacentAlert("NOTE", 5)] } },
+  { clause: "9b", limit: 3, check: "adjacent-alerts", text: "> [!NOTE]\n> One.\n>\n> More.\n\n> [!NOTE]\n> Two.\n", found: [ADJACENT_NOTE], control: { from: ">\n> More.", to: "> >\n> More.", found: [] } },
+  { clause: "9b", limit: 4, check: "adjacent-alerts", text: "> [!NOTE]\n> The valve is brass.\n\n> [!NOTE]\n> Lunch is at noon.\n", found: [ADJACENT_NOTE], control: { from: "> [!NOTE]\n> Lunch", to: "> [!TIP]\n> Lunch", found: [] } },
   { clause: "10c", limit: 1, check: "colour_only", answers: { kind: "block", answers: { colour_only: parseDecimal("0.01"), position_only: parseDecimal("0.99") } }, found: ["colour_only:pass"], control: { answers: { kind: "block", answers: { colour_only: parseDecimal("0.99"), position_only: parseDecimal("0.01") } }, found: ["colour_only:unsure"] } },
   { clause: "10c", limit: 1, check: "colour_only", answers: { kind: "block", answers: { colour_only: parseDecimal("0.01"), position_only: parseDecimal("0.01") } }, found: ["colour_only:pass"], control: { answers: { kind: "block", answers: { colour_only: parseDecimal("0.99"), position_only: parseDecimal("0.01") } }, found: ["colour_only:unsure"] } },
   { clause: "10c", limit: 1, check: "colour_only", answers: { kind: "block", answers: { colour_only: parseDecimal("0.99"), position_only: parseDecimal("0.99") } }, found: ["colour_only:unsure"], control: { answers: { kind: "block", answers: { colour_only: parseDecimal("0.01"), position_only: parseDecimal("0.99") } }, found: ["colour_only:pass"] } },
@@ -1069,6 +1128,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "3b": [22, 3],
   "6a": [10, 1],
   "8c": [4],
+  "9b": [8, 8, 26, 1],
   "10c": [3, 1],
   "12a": [11, 8],
   "12b": [48, 2, 3, 13, 24],
@@ -1116,6 +1176,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "3b": ["a89a361732bfc545", "cb48ca7f8f73c2bf"],
   "6a": ["a0eca4bb5ee78b0b", "ac7780100b062b44"],
   "8c": ["1e7ef38789ed8e7f"],
+  "9b": ["99c493162f01aa4e", "a471bdd7bd76b27b", "b4c3f5010ee1eff7", "ceaaded3dfdafc7c"],
   "10c": ["715422e93c74c160", "9136f07360ae2af1"],
   "12a": ["52d00e27020486eb", "fba17df6643bd1d8"],
   "12b": ["70527e3f6be02239", "0a8d2b897cc61c2d", "978b9b349ab33d16", "dc14dabc5b0e0873", "674628e5f56dee55"],
@@ -1145,6 +1206,7 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "3b": "2b287cac5742b449",
   "6a": "1fe5e2c752ffae09",
   "8c": "de544846e4fdb6fa",
+  "9b": "5090ff4499d5b3d2",
   "10c": "ecdf55f88967aded",
   "12a": "c56cf169d00f950c",
   "12b": "a9413d3cd9973b1f",
@@ -1817,8 +1879,8 @@ describe("the Part 5 checklist clause registry", () => {
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 24 fault
-  // clauses, 288 cells, it compares the two runs on that clause's own
+  // one folder with its option and without it. For each of the 25 fault
+  // clauses, 300 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline
