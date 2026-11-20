@@ -40,11 +40,24 @@ const STRIKE = "~";
  *     the text. Empty for empty source.
  */
 export function renderInline(source: string, marks: { strike?: boolean } = {}): string {
+  return renderInlineCode(source, marks).text;
+}
+
+/**
+ * The wording `renderInline` gives, with where the contents of each code
+ * span stand in it, in order. Both come from one reading of the source, so
+ * no character of the wording can be taken for the edge of a code span.
+ *
+ * @returns The wording, and for each code span the offset of its first
+ *     character in it and the offset just past its last.
+ */
+export function renderInlineCode(source: string, marks: { strike?: boolean } = {}): { text: string; code: Array<{ start: number; end: number }> } {
   const text = inlineText(source);
   const spans = codeSpanEnds(text);
   const markers = marks.strike === true ? EMPHASIS + STRIKE : EMPHASIS;
   const paired = new Set(pairedMarks(delimiterRuns(text, markers)));
   let rendered = "";
+  const code: Array<{ start: number; end: number }> = [];
   // Text since the last escape, code span or marker. Only this is decoded, so a
   // character reference cannot be made from the pieces either side of one.
   let plain = "";
@@ -67,7 +80,9 @@ export function renderInline(source: string, marks: { strike?: boolean } = {}): 
       const ticks = tickRun(text, index);
       let content = text.slice(index + ticks, span - ticks).replace(/\r\n|\r|\n/g, " ");
       if (content.startsWith(" ") && content.endsWith(" ") && /\S/.test(content)) content = content.slice(1, -1);
-      rendered += decodeEntities(plain) + content;
+      rendered += decodeEntities(plain);
+      code.push({ start: rendered.length, end: rendered.length + content.length });
+      rendered += content;
       plain = "";
       index = span;
       continue;
@@ -81,7 +96,7 @@ export function renderInline(source: string, marks: { strike?: boolean } = {}): 
     plain += text[index];
     index++;
   }
-  return rendered + decodeEntities(plain);
+  return { text: rendered + decodeEntities(plain), code };
 }
 
 /**
@@ -268,7 +283,8 @@ function canPair(opener: Run, closer: Run): boolean {
     || (opener.original % 3 === 0 && closer.original % 3 === 0);
 }
 
-function decodeEntities(text: string): string {
+/** Text with each character reference decoded, as CommonMark decodes one. */
+export function decodeEntities(text: string): string {
   return text.replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z][a-z0-9]+);/gi, (whole, name: string) => {
     if (!name.startsWith("#")) return (entities as Record<string, string>)[`${name};`] ?? whole;
     const point = name.charAt(1).toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));

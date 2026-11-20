@@ -349,12 +349,22 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "20a", demand: "On a restructure, every prose passage and content item is kept.", state: "fault",
         checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
         limits: [
-          "It compares wording, not meaning. A passage reworded is reported as dropped, as one removed is, so a finding does not say whether 20a or 20b failed.",
+          "It compares wording, not meaning. A passage reworded reads as dropped, as one removed does, unless 20b's check pairs it as rewritten or reads it with a new table, so a dropped row does not say whether 20a or 20b failed.",
           "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
           "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.",
         ],
       },
-      { id: "20b", demand: "On a restructure, no prose is rewritten.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "20b", demand: "On a restructure, no prose is rewritten.", state: "fault",
+        checks: [{ rule: "restructure-rewritten", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It pairs a unit of the original that has no unchanged copy with a unit of the new version left over, when the two share at least two words and at least half the words of the longer. A word counts as often as it stands, in any letter case, and a bold label such as `**Purpose:**` is set aside. It lists each pair as rewritten, for a person to confirm, and does not read whether the meaning changed. A unit reworded further reads as dropped and added, so `Close the valve.` becoming `Shut it.` is not paired.",
+          "It pairs only sentences, list items, table cells and image alternatives, never a heading, a code block, a unit that is one slot, or a unit that matches the author's wording. Of the pairs that qualify, the one sharing the largest part of the longer one's words is taken first, then the one sharing more words, then the earliest in the original, then the earliest in the new version, so it does not always make the most pairs. A pair is not read for order, so a unit reworded and moved reads as rewritten and not as moved.",
+          "A unit of the original left over with at least two, and at least half, of its different words among the words of a new table is read with that table. The table must keep no unit of the original, reword none, hold two or more units, and have at least half its own different words among those of the units read with it. It then prints one row, as restructured or rewritten, and its units are not listed as added. This has been checked only on Part 5's own plans example and on constructed specimens, not on a real document turned into a table.",
+          "When its searches for pairs, tables and values would take more than 20,000,000 steps, as when the original holds 2,500 copies of one sentence and the new version 2,500 copies of a sentence rewording it, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
+          "Wording that many documents share counts like any other, so a sentence can pair with one from an unrelated section. Under a Medicine heading, `For further information contact the doctor before treatment.` pairs with `For further information contact the bank about mortgages.` under a Banking heading, because the two share five of eight words. It does not read headings or sections when it pairs.",
+        ],
+      },
       { id: "20c", demand: "On a restructure, the tone is unchanged.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
     ],
   },
@@ -369,7 +379,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
           "It lists each unit kept word for word that now stands outside the longest order the kept units share with the original, for a person to check. A unit of a step out of order against the other steps of its list is listed by 21b's check instead, and not also here. It does not read whether a moved unit keeps what it depends on, except that a moved sentence, list item or table cell opening with `This`, `It` or `These` gets a question about what that word refers to. The same rows are where to look for 21c, which no check reads. A row clears only when the unit is back in its original order against the units kept around it.",
           "Where two orders keep as many units, it names the unit that stood first in the original, so of two sentences that swap places, the first is listed. Otherwise it names the part with fewer kept units, so when a heading and the text beside it change places, the heading can be the unit listed. Units next to each other in both versions share one row, and only the first of them gets the question.",
           "Copies of one text pair by whole wording first, and no comparison keeps fewer units than whole wording alone, nor fewer in order when it keeps as many. When repeated wording and labels both change, a unit that another pairing would keep in place can read as moved. When a label passes between two copies of a sentence, the pairs cross, and the copy that stood first in the original is named, labelled or not. A short text that stands more than once, such as a number in a table, can pair with a copy beside another label, so a value moved to another row reads as moved, and the row cannot tell that from a move of the label. When the copies of repeated texts would need more than 1,000,000 pairings, the texts with the most copies pair in document order, so a copy added or dropped can make another read as moved.",
-          "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as dropped and added, not as moved. A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
+          "It reads only units kept word for word, of the kinds 20a's check reads, so a sentence both moved and reworded reads as rewritten, or as dropped and added, not as moved. A heading's unit with no letter, such as the number of `## 4. Remove`, is kept but not read for order, so headings renumbered when a section is added list nothing.",
         ],
       },
       {
@@ -391,7 +401,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
         id: "22a", demand: "Every promoted sentence comes unchanged from the document or the author.", state: "fault",
         checks: [{ rule: "restructure-added", kind: "offline" }], needs: ["before"],
         limits: [
-          "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. It compares wording, not meaning, so a promoted sentence that was reworded is reported, and a person must confirm its source.",
+          "It reports each unit of the new version found neither in the original nor in the wording given with `--author-text`, not only a promoted sentence. It compares wording, not meaning, so a promoted sentence that was reworded is reported, as rewritten when 20b's check pairs it with its original and as added otherwise, and a person must confirm its source. The units of a new table that 20b's check reads with units of the original are not listed one by one.",
           "A new heading is counted and not reported, and so is a bold label ending in a colon, such as `**Purpose:**`, before a sentence that is kept. A unit that is one slot such as `[Author needed: reader]` is listed as a marked gap and not reported.",
         ],
       },
@@ -406,12 +416,23 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     item: 23,
     line: "- [ ] **Content primacy:** Did accuracy and completeness survive every structural choice, with nothing cut or distorted to fit a layout?",
     clauses: [
-      { id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "needs-two-versions", checks: [], needs: [], limits: [] },
+      {
+        id: "23a", demand: "Accuracy survives every structural choice, with nothing distorted to fit a layout.", state: "fault",
+        checks: [{ rule: "restructure-value", kind: "offline" }], needs: ["before"],
+        limits: [
+          "It reads a value as a number written in figures, in a sentence, list item, table cell or image alternative of the original that has no unchanged copy in the new version. It lists each number not found as written in the new version, for a person to confirm, and does not read whether a number it finds kept its meaning or its place.",
+          "It reads numbers only. Code spans, and other values written as text such as names, commands and dates in words, are not traced yet, so `npm test` that becomes `npm run test` is not listed. Nor is a number inside a code span read, so `--retries 3` that becomes `--retries 5` in one is not listed. In an image alternative, a code span is read as prose, so a number inside it is read.",
+          "A number counts as held where its text stands anywhere in the new file, even inside a longer figure, once white space is made single in both, so `13` is held by `1.13.0`. The file is read as written, with its character references decoded, then with its HTML tags removed as well, and as the units the comparison reads, so front matter, HTML, link destinations and image alternatives count. A number also counts as held by the same value written in these other ways, in the file as written or in its units, and only these: its digits grouped in threes or not, as in `1,000`, `1 000` and `1000`, and a figure grouped by spaces, such as `3 500`, by each group standing as a number, as in `3 then 500`; a full stop or a comma as its decimal point, as in `2,5` and `2.5`; leading zeros or trailing decimal zeros, as in `05` and `2.50`; and English words up to the billions, such as `five`, `twenty-five` or `fifth`, wherever they stand, so any `one` holds 1. A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order in one unit or one line, with at most three marks or spaces between each and the next. So `10:30` holds `10.30` and `3, 4` holds `3,4`, even inside a longer figure, so `0.3.1` holds `0.3`, but `10 --- 30` does not hold `10.30`. A month's name that opens with a capital, in full or cut to three letters, holds the month's number, so `28 September 2026` holds the `09` of `2026-09-28`, and a sentence opening with `May` holds `5`.",
+          "HTML tags are removed after character references are decoded, each read from a `<` to the next `>`, and a `<` before that `>` starts the tag again. So a `<` or `>` inside a quoted attribute or a comment ends a tag early, written or as a reference such as `&gt;`. A number that such markup splits may then be listed although a reader sees it whole, as when `42` becomes `4<span title=\">\">2</span>` or `4<!-- > -->2`. A number whose text stands whole anywhere in the file as written is always held. The text with references decoded, or with tags removed, is searched only for a number as the original writes it, not for its other forms, so `2,500` that becomes `2<b>500</b>` or `2&#53;00` in an HTML block is listed, while in prose the units hold `2500` and it is not. Only tags are removed, not what a browser hides, so `42` that becomes `4<script>x</script>2` is listed.",
+          "A number written another way is listed, as when `0.5` becomes `50%` or `half`, `4.2` becomes `4 point 2`, or `1000000000000` becomes `one trillion`. A figure is read from its first digit, so `.5` is read as `5`. A number written only in words in the original, such as `five`, is not read, nor is a number in a heading or a code block. A number counts as held however many times it stood in the original, so cutting one of two copies of it lists nothing. A number not held is listed once for each unit it stood in, and figures there that read as the same value, such as `5` and `5.0`, are one value.",
+          "When its searches for pairs, tables and values would take more than 20,000,000 steps, as when the original holds 2,500 copies of one sentence and the new version 2,500 copies of a sentence rewording it, it pairs nothing, reads no table and lists no value, and the printed comparison says so.",
+        ],
+      },
       {
         id: "23b", demand: "Completeness survives every structural choice, with nothing cut to fit a layout.", state: "fault",
         checks: [{ rule: "restructure-dropped", kind: "offline" }], needs: ["before"],
         limits: [
-          "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too.",
+          "It reports each unit of the original with no unchanged copy in the new version, so it cannot tell a cut made to fit a layout from any other. A passage reworded is reported as dropped too, unless 20b's check pairs it as rewritten or reads it with a new table.",
           "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. It does not read front matter unless it is read as text, a raw HTML block such as `<pre>`, or the alternative text of an HTML image. A heading that is gone is counted, not reported, so wording held only in a heading can go unreported. A hard line break inside a heading underlined on the next line reads as a backslash, so that heading is counted as new and as gone.",
           "It compares the words a reader sees, so a changed link destination or image source is not reported, as when `[guide](a.md)` becomes `[guide](b.md)`. Nor is a strike through words that stay, as when `the valve` becomes `the ~~valve~~`, because struck words are still on the page.",
         ],
@@ -478,9 +499,12 @@ export type ClauseState = "fault" | "pass-only" | "not-read" | "needs-two-versio
 /**
  * A rule or a Jev gate that can report on a clause. An offline rule is named
  * as its findings name it. The two-version comparison reports the units it
- * dropped, those it added, the kept units it moved and the kept units of
- * steps out of order, named here `restructure-dropped`, `restructure-added`,
- * `restructure-moved` and `restructure-step-order`. A Jev gate is named by
+ * dropped, those it added, the kept units it moved, the kept units of steps
+ * out of order, the units it paired as rewritten or read with a new table,
+ * and the numbers it did not find, named here `restructure-dropped`,
+ * `restructure-added`, `restructure-moved`, `restructure-step-order`,
+ * `restructure-rewritten` and `restructure-value`. The last reads numbers
+ * only, and code spans are not traced yet. A Jev gate is named by
  * its identifier in the calibration record.
  */
 export interface Check {
