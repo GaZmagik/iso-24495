@@ -61,7 +61,7 @@ import entities from "./html-entities.json";
 import { decodeEntities } from "./inline-wording.ts";
 import { codeSpanEnds } from "./parse.ts";
 
-/** The most looks at a character reading one file may take, for each character, both readings together. */
+/** The most looks at a character reading one file for the value search may take, for each character, all three readings together. */
 export const STEPS_PER_CHARACTER = 64;
 
 /**

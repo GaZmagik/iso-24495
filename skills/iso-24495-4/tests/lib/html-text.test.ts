@@ -84,7 +84,7 @@ describe("a value a reader sees whole is held", () => {
       const held = holds(document.text, document.value);
       if (isShown) shown++;
       if (isShown && !held) missed.push(`${document.family}: ${JSON.stringify(document.text)}`);
-      // Where the two readings disagree a value is held, so some values the reference does not show are held too.
+      // Where the readings disagree, or the file is in doubt, a value is held, so some values the reference does not show are held too.
       if (!isShown && held) heldUnshown++;
     }
     expect(missed).toEqual([]);

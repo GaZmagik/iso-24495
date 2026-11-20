@@ -160,15 +160,19 @@ White space is made single first, so a code span whose spacing alone changed is 
 The file is read as written, with references decoded and escapes read, as a reader sees it with its markup taken out, and as the units the comparison reads.
 So front matter, HTML, link destinations and image alternatives all count.
 
-Markup is taken out as HTML reads it, and again as CommonMark passes Markdown to a browser, and a value either reading holds is held.
+Markup is taken out as HTML reads it, and again as CommonMark passes Markdown to a browser.
+The file is read once more as HTML with each line's quotation and list markers taken off, and a value any reading holds is held.
 A quoted attribute holding `>` does not end its tag, so `npm test` that becomes `np<span title=">">m</span> test` is held.
 Comments are not text, and nor is the content of `script`, `style` and the other elements a browser that runs scripts hides.
 
 Text that `template`, an attribute or a style hides is read as text, so `42` that becomes `4<span hidden>x</span>2` is listed.
 Text a browser moves, as out of a table, is read where the file writes it.
-A comment an HTML block leaves open runs on to the next `-->`, and a tag it leaves open ends with it.
-Where Markdown's containers make a browser read such markup differently, as in a tight list, a value can be listed though a reader sees it.
 With references decoded or markup taken out, only the number as the original writes it is looked for, so `2,500` that becomes `2<b>500</b>` in an HTML block is listed.
+
+Where markup is left open across the end of a block, the readings cannot follow how a browser reads it on, so no value of that file is listed.
+That covers a tag or comment an HTML block leaves open, and an element such as `script` with no end tag in its block.
+It also covers a list item or quotation that ends inside an HTML block or a fence.
+Where a reading misplaces an HTML block's start or end, a value can still be listed though a reader sees it.
 
 A number also counts as held where the file as written, or its units, holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
