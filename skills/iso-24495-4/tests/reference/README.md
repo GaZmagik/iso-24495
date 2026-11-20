@@ -28,7 +28,7 @@ NODE_PATH="$PWD/node_modules" bun /path/to/skills/iso-24495-4/tests/reference/bu
 
 ## The HTML text record
 
-`../fixtures/html-text-renderings.ts` records whether the reference shows the value of each document in `../fixtures/html-text-documents.ts` whole: 154,906 documents, built from every ordered pair of a list of markup fragments in a range of blocks and containers, with 20,000 seeded random compositions beside them. commonmark.js renders each document and parse5, an HTML tree builder, builds the page a browser would. `../lib/html-text.test.ts` requires the value search's reading of HTML text to hold every value the record shows.
+`../fixtures/html-text-renderings.ts` records whether the reference shows the value of each document in `../fixtures/html-text-documents.ts` whole. There are 154,906 documents. They are built from every ordered pair of a list of markup fragments in a range of blocks and containers, with 20,000 seeded random compositions beside them. commonmark.js renders each document and parse5, an HTML tree builder, builds the page a browser would. `../lib/html-text.test.ts` requires the value search's reading of HTML text to hold every value the record shows.
 
 Install both outside the repository, then tell Bun where they are:
 

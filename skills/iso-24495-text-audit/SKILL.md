@@ -157,12 +157,13 @@ A hard line break inside a heading underlined on the next line reads as a backsl
 
 A value counts as held where its text stands anywhere in the new file, even inside a longer word or figure, so `pre` is held by `prefix`.
 White space is made single first, so a code span whose spacing alone changed is not listed.
-The file is read as written, with character references decoded and backslash escapes read, as a reader sees it once its markup is taken out, and as the units the comparison reads.
+The file is read as written, with references decoded and escapes read, as a reader sees it with its markup taken out, and as the units the comparison reads.
 So front matter, HTML, link destinations and image alternatives all count.
 
 Markup is taken out as HTML reads it, and again as CommonMark passes Markdown to a browser, and a value either reading holds is held.
 A quoted attribute holding `>` does not end its tag, so `npm test` that becomes `np<span title=">">m</span> test` is held.
 Comments are not text, and nor is the content of `script`, `style` and the other elements a browser that runs scripts hides.
+
 Text that an attribute or a style hides is read as text, so `42` that becomes `4<span hidden>x</span>2` is listed.
 Other markup left open where an HTML block, list item or quotation ends is not read on into the next block, though a browser may read it on.
 With references decoded or markup taken out, only the number as the original writes it is looked for, so `2,500` that becomes `2<b>500</b>` in an HTML block is listed.
