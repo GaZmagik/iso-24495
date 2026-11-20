@@ -142,6 +142,9 @@ describe("markup left open across the end of a block puts the file in doubt, and
     // The end tag of an element read to its end tag is a tag too.
     expect(holds("Something else.\n\n- <pre></pre>4<style></style\n  c=\"x <i>2</i>\n", "42")).toBe(true);
     expect(holds("Something else.\n\n- <pre></pre>4<style></style>\n  c=\"x <i>3</i>\n", "42")).toBe(false);
+    // A browser ends the processing instruction CommonMark passes whole at its first `>`, so the tag after it runs on.
+    expect(holds("Run it first.\n\nnp<?x >m<b c=\"?> z\n\n<p title=\"\"> test</p>\n", "npm test")).toBe(true);
+    expect(holds("Run it first.\n\nnp<?x >m<b c=\"\"?> z\n\n<p title=\"\"> test</p>\n", "npm test")).toBe(false);
     // Controls: a tag closed at the block's last character, and a tag left open in prose, which CommonMark shows as text.
     expect(inDoubt("<div>a<b>")).toBe(false);
     expect(inDoubt("<div>a<b>\n\nc")).toBe(false);

@@ -778,11 +778,13 @@ class Pass {
 
   /**
    * A tag's end as `tagClose` gives it, noting that the tag was left open
-   * when, in an HTML block of the Markdown reading, the block's end closes it
-   * or it does not end in the block.
+   * when the end of the stretch read as HTML closes it or it does not end
+   * there. In the Markdown reading such a stretch is an HTML block, or what a
+   * browser shows of a comment, processing instruction or CDATA section that
+   * CommonMark passes whole.
    */
   private noteCut(close: number, end: number): number {
-    if (this.runOn && (close === -1 || close === end && this.text.charAt(end - 1) !== ">")) this.leftOpen = true;
+    if (close === -1 || close === end && this.text.charAt(end - 1) !== ">") this.leftOpen = true;
     return close;
   }
 
