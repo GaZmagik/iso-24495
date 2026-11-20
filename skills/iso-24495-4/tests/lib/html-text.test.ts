@@ -91,11 +91,21 @@ describe("a value a reader sees whole is held", () => {
     expect(compared).toBe(4_225);
   });
 
-  test("markup left open where an HTML block ends is read as text, though a browser may close it in the next block", () => {
-    // A browser shows 42 here: the comment runs on to the `-->` in the next paragraph's comment.
-    expect(holds("Something else.\n\n<div>4<!--\n\n--><!-- x -->2</div>\n", "42")).toBe(false);
-    // Control: the same comment closed inside the block.
-    expect(holds("Something else.\n\n<div>4<!-- x -->2</div>\n", "42")).toBe(true);
+  test("a comment an HTML block leaves open runs on to the next `-->`, or to the end of the file, as a browser reads it on", () => {
+    expect(holds("Something else.\n\n<div>4<!--\n\n--><!-- x -->2</div>\n", "42")).toBe(true);
+    expect(read("<div>4<!--\n\n2\n\n3")).toEqual(["4<!-- 2 3", "4"]);
+    // Control: in prose CommonMark shows a comment left open as text, so it runs on nowhere.
+    expect(read("4<!--\n\n--><!-- x -->2")).toEqual(["4<!-- -->2"]);
+  });
+
+  test("where Markdown's containers make a browser read markup left open differently, a value a reader sees can be missed", () => {
+    // A browser ends the comment only at a `-->` CommonMark passes as HTML, so it hides the x.
+    expect(holds("Something else.\n\n<div>4<!--\n\n-->x<!-- x -->2</div>\n", "42")).toBe(false);
+    // In a tight list CommonMark writes no paragraph tag, so a browser reads the open tag on to the next `>`.
+    expect(holds("Something else.\n\n- <pre></pre>4<b\n  c=\"x <i>2</i>\n", "42")).toBe(false);
+    // Controls: no x, and no quotation mark to hide the `>` from the readings.
+    expect(holds("Something else.\n\n<div>4<!--\n\n--><!-- x -->2</div>\n", "42")).toBe(true);
+    expect(holds("Something else.\n\n- <pre></pre>4<b\n  c=x <i>2</i>\n", "42")).toBe(true);
   });
 });
 

@@ -32,12 +32,12 @@
 // that ends it. In the Markdown reading a block also ends where CommonMark
 // ends a quotation or opens a deeper one. Markup that does not end inside its
 // block is read as text, so a stray `<` in prose deletes nothing after it,
-// with two exceptions. The content of an element a browser never shows runs
+// with these exceptions. The content of an element a browser never shows runs
 // to its end tag wherever that stands, as a browser hides it. And in the
 // Markdown reading a tag an HTML block leaves open ends with the block,
-// because the markup CommonMark writes next closes it. Other markup a browser
-// reads on into that markup, such as a comment an HTML block leaves open, is
-// not read on.
+// because the markup CommonMark writes next closes it, and a comment the
+// block leaves open runs on to its end wherever that stands, as a browser
+// reads it on.
 //
 // The work grows in proportion to the file. Each character is looked at a
 // fixed number of times, and `steps` counts every look, so a test can hold
@@ -422,6 +422,11 @@ class Pass {
   private readonly finders = new Map<string, Finder>();
   /** Whether the stretch being read is prose of the Markdown reading, whose markup is read as CommonMark passes it to a browser. */
   private commonMark = false;
+  /**
+   * Whether the stretch being read is an HTML block of the Markdown reading,
+   * where a comment left open runs on past the block, as `through` reads it.
+   */
+  private runOn = false;
   /** The last place asked about, and the next blank line from it or -1, as `passedComment` keeps them. */
   private blankAsked = -1;
   private blankAnswer = -1;
@@ -546,6 +551,7 @@ class Pass {
   private readStretch(start: number, end: number, commonMark: boolean, cut = false): { read: string; resume: number } {
     if (start >= end) return { read: "", resume: Math.max(start, end) };
     this.commonMark = commonMark;
+    this.runOn = cut && !commonMark;
     const decode = commonMark ? decodeMarkdown : decodeHtml;
     let closes: Int32Array | null = null;
     let read = "";
@@ -658,10 +664,10 @@ class Pass {
       // `<!-->` and `<!--->` are whole comments.
       if (this.text.startsWith(">", at + 4)) return at + 5 <= end ? { end: at + 5, shown: "" } : null;
       if (this.text.startsWith("->", at + 4)) return at + 6 <= end ? { end: at + 6, shown: "" } : null;
-      const ending = this.through(this.nextCommentEnd, at + 4, end, 3);
-      const bang = this.through(this.nextCommentBang, at + 4, end, 4);
-      if (ending === null || bang === null) return ending ?? bang;
-      return ending.end - 3 < bang.end - 4 ? ending : bang;
+      const ending = this.nextCommentEnd.from(at + 4);
+      const bang = this.nextCommentBang.from(at + 4);
+      if (ending === -1) return this.closedBy(bang === -1 ? -1 : bang + 4, end);
+      return this.closedBy(bang === -1 || ending < bang ? ending + 3 : bang + 4, end);
     }
     return next === "?" ? this.through(this.nextGreater, at + 1, end, 1) : null;
   }
@@ -725,10 +731,28 @@ class Pass {
     return at < end && this.text.charAt(at) === ">" ? at + 1 : -1;
   }
 
-  /** Markup that runs to the next `mark` from `from`, where the mark is `length` long, when it ends before `end`. */
+  /**
+   * Markup that runs to the next `mark` from `from`, where the mark is
+   * `length` long, when it ends before `end`. In an HTML block of the
+   * Markdown reading, a comment, processing instruction or declaration left
+   * open runs on past the block to its mark, or to the end of the file, as a
+   * browser reads it on into the markup CommonMark writes next.
+   */
   private through(finder: Finder, from: number, end: number, length: number): { end: number; shown: string } | null {
     const found = finder.from(from);
-    return found === -1 || found + length > end ? null : { end: found + length, shown: "" };
+    return this.closedBy(found === -1 ? -1 : found + length, end);
+  }
+
+  /**
+   * Markup that ends at `close`, or null when it does not end before `end`
+   * or `close` is -1. In an HTML block of the Markdown reading it runs on
+   * past `end` instead, to `close` or to the end of the file, as `through`
+   * describes.
+   */
+  private closedBy(close: number, end: number): { end: number; shown: string } | null {
+    if (close !== -1 && close <= end) return { end: close, shown: "" };
+    if (!this.runOn) return null;
+    return { end: close === -1 ? this.text.length : close, shown: "" };
   }
 
   /**
