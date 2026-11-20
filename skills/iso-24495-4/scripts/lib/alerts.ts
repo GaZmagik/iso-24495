@@ -32,7 +32,8 @@ const SPACES = /[ \t]/g;
  * It also needs a blank line or the start of the text above it, a next line
  * in the quotation that holds text, no underline or row of dashes up to the
  * next blank line, no link definition of its marker anywhere in the text,
- * and no `<` on any line above it.
+ * no `<` on any line above it, and no line above it that opens an empty
+ * container, as `opensEmptyContainer` reads one.
  *
  * Every HTML block, element, comment and tag starts with a `<`, so with none
  * above an alert no HTML can hold it or the alert before it. A `<` counts
@@ -51,8 +52,11 @@ export function adjacentAlertViolations(text: string, parsed: Pick<ReturnType<ty
   for (const match of text.matchAll(DEFINED_MARKER)) {
     defined.add((match[1] ?? "").toUpperCase());
   }
-  const angle = lines.findIndex(line => line.includes("<"));
-  const reading: AlertReading = { lines, defined, firstAngle: angle === -1 ? Number.POSITIVE_INFINITY : angle + 1 };
+  const reading: AlertReading = {
+    lines, defined,
+    firstAngle: firstLineWhere(lines, line => line.includes("<")),
+    firstEmptyContainer: firstLineWhere(lines, opensEmptyContainer),
+  };
   const findings: Violation[] = [];
   let previous: Quotation | null = null;
   for (const quotation of parsed.quotations) {
@@ -76,17 +80,80 @@ interface AlertReading {
   defined: ReadonlySet<string>;
   /** The first line, counted from 1, that holds a `<`, or infinity when none does. */
   firstAngle: number;
+  /** The first line, counted from 1, that opens an empty container, or infinity when none does. */
+  firstEmptyContainer: number;
+}
+
+/** The first line, counted from 1, that the test holds for, or infinity when it holds for none. */
+function firstLineWhere(lines: readonly string[], holds: (line: string) => boolean): number {
+  const index = lines.findIndex(holds);
+  return index === -1 ? Number.POSITIVE_INFINITY : index + 1;
+}
+
+/**
+ * Whether a line is made only of container markers, spaces and tabs, and
+ * holds a list marker or two or more `>`, such as `> >`, `>>`, `-`, `- \t`,
+ * `1.` or `> -`. Such a line opens a quotation or a list item with nothing in
+ * it. The structural reading then takes an unmarked line below for a lazy
+ * line of that quotation, or loses the list the item opens, where CommonMark
+ * makes a paragraph or keeps the list. So the rule reads no alert below one.
+ *
+ * A lone `>` does not count: inside a quotation it is a blank line of it.
+ * The line counts wherever it stands, in code too, and also as a thematic
+ * break such as `- - -`, so some alerts that render are not read.
+ */
+function opensEmptyContainer(line: string): boolean {
+  let quotes = 0;
+  let lists = 0;
+  let index = 0;
+  while (index < line.length) {
+    const character = line.charAt(index);
+    if (character === " " || character === "\t") {
+      index++;
+    } else if (character === ">") {
+      quotes++;
+      index++;
+    } else {
+      const end = listMarkerEnd(line, index);
+      if (end === -1) return false;
+      lists++;
+      index = end;
+    }
+  }
+  return lists > 0 || quotes >= 2;
+}
+
+/**
+ * Where a list marker starting at this index ends: a `-`, `*` or `+`, or
+ * digits and a `.` or `)`, followed by a space, a tab or the end of the
+ * line. -1 when none starts there.
+ */
+function listMarkerEnd(line: string, start: number): number {
+  let index = start;
+  const character = line.charAt(index);
+  if (character === "-" || character === "*" || character === "+") {
+    index++;
+  } else {
+    while (index < line.length && line.charAt(index) >= "0" && line.charAt(index) <= "9") {
+      index++;
+    }
+    if (index === start || (line.charAt(index) !== "." && line.charAt(index) !== ")")) return -1;
+    index++;
+  }
+  const after = line.charAt(index);
+  return after === "" || after === " " || after === "\t" ? index : -1;
 }
 
 /**
  * Whether a quotation is an alert this rule is sure of: it names a kind, the
- * text defines no link label of that marker, no line above it holds a `<`, a
- * blank line or the start of the text stands above it, its next line is in
- * the quotation and holds text, and no line up to the next blank line is an
- * underline or a row of dashes.
+ * text defines no link label of that marker, no line above it holds a `<` or
+ * opens an empty container, a blank line or the start of the text stands
+ * above it, its next line is in the quotation and holds text, and no line up
+ * to the next blank line is an underline or a row of dashes.
  */
 function readableAlert(reading: AlertReading, quotation: Quotation): boolean {
-  if (quotation.alert === null || reading.defined.has(quotation.alert) || quotation.line > reading.firstAngle) return false;
+  if (quotation.alert === null || reading.defined.has(quotation.alert)) return false;
+  if (quotation.line > reading.firstAngle || quotation.line > reading.firstEmptyContainer) return false;
   const above = reading.lines[quotation.line - 2];
   if (above !== undefined && !BLANK.test(above)) return false;
   const next = reading.lines[quotation.line] ?? "";
