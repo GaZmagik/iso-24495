@@ -361,6 +361,29 @@ describe("a value of the original that the new version does not hold", () => {
 `)).toEqual(["a_b"]);
   });
 
+  test("a code span written whole in the file as written is held, though only the file as written holds it", () => {
+    // The attribute is markup, so no reading shows it, and its backslash is read as an escape once escapes are read.
+    expect(lost(String.raw`Run ${"`a\\*b`"} first.` + "\n", String.raw`Run it first.
+
+<a title="a\*b">x</a>
+`)).toEqual([]);
+    expect(lost(String.raw`Run ${"`a\\*b`"} first.` + "\n", String.raw`Run it first.
+
+<a title="a\*c">x</a>
+`)).toEqual([String.raw`a\*b`]);
+  });
+
+  test("a new version that leaves markup open across the end of a block holds every value, code span and number alike", () => {
+    // In a tight list a browser reads the tag the HTML block leaves open on into the next line, so a reader sees 42.
+    const leftOpen = "Something else.\n\n- <pre></pre>4<b\n  c=\"x <i>2</i>\n";
+    expect(lost("The total is 42 units. Run `42` first.\n", leftOpen)).toEqual([]);
+    // Neither value stands anywhere in this version, and with doubt it is not listed either.
+    expect(lost("The total is 17 units. Run `make all` first.\n", leftOpen)).toEqual([]);
+    // Control: the same version with its tag closed is not in doubt, so values it does not hold are listed.
+    const closed = "Something else.\n\n- <pre></pre>4<b>\n  c=\"x <i>3</i>\n";
+    expect(lost("The total is 42 units. Run `42` first.\n", closed)).toEqual(["42", "42"]);
+  });
+
   test("a code span in a table cell keeps an escaped pipe as the cell shows it", () => {
     expect(lost("| Command |\n|---|\n| Run `a \\| b` now |\n", "| Command |\n|---|\n| Run it |\n")).toEqual(["a | b"]);
     expect(lost("| Command |\n|---|\n| Run `a \\| b` now |\n", "Use a | b instead.\n")).toEqual([]);
