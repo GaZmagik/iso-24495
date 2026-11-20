@@ -16,6 +16,7 @@
 // steps on one meter. Past the meter's limit the comparison uses none of what
 // was found, so a finding never rests on a search that stopped partway.
 
+import { readerTexts } from "./html-text.ts";
 import { decodeEntities } from "./inline-wording.ts";
 import type { Unit } from "./restructure.ts";
 
@@ -64,9 +65,6 @@ const SCALES: ReadonlyMap<string, number> = new Map([
 
 /** A letter, a mark or a digit: a character a word is made of. */
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
-
-/** An HTML tag, read as far as the next angle bracket so a stray `<` costs no more than its own text. */
-const TAG = /<[^<>]*>/g;
 
 /** A backslash escape: a backslash before a mark of ASCII punctuation, which a reader sees as the mark alone. */
 const ESCAPED = /\\([!-/:-@[-`{-~])/g;
@@ -277,7 +275,7 @@ export function tablesFrom(units: readonly Unit[], tables: readonly Unit[][], me
 export function foundIn(keys: readonly string[], source: string, meter: Meter): Found {
   const numbers = new Set<string>();
   const decoded = decodeEntities(source.replace(ESCAPED, "$1"));
-  const whole = [keys.join(" "), source, decoded, decoded.replace(TAG, "")].map(singleSpace);
+  const whole = [keys.join(" "), source, decoded, ...readerTexts(source)].map(singleSpace);
   // A table shows an escaped pipe as a pipe, inside a code span too, so each text is also read that way.
   const texts = [...whole, ...whole.filter(text => text.includes(PIPE_ESCAPE)).map(text => text.replaceAll(PIPE_ESCAPE, "|"))];
   // Each run of digits that has only marks or spaces between it and the next, by its digits, so a figure is found by its runs.

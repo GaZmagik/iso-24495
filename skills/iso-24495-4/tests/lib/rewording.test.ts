@@ -231,6 +231,16 @@ describe("a value of the original that the new version does not hold", () => {
     expect(formatComparison(comparison, PATHS).split("\n")[3]).toBe("| value | 1 | 1 | A code span of the original is not found as written in the new version. Confirm that it was not cut or changed: \"npm test\" in \"Run npm test before you merge.\" |");
   });
 
+  test("a code span that HTML shows whole is held, though a quoted attribute in the markup splitting it holds an angle bracket", () => {
+    // Review R2-1 on PR 85: the text of this pre block is exactly "npm test".
+    const before = "Run `npm test` first.\n";
+    expect(lost(before, "Run it first.\n\n<pre>np<span title=\">\">m</span> test</pre>\n")).toEqual([]);
+    // Control: the same markup with no angle bracket in the attribute.
+    expect(lost(before, "Run it first.\n\n<pre>np<span title=\"plain\">m</span> test</pre>\n")).toEqual([]);
+    // Control: a code span genuinely cut is still listed, with the same markup beside it.
+    expect(lost(before, "Run it first.\n\n<pre>np<span title=\">\">m</span> tset</pre>\n")).toEqual(["npm test"]);
+  });
+
   test("a value found anywhere in the new version is not listed: in another unit, a new table or a code block", () => {
     expect(lost("Close the valve. Keep it below 5 bar.\n", "Close the valve.\n\nThe limit is 5 bar.\n")).toEqual([]);
     expect(lost("Keep it below 5 bar.\n", "Keep it low.\n\n| Limit | Pressure |\n|---|---|\n| 5 bar | high |\n")).toEqual([]);
@@ -350,23 +360,18 @@ describe("a value of the original that the new version does not hold", () => {
     expect(lost("Set `a|b` now.\n", "| Command | Use |\n|---|---|\n| `a\\|b` | yes |\n")).toEqual([]);
   });
 
-  test("a tag is read to the next angle bracket, so markup holding one can split a number a reader sees whole, but a number standing whole is held", () => {
+  test("markup is read as HTML reads it, so an angle bracket in a quoted value or a comment splits no number, and hidden content joins it", () => {
     const before = "The total is 42 units.\n";
-    // Each splits 42 with markup that holds an angle bracket, written or as a reference.
-    for (const markup of ["<span title=\">\">", "<span title=\"&gt;\">", "<span title=\"<\">", "<!-- > -->"]) {
-      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual(["42"]);
-      expect(lost(before, `Something else.\n\n<pre>4${markup}2 and 42</pre>\n`), `${markup}, then 42 whole`).toEqual([]);
+    // Each splits 42 with markup that holds an angle bracket, written or as a reference, or with content a browser hides.
+    for (const markup of ["<span title=\">\">", "<span title=\"&gt;\">", "<span title=\"<\">", "<!-- > -->", "<script>x</script>", "<style>a>b</style>"]) {
+      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual([]);
+      // Control: the number itself changed beside the same markup.
+      expect(lost(before, `Something else.\n\n<pre>4${markup}3</pre>\n`), `${markup}, changed`).toEqual(["42"]);
     }
-    // Only tags are removed, not what a browser hides.
-    expect(lost(before, "Something else.\n\n<pre>4<script>x</script>2</pre>\n")).toEqual(["42"]);
     // HTML text is searched for the number as written, not for its other forms; in prose the units hold them.
     expect(lost("The total is 2,500 units.\n", "Something else.\n\n<pre>2<b>500</b></pre>\n")).toEqual(["2,500"]);
     expect(lost("The total is 2,500 units.\n", "Something else.\n\n<pre>2&#53;00</pre>\n")).toEqual(["2,500"]);
     expect(lost("The total is 2,500 units.\n", "Something else, 2<b>500</b> in all.\n")).toEqual([]);
-    // Controls: the same markup with no angle bracket inside is removed, and the number held.
-    for (const markup of ["<span title=\"x\">", "<!-- x -->", "<b>"]) {
-      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual([]);
-    }
   });
 
   test("a value in a code block, a heading, a slot or a kept unit is not checked", () => {
