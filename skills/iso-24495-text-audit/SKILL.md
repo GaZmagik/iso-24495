@@ -170,7 +170,7 @@ Text a browser moves, as out of a table, is read where the file writes it.
 With references decoded or markup taken out, only the number as the original writes it is looked for, so `2,500` that becomes `2<b>500</b>` in an HTML block is listed.
 
 Where markup is left open across the end of a block, the readings cannot follow how a browser reads it on, so no value of that file is listed.
-That covers a tag or comment an HTML block leaves open, and an element such as `script` with no end tag in its block.
+That covers a tag or comment passed to a browser as HTML that does not end in its block, and an element such as `script` with no end tag there.
 It also covers a list item or quotation that ends inside an HTML block or a fence.
 Where a reading misplaces an HTML block's start or end, a value can still be listed though a reader sees it.
 

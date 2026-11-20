@@ -47,7 +47,9 @@
 // containers, which these readings do not follow. So the value search holds
 // every value of a file in doubt in this way. The Markdown reading finds the
 // doubt where markup does not end in the block it opens in: a tag, comment
-// or other markup an HTML block leaves open, the content of an element read
+// or other markup an HTML block leaves open, a tag left open in what a
+// browser shows of a processing instruction, comment or CDATA section that
+// CommonMark passes whole, the content of an element read
 // to its end tag where that tag is not in the block, unless it runs to the end
 // of the file, and `plaintext`. It finds it too where an HTML block or a fence
 // opens inside a list item or a quotation and a line before its end falls out
