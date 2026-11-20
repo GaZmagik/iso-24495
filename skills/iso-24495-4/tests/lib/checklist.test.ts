@@ -1880,7 +1880,7 @@ describe("the Part 5 checklist clause registry", () => {
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
   // one folder with its option and without it. For each of the 25 fault
-  // clauses, 288 cells, it compares the two runs on that clause's own
+  // clauses, 300 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline
