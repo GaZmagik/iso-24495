@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { emphasisMarkOffsets, renderInline, withoutEmphasis } from "../../scripts/lib/inline-wording.ts";
+import { decodeEntities, emphasisMarkOffsets, renderInline, renderInlineCode, withoutEmphasis } from "../../scripts/lib/inline-wording.ts";
 
 test("rendered wording respects delimiter runs, literal escapes and code spans", () => {
   for (const [source, expected] of [
@@ -76,4 +76,16 @@ test("a backslash before a line ending is a hard line break, and reads as the li
   // An escaped backslash is a character, and so is a backslash with nothing after it.
   expect(renderInline("Read the\\\\\nguide.")).toBe("Read the\\\nguide.");
   expect(renderInline("Read the guide.\\")).toBe("Read the guide.\\");
+});
+
+test("the rendered wording comes with where each code span's contents stand in it, from the same reading", () => {
+  const read = renderInlineCode("Use &#57344;x&#57345; and `--send` or ``a`b`` now.", { strike: true });
+  expect(read.text).toBe(`Use ${String.fromCodePoint(0xE000)}x${String.fromCodePoint(0xE001)} and --send or a\`b now.`);
+  expect(read.code.map(span => read.text.slice(span.start, span.end))).toEqual(["--send", "a`b"]);
+  expect(renderInlineCode("No code here.")).toEqual({ text: "No code here.", code: [] });
+  expect(renderInlineCode("An empty `` ` `` span.").code.map(span => span.end - span.start)).toEqual([1]);
+});
+
+test("a character reference is decoded as CommonMark decodes it", () => {
+  expect(decodeEntities("&amp; &#110;pm &#x41; &copy; &nosuch; &#0;")).toBe(`& npm A ${String.fromCodePoint(0xA9)} &nosuch; ${String.fromCodePoint(0xFFFD)}`);
 });
