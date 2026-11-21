@@ -177,7 +177,8 @@ describe("an item the rule cannot read with confidence is not read", () => {
 
   test("an empty marker line, five spaces after the marker or a tab in the indentation leaves the item unread", () => {
     expect(bullets("-\n  One.\n\n  Two.\n")).toEqual([]);
-    expect(bullets("-     One.\n\n  Two.\n")).toEqual([]);
+    expect(bullets("-     One.\n\n      Two.\n")).toEqual([]);
+    expect(bullets("-    One.\n\n      Two.\n")).toEqual([held(1, 2)]);
     expect(bullets(`-${TAB}One.\n\n  Two.\n`)).toEqual([]);
     expect(bullets(`- One.\n\n${TAB}Two.\n`)).toEqual([]);
     expect(bullets(`${TAB}- One.\n\n${TAB}  Two.\n`)).toEqual([]);
@@ -197,7 +198,7 @@ describe("an item the rule cannot read with confidence is not read", () => {
   });
 
   test("an opener of HTML that runs past a blank line, above the item or in it, leaves it unread", () => {
-    const openers = ["<!-- note -->", "<?php ?>", "<!DOCTYPE html>", "<![CDATA[ x ]]>", "<pre>x</pre>", "<pre", "<PRE class=a>", "<script>", "<style >", "<textarea>", "Text <!-- inline --> text.", "`<!-- in code -->`"];
+    const openers = ["<!-- note -->", "<?php ?>", "<!DOCTYPE html>", "<![CDATA[ x ]]>", "<pre>x</pre>", "<pre", "<PRE class=a>", "<script>", "<style >", "<textarea>", "<style/>", "<script//>", "<textarea/ x>", "Text <!-- inline --> text.", "`<!-- in code -->`"];
     for (const opener of openers) {
       expect(bullets(`${opener}\n\n${TWO}`), opener).toEqual([]);
       expect(bullets(`${opener}\n\nText.\n\n${TWO}`), opener).toEqual([]);
