@@ -1,0 +1,357 @@
+import { describe, expect, spyOn, test } from "bun:test";
+import { buildRequest, MODEL } from "../../../scripts/lib/jev/catalogue.ts";
+import { createAsk, readAnswers, TIMEOUT_MS, systemClock, wait, type Clock, type Fetch } from "../../../scripts/lib/jev/client.ts";
+import { parseDecimal } from "../../../scripts/lib/jev/decimal.ts";
+
+const OPENING = buildRequest("opening", { opening: "# Title" });
+const BLOCK = buildRequest("block", { paragraph: "Words." });
+const VALID = { model: MODEL, answers: { purpose: { type: "choice", choice: "neither", confidence: 0.9, probabilities: { both: 0.1, task_only: 0.02, scope_only: 0.02, neither: 0.86 } }, reader: { type: "noul", noul: 0.5 } } };
+function valid(): Response {
+  return new Response(JSON.stringify(VALID));
+}
+const idle: Clock = { schedule: () => () => {} };
+async function noWait(): Promise<void> {
+  // Waits for nothing, so a retry runs at once.
+}
+
+/**
+ * Makes a transport that checks each request it is sent, records its body,
+ * then changes the request it was made from. It fails the first attempt,
+ * answers the next two as busy, and answers every later one validly.
+ *
+ * @returns The transport.
+ */
+function recordingTransport(bodies: string[], request: typeof OPENING): Fetch {
+  return async (url, init) => {
+    expect(url).toContain("typesafe.ai");
+    expect(init.headers.Authorization).toBe("Bearer key");
+    bodies.push(init.body);
+    request.state.opening = "changed";
+    if (bodies.length === 1) throw new Error("key must be redacted");
+    if (bodies.length === 2) return new Response("busy", { status: 429 });
+    if (bodies.length === 3) return new Response("busy", { status: 503 });
+    return valid();
+  };
+}
+
+/** Does nothing with a response. It stands in until a real resolver is kept. */
+function ignoreResponse(): void {}
+
+describe("exact response validation", () => {
+  test("keeps the calibration's exact probability and companion validation", () => {
+    const text = JSON.stringify(VALID).replace('"both":0.1', '"both":0.10000000000000001');
+    expect(readAnswers(text, OPENING.questions).purpose).toHaveProperty("both", parseDecimal("0.10000000000000001"));
+    expect(readAnswers(JSON.stringify({ model: MODEL, answers: { colour_only: { type: "noul", noul: 0.17 }, position_only: { type: "noul", noul: 1 } } }), BLOCK.questions).colour_only).toEqual({ units: 17n, scale: 2 });
+  });
+  test("rejects malformed JSON, models and all malformed answer shapes", () => {
+    for (const text of ["broken", "null", "{}", JSON.stringify({ ...VALID, model: "jev-latest" })]) {
+      expect(() => readAnswers(text, OPENING.questions)).toThrow();
+    }
+    for (const answer of [null, {}, { type: "choice" }, { ...VALID.answers.purpose, type: "noul" }, { ...VALID.answers.purpose, choice: "other" }, { ...VALID.answers.purpose, confidence: -1 }, { ...VALID.answers.purpose, probabilities: [] }, { ...VALID.answers.purpose, probabilities: null }, { ...VALID.answers.purpose, probabilities: { both: 1 } }, { ...VALID.answers.purpose, probabilities: { ...VALID.answers.purpose.probabilities, extra: 0 } }, { ...VALID.answers.purpose, probabilities: { both: 0.1, task_only: 0, scope_only: 0, neither: 0.8 } }, { ...VALID.answers.purpose, probabilities: { ...VALID.answers.purpose.probabilities, both: 2 } }]) {
+      expect(() => readAnswers(JSON.stringify({ ...VALID, answers: { ...VALID.answers, purpose: answer } }), OPENING.questions)).toThrow();
+    }
+    for (const answer of [null, {}, { type: "choice", noul: 0 }, { type: "noul", noul: -0.1 }, { type: "noul", noul: 1.1 }, { type: "noul", noul: "0.2" }]) {
+      expect(() => readAnswers(JSON.stringify({ ...VALID, answers: { ...VALID.answers, reader: answer } }), OPENING.questions)).toThrow();
+    }
+    expect(() => readAnswers(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.00000000000000001'), OPENING.questions)).toThrow();
+    expect(() => readAnswers(JSON.stringify(VALID).replace('"confidence":0.9', '"confidence":1.00000000000000001'), OPENING.questions)).toThrow();
+    expect(() => readAnswers(JSON.stringify(VALID).replace('"both":0.1', '"both":-1e-400'), OPENING.questions)).toThrow();
+    expect(() => readAnswers(JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.87000000000000001'), OPENING.questions)).toThrow();
+    expect(() => readAnswers(JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.84999999999999999'), OPENING.questions)).toThrow();
+    expect(readAnswers(JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.855'), OPENING.questions).purpose).toBeDefined();
+  });
+  test("refuses a probability with a huge exponent as malformed, without building it", () => {
+    // JSON.parse reads 1e-10000000 as 0, which is a probability, so the plain
+    // checks pass. The exact comparison then built ten million digits to place
+    // it against zero, which took about 600 ms, and accepted it. One call per
+    // size against a fixed budget.
+    for (const number of ["1e-10000000", "0e10000000", "1e10000000"]) {
+      let message = "";
+      const started = performance.now();
+      try {
+        readAnswers(JSON.stringify(VALID).replace('"noul":0.5', `"noul":${number}`), OPENING.questions);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      const took = performance.now() - started;
+      expect(message, number).toBe("Jev returned malformed JSON.");
+      expect(took, number).toBeLessThan(100);
+    }
+  }, 60_000);
+  test("reads no answer, model or probability through a prototype the reply names", () => {
+    const reader = '{"type":"noul","noul":0.5}';
+    const purpose = JSON.stringify(VALID.answers.purpose);
+    const crafted = [
+      `{"model":"${MODEL}","answers":{"purpose":${purpose},"__proto__":{"reader":${reader}}}}`,
+      `{"model":"${MODEL}","__proto__":{"answers":{"purpose":${purpose},"reader":${reader}}}}`,
+      `{"__proto__":{"model":"${MODEL}"},"answers":{"purpose":${purpose},"reader":${reader}}}`,
+      `{"model":"${MODEL}","answers":{"purpose":${purpose},"reader":{"type":"noul","__proto__":{"noul":0.5}}}}`,
+      `{"model":"${MODEL}","answers":{"purpose":${purpose},"reader":{"type":"noul","noul":{"__proto__":0.5}}}}`,
+      `{"model":"${MODEL}","answers":{"reader":${reader},"purpose":${purpose.replace(/"probabilities":\{[^}]*\}/, match => `"probabilities":{"__proto__":${match.slice(16)}}`)}}}`,
+    ];
+    for (const text of crafted) {
+      expect(() => readAnswers(text, OPENING.questions), text).toThrow();
+    }
+    // A stray __proto__ beside valid fields is an extra key the checks never read.
+    const beside = `{"model":"${MODEL}","__proto__":{"model":"other"},"answers":{"__proto__":{"reader":{"type":"noul","noul":0.9}},"purpose":${purpose},"reader":{"type":"noul","noul":0.5,"__proto__":{"noul":0.9}}}}`;
+    expect(readAnswers(beside, OPENING.questions).reader).toEqual({ units: 5n, scale: 1 });
+  });
+});
+
+describe("transport controls", () => {
+  test("the native clock adapter can cancel and the sleep adapter completes", async () => {
+    let fired = false;
+    const cancel = systemClock.schedule(() => {
+      fired = true;
+    }, 1);
+    cancel();
+    await wait(10);
+    expect(fired).toBe(false);
+    await new Promise<void>(resolve => {
+      systemClock.schedule(resolve, 0);
+    });
+  });
+  test("checks untrimmed keys and integrity before any connection", () => {
+    for (const key of ["", "   ", " key\n", "\tkey", "key\u007f", "key\u0085"]) {
+      expect(() => createAsk(key)).toThrow();
+    }
+    expect(() => createAsk("key", { validate: () => {
+      throw new Error("secret");
+    } })).toThrow("integrity");
+  });
+  test("retries transport only, preserves frozen bytes and trims surrounding spaces", async () => {
+    const bodies: string[] = [];
+    const waits: number[] = [];
+    const request = structuredClone(OPENING);
+    const send = recordingTransport(bodies, request);
+    await createAsk(" key ", { fetch: send, clock: idle, sleep: async ms => {
+      waits.push(ms);
+    } })(request);
+    expect(new Set(bodies).size).toBe(1);
+    expect(bodies[0]).toBe(JSON.stringify(OPENING));
+    expect(waits).toEqual([500, 1000, 2000]);
+    for (const status of [400, 401, 403, 300]) {
+      let calls = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        calls++;
+        return new Response("secret", { status });
+      }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow("HTTP status");
+      expect(calls).toBe(1);
+    }
+    let malformedCalls = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      malformedCalls++;
+      return new Response("bad");
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow("malformed");
+    expect(malformedCalls).toBe(1);
+    let failures = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      failures++;
+      throw new Error("secret");
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow("six");
+    expect(failures).toBe(6);
+  });
+  // The timer is set after the listener is added. A clock that throws left the
+  // listener on the signal, because the code that removes it had not yet been
+  // reached. Each of the six attempts adds one, so each must take its own away.
+  test("a clock that cannot set a timer fails the request, sends nothing and leaves no listener", async () => {
+    const signal = new AbortController().signal;
+    const added = spyOn(signal, "addEventListener");
+    const removed = spyOn(signal, "removeEventListener");
+    const clock: Clock = { schedule: () => {
+      throw new Error("no timer");
+    } };
+    let sent = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      sent++;
+      return valid();
+    }, clock, sleep: noWait, signal })(OPENING))
+      .rejects.toThrow("Jev did not answer after six transport attempts.");
+    expect(sent).toBe(0);
+    expect(added.mock.calls.length).toBe(6);
+    expect(removed.mock.calls.map(call => call[1])).toEqual(added.mock.calls.map(call => call[1]));
+  });
+  // The timer is cancelled and the listener removed as each attempt ends. A
+  // cancel that threw stopped the clean-up before it reached the listener.
+  // The cancel's failure is not hidden: it takes the place of the valid
+  // answer, so each attempt fails and the request does after six.
+  test("a timer that cannot be cancelled fails the request and still leaves no listener", async () => {
+    const signal = new AbortController().signal;
+    const added = spyOn(signal, "addEventListener");
+    const removed = spyOn(signal, "removeEventListener");
+    const clock: Clock = { schedule: () => () => {
+      throw new Error("fixture cancellation failed");
+    } };
+    let sent = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      sent++;
+      return valid();
+    }, clock, sleep: noWait, signal })(OPENING))
+      .rejects.toThrow("Jev did not answer after six transport attempts.");
+    expect(sent).toBe(6);
+    expect(added.mock.calls.length).toBe(6);
+    expect(removed.mock.calls.map(call => call[1])).toEqual(added.mock.calls.map(call => call[1]));
+  });
+  test("times out attempts, ignores late answers and cancels", async () => {
+    const callbacks: Array<() => void> = [];
+    const clock: Clock = { schedule: (callback, ms) => {
+      expect(ms).toBe(TIMEOUT_MS);
+      callbacks.push(callback);
+      return () => {};
+    } };
+    let late: (response: Response) => void = ignoreResponse;
+    let calls = 0;
+    const pending = createAsk("key", { fetch: async () => {
+      calls++;
+      if (calls === 1) {
+        return new Promise(resolve => {
+          late = resolve;
+        });
+      }
+      return valid();
+    }, clock, sleep: noWait })(OPENING);
+    await Promise.resolve();
+    const [expire] = callbacks;
+    if (expire === undefined) throw new Error("no timeout was scheduled");
+    expire();
+    const accepted = await pending;
+    late(new Response("wrong late answer"));
+    expect(accepted.purpose).toBeDefined();
+    expect(calls).toBe(2);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(createAsk("key", { fetch: async () => valid(), clock: idle, signal: controller.signal })(OPENING)).rejects.toThrow("cancelled");
+    const during = new AbortController();
+    const active = createAsk("key", { fetch: async () => new Promise(() => {}), clock: idle, signal: during.signal })(OPENING);
+    await Promise.resolve();
+    during.abort();
+    await expect(active).rejects.toThrow("cancelled");
+    const backoff = new AbortController();
+    await expect(createAsk("key", { fetch: async () => {
+      throw new Error();
+    }, clock: idle, signal: backoff.signal, sleep: async () => {
+      backoff.abort();
+    } })(OPENING)).rejects.toThrow("cancelled");
+  });
+  // A 2xx answer that failed its checks used to end the request, and the audit
+  // then discarded every verdict. The calibration set such a reply aside and left
+  // the request for a later run, so its bounds rest on answers it accepted in the
+  // end. Three options at 0.33 sum to exactly 0.99, which
+  // floating-point addition puts 0.010000000000000009 from 1.
+  test("an answer that fails its checks is sent again, with the same bytes and the usual wait", async () => {
+    const refused = { ...VALID, answers: { ...VALID.answers, purpose: { type: "choice", choice: "both", confidence: 0.33, probabilities: { both: 0.33, task_only: 0.33, scope_only: 0.33, neither: 0 } } } };
+    expect(() => readAnswers(JSON.stringify(refused), OPENING.questions)).toThrow("Jev returned an invalid Choice distribution.");
+    const bodies: string[] = [];
+    const waits: number[] = [];
+    const request = structuredClone(OPENING);
+    const accepted = await createAsk("key", { fetch: async (url, init) => {
+      bodies.push(init.body);
+      request.state.opening = "changed";
+      return bodies.length === 1 ? Response.json(refused) : valid();
+    }, clock: idle, sleep: async ms => {
+      waits.push(ms);
+    } })(request);
+    expect(accepted.purpose).toEqual(readAnswers(JSON.stringify(VALID), OPENING.questions).purpose);
+    expect(bodies).toEqual([JSON.stringify(OPENING), JSON.stringify(OPENING)]);
+    expect(waits).toEqual([500]);
+  });
+  test("each check on an answer's values leads to a re-send, and six failures end the request in fixed words", async () => {
+    const failures: Array<[string, string]> = [
+      [JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'), "Jev returned an invalid probability."],
+      [JSON.stringify(VALID).replace('"neither":0.86', '"neither":0.5'), "Jev returned an invalid Choice distribution."],
+      [JSON.stringify(VALID).replace('"confidence":0.9', '"confidence":1.00000000000000001'), "Jev returned an out-of-range exact Choice probability."],
+      // With 0.55 written as 0.54999999999999999, floating-point addition puts the four
+      // 0.009999999999999898 from 1, and read exactly they are 0.01000000000000001 from it.
+      [JSON.stringify({ ...VALID, answers: { ...VALID.answers, purpose: { ...VALID.answers.purpose, choice: "scope_only", probabilities: { both: 0.01, task_only: 0.33, scope_only: 0.55, neither: 0.1 } } } }).replace('"scope_only":0.55', '"scope_only":0.54999999999999999'), "Jev returned an invalid exact Choice sum."],
+    ];
+    for (const [text, message] of failures) {
+      expect(() => readAnswers(text, OPENING.questions), message).toThrow(message);
+      const waits: number[] = [];
+      let sends = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        sends++;
+        return new Response(text);
+      }, clock: idle, sleep: async ms => {
+        waits.push(ms);
+      } })(OPENING), message).rejects.toThrow(new Error("Jev did not give a valid answer after six attempts."));
+      expect(sends, message).toBe(6);
+      expect(waits, message).toEqual([500, 1000, 2000, 4000, 8000]);
+    }
+  });
+  test("an accepted answer is sent once, and a reply that is not JSON or names another model ends the request at once", async () => {
+    let sends = 0;
+    await createAsk("key", { fetch: async () => {
+      sends++;
+      return valid();
+    }, clock: idle, sleep: noWait })(OPENING);
+    expect(sends).toBe(1);
+    for (const [text, message] of [["not json", "Jev returned malformed JSON."], [JSON.stringify({ ...VALID, model: "jev-latest" }), "Jev returned a wrong or missing model. Expected jev-1.13.0."]]) {
+      let calls = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        calls++;
+        return new Response(text);
+      }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error(message));
+      expect(calls, message).toBe(1);
+    }
+  });
+  // Six busy replies used to end in the words for six failed connections, and a
+  // rejected key in the words for any other refusal.
+  test("a refused key and six busy replies each end the request in words of their own", async () => {
+    for (const [status, message] of [[401, "Jev refused the request with HTTP status 401. The API key was not accepted or lacks permission."], [403, "Jev refused the request with HTTP status 403. The API key was not accepted or lacks permission."], [404, "Jev refused the request with HTTP status 404."]] as const) {
+      await expect(createAsk("key", { fetch: async () => new Response("secret", { status }), clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error(message));
+    }
+    for (const status of [429, 500, 503]) {
+      let sends = 0;
+      await expect(createAsk("key", { fetch: async () => {
+        sends++;
+        return new Response("secret", { status });
+      }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev was rate limited or unavailable, with HTTP status 429 or 5xx, and six attempts gave no answer."));
+      expect(sends, String(status)).toBe(6);
+    }
+    // A busy reply outranks a failed connection, and a failed check outranks both.
+    let mixed = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      mixed++;
+      if (mixed === 1) return new Response("busy", { status: 503 });
+      throw new Error("secret");
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev was rate limited or unavailable, with HTTP status 429 or 5xx, and six attempts gave no answer."));
+    let both = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      both++;
+      return both === 1 ? new Response(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1')) : new Response("busy", { status: 503 });
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev did not give a valid answer after six attempts."));
+  });
+  test("six attempts that mix failed transport with failed checks end in the words for an invalid answer", async () => {
+    let sends = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      sends++;
+      if (sends === 1) return new Response(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'));
+      throw new Error("secret");
+    }, clock: idle, sleep: noWait })(OPENING)).rejects.toThrow(new Error("Jev did not give a valid answer after six attempts."));
+    expect(sends).toBe(6);
+  });
+  test("a cancel during the wait after an answer that failed its checks is honoured", async () => {
+    const controller = new AbortController();
+    let sends = 0;
+    await expect(createAsk("key", { fetch: async () => {
+      sends++;
+      return new Response(JSON.stringify(VALID).replace('"noul":0.5', '"noul":1.1'));
+    }, clock: idle, signal: controller.signal, sleep: async () => {
+      controller.abort();
+    } })(OPENING)).rejects.toThrow(new Error("Jev execution was cancelled."));
+    expect(sends).toBe(1);
+  });
+  test("limits all queued requests to four in flight", async () => {
+    let active = 0;
+    let maximum = 0;
+    const ask = createAsk("key", { fetch: async () => {
+      active++;
+      maximum = Math.max(maximum, active);
+      await Promise.resolve();
+      active--;
+      return valid();
+    }, clock: idle });
+    await Promise.all(Array.from({ length: 20 }, () => ask(OPENING)));
+    expect(maximum).toBe(4);
+  });
+});

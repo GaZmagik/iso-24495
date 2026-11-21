@@ -1,0 +1,27 @@
+// The types of eslint.config.mjs, for the test that imports it. The
+// configuration is plain JavaScript, because ESLint loads it without a
+// compiler, so the type check has nothing else to read its exports from.
+
+import type { Linter } from "eslint";
+
+/** How one rule is set: its severity alone, or its severity followed by its options. */
+export type RuleSetting = Linter.RuleEntry;
+
+/**
+ * The rules this project enforces, each keyed by its name. Every setting is
+ * "error", or a list that opens with "error".
+ */
+export declare const ENFORCED_RULES: Record<string, RuleSetting>;
+
+/** The syntax selectors of the "no-restricted-syntax" rule, each with the message that names it. */
+export declare const GUIDE_SYNTAX: ReadonlyArray<{ readonly selector: string; readonly message: string }>;
+
+/** The syntax selectors that state rules of this plugin's code skill, in the same form. */
+export declare const CODE_SKILL_SYNTAX: ReadonlyArray<{ readonly selector: string; readonly message: string }>;
+
+/** The files where an enforced rule is set otherwise, with that setting. */
+export declare const RULE_EXCEPTIONS: ReadonlyArray<{ readonly files: readonly string[]; readonly rule: string; readonly setting: RuleSetting }>;
+
+declare const configuration: readonly unknown[];
+// ESLint requires the configuration as the default export.
+export default configuration;

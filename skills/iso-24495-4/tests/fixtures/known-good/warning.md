@@ -1,4 +1,4 @@
-# Before you continue
+# Before you continue (Version: 1.0)
 
 > [!CAUTION]
 > ROTATE KEYS before deployment.

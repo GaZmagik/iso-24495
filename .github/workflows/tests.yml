@@ -16,6 +16,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.2"
+      # The linter's launcher runs on Node, not on Bun.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.23.2"
       # Every gate lives in the script, so this job stays reproducible locally.
       - name: Run the shared gate
         run: bash scripts/check.sh
