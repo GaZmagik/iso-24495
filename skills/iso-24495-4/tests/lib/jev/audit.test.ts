@@ -947,8 +947,8 @@ const NO_TITLE_SEND_BEFORE = "f09d0c6f0eaba71a3289ba9c49adb715e52387469e344aa1fc
 // The preview's JSON report as written once the checklist reading was added,
 // with filesNotReached and documentsNotSent in its run, with the seven
 // clauses the two-version comparison reads counted as fault clauses that
-// need the original version, and clauses 25a, 19d and 9b fault checks.
-const NO_TITLE_PREVIEW_JSON = "9365e25ca702a5a3756683a41d7191d96f5141c8fe463fb44c52f6853b509fbf";
+// need the original version, and clauses 25a, 19d, 9b and 8a fault checks.
+const NO_TITLE_PREVIEW_JSON = "a0e7314a1e7e2517b86e632c79367a32a433d4d898f178f881a219a132188f5a";
 const NO_TITLE_PREVIEW_JSON_BEFORE = "aaa36ebb767b04dc1b8078dfd2cfaf7c9a6ea5e19e4a83c3da20b3b6292c42b1";
 const NO_TITLE_BODIES_BEFORE = "a7cbaf21c2f26888b27b828be090bb7ce0eb7a996f6a8d1cc3d708805443f68c";
 const NO_TITLE_LOG_DIGEST_BEFORE = "bfca057c543a67dff65f26fce00ec30afde49d0d3ec36624a6e6c9e83a8bd491";

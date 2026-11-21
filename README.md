@@ -124,13 +124,13 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Five layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, `empty-signpost` an empty referral heading, and `adjacent-alerts` an underline that may make an alert one. The Jev route's `opening-title` finding reads them as well. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Six layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, and `empty-signpost` an empty referral heading. `adjacent-alerts` reads an underline that may make an alert one, `bullet-paragraphs` a heading or underline that leaves an item unread, and the Jev route's `opening-title` finding the title. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`;
-- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, and `adjacent-alerts` reads no alert below a `<` in one. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
-- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`. `bullet-paragraphs` reads no item below a line in it shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, `adjacent-alerts` reads no alert below a `<` in one, and `bullet-paragraphs` no item below one holding `<!--`. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
+- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item. Nor does `bullet-paragraphs` read an item below a line in it shaped like a fence, starting HTML that runs past a blank line, or opening an empty list item;
 - a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;
 - a task marker, which is a control rather than two words.
 
@@ -156,8 +156,8 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-Six Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth, an overview before detail, an empty signpost check and an adjacent alerts check.
-Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus. The two newest rules were run on one, as their paragraphs below say.
+Seven Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and one paragraph to a bullet. They also add an overview before detail, an empty signpost check and an adjacent alerts check.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus. The three newest rules were run on one, as their paragraphs below say.
 
 The edition advisory applies only to titled documents and asks whether readers need a version or date.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
@@ -183,6 +183,16 @@ Nor does it read any below a line that opens an empty quotation or list item, su
 
 To clear it, merge the two alerts; when they serve different purposes, the finding can stand, because the rule does not read what they say.
 It found 2 in 1 of 822 third-party Markdown files, each two alerts of one kind with only a blank line between, and none in this repository's own documents.
+
+The `bullet-paragraphs` rule reports an unordered list item that holds two or more paragraphs and nothing else, and names how many.
+Blank lines between items do not count, so a loose list of one-paragraph items is not reported, and ordered items are not read.
+An item that holds anything else is not read, such as code, a quotation, a nested list, a table or a paragraph that is one code span.
+It misses some items, such as any four or more columns in and any below a line shaped like a fence, fenced code included.
+On the corpus named below, that fence guard alone leaves unread 7 of the 18 items it would otherwise report.
+
+To clear it, join the paragraphs into one paragraph on one idea, or promote the item to a subsection.
+It found 11 in 4 of 822 third-party Markdown files, 8 of them in one file, and none in this repository's own documents.
+Each of the 11 was read and judged a true finding.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 

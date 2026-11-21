@@ -24,7 +24,7 @@ const FUZZ_INPUTS = [
   "[label]: " + String.fromCharCode(160),
 ] as const;
 
-// Every rule an audit can report, with the six layout rules that report only
+// Every rule an audit can report, with the seven layout rules that report only
 // when the audit is told the text is Markdown.
 const KNOWN_RULES = new Set([
   "sentence-length",
@@ -49,6 +49,7 @@ const KNOWN_RULES = new Set([
   "opening-title",
   "opening-version-date",
   "bullet-depth",
+  "bullet-paragraphs",
   "empty-signpost",
   "adjacent-alerts",
   "contents-list",
@@ -89,6 +90,7 @@ describe("robustness and determinism", () => {
       "![logo](logo.png)",
       "## See also\n",
       "> [!NOTE]\n> One.\n\n> [!NOTE]\n> Two.\n",
+      "- One.\n\n  Two.\n",
     ];
     const violations = inputs.flatMap((input) => [...auditText(input), ...auditText(input, { markdown: true })]);
     expect(violations.length).toBeGreaterThan(0);
