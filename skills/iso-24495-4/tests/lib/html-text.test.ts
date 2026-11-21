@@ -189,6 +189,15 @@ describe("markup left open across the end of a block puts the file in doubt, and
     expect(holds("Something else.\n\n-  ```\n   <a title=\"\n   ```\n  4<span title=\"<\">3`\n", "42")).toBe(false);
     expect(inDoubt("- ```\n\n  x\n  ```\n> ```\n>\n> x\n> ```\n```\nx\n```\n- a\n\n  ```\n  b\n  ```\n")).toBe(false);
   });
+
+  test("an HTML block or fence that opens indented at the top level, with a later line indented less, is in doubt too, though CommonMark leaves nothing open", () => {
+    // The comparison reads the line as falling out of a list item, which this file does not have.
+    expect(inDoubt("Run it first.\n\n  <div>\nnpm test\n</div>\n")).toBe(true);
+    expect(inDoubt("Run it.\n\n  ```\nx\n  ```\n")).toBe(true);
+    // Controls: the same blocks not indented.
+    expect(inDoubt("Run it first.\n\n<div>\nnpm test\n</div>\n")).toBe(false);
+    expect(inDoubt("Run it.\n\n```\nx\n```\n")).toBe(false);
+  });
 });
 
 describe("the value search reads the file a third time", () => {

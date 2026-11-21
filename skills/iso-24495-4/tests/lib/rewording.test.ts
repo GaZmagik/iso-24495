@@ -26,11 +26,28 @@ const IN_DOUBT = "The new version leaves markup open across the end of a block, 
  * lists it. Each is the shape, the value, and the new version.
  */
 const RESIDUAL: ReadonlyArray<readonly [string, string, string]> = [
+  ["clause 23a's number specimen: an HTML block holds a code span", "42", "Something else.\n\n<div>\n`x` 4<!--\n\n<!---->2\n</div>\n"],
   ["a line inside an HTML block opens as another HTML block would", "a<b>c", "Run it first.\n\n<div>\n<style>\n\n</style>a<!--\n--><!--x--->\\<b>c\n</div>\n"],
   ["an HTML block holds a code span, which CommonMark does not read there", "npm test", "Run it first.\n\n<pre> Use `\"` here. np<![CDATA[x]]></script>m <b\n>>test\"></pre>\n"],
   ["a quotation marker stands straight after a list marker", "a<b>c", "Run it first.\n\n- >a\\<b<span title=\"a\n  >b\">&gt;c\n"],
   ["an HTML block in a quotation holds both, with a number", "42", "Something else.\n\n> <pre> Use `\"` here. 4<b\n> ><script><!--</script>2></pre>\n"],
   ["an HTML block holds a code span, with a number", "42", "Something else.\n\n<div>\n Use `\"` here. 4<!--\n\n--><!-- <b> -->2\n</div>\n"],
+];
+
+/**
+ * New versions inside clause 23a's guarantee that the CommonMark reference
+ * shows `npm test` in, though none holds it whole: each is what holds it, and
+ * the new version.
+ */
+const INSIDE: ReadonlyArray<readonly [string, string]> = [
+  ["the third reading, which reads a backslash that ends a line as a break", String.raw`Run it first.
+
+np<b>m\
+test
+`],
+  ["the HTML reading, where a quoted `>` does not end its tag", "Run it first.\n\nnp<span title=\">\">m</span> test\n"],
+  ["doubt, where a style is left open across blank lines", "Run it first.\n\nnp<style>\n\nx\n\nx</style>m test\n"],
+  ["doubt, where a script is left open across blank lines", "Run it first.\n\nnp<script>\n\nx\n\nx</script>m test\n"],
 ];
 
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
@@ -1013,6 +1030,12 @@ describe("clause 23a's guarantee", () => {
     }
     expect([inside, shown, listed]).toEqual([67_252, 41_231, 0]);
   }, 120_000);
+
+  test("each hand specimen inside it that the reference shows is not listed", () => {
+    for (const [holder, after] of INSIDE) {
+      expect([holder, after.includes("npm test"), inValueGuarantee(after), lost("Run `npm test` first.\n", after)]).toEqual([holder, false, true, []]);
+    }
+  });
 
   test("each shape the sweeps found listed though a reader sees its value falls outside it", () => {
     for (const [shape, value, after] of RESIDUAL) {

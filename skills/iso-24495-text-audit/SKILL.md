@@ -172,7 +172,14 @@ With references decoded or markup taken out, only the number as the original wri
 Where markup is left open across the end of a block, the readings cannot follow how a browser reads it on, so no value of that file is listed.
 That covers a tag or comment passed to a browser as HTML that does not end in its block, and an element such as `script` with no end tag there.
 It also covers a list item or quotation that ends inside an HTML block or a fence.
-A reading can find a block's start or end, or the markers that open a line, other than where CommonMark finds them. A value can then still be listed though a reader sees it.
+
+These are blocks as the comparison reads them, so a file can be in doubt where CommonMark leaves nothing open.
+An HTML block or a fence that opens two spaces in at the top level, with a later line not indented, is in doubt too.
+When a value was looked for in a file in doubt, a closing line says that no value was traced.
+
+A reading can find a block's start or end, or the markers that open a line, other than where CommonMark finds them. A number or code span can then still be listed though a reader sees it.
+Where no line opens with `<` once its leading spaces, tabs and markers are taken off, and no quotation marker follows a list marker, testing found no such value listed.
+That is tested, not proved.
 
 A number also counts as held where the file as written, or its units, holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
@@ -207,6 +214,7 @@ Under `tables` it gives the lines of the units read with each table, the table's
 It also gives the first 60 characters of the first unit read with it, and its counts of values.
 
 `weighed` is false when the searches passed their limit.
+`valuesInDoubt` is true when a value was looked for in a file in doubt, so none was traced.
 Report every row to the user, and leave it to the user to decide what each one means.
 
 ## Optional calibrated Jev checks
