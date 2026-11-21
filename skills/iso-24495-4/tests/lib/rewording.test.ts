@@ -18,7 +18,7 @@ const TAIL = [
 ];
 
 /** The line printed last when a value was looked for in a new version in doubt. */
-const IN_DOUBT = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
+const IN_DOUBT = "The comparison reads the new version as leaving markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
 
 /**
  * New versions outside clause 23a's guarantee that the sweeps of fix round 2

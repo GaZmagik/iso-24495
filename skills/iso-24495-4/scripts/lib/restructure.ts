@@ -82,7 +82,7 @@ const WEIGHED_LINE = "It pairs a reworded unit only where the two share half the
 const NOT_WEIGHED_LINE = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
 
 /** What the printed comparison says when the new version was in doubt as it looked for a value, so it listed none as not found. */
-const IN_DOUBT_LINE = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
+const IN_DOUBT_LINE = "The comparison reads the new version as leaving markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
 
 /**
  * How many pairings of repeated texts the comparison weighs, at most, when
@@ -286,7 +286,8 @@ export function documentUnits(text: string, reading: Reading = {}): Unit[] {
 
 /**
  * The comparison as a table of what it found, a line of counts and two
- * closing statements. It prints only what the comparison reads.
+ * closing statements, with a third when a value was looked for in a new
+ * version in doubt. It prints only what the comparison reads.
  *
  * Each dropped unit is a row, in before order, then each value not found,
  * in before order. Then come the after units left over and the kept units
