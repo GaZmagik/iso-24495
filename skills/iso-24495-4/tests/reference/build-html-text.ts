@@ -39,7 +39,9 @@ function pageText(markdown: string): string {
     if (node.nodeName === "#text") {
       text += node.value ?? "";
     } else if (node.nodeName !== "#comment" && !(node.tagName !== undefined && HIDDEN.has(node.tagName))) {
-      pending.push(...[...(node.childNodes ?? [])].reverse());
+      for (const child of (node.childNodes ?? []).slice().reverse()) {
+        pending.push(child);
+      }
     }
   }
   return text;

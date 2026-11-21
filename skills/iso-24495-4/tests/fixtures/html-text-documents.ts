@@ -166,7 +166,9 @@ export function htmlTextDocuments(): HtmlTextDocument[] {
       }
     }
   }
-  documents.push(...randomDocuments());
+  for (const document of randomDocuments()) {
+    documents.push(document);
+  }
   return documents;
 }
 

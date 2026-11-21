@@ -341,8 +341,8 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
       + `New labels ${comparison.newLabels.length}. Labels gone ${comparison.labelsGone.length}.`,
     "The comparison reads wording, not meaning.",
     comparison.weighed ? WEIGHED_LINE : NOT_WEIGHED_LINE,
-    ...(comparison.valuesInDoubt ? [IN_DOUBT_LINE] : []),
   );
+  if (comparison.valuesInDoubt) lines.push(IN_DOUBT_LINE);
   return lines.join("\n");
 }
 

@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { compareUnits, compareVersions, comparisonReport, formatComparison, type Comparison, type Unit } from "../../scripts/lib/restructure.ts";
 import { figureFound, figureValues, foundIn, numberWords, pairReworded, wordsOf, WEIGHING_BUDGET, type Meter } from "../../scripts/lib/rewording.ts";
 import { htmlTextDocuments } from "../fixtures/html-text-documents.ts";
-import { VALUE_SHOWN } from "../fixtures/html-text-renderings.ts";
-import { inValueGuarantee } from "../fixtures/value-guarantee.ts";
 
 /** The paths every printed comparison here names. */
 const PATHS = { before: "old.md", after: "new.md", authorText: null };
@@ -21,33 +19,42 @@ const TAIL = [
 const IN_DOUBT = "The comparison reads the new version as leaving markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
 
 /**
- * New versions outside clause 23a's guarantee that the sweeps of fix round 2
- * found: the CommonMark reference shows each value whole, and the comparison
- * lists it. Each is the shape, the value, and the new version.
+ * Examples of a limit of clause 23a: pieces of a value that markup separates
+ * in the new version, where a renderer drops or moves that markup, so a
+ * reader sees the value whole and the comparison lists it. The CommonMark
+ * reference, commonmark.js 0.31.2 with parse5 7.3.0, showed each value whole
+ * when these were chosen; the tests here do not run it. Each is the markup,
+ * the value, and the new version.
  */
-const RESIDUAL: ReadonlyArray<readonly [string, string, string]> = [
-  ["clause 23a's number specimen: an HTML block holds a code span", "42", "Something else.\n\n<div>\n`x` 4<!--\n\n<!---->2\n</div>\n"],
+const SEPARATED: ReadonlyArray<readonly [string, string, string]> = [
+  ["an HTML block holds a code span", "42", "Something else.\n\n<div>\n`x` 4<!--\n\n<!---->2\n</div>\n"],
   ["a line inside an HTML block opens as another HTML block would", "a<b>c", "Run it first.\n\n<div>\n<style>\n\n</style>a<!--\n--><!--x--->\\<b>c\n</div>\n"],
   ["an HTML block holds a code span, which CommonMark does not read there", "npm test", "Run it first.\n\n<pre> Use `\"` here. np<![CDATA[x]]></script>m <b\n>>test\"></pre>\n"],
   ["a quotation marker stands straight after a list marker", "a<b>c", "Run it first.\n\n- >a\\<b<span title=\"a\n  >b\">&gt;c\n"],
   ["an HTML block in a quotation holds both, with a number", "42", "Something else.\n\n> <pre> Use `\"` here. 4<b\n> ><script><!--</script>2></pre>\n"],
   ["an HTML block holds a code span, with a number", "42", "Something else.\n\n<div>\n Use `\"` here. 4<!--\n\n--><!-- <b> -->2\n</div>\n"],
+  ["a tag, then a quotation marker inside a closed fence", "npm test", "Run it first.\n\n> np<b>m\n> ```\n> test\n> ```\n"],
+  ["a tag, then a quotation marker inside a fence left open", "npm test", "Run it first.\n\n> np<b>m\n> ```\n> test\n"],
+  ["an inline table, whose text a browser moves before it, with a code span", "npm test", "Run it first.\n\nText <table><tr><td>test</td></tr>npm </table>\n"],
+  ["an inline table, whose text a browser moves before it, with a number", "42", "Something else.\n\nText <table><tr><td>2</td></tr>4</table>\n"],
+  ["an image, whose alternative text a page does not hold", "npm test", "Run it first.\n\nnp![x](x)m\n\n test\n"],
+  ["a link definition over two lines, which a renderer drops", "npm test", "Run it first.\n\nnpm\n\n[r]:\nx\n\n test\n"],
+  ["a pipe, where the comparison reads a table and a renderer a heading", "npm test", "Run it first.\n\n| a |\n|---|\n| npm\n===\n test |\n"],
+  ["front matter, which a renderer reads as a rule and a heading", "npm test", "---\ntitle: npm\n---\ntest\n"],
+  ["an inline link's label, and a backslash that ends a line in a heading", "npm test", "Run it first.\n\nnp[](x)m\\\n test\n===\n"],
+  ["an inline link's label beside emphasis", "42", "Something else.\n\n10. __4__[](x)2\n"],
 ];
 
 /**
- * New versions inside clause 23a's guarantee that the CommonMark reference
- * shows `npm test` in, though none holds it whole: each is what holds it, and
- * the new version.
+ * The same markup changed so that it no longer separates the value, or with
+ * the value cut: each is the change, the value, whether it is listed, and the
+ * new version.
  */
-const INSIDE: ReadonlyArray<readonly [string, string]> = [
-  ["the third reading, which reads a backslash that ends a line as a break", String.raw`Run it first.
-
-np<b>m\
-test
-`],
-  ["the HTML reading, where a quoted `>` does not end its tag", "Run it first.\n\nnp<span title=\">\">m</span> test\n"],
-  ["a reading that hides a style's content up to its end tag, across blank lines, as a browser does", "Run it first.\n\nnp<style>\n\nx\n\nx</style>m test\n"],
-  ["a reading that hides a script's content up to its end tag, across blank lines, as a browser does", "Run it first.\n\nnp<script>\n\nx\n\nx</script>m test\n"],
+const SEPARATED_CONTROLS: ReadonlyArray<readonly [string, string, boolean, string]> = [
+  ["the fenced quotation with no fence", "npm test", false, "Run it first.\n\n> np<b>m\n> test\n"],
+  ["the fenced quotation with its value cut", "npm test", true, "Run it first.\n\n> np<b>m\n> ```\n> tset\n> ```\n"],
+  ["the table with the number's text first in the file", "42", false, "Something else.\n\nText <table>4<tr><td>2</td></tr></table>\n"],
+  ["the table with the code span's text first in the file", "npm test", false, "Run it first.\n\nText <table>npm <tr><td>test</td></tr></table>\n"],
 ];
 
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
@@ -1014,53 +1021,137 @@ function cannotHold(oracle: readonly string[], value: string, isCode: boolean): 
   return !NUMBER_WORD.test(text) && digits.every(run => !runs.has(run.replace(/^0+(?=\d)/, "")));
 }
 
-/** Whether the CommonMark reference shows the value of the recorded document at this index whole, or the file as written holds it. */
-function recordedShown(index: number): boolean {
-  return ((Number.parseInt(VALUE_SHOWN.charAt(index >> 2), 16) >> (3 - (index & 3))) & 1) === 1;
-}
-
 /** An original that holds one value: a number in a sentence, or a code span. */
 function originalOf(value: string): string {
   return /^\d+$/.test(value) ? `The total is ${value} units.\n` : `Run \`${value}\` first.\n`;
 }
 
-describe("clause 23a's guarantee", () => {
-  test("where no line opens with `<` once its leading marks are taken off, and no quotation marker follows a list marker, no recorded value the reference shows is listed", () => {
-    const documents = htmlTextDocuments();
-    expect(VALUE_SHOWN.length).toBe(Math.ceil(documents.length / 4));
-    let inside = 0;
-    let shown = 0;
-    let listed = 0;
-    for (const [index, document] of documents.entries()) {
-      if (!inValueGuarantee(document.text)) continue;
-      inside++;
-      if (!recordedShown(index)) continue;
-      shown++;
-      if (lost(originalOf(document.value), document.text).includes(document.value)) listed++;
+/** An original whose sentence a new table reads, with a code span `a &amp; b` and the number 42 that the table does not hold. */
+const TABLE_BEFORE = "The Basic plan costs 5 pounds per month and includes 10 GB of storage, `a &amp; b` and 42 users.\n";
+
+/** A table that holds two of `TABLE_BEFORE`'s numbers, but not its code span or its 42. */
+const TABLE_AFTER = "| Plan | Cost per month | Storage | Tool |\n|---|---|---|---|\n| Basic plan | 5 pounds | 10 GB of storage | none |\n";
+
+describe("a value that stands whole in the new file as written is never listed", () => {
+  test("a code span and a number that only the file as written holds, its white space made single", () => {
+    // A comment hides each from every reading but the file as written, and a character reference would be decoded in the others.
+    const held: ReadonlyArray<readonly [string, string]> = [
+      ["a &amp; b", "Run it first.\n\n<!-- a &amp; b -->\n"],
+      ["a &amp; b", "Run it first.\n\n<!-- a\n  &amp;   b -->\n"],
+      ["42", "Something else.\n\n<!-- &#4242; -->\n"],
+    ];
+    for (const [value, after] of held) {
+      expect([after, lost(originalOf(value), after)]).toEqual([after, []]);
     }
-    expect([inside, shown, listed]).toEqual([67_252, 41_231, 0]);
+    // Controls: the same files with the value changed.
+    const changed: ReadonlyArray<readonly [string, string]> = [
+      ["a &amp; b", "Run it first.\n\n<!-- a &amp; c -->\n"],
+      ["a &amp; b", "Run it first.\n\n<!-- a\n  &amp;   c -->\n"],
+      ["42", "Something else.\n\n<!-- &#4343; -->\n"],
+    ];
+    for (const [value, after] of changed) {
+      expect([after, lost(originalOf(value), after)]).toEqual([after, [value]]);
+    }
+  });
+
+  test("wherever it stands: in a script, an attribute, a link destination, front matter, a heading or a fence", () => {
+    const held: ReadonlyArray<readonly [string, string]> = [
+      ["npm test", "Run it first.\n\n<script>npm test</script>\n"],
+      ["npm test", "Run it first.\n\n<span title=\"npm test\">x</span>\n"],
+      ["npm-test", "Run it first.\n\n[x](npm-test)\n"],
+      ["42", "---\nsize: 42\n---\nSomething else.\n"],
+      ["npm test", "Run it first.\n\n# npm test\n"],
+      ["42", "Something else.\n\n```\n42\n```\n"],
+    ];
+    for (const [value, after] of held) {
+      expect([after, lost(originalOf(value), after)]).toEqual([after, []]);
+    }
+  });
+
+  test("in every recorded document whose text holds its value whole", () => {
+    const count = { code: 0, number: 0, listed: 0 };
+    for (const document of htmlTextDocuments()) {
+      if (!singleSpace(document.text).includes(document.value)) continue;
+      count[/^\d+$/.test(document.value) ? "number" : "code"]++;
+      if (lost(originalOf(document.value), document.text).includes(document.value)) count.listed++;
+    }
+    expect(count).toEqual({ code: 1981, number: 432, listed: 0 });
   }, 120_000);
 
-  test("each hand specimen inside it that the reference shows is not listed", () => {
-    for (const [holder, after] of INSIDE) {
-      expect([holder, after.includes("npm test"), inValueGuarantee(after), lost("Run `npm test` first.\n", after)]).toEqual([holder, false, true, []]);
+  test("read with a new table, it counts as elsewhere, not as not found", () => {
+    const held = compareVersions(TABLE_BEFORE, `${TABLE_AFTER}\n<!-- a &amp; b &#4242; -->\n`, null);
+    expect([held.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), values(held)]).toEqual([[[2, 2, 0]], []]);
+    // Control: with both changed, both are not found, and both are listed.
+    const changed = compareVersions(TABLE_BEFORE, `${TABLE_AFTER}\n<!-- a &amp; c &#4343; -->\n`, null);
+    expect([changed.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), values(changed)]).toEqual([[[2, 0, 2]], [["code", "a &amp; b"], ["number", "42"]]]);
+  });
+});
+
+describe("each reading of the new file also clears a row", () => {
+  // Each specimen is held by one reading alone, and its control, with the value changed, is listed.
+  test("the units the comparison reads, which read emphasis as its text", () => {
+    expect([lost("Run `npm test` first.\n", "Run it first.\n\nnp*m* test\n"), lost("Run `npm test` first.\n", "Run it first.\n\nnp*m* tset\n")])
+      .toEqual([[], ["npm test"]]);
+  });
+
+  test("the file with its character references decoded and its backslash escapes read, here in a comment that no other reading shows", () => {
+    const held = [
+      lost("Run `npm test` first.\n", "Run it first.\n\n<!-- npm&#32;test -->\n"),
+      lost("Run `npm_test` first.\n", "Run it first.\n\n<!-- npm\\_test -->\n"),
+      lost("The total is 42 units.\n", "Something else.\n\n<!-- 4&#50; -->\n"),
+    ];
+    const changed = [
+      lost("Run `npm test` first.\n", "Run it first.\n\n<!-- npm&#32;tset -->\n"),
+      lost("Run `npm_test` first.\n", "Run it first.\n\n<!-- npm\\_tset -->\n"),
+      lost("The total is 42 units.\n", "Something else.\n\n<!-- 4&#51; -->\n"),
+    ];
+    expect([held, changed]).toEqual([[[], [], []], [["npm test"], ["npm_test"], ["42"]]]);
+  });
+
+  test("the HTML reading, which keeps a quotation marker as text", () => {
+    expect([lost("Run `> npm` first.\n", "Run it first.\n\n> np<b>m</b>\n"), lost("Run `> npm` first.\n", "Run it first.\n\n> np<b>n</b>\n")])
+      .toEqual([[], ["> npm"]]);
+  });
+
+  test("the Markdown reading, which reads front matter as CommonMark does, as a rule and a heading", () => {
+    expect([lost("Run `npm test` first.\n", "---\ntitle: np`m` test\n---\nRun it first.\n"), lost("Run `npm test` first.\n", "---\ntitle: np`m` tset\n---\nRun it first.\n")])
+      .toEqual([[], ["npm test"]]);
+  });
+
+  test("the third reading, which reads a backslash that ends a line as a break", () => {
+    expect([lost("Run `npm test` first.\n", "Run it first.\n\nnp<b>m\\\ntest\n"), lost("Run `npm test` first.\n", "Run it first.\n\nnp<b>m\\\ntset\n")])
+      .toEqual([[], ["npm test"]]);
+  });
+
+  test("the figures of the file as written, which hold a number written another way", () => {
+    expect([lost("The total is 1000 units.\n", "Something else.\n\n<!-- 1,000 -->\n"), lost("The total is 1000 units.\n", "Something else.\n\n<!-- 1,001 -->\n")])
+      .toEqual([[], ["1000"]]);
+  });
+
+  test("the readings read a quoted `>` inside its tag, and hide a style's or a script's content up to its end tag", () => {
+    for (const after of ["np<span title=\">\">m</span> test", "np<style>x</style>m test", "np<script>x</script>m test"]) {
+      expect([after, lost("Run `npm test` first.\n", `Run it first.\n\n${after}\n`), lost("Run `npm test` first.\n", `Run it first.\n\n${after.replace("test", "tset")}\n`)])
+        .toEqual([after, [], ["npm test"]]);
+    }
+  });
+});
+
+describe("clause 23a's limit: pieces of a value that markup separates", () => {
+  test("each example is listed, though a reader sees the value whole", () => {
+    for (const [markup, value, after] of SEPARATED) {
+      expect([markup, after.includes(value), lost(originalOf(value), after)]).toEqual([markup, false, [value]]);
     }
   });
 
-  test("each shape the sweeps found listed though a reader sees its value falls outside it", () => {
-    for (const [shape, value, after] of RESIDUAL) {
-      expect([shape, after.includes(value), lost(originalOf(value), after), inValueGuarantee(after)]).toEqual([shape, false, [value], false]);
+  test("writing the value whole in the new version clears each row", () => {
+    for (const [markup, value, after] of SEPARATED) {
+      expect([markup, lost(originalOf(value), `${after}\n${value}\n`)]).toEqual([markup, []]);
     }
   });
 
-  test("it reads the marks that open each line", () => {
-    // Inside: prose, a list, a quotation, a list in a quotation, a fence, and a `<` that opens no line.
-    for (const text of ["np<b>m test\n", "- np<b>m test\n", "> np<b>m\n", "> - np<b>m\n", "```\nx\n```\n", "a \\<b>\n"]) {
-      expect([text, inValueGuarantee(text)]).toEqual([text, true]);
-    }
-    // Outside: a line that opens with `<` under any marks, and a quotation marker after a list marker, however deep.
-    for (const text of ["<div>\nx\n</div>\n", "a\n<b>c\n", "  <b>x\n", "- <b>x\n", "> - <b>x\n", "1. > x\n", "- - > x\n", "> 2) > x\n", "a\r\n<b>\r\n"]) {
-      expect([text, inValueGuarantee(text)]).toEqual([text, false]);
+  test("the same markup that does not separate the value lists nothing, and a value cut is listed", () => {
+    for (const [change, value, listed, after] of SEPARATED_CONTROLS) {
+      expect([change, lost(originalOf(value), after)]).toEqual([change, listed ? [value] : []]);
     }
   });
 });

@@ -406,7 +406,9 @@ describe("the work grows in proportion to the file", () => {
         valueReading(text, steps);
         return steps.count / text.length;
       });
-      expect(Math.max(...perCharacter), name).toBeLessThanOrEqual(STEPS_PER_CHARACTER);
+      for (const steps of perCharacter) {
+        expect(steps, name).toBeLessThanOrEqual(STEPS_PER_CHARACTER);
+      }
       // Eight times the text takes no more steps for each character.
       expect(perCharacter[1] ?? 0, name).toBeLessThanOrEqual((perCharacter[0] ?? 0) * 1.01);
     }
