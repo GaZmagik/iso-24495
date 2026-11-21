@@ -198,6 +198,15 @@ describe("markup left open across the end of a block puts the file in doubt, and
     expect(inDoubt("Run it first.\n\n<div>\nnpm test\n</div>\n")).toBe(false);
     expect(inDoubt("Run it.\n\n```\nx\n```\n")).toBe(false);
   });
+
+  test("a code span inside an HTML block's comment or attribute puts the file in doubt, though CommonMark reads no code span there and leaves nothing open", () => {
+    // A code span is read before HTML blocks are found, as nvm's README line 11 and llama.cpp's README show.
+    expect(inDoubt("Text.\n\n<!-- run `a` then `b` -->\n\nMore.\n")).toBe(true);
+    expect(inDoubt("<table>\n<tr><td><img alt=\"a `b` c\" src=\"x\"></td></tr>\n</table>\n\nMore.\n")).toBe(true);
+    // Controls: the same markup without the code span.
+    expect(inDoubt("Text.\n\n<!-- run a then b -->\n\nMore.\n")).toBe(false);
+    expect(inDoubt("<table>\n<tr><td><img alt=\"a b c\" src=\"x\"></td></tr>\n</table>\n\nMore.\n")).toBe(false);
+  });
 });
 
 describe("the value search reads the file a third time", () => {

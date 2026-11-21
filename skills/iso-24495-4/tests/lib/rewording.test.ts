@@ -18,7 +18,7 @@ const TAIL = [
 ];
 
 /** The line printed last when a value was looked for in a new version in doubt. */
-const IN_DOUBT = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and it traced no value.";
+const IN_DOUBT = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
 
 /**
  * New versions outside clause 23a's guarantee that the sweeps of fix round 2
@@ -420,7 +420,7 @@ describe("a value of the original that the new version does not hold", () => {
     expect(lost("The total is 42 units. Run `42` first.\n", closed)).toEqual(["42", "42"]);
   });
 
-  test("a comparison that looks for a value in a new version in doubt says it traced none, in print and in the report", () => {
+  test("a comparison that looks for a value in a new version in doubt says it lists none as not found, in print and in the report", () => {
     const before = "Run `make all` first.\n";
     // The tag the HTML block leaves open runs across the blank line, so the version is in doubt, though `make all` is cut.
     const leftOpen = "Run it first.\n\n<div>a<b\n\nc\n";
@@ -436,6 +436,16 @@ describe("a value of the original that the new version does not hold", () => {
     // A version in doubt with no value to look for says nothing of doubt, because no value went untraced.
     const noValue = compareVersions("Run the tests first.\n", leftOpen, null);
     expect([noValue.valuesInDoubt, formatComparison(noValue, PATHS).split("\n").at(-1)]).toEqual([false, TAIL[1]]);
+  });
+
+  test("in a new version in doubt, a value read with a new table is still looked for in the table, and one not there counts as elsewhere", () => {
+    const before = "The Basic plan costs 5 pounds per month and includes 10 GB of storage and `sync` now.\n";
+    const table = "| Plan | Cost per month | Storage | Tool |\n|---|---|---|---|\n| Basic plan | 5 pounds | 10 GB of storage | none |\n";
+    const leftOpen = compareVersions(before, `${table}\n<div>a<b\n\nc\n`, null);
+    expect([leftOpen.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), leftOpen.values.length, leftOpen.valuesInDoubt]).toEqual([[[2, 1, 0]], 0, true]);
+    // Control: with the tag closed, the code span the table lacks is not found, and is listed.
+    const closed = compareVersions(before, `${table}\n<div>a<b>\n\nc\n`, null);
+    expect([closed.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), values(closed), closed.valuesInDoubt]).toEqual([[[2, 0, 1]], [["code", "sync"]], false]);
   });
 
   test("a code span in a table cell keeps an escaped pipe as the cell shows it", () => {

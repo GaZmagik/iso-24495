@@ -575,7 +575,7 @@ describe("the two-version comparison, given --before", () => {
     }
   });
 
-  test("says, printed and in the report, when the new version is in doubt and no value was traced", () => {
+  test("says, printed and in the report, when the new version is in doubt and no value is listed as not found", () => {
     const project = makeProject();
     try {
       writeFileSync(join(project, "old.md"), "Run `npm test` before you merge.\n\nKeep the valve shut.\n");
@@ -584,7 +584,7 @@ describe("the two-version comparison, given --before", () => {
       expect(leftOpen.closing).toEqual([
         "The comparison reads wording, not meaning.",
         "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
-        "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and it traced no value.",
+        "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.",
       ]);
       expect([leftOpen.restructure.values, leftOpen.restructure.weighed, leftOpen.restructure.valuesInDoubt]).toEqual([[], true, true]);
       // Control: with the tag closed the file is not in doubt, the cut code span is listed, and no such line is printed.

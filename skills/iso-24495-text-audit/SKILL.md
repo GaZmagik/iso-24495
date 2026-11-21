@@ -175,10 +175,13 @@ It also covers a list item or quotation that ends inside an HTML block or a fenc
 
 These are blocks as the comparison reads them, so a file can be in doubt where CommonMark leaves nothing open.
 An HTML block or a fence that opens two spaces in at the top level, with a later line not indented, is in doubt too.
-When a value was looked for in a file in doubt, a closing line says that no value was traced.
+So is a code span inside an HTML block's comment or attribute, where CommonMark reads none.
+When a value was looked for in a file in doubt, a closing line says that none is listed as not found.
+A value read with a new table is still looked for in the table, and one not there counts as elsewhere.
 
 A reading can find a block's start or end, or the markers that open a line, other than where CommonMark finds them. A number or code span can then still be listed though a reader sees it.
-Where no line opens with `<` once its leading spaces, tabs and markers are taken off, and no quotation marker follows a list marker, testing found no such value listed.
+Testing covers files where no line opens with `<` once its leading spaces, tabs and markers are taken off, and no quotation marker follows a list marker.
+In those, no value a reader sees whole, as the original writes it, was listed.
 That is tested, not proved.
 
 A number also counts as held where the file as written, or its units, holds the same value in figures, or in English words up to the billions.
@@ -214,7 +217,7 @@ Under `tables` it gives the lines of the units read with each table, the table's
 It also gives the first 60 characters of the first unit read with it, and its counts of values.
 
 `weighed` is false when the searches passed their limit.
-`valuesInDoubt` is true when a value was looked for in a file in doubt, so none was traced.
+`valuesInDoubt` is true when a value was looked for in a file in doubt, so none is listed as not found.
 Report every row to the user, and leave it to the user to decide what each one means.
 
 ## Optional calibrated Jev checks
