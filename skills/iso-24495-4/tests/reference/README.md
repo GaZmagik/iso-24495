@@ -26,6 +26,18 @@ One adjustment makes the comparison meaningful. The reference renders inline mar
 NODE_PATH="$PWD/node_modules" bun /path/to/skills/iso-24495-4/tests/reference/build-image-titles.ts
 ```
 
+## The HTML text record
+
+`../fixtures/html-text-renderings.ts` records whether the reference shows the value of each document in `../fixtures/html-text-documents.ts` whole. There are 154,906 documents. They are built from every ordered pair of a list of markup fragments in a range of blocks and containers, with 20,000 seeded random compositions beside them. commonmark.js renders each document and parse5, an HTML tree builder, builds the page a browser would. `../lib/html-text.test.ts` requires the value search's reading of HTML text to hold every value the record shows.
+
+Install both outside the repository, then tell Bun where they are:
+
+```sh
+mkdir /tmp/html-text-ref && cd /tmp/html-text-ref
+bun add commonmark@0.31.2 parse5@7.3.0
+NODE_PATH="$PWD/node_modules" bun /path/to/skills/iso-24495-4/tests/reference/build-html-text.ts
+```
+
 ## The plan pin
 
 `../fixtures/plan-pin.ts` records what `planDocument` makes of 348 documents: the specimens in `../fixtures/plan-specimens.ts` and the 302 documents of `../fixtures/reference-blocks.ts`. For each it holds a digest of the whole plan, and the state of every Jev request in it. A test in `../lib/jev/engine.test.ts` fails when the two disagree. It needs no calibration file, so it runs in the gate, unlike the calibration tests beside it.

@@ -21,16 +21,15 @@
 // Units left over on both sides are then read again, as `rewording.ts`
 // describes: a pair that shares half the longer one's words or more is
 // rewritten, units of the original that share at least half of their
-// different words with a new table are read with it, and each number in
-// figures of a unit not kept is looked for in the whole new version. Code
-// spans are not traced yet.
+// different words with a new table are read with it, and each number and code span of a unit not kept is
+// looked for in the whole new version.
 //
 // It reads wording, not meaning. A sentence reworded further than that reads
 // as dropped and added, and a sentence kept word for word whose meaning
 // changed in its new place reads as kept.
 
 import { renderInline, renderInlineCode } from "./inline-wording.ts";
-import { figureFound, figureValues, foundIn, pairReworded, tablesFrom, WEIGHING_BUDGET, type FigureValue, type Found, type Meter, type ReworkedPair } from "./rewording.ts";
+import { figureFound, figureValues, foundIn, pairReworded, PIPE_ESCAPE, tablesFrom, WEIGHING_BUDGET, type FigureValue, type Found, type Meter, type ReworkedPair } from "./rewording.ts";
 import { inlineText, locateSentences, markdownLinks, normaliseReference, structure, tableCells, type ListStep, type LocatedSentence, type MarkdownLink, type Reading } from "./parse.ts";
 import { safeCell, safePathCode } from "./safe-text.ts";
 
@@ -77,10 +76,13 @@ const PROSE_KINDS: ReadonlySet<UnitKind> = new Set(["sentence", "item", "cell"])
 const REWORDED_KINDS: ReadonlySet<UnitKind> = new Set(["sentence", "item", "cell", "alternative"]);
 
 /** What the printed comparison says it pairs and reads as values, when it weighed them. */
-const WEIGHED_LINE = "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures as values, not code spans.";
+const WEIGHED_LINE = "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.";
 
 /** What the printed comparison says when its searches passed `WEIGHING_BUDGET`. */
 const NOT_WEIGHED_LINE = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
+
+/** What the printed comparison says when the new version was in doubt as it looked for a value, so it listed none as not found. */
+const IN_DOUBT_LINE = "The comparison reads the new version as leaving markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
 
 /**
  * How many pairings of repeated texts the comparison weighs, at most, when
@@ -181,7 +183,7 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
     added: [], fromAuthor: [], gaps: [], newHeadings: [],
     newLabels: byItsLabel.filter(pair => pair.after.label !== undefined).map(pair => pair.after),
     labelsGone: byItsLabel.filter(pair => pair.before.label !== undefined).map(pair => pair.before),
-    rewritten: [], tables: [], values: [], weighed: true,
+    rewritten: [], tables: [], values: [], weighed: true, valuesInDoubt: false,
   };
   const takeAuthor = waitingByText(author, unit => unit.key);
   const headingUnits: Unit[] = [];
@@ -284,7 +286,8 @@ export function documentUnits(text: string, reading: Reading = {}): Unit[] {
 
 /**
  * The comparison as a table of what it found, a line of counts and two
- * closing statements. It prints only what the comparison reads.
+ * closing statements, with a third when a value was looked for in a new
+ * version in doubt. It prints only what the comparison reads.
  *
  * Each dropped unit is a row, in before order, then each value not found,
  * in before order. Then come the after units left over and the kept units
@@ -321,7 +324,9 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
     lines.push(`| dropped | ${unit.line} | | No unchanged copy is in the new version: ${quoted(unit.key)} |`);
   }
   for (const value of comparison.values) {
-    const finding = "A number of the original is not found as written in the new version, nor as the same value in figures or words.";
+    const finding = value.kind === "number"
+      ? "A number of the original is not found as written in the new version, nor as the same value in figures or words."
+      : "A code span of the original is not found as written in the new version.";
     lines.push(`| value | ${value.unit.line} | ${value.after === null ? "" : `${value.after} `}| ${finding} Confirm that it was not cut or changed: ${quoted(value.value)} in ${quoted(value.unit.key)} |`);
   }
   for (const row of afterRows(comparison)) {
@@ -337,6 +342,7 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
     "The comparison reads wording, not meaning.",
     comparison.weighed ? WEIGHED_LINE : NOT_WEIGHED_LINE,
   );
+  if (comparison.valuesInDoubt) lines.push(IN_DOUBT_LINE);
   return lines.join("\n");
 }
 
@@ -359,10 +365,11 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
  *     it, its first line, how many units it holds, the first 60 characters
  *     of the first unit read with it, and how many of their values are in
  *     the table, elsewhere and not found. A value's entry gives its unit's
- *     line, the line of the unit or table it went to or null, its kind,
- *     which is `number`, and the first 60 characters of the value and of its
- *     unit. `weighed` is
+ *     line, the line of the unit or table it went to or null, its kind, and
+ *     the first 60 characters of the value and of its unit. `weighed` is
  *     false when the searches passed their limit and none of these was read.
+ *     `valuesInDoubt` is true when the new version was in doubt as a value
+ *     was looked for, so no value was listed as not found.
  */
 export function comparisonReport(comparison: Comparison, paths: ComparedPaths): RestructureReport {
   return {
@@ -390,6 +397,7 @@ export function comparisonReport(comparison: Comparison, paths: ComparedPaths): 
     })),
     values: comparison.values.map(value => ({ before: value.unit.line, after: value.after, kind: value.kind, value: excerpt(value.value), excerpt: excerpt(value.unit.key) })),
     weighed: comparison.weighed,
+    valuesInDoubt: comparison.valuesInDoubt,
   };
 }
 
@@ -406,11 +414,7 @@ export interface Unit {
   readonly label?: string;
   /** The items of ordered lists the unit stands in, outermost first. Absent outside every ordered list. */
   readonly steps?: readonly ListStep[];
-  /**
-   * The code spans that stand in `key`, in order, each as much of it as
-   * `key` holds, so a number inside one is not read as a value. Absent when
-   * the unit holds none.
-   */
+  /** The code spans that stand in `key`, in order, each as much of it as `key` holds. Absent when the unit holds none. */
   readonly spans?: readonly CodeSpan[];
 }
 
@@ -421,6 +425,12 @@ export interface Unit {
 export interface CodeSpan {
   readonly start: number;
   readonly end: number;
+  /**
+   * The whole span, its white space made single. A span that a sentence's
+   * end splits runs into two units, and both hold this same object, so it
+   * is traced once.
+   */
+  readonly whole: { readonly text: string };
 }
 
 /**
@@ -475,6 +485,13 @@ export interface Comparison {
   readonly values: readonly MissingValue[];
   /** False when the searches for rewording, tables and values passed their limit, so none of them was read. */
   readonly weighed: boolean;
+  /**
+   * True when a value was looked for in a new version in doubt, as
+   * `valueReading` describes, so every value counted as held there: none
+   * was listed as not found, and a value read with a new table and not in
+   * it counted as elsewhere.
+   */
+  readonly valuesInDoubt: boolean;
 }
 
 /** A new table and the units of the original read with it, as `readRewording` describes. */
@@ -491,14 +508,13 @@ export interface TableRead {
   readonly notFound: number;
 }
 
-/** A number in figures of a unit not kept, found nowhere in the new version. */
+/** A number or code span of a unit not kept, found nowhere in the new version. */
 export interface MissingValue {
   /** The unit of the original it stands in. */
   readonly unit: Unit;
   /** The line of the unit that rewords that unit, or of the table it was read with, or null. */
   readonly after: number | null;
-  /** What the value is. Only numbers are traced. */
-  readonly kind: "number";
+  readonly kind: "number" | "code";
   /** The value as the original writes it. */
   readonly value: string;
 }
@@ -529,8 +545,9 @@ export interface RestructureReport {
   labelsGone: ReportedUnit[];
   rewritten: Array<{ before: number; after: number; kind: UnitKind; excerpt: string; original: string; shared: number; words: number }>;
   tables: Array<{ before: number[]; after: number; units: number; excerpt: string; values: { inTable: number; elsewhere: number; notFound: number } }>;
-  values: Array<{ before: number; after: number | null; kind: "number"; value: string; excerpt: string }>;
+  values: Array<{ before: number; after: number | null; kind: "number" | "code"; value: string; excerpt: string }>;
   weighed: boolean;
+  valuesInDoubt: boolean;
 }
 
 /** One unit in a report: its line, its kind and its first 60 characters. */
@@ -682,15 +699,18 @@ function runs(kept: readonly KeptPair[], flagged: Uint8Array, rank: Int32Array, 
  * 2. A new table is one whose units are all added and number two or more.
  *    Units still dropped are read with such a table as `tablesFrom`
  *    describes, and neither they nor the table's units are then listed.
- * 3. Each number in figures of a unit dropped, rewritten or read with a
- *    table is looked for in the whole new version, as `figureFound` and
- *    `foundIn` describe, and each not found is listed. A number inside a
- *    code span is not read, and code spans are not traced yet. A number is
- *    looked for once for each unit however often it stands there, and
- *    figures that read as the same value, such as `5` and `5.0`, are one
- *    value. A number not found by its value is looked for again as it is
- *    written. A number of a unit read with a table is counted as in the
- *    table, elsewhere or not found.
+ * 3. Each number and code span of a unit dropped, rewritten or read with a
+ *    table is looked for in the whole new version, as `foundIn` describes,
+ *    and each not found is listed. A value is looked for once for each unit
+ *    however often it stands there, and figures that read as the same value,
+ *    such as `5` and `5.0`, are one value. A code span that runs into two
+ *    units is one value, looked for with the first of them read here. A
+ *    value of a unit read with a table is counted as in the table, elsewhere
+ *    or not found.
+ *
+ * When the new version is in doubt, every value counts as held in it, as
+ * `foundIn` describes, and the comparison says it listed none as not found.
+ * A value read with a table is still looked for in the table's units.
  *
  * When the searches pass `WEIGHING_BUDGET` steps, none of this is used: the
  * comparison keeps its units dropped and added, and says it weighed nothing.
@@ -721,16 +741,22 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
   const inTables = read.map(table => foundIn(table.cells.map(cell => cell.key), "", meter));
   const tallies = read.map(() => ({ inTable: 0, elsewhere: 0, notFound: 0 }));
   const values: MissingValue[] = [];
+  const spansRead = new Set<CodeSpan["whole"]>();
   for (const { unit, after, table } of checked) {
     // Each value once for its unit, so "14 of 14" lists one 14, and "5 or 5.0" one 5.
     const read = new Set<string>();
-    for (const figure of figureValues(unit.key, unit.spans ?? [])) {
-      const same = `number ${[...figure.readings].sort().join(" ")}`;
+    for (const value of valuesOf(unit)) {
+      if (value.whole !== undefined) {
+        if (spansRead.has(value.whole)) continue;
+        spansRead.add(value.whole);
+      }
+      const kind = value.figure === undefined ? "code" : "number";
+      const same = value.figure === undefined ? `code ${value.text}` : `number ${[...value.figure.readings].sort().join(" ")}`;
       if (read.has(same)) continue;
       read.add(same);
       found ??= foundIn(comparison.after.map(other => other.key), afterSource, meter);
-      const anywhere = numberFound(figure, found);
-      const inTable = table === -1 ? false : numberFound(figure, inTables[table] ?? found);
+      const anywhere = valueFound(value, found);
+      const inTable = table === -1 ? false : valueFound(value, inTables[table] ?? found);
       if (anywhere === null || inTable === null) return unweighed;
       const tally = tallies[table];
       if (tally !== undefined) {
@@ -742,7 +768,7 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
           tally.notFound++;
         }
       }
-      if (!anywhere) values.push({ unit, after, kind: "number", value: figure.text });
+      if (!anywhere) values.push({ unit, after, kind, value: value.text });
     }
   }
   if (meter.spent > meter.limit) return unweighed;
@@ -753,6 +779,7 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
     rewritten: pairs,
     tables: read.map((table, position) => ({ sources: table.sources, cells: table.cells, ...(tallies[position] ?? { inTable: 0, elsewhere: 0, notFound: 0 }) })),
     values,
+    valuesInDoubt: found?.inDoubt === true,
   };
 }
 
@@ -787,15 +814,34 @@ function newTables(after: readonly Unit[], added: readonly Unit[]): Unit[][] {
 }
 
 /**
- * Whether a number of a unit is found in what a version holds: by its value,
- * as `figureFound` describes, or else as it is written, as `foundIn`
- * describes.
+ * The numbers in figures and the code spans of a unit, in the order they
+ * stand in it. A code span's text is the whole span, its white space made
+ * single, even where it runs into another unit, and a number inside one is
+ * not read on its own. In a table cell, an escaped pipe in a code span is
+ * read as the pipe a table shows.
+ */
+function valuesOf(unit: Unit): Array<{ text: string; start: number; figure?: FigureValue; whole?: CodeSpan["whole"] }> {
+  const spans = unit.spans ?? [];
+  const values: Array<{ text: string; start: number; figure?: FigureValue; whole?: CodeSpan["whole"] }> = spans.map(span => ({
+    text: unit.kind === "cell" ? span.whole.text.replaceAll(PIPE_ESCAPE, "|") : span.whole.text, start: span.start, whole: span.whole,
+  }));
+  for (const figure of figureValues(unit.key, spans)) {
+    values.push({ text: figure.text, start: figure.start, figure });
+  }
+  return values.sort((first, second) => first.start - second.start);
+}
+
+/**
+ * Whether a value of a unit, as `valuesOf` gives it, is found in what a
+ * version holds, as `foundIn` describes. A number not found by its value is
+ * looked for again as it is written.
  *
  * @returns Null when the meter passed its limit while looking.
  */
-function numberFound(figure: FigureValue, where: Found): boolean | null {
-  const byValue = figureFound(figure, where);
-  return byValue === false ? where.text(figure.text) : byValue;
+function valueFound(value: { text: string; figure?: FigureValue }, where: Found): boolean | null {
+  if (value.figure === undefined) return where.code(value.text);
+  const byValue = figureFound(value.figure, where);
+  return byValue === false ? where.text(value.text) : byValue;
 }
 
 /**
@@ -1197,21 +1243,23 @@ function boldLabel(prose: string, references: ReadonlySet<string>): string | nul
  *     when that sentence holds more than the label. Null for none.
  * @param code Where the contents of each code span stand in the rendered
  *     text, in order, as `renderInlineCode` gives them. Each unit holds the
- *     part of each that falls inside it.
+ *     part of each that falls inside it, with the whole span.
  */
 function sentenceUnits(rendered: string, firstLine: number, kind: UnitKind, block: number, label: string | null, code: ReadonlyArray<{ start: number; end: number }> = []): Array<{ unit: Unit; start: number }> {
   const { text, lines, spans } = singleSpaced(rendered, code);
+  const whole = spans.map(span => ({ ...span, whole: { text: text.slice(span.start, span.end) } }));
   let next = 0;
   return wholeSlots(text, locateSentences(text)).map((sentence, index) => {
     const end = sentence.start + sentence.text.length;
-    while (next < spans.length && (spans[next]?.end ?? 0) <= sentence.start) {
+    while (next < whole.length && (whole[next]?.end ?? 0) <= sentence.start) {
       next++;
     }
     const held: CodeSpan[] = [];
-    for (let span = next; span < spans.length && (spans[span]?.start ?? end) < end; span++) {
-      const from = Math.max(spans[span]?.start ?? 0, sentence.start);
-      const to = Math.min(spans[span]?.end ?? 0, end);
-      if (from < to) held.push({ start: from - sentence.start, end: to - sentence.start });
+    for (let span = next; span < whole.length && (whole[span]?.start ?? end) < end; span++) {
+      const from = Math.max(whole[span]?.start ?? 0, sentence.start);
+      const to = Math.min(whole[span]?.end ?? 0, end);
+      const shared = whole[span]?.whole;
+      if (from < to && shared !== undefined) held.push({ start: from - sentence.start, end: to - sentence.start, whole: shared });
     }
     const unit = { kind, line: firstLine + (lines[sentence.start] ?? 0), key: sentence.text, block, ...(held.length > 0 ? { spans: held } : {}) };
     return { unit: index === 0 && label !== null && sentence.text.startsWith(`${label} `) ? { ...unit, label } : unit, start: sentence.start };
@@ -1438,7 +1486,7 @@ function afterRows(comparison: Comparison): string[] {
     if (first === undefined) continue;
     const who = table.sources.length === 1 ? "A unit of the original shares at least half of its different words" : `${table.sources.length} units of the original each share at least half of their different words`;
     const whose = table.sources.length === 1 ? "Its" : "Their";
-    const traced = `${whose} numbers: ${table.inTable} in the table, ${table.elsewhere} elsewhere in the new version, ${table.notFound} not found:`;
+    const traced = `${whose} numbers and code spans: ${table.inTable} in the table, ${table.elsewhere} elsewhere in the new version, ${table.notFound} not found:`;
     rows.push({ line, text: `| restructured or rewritten | ${first.line} | ${line} | ${who} with a new table of ${table.cells.length} units, which are not listed one by one. Confirm that nothing was cut or reworded. ${traced} ${quoted(first.key)} |` });
   }
   for (const unit of comparison.fromAuthor) {

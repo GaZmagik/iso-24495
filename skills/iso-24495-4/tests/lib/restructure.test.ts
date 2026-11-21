@@ -18,7 +18,7 @@ const HEAD = ["Restructure comparison: before `old.md`, after `new.md`", "| Kind
 /** The closing statements of every printed comparison: what it reads, and the bounds of what it pairs and reads as values. */
 const TAIL = [
   "The comparison reads wording, not meaning.",
-  "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures as values, not code spans.",
+  "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
 ];
 
 /**
@@ -1022,6 +1022,7 @@ describe("the JSON report", () => {
       tables: [],
       values: [],
       weighed: true,
+      valuesInDoubt: false,
     });
   });
 

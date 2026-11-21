@@ -35,4 +35,28 @@ declare module "commonmark" {
     /** The root node of the document parsed from `markdown`. */
     parse(markdown: string): Node;
   }
+
+  /** Writes a parsed document as HTML. */
+  export class HtmlRenderer {
+    /** The HTML of the document whose root node is `root`. */
+    render(root: Node): string;
+  }
+}
+
+// The part of parse5, the HTML tree builder, that build-html-text.ts reads.
+// It is not installed here either, for the same reason.
+declare module "parse5" {
+  /** A node of the tree parse5 builds. */
+  export interface Parse5Node {
+    /** "#text" for text, "#comment" for a comment, or the element's name. */
+    nodeName: string;
+    /** The text of a text node. */
+    value?: string;
+    /** The element's name, in lower case, for an element. */
+    tagName?: string;
+    childNodes?: Parse5Node[];
+  }
+
+  /** The tree of a whole HTML document, as a browser builds it. */
+  export function parse(html: string): Parse5Node;
 }

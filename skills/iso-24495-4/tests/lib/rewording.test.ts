@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { compareUnits, compareVersions, comparisonReport, formatComparison, type Comparison, type Unit } from "../../scripts/lib/restructure.ts";
 import { figureFound, figureValues, foundIn, numberWords, pairReworded, wordsOf, WEIGHING_BUDGET, type Meter } from "../../scripts/lib/rewording.ts";
+import { htmlTextDocuments } from "../fixtures/html-text-documents.ts";
 
 /** The paths every printed comparison here names. */
 const PATHS = { before: "old.md", after: "new.md", authorText: null };
@@ -11,7 +12,49 @@ const HEAD = ["Restructure comparison: before `old.md`, after `new.md`", "| Kind
 /** The closing statements of a printed comparison that weighed its rewording. */
 const TAIL = [
   "The comparison reads wording, not meaning.",
-  "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures as values, not code spans.",
+  "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
+];
+
+/** The line printed last when a value was looked for in a new version in doubt. */
+const IN_DOUBT = "The comparison reads the new version as leaving markup open across the end of a block, so what a reader sees of it is in doubt, and no value is listed as not found.";
+
+/**
+ * Examples of a limit of clause 23a: pieces of a value that markup separates
+ * in the new version, where a renderer drops or moves that markup, so a
+ * reader sees the value whole and the comparison lists it. The CommonMark
+ * reference, commonmark.js 0.31.2 with parse5 7.3.0, showed each value whole
+ * when these were chosen; the tests here do not run it. Each is the markup,
+ * the value, and the new version.
+ */
+const SEPARATED: ReadonlyArray<readonly [string, string, string]> = [
+  ["an HTML block holds a code span", "42", "Something else.\n\n<div>\n`x` 4<!--\n\n<!---->2\n</div>\n"],
+  ["a line inside an HTML block opens as another HTML block would", "a<b>c", "Run it first.\n\n<div>\n<style>\n\n</style>a<!--\n--><!--x--->\\<b>c\n</div>\n"],
+  ["an HTML block holds a code span, which CommonMark does not read there", "npm test", "Run it first.\n\n<pre> Use `\"` here. np<![CDATA[x]]></script>m <b\n>>test\"></pre>\n"],
+  ["a quotation marker stands straight after a list marker", "a<b>c", "Run it first.\n\n- >a\\<b<span title=\"a\n  >b\">&gt;c\n"],
+  ["an HTML block in a quotation holds both, with a number", "42", "Something else.\n\n> <pre> Use `\"` here. 4<b\n> ><script><!--</script>2></pre>\n"],
+  ["an HTML block holds a code span, with a number", "42", "Something else.\n\n<div>\n Use `\"` here. 4<!--\n\n--><!-- <b> -->2\n</div>\n"],
+  ["a tag, then a quotation marker inside a closed fence", "npm test", "Run it first.\n\n> np<b>m\n> ```\n> test\n> ```\n"],
+  ["a tag, then a quotation marker inside a fence left open", "npm test", "Run it first.\n\n> np<b>m\n> ```\n> test\n"],
+  ["an inline table, whose text a browser moves before it, with a code span", "npm test", "Run it first.\n\nText <table><tr><td>test</td></tr>npm </table>\n"],
+  ["an inline table, whose text a browser moves before it, with a number", "42", "Something else.\n\nText <table><tr><td>2</td></tr>4</table>\n"],
+  ["an image, whose alternative text a page does not hold", "npm test", "Run it first.\n\nnp![x](x)m\n\n test\n"],
+  ["a link definition over two lines, which a renderer drops", "npm test", "Run it first.\n\nnpm\n\n[r]:\nx\n\n test\n"],
+  ["a pipe, where the comparison reads a table and a renderer a heading", "npm test", "Run it first.\n\n| a |\n|---|\n| npm\n===\n test |\n"],
+  ["front matter, which a renderer reads as a rule and a heading", "npm test", "---\ntitle: npm\n---\ntest\n"],
+  ["an inline link's label, and a backslash that ends a line in a heading", "npm test", "Run it first.\n\nnp[](x)m\\\n test\n===\n"],
+  ["an inline link's label beside emphasis", "42", "Something else.\n\n10. __4__[](x)2\n"],
+];
+
+/**
+ * The same markup changed so that it no longer separates the value, or with
+ * the value cut: each is the change, the value, whether it is listed, and the
+ * new version.
+ */
+const SEPARATED_CONTROLS: ReadonlyArray<readonly [string, string, boolean, string]> = [
+  ["the fenced quotation with no fence", "npm test", false, "Run it first.\n\n> np<b>m\n> test\n"],
+  ["the fenced quotation with its value cut", "npm test", true, "Run it first.\n\n> np<b>m\n> ```\n> tset\n> ```\n"],
+  ["the table with the number's text first in the file", "42", false, "Something else.\n\nText <table>4<tr><td>2</td></tr></table>\n"],
+  ["the table with the code span's text first in the file", "npm test", false, "Run it first.\n\nText <table>npm <tr><td>test</td></tr></table>\n"],
 ];
 
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
@@ -225,19 +268,34 @@ describe("a value of the original that the new version does not hold", () => {
     ]);
   });
 
-  test("a code span is not traced yet, so one whose text is gone lists no value, while a number beside it does", () => {
-    const comparison = compareVersions("Run `npm test` 5 times before you merge.\n", "Run the tests before you merge.\n", null);
-    expect(values(comparison)).toEqual([["number", "5"]]);
-    expect(lost("Run `npm test` before you merge.\n", "Run the tests before you merge.\n")).toEqual([]);
-    // Codex's second-round reproduction: the span's text stands in the HTML, split by a tag whose quoted attribute holds a `>`.
-    expect(lost("Run `npm test` first.\n", "Run it first.\n\n<pre>np<span title=\">\">m</span> test</pre>\n")).toEqual([]);
+  test("a code span is listed when its text stands nowhere in the new version", () => {
+    const comparison = compareVersions("Run `npm test` before you merge.\n", "Run the tests before you merge.\n", null);
+    expect(values(comparison)).toEqual([["code", "npm test"]]);
+    expect(formatComparison(comparison, PATHS).split("\n")[3]).toBe("| value | 1 | 1 | A code span of the original is not found as written in the new version. Confirm that it was not cut or changed: \"npm test\" in \"Run npm test before you merge.\" |");
+  });
+
+  test("a code span that HTML shows whole is held, though a quoted attribute in the markup splitting it holds an angle bracket", () => {
+    // Review R2-1 on PR 85: the text of this pre block is exactly "npm test".
+    const before = "Run `npm test` first.\n";
+    expect(lost(before, "Run it first.\n\n<pre>np<span title=\">\">m</span> test</pre>\n")).toEqual([]);
+    // Control: the same markup with no angle bracket in the attribute.
+    expect(lost(before, "Run it first.\n\n<pre>np<span title=\"plain\">m</span> test</pre>\n")).toEqual([]);
+    // Control: a code span genuinely cut is still listed, with the same markup beside it.
+    expect(lost(before, "Run it first.\n\n<pre>np<span title=\">\">m</span> tset</pre>\n")).toEqual(["npm test"]);
+  });
+
+  test("markup is taken out before character references are decoded, so a tag written as references is text a reader sees", () => {
+    const before = "Use `<thinking> now` here.\n";
+    expect(lost(before, "Use it.\n\n<pre>&lt;thinking&gt; <i>now</i></pre>\n")).toEqual([]);
+    // Control: the code span's last word changed.
+    expect(lost(before, "Use it.\n\n<pre>&lt;thinking&gt; <i>later</i></pre>\n")).toEqual(["<thinking> now"]);
   });
 
   test("a value found anywhere in the new version is not listed: in another unit, a new table or a code block", () => {
     expect(lost("Close the valve. Keep it below 5 bar.\n", "Close the valve.\n\nThe limit is 5 bar.\n")).toEqual([]);
     expect(lost("Keep it below 5 bar.\n", "Keep it low.\n\n| Limit | Pressure |\n|---|---|\n| 5 bar | high |\n")).toEqual([]);
-    expect(lost("Keep it below 5 bar.\n", "Keep it low.\n\n```\nlimit 5\n```\n")).toEqual([]);
-    expect(lost("Use port 8080 now.\n", "Use the port now. The port is `8080`.\n")).toEqual([]);
+    expect(lost("Run `npm test` before you merge.\n", "Run the tests before you merge.\n\n```\nnpm test --watch\n```\n")).toEqual([]);
+    expect(lost("Use port `8080` now.\n", "Use the port now. The port is `8080`.\n")).toEqual([]);
   });
 
   test("a number found in figures or words of the same value is not listed, and one written another way is", () => {
@@ -272,82 +330,149 @@ describe("a value of the original that the new version does not hold", () => {
     expect(lost("Released on 2026-09-28 now.\n", "Released on 28 October 2026 today.\n")).toEqual(["09"]);
   });
 
-  test("a value whose text stands anywhere in the new version is not listed, even inside a longer figure", () => {
+  test("a value whose text stands anywhere in the new version is not listed, even inside a longer word or figure", () => {
+    expect(lost("Use `a-b` now.\n", "Use xa-b and a today.\n")).toEqual([]);
+    expect(lost("Use `a-b` now.\n", "Use a-bc and b today.\n")).toEqual([]);
     expect(lost("Read page 13 now.\n", "Read page 1.13.0 today.\n")).toEqual([]);
     expect(lost("Read clause 49 now.\n", "Read ISO 24495 today.\n")).toEqual([]);
-    // Control: the same change with the text gone.
+    // Controls: the same changes with the text gone.
+    expect(lost("Use `a-b` now.\n", "Use a-c and b today.\n")).toEqual(["a-b"]);
     expect(lost("Read page 13 now.\n", "Read page 1.14.0 today.\n")).toEqual(["13"]);
   });
 
-  test("a number inside a code span is not read, and the span's own text is not traced", () => {
-    expect(lost("Set `limit=1,000` now.\n", "Set `limit=1000` now.\n")).toEqual([]);
-    expect(lost("Set `limit=1,000` now.\n", "Set the limit now.\n")).toEqual([]);
+  test("a code span is compared exactly but for its white space, and a number inside one is not read on its own", () => {
+    expect(lost("Set `limit=1,000` now.\n", "Set `limit=1000` now.\n")).toEqual(["limit=1,000"]);
+    expect(lost("Set `limit=1000` now.\n", "Set `limit=1000` today.\n")).toEqual([]);
     expect(figureValues("Set limit=1,000 now.", [{ start: 4, end: 15 }]).map(value => value.text)).toEqual([]);
-    // Control: the same figure outside a code span is read.
-    expect(lost("Set limit=1,000 now.\n", "Set the limit now.\n")).toEqual(["1,000"]);
+    // White space is made single on both sides, so a change of spacing alone is not listed.
+    expect(lost("Run `echo  foo` now.\n", "Run `echo foo` today.\n")).toEqual([]);
+    expect(lost("Run `echo\tfoo` now.\n", "Run `echo foo` today.\n")).toEqual([]);
+    expect(lost("Run `echo  foo` now.\n", "Run `echo bar` today.\n")).toEqual(["echo foo"]);
   });
 
-  test("a code span that a full stop splits hides its numbers from every sentence it runs into", () => {
-    const units = compareVersions("Run `a. b 5` now. Then stop here.\n", "", null).dropped;
-    expect(units.map(unit => unit.key)).toEqual(["Run a.", "b 5 now.", "Then stop here."]);
-    expect(lost("Run `a. b 5` now. Then stop here.\n", "")).toEqual([]);
-    // Control: the same words with no code span.
-    expect(lost("Run a. b 5 now. Then stop here.\n", "")).toEqual(["5"]);
+  test("a code span holding a full stop is one value, traced whole, even where it splits the sentence", () => {
+    const units = compareVersions("Run `a. b` now. Then stop here.\n", "", null).dropped;
+    expect(units.map(unit => unit.key)).toEqual(["Run a.", "b now.", "Then stop here."]);
+    expect(lost("Run `a. b` now. Then stop here.\n", "")).toEqual(["a. b"]);
+    expect(lost("Run `a. b` now. Then stop here.\n", "Use `a. b` instead.\n")).toEqual([]);
+    // The unit it starts in is kept, so it is traced with the unit it runs into.
+    const hidden = compareVersions("Run `a. b` now.\n", "Run `a. c` now.\n\nKeep b.\n", null);
+    expect(hidden.kept.map(pair => pair.before.key)).toEqual(["Run a."]);
+    expect(hidden.values.map(value => [value.value, value.unit.key])).toEqual([["a. b", "b now."]]);
   });
 
-  test("a code span that ends its prose hides its numbers, as a list item or a table cell that is only code", () => {
-    expect(lost("- `npm 5`\n", "- Run it.\n")).toEqual([]);
-    expect(lost("| Command |\n|---|\n| `make 4` |\n", "| Command |\n|---|\n| make it |\n")).toEqual([]);
-    expect(lost("Run `npm  5`\n", "Run it.\n")).toEqual([]);
-    // Controls: the same units with no code span.
-    expect(lost("- npm 5\n", "- Run it.\n")).toEqual(["5"]);
-    expect(lost("| Command |\n|---|\n| make 4 |\n", "| Command |\n|---|\n| make it |\n")).toEqual(["4"]);
+  test("a code span that ends its prose is traced, as a list item or a table cell that is only code", () => {
+    expect(lost("- `npm test`\n", "- Run it.\n")).toEqual(["npm test"]);
+    expect(lost("| Command |\n|---|\n| `make all` |\n", "| Command |\n|---|\n| make it |\n")).toEqual(["make all"]);
+    expect(lost("Run `npm  test`\n", "Run it.\n")).toEqual(["npm test"]);
+    expect(lost("- `npm test`\n", "- Run `npm test`.\n")).toEqual([]);
   });
 
   test("a character reference in the prose does not move a code span", () => {
-    expect(lost("Use &#57344;fake&#57345; and `5 x` now.\n", "Use other now.\n")).toEqual([]);
-    expect(lost("Use &#57344;fake&#57345; and 5 x now.\n", "Use other now.\n")).toEqual(["5"]);
-    // Read from the source as written, four references would move the span sixteen places on, past the 5 and onto the 6.
-    expect(lost("Use &amp;&amp;&amp;&amp; then `x 5` and 6 now.\n", "Use other now.\n")).toEqual(["6"]);
+    expect(lost("Use &#57344;fake&#57345; and `--send` now.\n", "Use other and --send now.\n")).toEqual([]);
+    expect(lost("Use &#57344;fake&#57345; and `--send` now.\n", "Use other now.\n")).toEqual(["--send"]);
+    expect(lost("Use &amp; and `a&b` now.\n", "Use and now.\n")).toEqual(["a&b"]);
   });
 
   test("a code span in an image alternative is read as prose, and a number in it as a number", () => {
+    expect(lost("![Use `--send` now](x.png)\n", "![Use send now](x.png)\n")).toEqual([]);
     expect(lost("![Set `limit=1000` now](x.png)\n", "![Set `limit=1,000` now](x.png)\n")).toEqual([]);
     expect(lost("![Set `limit=1000` now](x.png)\n", "![Set `limit=2000` now](x.png)\n")).toEqual(["1000"]);
-    // Control: the same code span in a sentence hides its number.
-    expect(lost("Set `limit=1000` now.\n", "Set `limit=2000` now.\n")).toEqual([]);
+    // Control: the same code span in a sentence is traced.
+    expect(lost("Use `--send` now.\n", "Use send now.\n")).toEqual(["--send"]);
   });
 
   test("a value is looked for in the whole new file: image alternatives, link text and destinations, headings, HTML and character references", () => {
-    const before = "Run the pump 4096 times first.\n";
+    const before = "Run `npm test` first.\n";
     const places = [
-      "![Run 4096](x.png)", "[4096](guide.md)", "[the guide](https://example.org/4096)", "## 4096", "<div>\n4096\n</div>",
-      "<pre>\n<b>40</b>96\n</pre>", "---\ncount: &#52;096\n---", "Run `4096` there.",
+      "![Run npm test](x.png)", "[npm test](guide.md)", "[the guide](https://example.org/npm test)", "## npm test", "<div>\nnpm test\n</div>",
+      "<pre>\n<b>npm</b> test\n</pre>", "---\ncommand: &#110;pm test\n---", "Run `npm\ntest` there.",
     ];
     for (const place of places) {
       const after = place.startsWith("---") ? `${place}\n\nRun it first.\n` : `Run it first.\n\n${place}\n`;
       expect(lost(before, after), place).toEqual([]);
-      expect(lost(before, after.replaceAll("96", "69")), `control: ${place}`).toEqual(["4096"]);
+      expect(lost(before, after.replaceAll("test", "tset")), `control: ${place}`).toEqual(["npm test"]);
     }
+    // A backslash escape outside every unit is read as the character it escapes.
+    expect(lost("Run `a_b` first.\n", String.raw`Run it first.
+
+[the guide](a\_b.md)
+`)).toEqual([]);
+    expect(lost("Run `a_b` first.\n", String.raw`Run it first.
+
+[the guide](a\_c.md)
+`)).toEqual(["a_b"]);
   });
 
-  test("a tag is read to the next angle bracket, so markup holding one can split a number a reader sees whole, but a number standing whole is held", () => {
+  test("a code span written whole in the file as written is held, though only the file as written holds it", () => {
+    // The attribute is markup, so no reading shows it, and its backslash is read as an escape once escapes are read.
+    expect(lost(String.raw`Run ${"`a\\*b`"} first.` + "\n", String.raw`Run it first.
+
+<a title="a\*b">x</a>
+`)).toEqual([]);
+    expect(lost(String.raw`Run ${"`a\\*b`"} first.` + "\n", String.raw`Run it first.
+
+<a title="a\*c">x</a>
+`)).toEqual([String.raw`a\*b`]);
+  });
+
+  test("a new version that leaves markup open across the end of a block holds every value, code span and number alike", () => {
+    // In a tight list a browser reads the tag the HTML block leaves open on into the next line, so a reader sees 42.
+    const leftOpen = "Something else.\n\n- <pre></pre>4<b\n  c=\"x <i>2</i>\n";
+    expect(lost("The total is 42 units. Run `42` first.\n", leftOpen)).toEqual([]);
+    // Neither value stands anywhere in this version, and with doubt it is not listed either.
+    expect(lost("The total is 17 units. Run `make all` first.\n", leftOpen)).toEqual([]);
+    // Control: the same version with its tag closed is not in doubt, so values it does not hold are listed.
+    const closed = "Something else.\n\n- <pre></pre>4<b>\n  c=\"x <i>3</i>\n";
+    expect(lost("The total is 42 units. Run `42` first.\n", closed)).toEqual(["42", "42"]);
+  });
+
+  test("a comparison that looks for a value in a new version in doubt says it lists none as not found, in print and in the report", () => {
+    const before = "Run `make all` first.\n";
+    // The tag the HTML block leaves open runs across the blank line, so the version is in doubt, though `make all` is cut.
+    const leftOpen = "Run it first.\n\n<div>a<b\n\nc\n";
+    const comparison = compareVersions(before, leftOpen, null);
+    expect([comparison.values.length, comparison.weighed, comparison.valuesInDoubt]).toEqual([0, true, true]);
+    expect(formatComparison(comparison, PATHS).split("\n").slice(-3)).toEqual([...TAIL, IN_DOUBT]);
+    expect(comparisonReport(comparison, PATHS).valuesInDoubt).toBe(true);
+    // Control: with the tag closed the version is not in doubt, so the value is listed and no such line is printed.
+    const closed = compareVersions(before, "Run it first.\n\n<div>a<b>\n\nc\n", null);
+    expect([values(closed), closed.valuesInDoubt]).toEqual([[["code", "make all"]], false]);
+    expect(formatComparison(closed, PATHS).split("\n").slice(-2)).toEqual(TAIL);
+    expect(comparisonReport(closed, PATHS).valuesInDoubt).toBe(false);
+    // A version in doubt with no value to look for says nothing of doubt, because no value went untraced.
+    const noValue = compareVersions("Run the tests first.\n", leftOpen, null);
+    expect([noValue.valuesInDoubt, formatComparison(noValue, PATHS).split("\n").at(-1)]).toEqual([false, TAIL[1]]);
+  });
+
+  test("in a new version in doubt, a value read with a new table is still looked for in the table, and one not there counts as elsewhere", () => {
+    const before = "The Basic plan costs 5 pounds per month and includes 10 GB of storage and `sync` now.\n";
+    const table = "| Plan | Cost per month | Storage | Tool |\n|---|---|---|---|\n| Basic plan | 5 pounds | 10 GB of storage | none |\n";
+    const leftOpen = compareVersions(before, `${table}\n<div>a<b\n\nc\n`, null);
+    expect([leftOpen.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), leftOpen.values.length, leftOpen.valuesInDoubt]).toEqual([[[2, 1, 0]], 0, true]);
+    // Control: with the tag closed, the code span the table lacks is not found, and is listed.
+    const closed = compareVersions(before, `${table}\n<div>a<b>\n\nc\n`, null);
+    expect([closed.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), values(closed), closed.valuesInDoubt]).toEqual([[[2, 0, 1]], [["code", "sync"]], false]);
+  });
+
+  test("a code span in a table cell keeps an escaped pipe as the cell shows it", () => {
+    expect(lost("| Command |\n|---|\n| Run `a \\| b` now |\n", "| Command |\n|---|\n| Run it |\n")).toEqual(["a | b"]);
+    expect(lost("| Command |\n|---|\n| Run `a \\| b` now |\n", "Use a | b instead.\n")).toEqual([]);
+    expect(lost("Set `a|b` now.\n", "| Command | Use |\n|---|---|\n| `a\\|b` | yes |\n")).toEqual([]);
+  });
+
+  test("markup is read as HTML reads it, so an angle bracket in a quoted value or a comment splits no number, and hidden content joins it", () => {
     const before = "The total is 42 units.\n";
-    // Each splits 42 with markup that holds an angle bracket, written or as a reference.
-    for (const markup of ["<span title=\">\">", "<span title=\"&gt;\">", "<span title=\"<\">", "<!-- > -->"]) {
-      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual(["42"]);
-      expect(lost(before, `Something else.\n\n<pre>4${markup}2 and 42</pre>\n`), `${markup}, then 42 whole`).toEqual([]);
+    // Each splits 42 with markup that holds an angle bracket, written or as a reference, or with content a browser hides.
+    for (const markup of ["<span title=\">\">", "<span title=\"&gt;\">", "<span title=\"<\">", "<!-- > -->", "<script>x</script>", "<style>a>b</style>"]) {
+      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual([]);
+      // Control: the number itself changed beside the same markup.
+      expect(lost(before, `Something else.\n\n<pre>4${markup}3</pre>\n`), `${markup}, changed`).toEqual(["42"]);
     }
-    // Only tags are removed, not what a browser hides.
-    expect(lost(before, "Something else.\n\n<pre>4<script>x</script>2</pre>\n")).toEqual(["42"]);
     // HTML text is searched for the number as written, not for its other forms; in prose the units hold them.
     expect(lost("The total is 2,500 units.\n", "Something else.\n\n<pre>2<b>500</b></pre>\n")).toEqual(["2,500"]);
     expect(lost("The total is 2,500 units.\n", "Something else.\n\n<pre>2&#53;00</pre>\n")).toEqual(["2,500"]);
     expect(lost("The total is 2,500 units.\n", "Something else, 2<b>500</b> in all.\n")).toEqual([]);
-    // Controls: the same markup with no angle bracket inside is removed, and the number held.
-    for (const markup of ["<span title=\"x\">", "<!-- x -->", "<b>"]) {
-      expect(lost(before, `Something else.\n\n<pre>4${markup}2</pre>\n`), markup).toEqual([]);
-    }
   });
 
   test("a value in a code block, a heading, a slot or a kept unit is not checked", () => {
@@ -362,10 +487,10 @@ describe("a value of the original that the new version does not hold", () => {
   });
 
   test("a value not found is listed once for each unit it stands in, however often it stands there", () => {
-    expect(lost("It was right on 14 of 14 headings.\n", "It was right on most headings.\n")).toEqual(["14"]);
+    expect(lost("It was right on 14 of 14 headings with `make` and `make` again.\n", "It was right on most headings.\n")).toEqual(["14", "make"]);
     expect(lost("It was right on 14 of 14 headings.\n\nIt was wrong on 14 lines.\n", "It was right on most headings.\n")).toEqual(["14", "14"]);
-    // The 14 inside the code span is not read, so only the other is listed.
-    expect(lost("Set `14` on 14 of them.\n", "Set it on all of them.\n")).toEqual(["14"]);
+    // The same text as a number and as a code span is two values.
+    expect(lost("Set `14` on 14 of them.\n", "Set it on all of them.\n")).toEqual(["14", "14"]);
   });
 
   test("figures that read as the same value are one value for their unit", () => {
@@ -385,7 +510,11 @@ describe("a value of the original that the new version does not hold", () => {
   test("a value in the new version's front matter, a link destination or an HTML block is found", () => {
     expect(lost("Read issue 22 today.\n", "---\nissue: 22\n---\n\nRead the issue today.\n")).toEqual([]);
     expect(lost("Read issue 22 today.\n", "Read [the issue](https://example.org/22) today.\n")).toEqual([]);
-    expect(lost("Run the pump 12 times today.\n", "<pre>\npump 12\n</pre>\n\nRun it today.\n")).toEqual([]);
+    expect(lost("Run `make all` today.\n", "<pre>\nmake all\n</pre>\n\nRun it today.\n")).toEqual([]);
+  });
+
+  test("a code span holding no letter or digit is not checked", () => {
+    expect(lost("Pass `--` before the name.\n", "Pass nothing before the name.\n")).toEqual([]);
   });
 
   test("outside every unit, a number is held by its value too: in other figures, in words or by its runs", () => {
@@ -412,10 +541,10 @@ describe("a value of the original that the new version does not hold", () => {
   });
 
   test("the JSON report lists each value with its lines, kind and text", () => {
-    const report = comparisonReport(compareVersions("Keep it below 5 bar.\n\nRun `npm test` 3 times first.\n", "Keep it below the limit.\n", null), PATHS);
+    const report = comparisonReport(compareVersions("Keep it below 5 bar.\n\nRun `npm test` first.\n", "Keep it below the limit.\n", null), PATHS);
     expect(report.values).toEqual([
       { before: 1, after: 1, kind: "number", value: "5", excerpt: "Keep it below 5 bar." },
-      { before: 3, after: null, kind: "number", value: "3", excerpt: "Run npm test 3 times first." },
+      { before: 3, after: null, kind: "code", value: "npm test", excerpt: "Run npm test first." },
     ]);
   });
 });
@@ -436,11 +565,11 @@ describe("number words and figures", () => {
   });
 
   test("a value is found in figures, in words or as text the new version holds", () => {
-    const after = foundIn(["It takes five days.", "Use version 1.13.0 now."], "", meter());
+    const after = foundIn(["It takes five days.", "Use `make all` now."], "", meter());
     expect(after.number(figureValues("5", [])[0]?.readings ?? new Set())).toBe(true);
     expect(after.number(new Set(["6"]))).toBe(false);
-    expect(after.text("13")).toBe(true);
-    expect(after.text("14")).toBe(false);
+    expect(after.code("make all")).toBe(true);
+    expect(after.code("make clean")).toBe(false);
   });
 });
 
@@ -451,7 +580,7 @@ describe("a unit turned into a new table", () => {
     expect(printed(PLANS_BEFORE, PLANS_AFTER).slice(3)).toEqual([
       "| added | | 1 | Not in the original or the author's wording. Confirm its source: \"Choose a plan based on storage and support needs:\" |",
       "| restructured or rewritten | 1 | 3 | A unit of the original shares at least half of its different words with a new table of 20 units, which are not listed one by one. "
-        + "Confirm that nothing was cut or reworded. Its numbers: 6 in the table, 0 elsewhere in the new version, 0 not found: "
+        + "Confirm that nothing was cut or reworded. Its numbers and code spans: 6 in the table, 0 elsewhere in the new version, 0 not found: "
         + "\"The Basic plan costs £5 per month and includes 10 GB of stor...\" |",
       counts({ tables: 1, added: 1 }),
       ...TAIL,
@@ -476,7 +605,7 @@ describe("a unit turned into a new table", () => {
     const lines = printed("The Basic plan costs £5 per month.\n\nThe Pro plan costs £15 per month.\n", "| Plan | Price per month |\n|---|---|\n| Basic | £5 |\n| Pro | £15 |\n");
     expect(lines.slice(3)).toEqual([
       "| restructured or rewritten | 1 | 1 | 2 units of the original each share at least half of their different words with a new table of 6 units, which are not listed one by one. "
-        + "Confirm that nothing was cut or reworded. Their numbers: 2 in the table, 0 elsewhere in the new version, 0 not found: \"The Basic plan costs £5 per month.\" |",
+        + "Confirm that nothing was cut or reworded. Their numbers and code spans: 2 in the table, 0 elsewhere in the new version, 0 not found: \"The Basic plan costs £5 per month.\" |",
       counts({ tables: 2 }),
       ...TAIL,
     ]);
@@ -528,14 +657,14 @@ describe("weighing has a limit", () => {
   });
 
   test("a lookup that passes the limit answers null, and a comparison whose value search does so weighs nothing", () => {
-    expect(foundIn(["A line holding w and x and more words."], "", meter(5)).text("7001")).toBeNull();
+    expect(foundIn(["A line holding w and x and more words."], "", meter(5)).code("w-x")).toBeNull();
     const runs = foundIn(["Open at 10:30."], "", meter(0));
     expect(runs.runs(["10", "30"])).toBeNull();
     const figure = figureValues("10.30", [])[0];
     expect(figure === undefined ? "no figure" : figureFound(figure, runs)).toBeNull();
-    // Ten numbers that stand in none of 2,000 long lines, so each is read for in every line.
-    const numbers = ["7001", "7002", "7003", "7004", "7005", "7006", "7007", "7008", "7009", "7010"];
-    const before = numbers.map(number => `Run ${number} now.`).join("\n\n");
+    // Ten code spans whose words stand in every one of 2,000 long lines, and whose text stands in none.
+    const codes = ["w-x", "x-w", "w.x", "x.w", "w/x", "x/w", "w:x", "x:w", "w+x", "x+w"];
+    const before = codes.map(code => `Run \`${code}\` now.`).join("\n\n");
     const line = `Then ${"w and x and y and z, ".repeat(48)}end.`;
     const comparison = compareVersions(`${before}\n`, `${Array.from({ length: 2_000 }, () => line).join("\n\n")}\n`, null);
     expect([comparison.weighed, comparison.values.length, comparison.dropped.length]).toEqual([false, 0, 10]);
@@ -573,9 +702,9 @@ describe("weighing has a limit", () => {
     expect([read.length, elapsed < 500]).toEqual([0, true]);
   });
 
-  test("a paragraph of 32,000 code spans is compared, and only the number outside them traced", () => {
-    const comparison = compareVersions(`Run ${"`abc 5` ".repeat(32_000)}now 7.\n`, "", null);
-    expect([comparison.weighed, comparison.values.map(value => value.value)]).toEqual([true, ["7"]]);
+  test("a paragraph of 32,000 code spans is compared, and its one code value traced", () => {
+    const comparison = compareVersions(`Run ${"`abc` ".repeat(32_000)}now.\n`, "", null);
+    expect([comparison.weighed, comparison.values.map(value => value.value)]).toEqual([true, ["abc"]]);
   });
 
   test("the steps of pairing grow in proportion to the units, not with their square", () => {
@@ -622,11 +751,12 @@ describe("on random documents", () => {
       for (const pair of comparison.rewritten) {
         expect(pair.shared * 2 >= pair.longer && pair.shared >= 2, label).toBe(true);
       }
-      // A value listed is not in the new version as a whole figure.
+      // A value listed is not in the new version as a whole figure, or as code standing apart from other words.
       const plainAfter = `${comparison.after.map(unit => unit.key).join(" ")} ${after}`;
       const figures = new Set(plainAfter.match(/\d+(?:[.,]\d+)*/g) ?? []);
       for (const value of comparison.values) {
-        expect(figures.has(value.value), `${label}: ${value.value}`).toBe(false);
+        const apart = new RegExp(String.raw`(?<![\p{L}\p{M}\p{N}])${value.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\p{L}\p{M}\p{N}])`, "u").test(plainAfter);
+        expect(value.kind === "number" ? figures.has(value.value) : apart, `${label}: ${value.value}`).toBe(false);
       }
     }
   });
@@ -650,7 +780,13 @@ describe("on random documents", () => {
       value => `![See ${value} here](x.png)`, value => `[${value}](guide.md)`, value => `[the guide](<${value}.md>)`, value => `## ${value}`,
       value => `<div>\n${value}\n</div>`, value => `<pre>\n<b>${value.slice(0, 1)}</b>${value.slice(1)}\n</pre>`,
       value => `<div>\n${[...value].map(character => `&#${character.codePointAt(0)};`).join("")}\n</div>`,
+      // Markup a reader does not see, which a tag read only to its next `>` would end early or leave in.
+      value => `<pre>${value.slice(0, 1)}<span title=">">${value.slice(1)}</span></pre>`,
+      value => `<pre>${value.slice(0, 1)}<!-- > -->${value.slice(1)}</pre>`,
+      value => `<pre>${value.slice(0, 1)}<script>x</script>${value.slice(1)}</pre>`,
     ];
+    // The places from here on show the value whole to a reader only once their markup is read as HTML reads it.
+    const firstMarkupPlace = places.length - 3;
     const figures = numbers.map(number => number.replace("%", ""));
     let paired = 0;
     let listed = 0;
@@ -663,11 +799,11 @@ describe("on random documents", () => {
     let cellPairs = 0;
     let copiesPaired = 0;
     let labelled = 0;
-    for (let trial = 0; trial < 1_000; trial++) {
+    let markupCleared = 0;
+    for (let trial = 0; trial < 600; trial++) {
       const count = 2 + Math.floor(random() * 6);
       const drawn = Array.from({ length: count }, () => {
-        // Most sentences hold a number, so the run lists and clears enough of them.
-        const value = random() < 0.8 ? ` ${pick(numbers, random)} times` : "";
+        const value = random() < 0.5 ? ` ${pick(numbers, random)} times` : "";
         const span = random() < 0.3 ? ` with \`${pick(spans, random)}\`` : "";
         const label = random() < 0.2 ? "**Note:** " : "";
         const reference = random() < 0.15 ? pick(references, random) : "";
@@ -704,24 +840,32 @@ describe("on random documents", () => {
       const ends = random() < 0.25 ? "\r\n" : "\n";
       const before = `${random() < 0.3 ? `## ${pick(verbs, random)} the ${pick(subjects, random)}\n\n` : ""}${sentences.join("\n\n")}\n`.replaceAll("\n", ends);
       // A value of the original, put again in a place of the new version that is not a unit of prose.
-      const valuesBefore = sentences.flatMap(sentence => sentence.replace(/`[^`]*`/g, " ").match(/\d[\d.,]*/g) ?? []);
+      const valuesBefore = sentences.flatMap(sentence => [
+        ...[...sentence.matchAll(/`([^`]*)`/g)].map(match => singleSpace(match[1] ?? "")),
+        ...(sentence.replace(/`[^`]*`/g, " ").match(/\d[\d.,]*/g) ?? []),
+      ]);
       const placed = valuesBefore.length > 0 && random() < 0.7 ? pick(valuesBefore, random) : null;
+      // Half the values placed go to a markup place, so that axis is read often enough to count.
+      const place = placed === null ? -1 : random() < 0.5 ? firstMarkupPlace + Math.floor(random() * 3) : Math.floor(random() * firstMarkupPlace);
       const afterBody = `${heading}${body}${splitTable}${block}`;
-      const after = `${afterBody}${placed === null ? "" : `\n${pick(places, random)(placed)}\n`}`.replaceAll("\n", ends);
+      const after = `${afterBody}${placed === null ? "" : `\n${(places[place] ?? String)(placed)}\n`}`.replaceAll("\n", ends);
       const comparison = compareVersions(before, after, null);
       const label = JSON.stringify([before, after]);
-      // A value is listed only when its text stands nowhere in the new file as written, with its numeric references decoded, or in its units, and only as the original wrote it.
-      const plain = plainTexts(after, comparison.after);
+      // A value is listed only when its text, white space made single, stands nowhere in the new file, and only as the original wrote it.
+      const oracle = oracleTexts(after, comparison.after);
+      // A reader sees the value whole in a markup place, so the oracle holds it as written.
+      if (placed !== null && place >= firstMarkupPlace) oracle.push(singleSpace(placed));
       for (const value of comparison.values) {
-        expect(plain.some(text => text.includes(value.value)), `${label}: ${value.value} stands in the new version`).toBe(false);
-        expect(figures.includes(value.value), `${label}: ${value.value} is not a figure the original wrote outside a code span`).toBe(true);
+        expect(oracle.some(text => text.includes(singleSpace(value.value))), `${label}: ${value.value} stands in the new version`).toBe(false);
+        expect((value.kind === "code" ? spans.map(singleSpace) : figures).includes(value.value), `${label}: ${value.value} is not a value the original wrote`).toBe(true);
       }
       if (placed !== null && compareVersions(before, afterBody.replaceAll("\n", ends), null).values.some(value => value.value === placed)) {
         expect(comparison.values.some(value => value.value === placed), `${label}: ${placed}`).toBe(false);
         cleared++;
+        // Counted only where a tag read to its next `>` could not hold the value, so plain markup in these places counts nothing.
+        if (place >= firstMarkupPlace && cannotHold(oracleTexts(after, comparison.after), placed, spans.map(singleSpace).includes(placed))) markupCleared++;
       }
-      // A character reference beside a code span, where a span placed by another reading would hide the wrong figures.
-      if (/&[#a-z]/.test(before) && before.includes("`") && comparison.values.length > 0) traced++;
+      if (/&[#a-z]/.test(before) && comparison.values.some(value => value.kind === "code")) traced++;
       // Every unit of either version not kept, as the comparison held them before it paired any.
       const left = inOrderOf([...comparison.dropped, ...comparison.rewritten.map(pair => pair.before), ...comparison.tables.flatMap(table => table.sources)], comparison.before);
       const over = inOrderOf([...comparison.added, ...comparison.rewritten.map(pair => pair.after), ...comparison.tables.flatMap(table => table.cells)], comparison.after);
@@ -740,10 +884,9 @@ describe("on random documents", () => {
       }
       // Each value of a unit not kept that nothing in the new version could be read as must be listed.
       const listedHere = new Set(comparison.values.map(value => `${value.unit.line} ${value.unit.key} ${value.value}`));
-      const oracle = oracleTexts(after, comparison.after);
       for (const unit of [...comparison.dropped.filter(isProse), ...comparison.rewritten.map(pair => pair.before), ...comparison.tables.flatMap(table => table.sources)]) {
-        for (const value of figuresOutside(unit.key, spans)) {
-          if (cannotHold(oracle, value)) {
+        for (const value of [...spans.filter(code => unit.key.includes(code)), ...figuresOutside(unit.key, spans)]) {
+          if (cannotHold(oracle, value, spans.includes(value))) {
             expect(listedHere.has(`${unit.line} ${unit.key} ${value}`), `${label}: ${value}`).toBe(true);
             listed++;
           }
@@ -760,6 +903,7 @@ describe("on random documents", () => {
     expect(Math.min(itemPairs, cellPairs)).toBeGreaterThan(80);
     expect(copiesPaired).toBeGreaterThan(50);
     expect(labelled).toBeGreaterThan(60);
+    expect(markupCleared).toBeGreaterThan(5);
   });
 });
 
@@ -853,35 +997,161 @@ function singleSpace(text: string): string {
 }
 
 /**
- * The new file as written, with its numeric character references decoded,
- * and as the units the comparison read. A figure whose text stands in one of
- * these is in the new version without reading any HTML, so no row may name it.
- */
-function plainTexts(source: string, units: readonly Unit[]): string[] {
-  return [source, source.replace(/&#(\d+);/g, (whole, code: string) => String.fromCodePoint(Number(code))), units.map(unit => unit.key).join(" ")];
-}
-
-/**
- * The new file as the random documents here can hold a value in it: the
- * texts `plainTexts` gives, and the decoded text with its tags removed too,
- * each with its white space made single. The documents hold no `<` or `>`
- * inside a tag, so removing each run from `<` to the next `>` removes their tags.
+ * The new file as the random documents here can hold a value in it: raw,
+ * with its numeric character references decoded, with its tags removed too,
+ * and as the units the comparison read, each with its white space made single.
  */
 function oracleTexts(source: string, units: readonly Unit[]): string[] {
-  const [raw = "", decoded = "", keys = ""] = plainTexts(source, units);
-  return [raw, decoded, decoded.replace(/<[^<>]*>/g, ""), keys].map(singleSpace);
+  const decoded = source.replace(/&#(\d+);/g, (whole, code: string) => String.fromCodePoint(Number(code)));
+  return [source, decoded, decoded.replace(/<[^<>]*>/g, ""), units.map(unit => unit.key).join(" ")].map(singleSpace);
 }
 
 /**
- * Whether nothing in the new version could be read as a number: its text
- * stands nowhere in the texts `oracleTexts` gives, no run of its digits, nor
- * all its digits joined, stands as a run of digits there, and no number word
- * does.
+ * Whether nothing in the new version could be read as a value: its text
+ * stands nowhere in the texts `oracleTexts` gives, and for a number, no run
+ * of its digits, nor all its digits joined, stands as a run of digits there,
+ * and no number word does.
  */
-function cannotHold(oracle: readonly string[], value: string): boolean {
+function cannotHold(oracle: readonly string[], value: string, isCode: boolean): boolean {
   const text = oracle.join("\n");
-  if (text.includes(value)) return false;
+  if (text.includes(singleSpace(value))) return false;
+  if (isCode) return true;
   const runs = new Set((text.match(/\d+/g) ?? []).map(run => run.replace(/^0+(?=\d)/, "")));
   const digits = [...(value.match(/\d+/g) ?? []), value.replace(/\D/g, "")];
   return !NUMBER_WORD.test(text) && digits.every(run => !runs.has(run.replace(/^0+(?=\d)/, "")));
 }
+
+/** An original that holds one value: a number in a sentence, or a code span. */
+function originalOf(value: string): string {
+  return /^\d+$/.test(value) ? `The total is ${value} units.\n` : `Run \`${value}\` first.\n`;
+}
+
+/** An original whose sentence a new table reads, with a code span `a &amp; b` and the number 42 that the table does not hold. */
+const TABLE_BEFORE = "The Basic plan costs 5 pounds per month and includes 10 GB of storage, `a &amp; b` and 42 users.\n";
+
+/** A table that holds two of `TABLE_BEFORE`'s numbers, but not its code span or its 42. */
+const TABLE_AFTER = "| Plan | Cost per month | Storage | Tool |\n|---|---|---|---|\n| Basic plan | 5 pounds | 10 GB of storage | none |\n";
+
+describe("a value that stands whole in the new file as written is never listed", () => {
+  test("a code span and a number that only the file as written holds, its white space made single", () => {
+    // A comment hides each from every reading but the file as written, and a character reference would be decoded in the others.
+    const held: ReadonlyArray<readonly [string, string]> = [
+      ["a &amp; b", "Run it first.\n\n<!-- a &amp; b -->\n"],
+      ["a &amp; b", "Run it first.\n\n<!-- a\n  &amp;   b -->\n"],
+      ["42", "Something else.\n\n<!-- &#4242; -->\n"],
+    ];
+    for (const [value, after] of held) {
+      expect([after, lost(originalOf(value), after)]).toEqual([after, []]);
+    }
+    // Controls: the same files with the value changed.
+    const changed: ReadonlyArray<readonly [string, string]> = [
+      ["a &amp; b", "Run it first.\n\n<!-- a &amp; c -->\n"],
+      ["a &amp; b", "Run it first.\n\n<!-- a\n  &amp;   c -->\n"],
+      ["42", "Something else.\n\n<!-- &#4343; -->\n"],
+    ];
+    for (const [value, after] of changed) {
+      expect([after, lost(originalOf(value), after)]).toEqual([after, [value]]);
+    }
+  });
+
+  test("wherever it stands: in a script, an attribute, a link destination, front matter, a heading or a fence", () => {
+    const held: ReadonlyArray<readonly [string, string]> = [
+      ["npm test", "Run it first.\n\n<script>npm test</script>\n"],
+      ["npm test", "Run it first.\n\n<span title=\"npm test\">x</span>\n"],
+      ["npm-test", "Run it first.\n\n[x](npm-test)\n"],
+      ["42", "---\nsize: 42\n---\nSomething else.\n"],
+      ["npm test", "Run it first.\n\n# npm test\n"],
+      ["42", "Something else.\n\n```\n42\n```\n"],
+    ];
+    for (const [value, after] of held) {
+      expect([after, lost(originalOf(value), after)]).toEqual([after, []]);
+    }
+  });
+
+  test("in every recorded document whose text holds its value whole", () => {
+    const count = { code: 0, number: 0, listed: 0 };
+    for (const document of htmlTextDocuments()) {
+      if (!singleSpace(document.text).includes(document.value)) continue;
+      count[/^\d+$/.test(document.value) ? "number" : "code"]++;
+      if (lost(originalOf(document.value), document.text).includes(document.value)) count.listed++;
+    }
+    expect(count).toEqual({ code: 1981, number: 432, listed: 0 });
+  }, 120_000);
+
+  test("read with a new table, it counts as elsewhere, not as not found", () => {
+    const held = compareVersions(TABLE_BEFORE, `${TABLE_AFTER}\n<!-- a &amp; b &#4242; -->\n`, null);
+    expect([held.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), values(held)]).toEqual([[[2, 2, 0]], []]);
+    // Control: with both changed, both are not found, and both are listed.
+    const changed = compareVersions(TABLE_BEFORE, `${TABLE_AFTER}\n<!-- a &amp; c &#4343; -->\n`, null);
+    expect([changed.tables.map(read => [read.inTable, read.elsewhere, read.notFound]), values(changed)]).toEqual([[[2, 0, 2]], [["code", "a &amp; b"], ["number", "42"]]]);
+  });
+});
+
+describe("each reading of the new file also clears a row", () => {
+  // Each specimen is held by one reading alone, and its control, with the value changed, is listed.
+  test("the units the comparison reads, which read emphasis as its text", () => {
+    expect([lost("Run `npm test` first.\n", "Run it first.\n\nnp*m* test\n"), lost("Run `npm test` first.\n", "Run it first.\n\nnp*m* tset\n")])
+      .toEqual([[], ["npm test"]]);
+  });
+
+  test("the file with its character references decoded and its backslash escapes read, here in a comment that no other reading shows", () => {
+    const held = [
+      lost("Run `npm test` first.\n", "Run it first.\n\n<!-- npm&#32;test -->\n"),
+      lost("Run `npm_test` first.\n", "Run it first.\n\n<!-- npm\\_test -->\n"),
+      lost("The total is 42 units.\n", "Something else.\n\n<!-- 4&#50; -->\n"),
+    ];
+    const changed = [
+      lost("Run `npm test` first.\n", "Run it first.\n\n<!-- npm&#32;tset -->\n"),
+      lost("Run `npm_test` first.\n", "Run it first.\n\n<!-- npm\\_tset -->\n"),
+      lost("The total is 42 units.\n", "Something else.\n\n<!-- 4&#51; -->\n"),
+    ];
+    expect([held, changed]).toEqual([[[], [], []], [["npm test"], ["npm_test"], ["42"]]]);
+  });
+
+  test("the HTML reading, which keeps a quotation marker as text", () => {
+    expect([lost("Run `> npm` first.\n", "Run it first.\n\n> np<b>m</b>\n"), lost("Run `> npm` first.\n", "Run it first.\n\n> np<b>n</b>\n")])
+      .toEqual([[], ["> npm"]]);
+  });
+
+  test("the Markdown reading, which reads front matter as CommonMark does, as a rule and a heading", () => {
+    expect([lost("Run `npm test` first.\n", "---\ntitle: np`m` test\n---\nRun it first.\n"), lost("Run `npm test` first.\n", "---\ntitle: np`m` tset\n---\nRun it first.\n")])
+      .toEqual([[], ["npm test"]]);
+  });
+
+  test("the third reading, which reads a backslash that ends a line as a break", () => {
+    expect([lost("Run `npm test` first.\n", "Run it first.\n\nnp<b>m\\\ntest\n"), lost("Run `npm test` first.\n", "Run it first.\n\nnp<b>m\\\ntset\n")])
+      .toEqual([[], ["npm test"]]);
+  });
+
+  test("the figures of the file as written, which hold a number written another way", () => {
+    expect([lost("The total is 1000 units.\n", "Something else.\n\n<!-- 1,000 -->\n"), lost("The total is 1000 units.\n", "Something else.\n\n<!-- 1,001 -->\n")])
+      .toEqual([[], ["1000"]]);
+  });
+
+  test("the readings read a quoted `>` inside its tag, and hide a style's or a script's content up to its end tag", () => {
+    for (const after of ["np<span title=\">\">m</span> test", "np<style>x</style>m test", "np<script>x</script>m test"]) {
+      expect([after, lost("Run `npm test` first.\n", `Run it first.\n\n${after}\n`), lost("Run `npm test` first.\n", `Run it first.\n\n${after.replace("test", "tset")}\n`)])
+        .toEqual([after, [], ["npm test"]]);
+    }
+  });
+});
+
+describe("clause 23a's limit: pieces of a value that markup separates", () => {
+  test("each example is listed, though a reader sees the value whole", () => {
+    for (const [markup, value, after] of SEPARATED) {
+      expect([markup, after.includes(value), lost(originalOf(value), after)]).toEqual([markup, false, [value]]);
+    }
+  });
+
+  test("writing the value whole in the new version clears each row", () => {
+    for (const [markup, value, after] of SEPARATED) {
+      expect([markup, lost(originalOf(value), `${after}\n${value}\n`)]).toEqual([markup, []]);
+    }
+  });
+
+  test("the same markup that does not separate the value lists nothing, and a value cut is listed", () => {
+    for (const [change, value, listed, after] of SEPARATED_CONTROLS) {
+      expect([change, lost(originalOf(value), after)]).toEqual([change, listed ? [value] : []]);
+    }
+  });
+});
