@@ -484,8 +484,8 @@ describe("bullet-paragraphs checked against Bun's renderer, a test oracle", () =
       }
     }
     expect(shown).toEqual([]);
-    // The specimens above held 106 findings when this was written.
-    expect(checked).toBeGreaterThanOrEqual(106);
+    // The specimens above hold 265 findings. Fewer means some no longer reach this check.
+    expect(checked).toBeGreaterThanOrEqual(265);
   });
 
   test.skipIf(renderer === undefined)("every finding in the seeded documents below shows as an unordered item of that many paragraphs in Bun's rendering", () => {
