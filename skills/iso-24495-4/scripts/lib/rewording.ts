@@ -68,7 +68,7 @@ const SCALES: ReadonlyMap<string, number> = new Map([
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 
 /** What a version in doubt, as `valueReading` describes it, holds: every value, however it is looked for. */
-const HELD: Found = { number: heldAnyway, runs: heldAnyway, code: heldAnyway, text: heldAnyway };
+const HELD: Found = { inDoubt: true, number: heldAnyway, runs: heldAnyway, code: heldAnyway, text: heldAnyway };
 
 /** A backslash escape: a backslash before a mark of ASCII punctuation, which a reader sees as the mark alone. */
 const ESCAPED = /\\([!-/:-@[-`{-~])/g;
@@ -105,6 +105,8 @@ export interface FigureValue {
 
 /** What the new version holds, to look a value up in. */
 export interface Found {
+  /** Whether the new version is in doubt, as `valueReading` describes, so every value counts as held without being looked for. */
+  readonly inDoubt: boolean;
   /** Whether the new version holds a number with one of these readings, in figures or in words. */
   number(readings: ReadonlySet<string>): boolean;
   /**
@@ -307,6 +309,7 @@ export function foundIn(keys: readonly string[], source: string, meter: Meter): 
   }
   const answers = new Map<string, boolean | null>();
   return {
+    inDoubt: false,
     number: readings => [...readings].some(reading => numbers.has(reading)),
     runs: runs => {
       const places = startingWith.get(runs[0] ?? "") ?? [];

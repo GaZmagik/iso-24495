@@ -14,6 +14,9 @@ const TAIL = [
   "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
 ];
 
+/** The line printed last when a value was looked for in a new version in doubt. */
+const IN_DOUBT = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and it traced no value.";
+
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
 const NOT_WEIGHED = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
 
@@ -382,6 +385,24 @@ describe("a value of the original that the new version does not hold", () => {
     // Control: the same version with its tag closed is not in doubt, so values it does not hold are listed.
     const closed = "Something else.\n\n- <pre></pre>4<b>\n  c=\"x <i>3</i>\n";
     expect(lost("The total is 42 units. Run `42` first.\n", closed)).toEqual(["42", "42"]);
+  });
+
+  test("a comparison that looks for a value in a new version in doubt says it traced none, in print and in the report", () => {
+    const before = "Run `make all` first.\n";
+    // The tag the HTML block leaves open runs across the blank line, so the version is in doubt, though `make all` is cut.
+    const leftOpen = "Run it first.\n\n<div>a<b\n\nc\n";
+    const comparison = compareVersions(before, leftOpen, null);
+    expect([comparison.values.length, comparison.weighed, comparison.valuesInDoubt]).toEqual([0, true, true]);
+    expect(formatComparison(comparison, PATHS).split("\n").slice(-3)).toEqual([...TAIL, IN_DOUBT]);
+    expect(comparisonReport(comparison, PATHS).valuesInDoubt).toBe(true);
+    // Control: with the tag closed the version is not in doubt, so the value is listed and no such line is printed.
+    const closed = compareVersions(before, "Run it first.\n\n<div>a<b>\n\nc\n", null);
+    expect([values(closed), closed.valuesInDoubt]).toEqual([[["code", "make all"]], false]);
+    expect(formatComparison(closed, PATHS).split("\n").slice(-2)).toEqual(TAIL);
+    expect(comparisonReport(closed, PATHS).valuesInDoubt).toBe(false);
+    // A version in doubt with no value to look for says nothing of doubt, because no value went untraced.
+    const noValue = compareVersions("Run the tests first.\n", leftOpen, null);
+    expect([noValue.valuesInDoubt, formatComparison(noValue, PATHS).split("\n").at(-1)]).toEqual([false, TAIL[1]]);
   });
 
   test("a code span in a table cell keeps an escaped pipe as the cell shows it", () => {

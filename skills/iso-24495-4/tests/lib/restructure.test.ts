@@ -1022,6 +1022,7 @@ describe("the JSON report", () => {
       tables: [],
       values: [],
       weighed: true,
+      valuesInDoubt: false,
     });
   });
 

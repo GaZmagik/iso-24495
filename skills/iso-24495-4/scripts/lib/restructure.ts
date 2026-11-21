@@ -81,6 +81,9 @@ const WEIGHED_LINE = "It pairs a reworded unit only where the two share half the
 /** What the printed comparison says when its searches passed `WEIGHING_BUDGET`. */
 const NOT_WEIGHED_LINE = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
 
+/** What the printed comparison says when the new version was in doubt as it looked for a value, so it traced none. */
+const IN_DOUBT_LINE = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and it traced no value.";
+
 /**
  * How many pairings of repeated texts the comparison weighs, at most, when
  * it pairs their copies. Weighing every pairing of a text with `b` copies
@@ -180,7 +183,7 @@ export function compareUnits(before: readonly Unit[], after: readonly Unit[], au
     added: [], fromAuthor: [], gaps: [], newHeadings: [],
     newLabels: byItsLabel.filter(pair => pair.after.label !== undefined).map(pair => pair.after),
     labelsGone: byItsLabel.filter(pair => pair.before.label !== undefined).map(pair => pair.before),
-    rewritten: [], tables: [], values: [], weighed: true,
+    rewritten: [], tables: [], values: [], weighed: true, valuesInDoubt: false,
   };
   const takeAuthor = waitingByText(author, unit => unit.key);
   const headingUnits: Unit[] = [];
@@ -337,6 +340,7 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
       + `New labels ${comparison.newLabels.length}. Labels gone ${comparison.labelsGone.length}.`,
     "The comparison reads wording, not meaning.",
     comparison.weighed ? WEIGHED_LINE : NOT_WEIGHED_LINE,
+    ...(comparison.valuesInDoubt ? [IN_DOUBT_LINE] : []),
   );
   return lines.join("\n");
 }
@@ -363,6 +367,8 @@ export function formatComparison(comparison: Comparison, paths: ComparedPaths): 
  *     line, the line of the unit or table it went to or null, its kind, and
  *     the first 60 characters of the value and of its unit. `weighed` is
  *     false when the searches passed their limit and none of these was read.
+ *     `valuesInDoubt` is true when the new version was in doubt as a value
+ *     was looked for, so no value was traced or listed.
  */
 export function comparisonReport(comparison: Comparison, paths: ComparedPaths): RestructureReport {
   return {
@@ -390,6 +396,7 @@ export function comparisonReport(comparison: Comparison, paths: ComparedPaths): 
     })),
     values: comparison.values.map(value => ({ before: value.unit.line, after: value.after, kind: value.kind, value: excerpt(value.value), excerpt: excerpt(value.unit.key) })),
     weighed: comparison.weighed,
+    valuesInDoubt: comparison.valuesInDoubt,
   };
 }
 
@@ -477,6 +484,13 @@ export interface Comparison {
   readonly values: readonly MissingValue[];
   /** False when the searches for rewording, tables and values passed their limit, so none of them was read. */
   readonly weighed: boolean;
+  /**
+   * True when a value was looked for in a new version in doubt, as
+   * `valueReading` describes, so every value counted as held: none was
+   * traced or listed, and a value read with a new table and not in it
+   * counted as elsewhere.
+   */
+  readonly valuesInDoubt: boolean;
 }
 
 /** A new table and the units of the original read with it, as `readRewording` describes. */
@@ -532,6 +546,7 @@ export interface RestructureReport {
   tables: Array<{ before: number[]; after: number; units: number; excerpt: string; values: { inTable: number; elsewhere: number; notFound: number } }>;
   values: Array<{ before: number; after: number | null; kind: "number" | "code"; value: string; excerpt: string }>;
   weighed: boolean;
+  valuesInDoubt: boolean;
 }
 
 /** One unit in a report: its line, its kind and its first 60 characters. */
@@ -692,6 +707,9 @@ function runs(kept: readonly KeptPair[], flagged: Uint8Array, rank: Int32Array, 
  *    value of a unit read with a table is counted as in the table, elsewhere
  *    or not found.
  *
+ * When the new version is in doubt, every value counts as held, as
+ * `foundIn` describes, and the comparison says it traced none.
+ *
  * When the searches pass `WEIGHING_BUDGET` steps, none of this is used: the
  * comparison keeps its units dropped and added, and says it weighed nothing.
  */
@@ -759,6 +777,7 @@ function readRewording(comparison: Comparison, afterSource: string): Comparison 
     rewritten: pairs,
     tables: read.map((table, position) => ({ sources: table.sources, cells: table.cells, ...(tallies[position] ?? { inTable: 0, elsewhere: 0, notFound: 0 }) })),
     values,
+    valuesInDoubt: found?.inDoubt === true,
   };
 }
 

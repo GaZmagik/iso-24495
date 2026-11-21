@@ -548,8 +548,42 @@ describe("the two-version comparison, given --before", () => {
         dropped: [{ line: 3, kind: "sentence", excerpt: "Open the vent." }],
         added: [{ line: 4, kind: "item", excerpt: "Check the gauge." }],
         fromAuthor: [], gaps: [], newHeadings: [], headingsGone: [], newLabels: [], labelsGone: [],
-        rewritten: [], tables: [], values: [], weighed: true,
+        rewritten: [], tables: [], values: [], weighed: true, valuesInDoubt: false,
       });
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test("says, printed and in the report, when the new version is in doubt and no value was traced", () => {
+    const project = makeProject();
+    try {
+      writeFileSync(join(project, "old.md"), "Run `npm test` before you merge.\n\nKeep the valve shut.\n");
+      const json = join(project, "report.json");
+      const compared = (after: string): { closing: string[]; restructure: { values: unknown[]; weighed: boolean; valuesInDoubt: boolean } } => {
+        writeFileSync(join(project, "new.md"), after);
+        const output = capture();
+        expect(runCli(
+          ["bun", "audit-text-cli.ts", join(project, "new.md"), "--before", join(project, "old.md"), "--project-dir", project, "--json", json],
+          output.writeOut,
+          output.writeErr,
+        )).toBe(0);
+        const comparison = output.stdout.find(block => block.startsWith("Restructure comparison")) ?? "";
+        const report = JSON.parse(readFileSync(json, "utf8")) as { restructure: { values: unknown[]; weighed: boolean; valuesInDoubt: boolean } };
+        return { closing: comparison.split("\n").slice(-3), restructure: report.restructure };
+      };
+      // The tag the HTML block leaves open runs across the blank line, so the file is in doubt, though `npm test` is cut.
+      const leftOpen = compared("Run the tests before you merge.\n\nKeep the valve shut.\n\n<div>a<b\n\nc\n");
+      expect(leftOpen.closing).toEqual([
+        "The comparison reads wording, not meaning.",
+        "It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.",
+        "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and it traced no value.",
+      ]);
+      expect([leftOpen.restructure.values, leftOpen.restructure.weighed, leftOpen.restructure.valuesInDoubt]).toEqual([[], true, true]);
+      // Control: with the tag closed the file is not in doubt, the cut code span is listed, and no such line is printed.
+      const closed = compared("Run the tests before you merge.\n\nKeep the valve shut.\n\n<div>a<b>\n\nc\n");
+      expect(closed.closing.at(-1)).toBe("It pairs a reworded unit only where the two share half the longer one's words or more, and reads only figures and code spans as values.");
+      expect([closed.restructure.values.length, closed.restructure.valuesInDoubt]).toEqual([1, false]);
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
