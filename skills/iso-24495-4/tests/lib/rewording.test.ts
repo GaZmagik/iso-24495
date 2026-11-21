@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { compareUnits, compareVersions, comparisonReport, formatComparison, type Comparison, type Unit } from "../../scripts/lib/restructure.ts";
 import { figureFound, figureValues, foundIn, numberWords, pairReworded, wordsOf, WEIGHING_BUDGET, type Meter } from "../../scripts/lib/rewording.ts";
+import { htmlTextDocuments } from "../fixtures/html-text-documents.ts";
+import { VALUE_SHOWN } from "../fixtures/html-text-renderings.ts";
+import { inValueGuarantee } from "../fixtures/value-guarantee.ts";
 
 /** The paths every printed comparison here names. */
 const PATHS = { before: "old.md", after: "new.md", authorText: null };
@@ -16,6 +19,19 @@ const TAIL = [
 
 /** The line printed last when a value was looked for in a new version in doubt. */
 const IN_DOUBT = "The new version leaves markup open across the end of a block, so what a reader sees of it is in doubt, and it traced no value.";
+
+/**
+ * New versions outside clause 23a's guarantee that the sweeps of fix round 2
+ * found: the CommonMark reference shows each value whole, and the comparison
+ * lists it. Each is the shape, the value, and the new version.
+ */
+const RESIDUAL: ReadonlyArray<readonly [string, string, string]> = [
+  ["a line inside an HTML block opens as another HTML block would", "a<b>c", "Run it first.\n\n<div>\n<style>\n\n</style>a<!--\n--><!--x--->\\<b>c\n</div>\n"],
+  ["an HTML block holds a code span, which CommonMark does not read there", "npm test", "Run it first.\n\n<pre> Use `\"` here. np<![CDATA[x]]></script>m <b\n>>test\"></pre>\n"],
+  ["a quotation marker stands straight after a list marker", "a<b>c", "Run it first.\n\n- >a\\<b<span title=\"a\n  >b\">&gt;c\n"],
+  ["an HTML block in a quotation holds both, with a number", "42", "Something else.\n\n> <pre> Use `\"` here. 4<b\n> ><script><!--</script>2></pre>\n"],
+  ["an HTML block holds a code span, with a number", "42", "Something else.\n\n<div>\n Use `\"` here. 4<!--\n\n--><!-- <b> -->2\n</div>\n"],
+];
 
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
 const NOT_WEIGHED = "Its searches for reworded units, new tables and values passed their limit, so it paired no reworded unit, read no new table and traced no value.";
@@ -970,3 +986,48 @@ function cannotHold(oracle: readonly string[], value: string, isCode: boolean): 
   const digits = [...(value.match(/\d+/g) ?? []), value.replace(/\D/g, "")];
   return !NUMBER_WORD.test(text) && digits.every(run => !runs.has(run.replace(/^0+(?=\d)/, "")));
 }
+
+/** Whether the CommonMark reference shows the value of the recorded document at this index whole, or the file as written holds it. */
+function recordedShown(index: number): boolean {
+  return ((Number.parseInt(VALUE_SHOWN.charAt(index >> 2), 16) >> (3 - (index & 3))) & 1) === 1;
+}
+
+/** An original that holds one value: a number in a sentence, or a code span. */
+function originalOf(value: string): string {
+  return /^\d+$/.test(value) ? `The total is ${value} units.\n` : `Run \`${value}\` first.\n`;
+}
+
+describe("clause 23a's guarantee", () => {
+  test("where no line opens with `<` once its leading marks are taken off, and no quotation marker follows a list marker, no recorded value the reference shows is listed", () => {
+    const documents = htmlTextDocuments();
+    expect(VALUE_SHOWN.length).toBe(Math.ceil(documents.length / 4));
+    let inside = 0;
+    let shown = 0;
+    let listed = 0;
+    for (const [index, document] of documents.entries()) {
+      if (!inValueGuarantee(document.text)) continue;
+      inside++;
+      if (!recordedShown(index)) continue;
+      shown++;
+      if (lost(originalOf(document.value), document.text).includes(document.value)) listed++;
+    }
+    expect([inside, shown, listed]).toEqual([67_252, 41_231, 0]);
+  }, 120_000);
+
+  test("each shape the sweeps found listed though a reader sees its value falls outside it", () => {
+    for (const [shape, value, after] of RESIDUAL) {
+      expect([shape, after.includes(value), lost(originalOf(value), after), inValueGuarantee(after)]).toEqual([shape, false, [value], false]);
+    }
+  });
+
+  test("it reads the marks that open each line", () => {
+    // Inside: prose, a list, a quotation, a list in a quotation, a fence, and a `<` that opens no line.
+    for (const text of ["np<b>m test\n", "- np<b>m test\n", "> np<b>m\n", "> - np<b>m\n", "```\nx\n```\n", "a \\<b>\n"]) {
+      expect([text, inValueGuarantee(text)]).toEqual([text, true]);
+    }
+    // Outside: a line that opens with `<` under any marks, and a quotation marker after a list marker, however deep.
+    for (const text of ["<div>\nx\n</div>\n", "a\n<b>c\n", "  <b>x\n", "- <b>x\n", "> - <b>x\n", "1. > x\n", "- - > x\n", "> 2) > x\n", "a\r\n<b>\r\n"]) {
+      expect([text, inValueGuarantee(text)]).toEqual([text, false]);
+    }
+  });
+});
