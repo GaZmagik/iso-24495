@@ -46,8 +46,8 @@ np<b>m\
 test
 `],
   ["the HTML reading, where a quoted `>` does not end its tag", "Run it first.\n\nnp<span title=\">\">m</span> test\n"],
-  ["doubt, where a style is left open across blank lines", "Run it first.\n\nnp<style>\n\nx\n\nx</style>m test\n"],
-  ["doubt, where a script is left open across blank lines", "Run it first.\n\nnp<script>\n\nx\n\nx</script>m test\n"],
+  ["a reading that hides a style's content up to its end tag, across blank lines, as a browser does", "Run it first.\n\nnp<style>\n\nx\n\nx</style>m test\n"],
+  ["a reading that hides a script's content up to its end tag, across blank lines, as a browser does", "Run it first.\n\nnp<script>\n\nx\n\nx</script>m test\n"],
 ];
 
 /** The line printed in place of the rows part N gives, when the weighing passed its limit. */
