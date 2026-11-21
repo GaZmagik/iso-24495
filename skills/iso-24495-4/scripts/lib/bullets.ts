@@ -3,8 +3,10 @@ import { opensEmptyContainer } from "./alerts.ts";
 import type { Violation } from "./types.ts";
 
 const BLANK = /^[ \t]*$/;
-/** The marker line of an item this rule reads: spaces, a bullet, one or more spaces, then text that does not start with a space or a tab. */
-const MARKER_LINE = /^( *)([-*+])( +)([^ \t].*)$/;
+/** The marker line of an item this rule reads: up to three spaces, a bullet, one or more spaces, then text that does not start with a space or a tab. */
+const MARKER_LINE = /^( {0,3})([-*+])( +)([^ \t].*)$/;
+/** The byte order mark, which the structural reading drops from the start of a text. */
+const BYTE_ORDER_MARK = 0xfeff;
 /** The spaces and tabs a line starts with. */
 const LEADING = /^[ \t]*/;
 /**
@@ -32,9 +34,12 @@ const STAR_OR_UNDERSCORE_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
  * holds two or more paragraphs and nothing else.
  *
  * It reports only an item it is sure of, and reads any other as no finding.
- * An item is read when its marker line is spaces, a `-`, `*` or `+`, one to
- * four spaces and text, so items in quotations or on another item's line are
- * not read. Each line of the item must be blank or plain text at its text's
+ * An item is read when its marker line is up to three spaces, a `-`, `*` or
+ * `+`, one to four spaces and text, so items in quotations, on another item's
+ * line or four or more columns in are not read. A bullet with text up to
+ * three columns in is an item in CommonMark wherever it stands, unless HTML
+ * or a fence holds it; one further in is an item only because of the lists
+ * above it, which the structural reading can misplace. Each line of the item must be blank or plain text at its text's
  * column, up to three columns past it. A line that may start any other
  * block, such as code, a quotation, a list, a table, a heading, HTML or a
  * link definition, leaves the whole item unread. So does a paragraph that is
@@ -50,9 +55,11 @@ const STAR_OR_UNDERSCORE_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
  * as `<!--` or `<pre`, wherever it stands. No line from the last blank line
  * above the marker may hold a `<`, as HTML there runs on to the next blank
  * line. No line above it may open an empty container, as
- * `opensEmptyContainer` reads one. And when its marker stands four or more
- * columns in, no line above it may hold a `<`: such a marker is an item only
- * because of the lists above it, and HTML above can hide where they stand.
+ * `opensEmptyContainer` reads one. And no line above it may be shaped like a
+ * fence, wherever it stands, as the structural reading can end a fence where
+ * CommonMark keeps it open. An item on the first line of a text that starts
+ * with a byte order mark is not read either: CommonMark reads the mark as
+ * text there.
  *
  * Each line after a marker is read by one item at most, so the time taken
  * grows with the text, not with the number of items.
@@ -66,7 +73,7 @@ const STAR_OR_UNDERSCORE_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
  */
 export function bulletParagraphViolations(text: string, parsed: Pick<ReturnType<typeof structure>, "items">, tally?: { lines: number }): Violation[] {
   const lines = toLines(text);
-  const guards = readGuards(lines);
+  const guards = readGuards(text, lines);
   const findings: Violation[] = [];
   let previous = -1;
   for (const item of parsed.items) {
@@ -74,8 +81,7 @@ export function bulletParagraphViolations(text: string, parsed: Pick<ReturnType<
     // Items nested on one line share it; the line is read once.
     if (index === previous) continue;
     previous = index;
-    const marker = lines[index] ?? "";
-    if (!guards.clearAbove(index, marker.length - marker.replace(/^ +/, "").length)) continue;
+    if (!guards.clearAbove(index)) continue;
     const paragraphs = paragraphsOf(lines, index, tally);
     if (paragraphs >= 2) {
       findings.push({
@@ -87,24 +93,24 @@ export function bulletParagraphViolations(text: string, parsed: Pick<ReturnType<
   return findings;
 }
 
-/** What the four guards need to know of the whole text, read in one pass. */
+/** What the guards need to know of the whole text, read in one pass. */
 interface Guards {
-  /** Whether no guard stops the item whose marker stands at this index, this many spaces in. */
-  clearAbove(index: number, indent: number): boolean;
+  /** Whether no guard stops the item whose marker stands at this index. */
+  clearAbove(index: number): boolean;
 }
 
 /**
- * Reads the text once for the four guards. An item at index `m` is clear
- * when the first line that starts HTML running past a blank line stands at
- * or below `m`, the first line that opens an empty container stands at or
- * below `m`, and no line holds a `<` between the last blank line above `m`
- * and `m`. An item four or more spaces in is clear only when the first line
- * that holds a `<` also stands at or below `m`.
+ * Reads the text once for the guards. An item at index `m` is clear when the
+ * first line that starts HTML running past a blank line, the first line that
+ * opens an empty container and the first line shaped like a fence each stand
+ * at or below `m`, and no line holds a `<` between the last blank line above
+ * `m` and `m`. An item at index 0 is not clear when the text starts with a
+ * byte order mark.
  */
-function readGuards(lines: readonly string[]): Guards {
+function readGuards(text: string, lines: readonly string[]): Guards {
   let firstLongHtml = Number.POSITIVE_INFINITY;
   let firstEmpty = Number.POSITIVE_INFINITY;
-  let firstAngle = Number.POSITIVE_INFINITY;
+  let firstFence = Number.POSITIVE_INFINITY;
   // For each index, whether a `<` stands on a line after the last blank line
   // at or above it.
   const angleSinceBlank = new Uint8Array(lines.length);
@@ -113,18 +119,45 @@ function readGuards(lines: readonly string[]): Guards {
     const line = lines[index] ?? "";
     if (firstLongHtml === Number.POSITIVE_INFINITY && LONG_HTML.test(line)) firstLongHtml = index;
     if (firstEmpty === Number.POSITIVE_INFINITY && opensEmptyContainer(line)) firstEmpty = index;
+    if (firstFence === Number.POSITIVE_INFINITY && shapedLikeFence(line)) firstFence = index;
     if (BLANK.test(line)) {
       angle = false;
     } else if (line.includes("<")) {
       angle = true;
-      if (firstAngle === Number.POSITIVE_INFINITY) firstAngle = index;
     }
     angleSinceBlank[index] = angle ? 1 : 0;
   }
+  const markedFirst = text.charCodeAt(0) === BYTE_ORDER_MARK;
   return {
-    clearAbove: (index: number, indent: number) => index <= firstLongHtml && index <= firstEmpty
-      && (index === 0 || angleSinceBlank[index - 1] === 0) && (indent < 4 || index <= firstAngle),
+    clearAbove: (index: number) => index <= firstLongHtml && index <= firstEmpty && index <= firstFence
+      && (index === 0 ? !markedFirst : angleSinceBlank[index - 1] === 0),
   };
+}
+
+/**
+ * Whether a line may open a fence: three backticks or tildes after any
+ * spaces, tabs, `>`, `-`, `*`, `+` and digits followed by `.` or `)`, in any
+ * order. A loop rather than a pattern, so a long line of markers is read
+ * once, quickly.
+ */
+function shapedLikeFence(line: string): boolean {
+  let index = 0;
+  while (index < line.length) {
+    const character = line.charAt(index);
+    if (" \t>-*+".includes(character)) {
+      index++;
+    } else if (character >= "0" && character <= "9") {
+      let end = index;
+      while (end < line.length && line.charAt(end) >= "0" && line.charAt(end) <= "9") {
+        end++;
+      }
+      if (line.charAt(end) !== "." && line.charAt(end) !== ")") return false;
+      index = end + 1;
+    } else {
+      break;
+    }
+  }
+  return line.startsWith("```", index) || line.startsWith("~~~", index);
 }
 
 /**

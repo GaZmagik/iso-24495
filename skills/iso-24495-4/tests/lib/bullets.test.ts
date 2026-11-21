@@ -219,15 +219,32 @@ describe("an item the rule cannot read with confidence is not read", () => {
     expect(bullets(`- <b>x</b>\n${TWO}`)).toEqual([]);
   });
 
-  test("an item four or more columns in, below any line that holds a <, is not read; one less indented is", () => {
+  test("an item four or more columns in is not read, whatever stands above it; one three in is", () => {
     const nested = "- Outer.\n  - Middle.\n\n    - Deep one.\n\n      Deep two.\n";
-    expect(bullets(nested)).toEqual([held(4, 2)]);
-    expect(bullets(`<b>Bold</b>\n\n${nested}`)).toEqual([]);
-    expect(bullets(`a < b\n\n${nested}`)).toEqual([]);
+    expect(bullets(nested)).toEqual([]);
+    expect(bullets(nested.replace("    - Deep", "   - Deep").replace("      Deep two", "     Deep two"))).toEqual([held(4, 2)]);
     expect(bullets(`</frameset>\n- Swallowed.\n     - Middle.\n   \n       Body.\n    - Deep one.\n\n      Deep two.\n`)).toEqual([]);
-    expect(bullets(`<b>Bold</b>\n\n- Outer.\n\n   - Three in.\n\n     Two.\n`)).toEqual([held(5, 2)]);
-    expect(bullets(`${nested}\n<b>Below</b>\n`)).toEqual([held(4, 2)]);
-    expect(bullets(`- Outer.\n  - Middle.\n\n    - Deep <b>one</b>.\n\n      Deep two.\n`)).toEqual([held(4, 2)]);
+    expect(bullets(`- Mk0 only.\n  >\n${NBSP}\n    - Deep one.\n\n      Deep two.\n`)).toEqual([]);
+    expect(bullets("- Outer.\n\n   - Three in.\n\n     Two.\n")).toEqual([held(3, 2)]);
+  });
+
+  test("a line shaped like a fence anywhere above the item leaves it unread, as the reading may end a fence CommonMark keeps open", () => {
+    const fences = ["```\ncode\n```", "~~~\ncode\n~~~", "````", "> ```", "- ```", "1. ~~~", "    ```", "<div>\n```\n\n```", "| a |\n|---|\n```|", "Text\n```js"];
+    for (const fence of fences) {
+      expect(bullets(`${fence}\n\n${TWO}`), fence).toEqual([]);
+      expect(bullets(`${fence}\n\nText.\n\n${TWO}`), fence).toEqual([]);
+    }
+    for (const near of ["``", "Use ```x``` here.", "a ~~~ b"]) {
+      expect(bullets(`${near}\n\n${TWO}`), near).toEqual([held(3, 2)]);
+    }
+    expect(bullets(`${TWO}\n\`\`\`\ncode\n\`\`\`\n`)).toEqual([held(1, 2)]);
+  });
+
+  test("an item on the first line of a text that starts with a byte order mark is not read; one below it is", () => {
+    const mark = String.fromCharCode(0xfeff);
+    expect(bullets(`${mark}${TWO}`)).toEqual([]);
+    expect(bullets(`${mark}Text.\n\n${TWO}`)).toEqual([held(3, 2)]);
+    expect(bullets(`Text.\n\n${TWO}`)).toEqual([held(3, 2)]);
   });
 
   test("a line that opens an empty container above the item leaves it unread; a lone > does not", () => {
@@ -424,7 +441,7 @@ const AXES = {
   ending: ["eof", "sibling", "after-blank", "lazy", "sibling-elsewhere", "heading"],
   lineEnding: ["lf", "crlf", "cr"],
   container: ["top", "bullet", "ordered", "quote"],
-  above: ["none", "text", "angle-run", "angle-blank", "comment", "pre", "empty-container", "lone-quote"],
+  above: ["none", "text", "angle-run", "angle-blank", "comment", "pre", "empty-container", "lone-quote", "fence", "near-fence"],
 } as const;
 type Choice = { [Axis in keyof typeof AXES]: (typeof AXES)[Axis][number] };
 
@@ -433,7 +450,7 @@ const CLEARS: Readonly<Record<keyof typeof AXES, readonly string[]>> = {
   marker: [], gap: ["5"], indent: [], paragraphs: ["1"], blank: [], wrap: ["deep4"],
   extra: ["fence", "tildes", "indented", "quote", "bullet", "ordered", "table", "heading", "underline", "rule", "html", "definition", "math", "span"],
   ending: ["lazy", "sibling-elsewhere", "heading"], lineEnding: [], container: ["quote"],
-  above: ["angle-run", "comment", "pre", "empty-container"],
+  above: ["angle-run", "comment", "pre", "empty-container", "fence"],
 };
 
 /** The names of the axes, in order. */
@@ -451,6 +468,7 @@ const EXTRA_BLOCK: Record<Choice["extra"], readonly string[]> = {
 const ABOVE_LINES: Record<Choice["above"], readonly string[]> = {
   "none": [], "text": ["Lead text."], "angle-run": ["<b>Bold</b> lead."], "angle-blank": ["<b>Bold</b> lead.", ""],
   "comment": ["<!-- note -->", ""], "pre": ["<pre>x</pre>", ""], "empty-container": ["> >", "", "Lead text.", ""], "lone-quote": [">", ""],
+  "fence": ["~~~", "code", "~~~", ""], "near-fence": ["Use ``x`` here.", ""],
 };
 
 /** A seeded document, the choice it was made from, and the lines the rule should report with their counts. */
@@ -488,10 +506,10 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
   const lines = ["# Seeded", "", ...prefixed.lead, ...body.map(line => line === "" && choice.container !== "quote" ? "" : `${prefixed.prefix}${line}`)];
   const markerLine = 3 + prefixed.lead.length + ABOVE_LINES[choice.above].length;
   const ending = { lf: "\n", crlf: "\r\n", cr: CR }[choice.lineEnding];
-  // A marker four or more spaces in is not read below any `<`, a guard that
-  // two axes decide together.
-  const deepBelowAngle = prefixed.prefix.length + Number(choice.indent) >= 4 && ABOVE_LINES[choice.above].some(line => line.includes("<"));
-  const reported = !deepBelowAngle && AXIS_NAMES.every(axis => !CLEARS[axis].includes(choice[axis]));
+  // A marker four or more spaces in is not read, which the container and
+  // indent axes decide together.
+  const deep = prefixed.prefix.length + Number(choice.indent) >= 4;
+  const reported = !deep && AXIS_NAMES.every(axis => !CLEARS[axis].includes(choice[axis]));
   return { text: lines.join(ending) + ending, choice, expected: reported ? [{ line: markerLine, paragraphs: count }] : [] };
 }
 
@@ -552,6 +570,17 @@ describe("bullet-paragraphs on seeded documents that vary every distinction it k
   }, 60_000);
 });
 
+/** The fastest of three runs of the rule's guards over a text, given no items, in milliseconds. */
+function fastestGuards(text: string): number {
+  let fastest = Number.POSITIVE_INFINITY;
+  for (let run = 0; run < 3; run++) {
+    const started = performance.now();
+    bulletParagraphViolations(text, { items: [] });
+    fastest = Math.min(fastest, performance.now() - started);
+  }
+  return fastest;
+}
+
 /** The findings and the count of lines the rule read for a text. */
 function counted(text: string): { findings: number; read: number; lines: number } {
   const tally = { lines: 0 };
@@ -595,6 +624,19 @@ describe("bullet-paragraphs reads each line at most once, in time in proportion 
       const parseStarted = performance.now();
       structure(text);
       expect(scan, body.slice(0, 6)).toBeLessThan(3 * (performance.now() - parseStarted) + 50);
+    }
+  }, 120_000);
+
+  // Each line here is almost the start of a fence, a container or HTML until
+  // its last character, so a guard that rescans it from each position fails.
+  // The guards read every line whatever the items, so no items are passed:
+  // the parse of lines of nested markers takes time in the square of their
+  // number, before the rule runs. The baseline is the same guards over a
+  // line of plain letters of the same length.
+  test("lines of a million characters that almost open a fence, a container or HTML take the guards as long as plain text", () => {
+    for (const line of ["> ".repeat(500_000), "- ".repeat(500_000), "1. ".repeat(300_000), "1".repeat(1_000_000), `${" ".repeat(999_999)}\t`, "<!".repeat(500_000), ">".repeat(1_000_000)]) {
+      const plain = "x".repeat(line.length);
+      expect(fastestGuards(`${line}x\n`), line.slice(0, 6)).toBeLessThan(3 * fastestGuards(`${plain}x\n`) + 50);
     }
   }, 120_000);
 });
