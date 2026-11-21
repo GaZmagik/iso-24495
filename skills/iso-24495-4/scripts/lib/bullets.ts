@@ -43,7 +43,8 @@ const STAR_OR_UNDERSCORE_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
  * column, up to three columns past it. A line that may start any other
  * block, such as code, a quotation, a list, a table, a heading, HTML or a
  * link definition, leaves the whole item unread. So does a paragraph that is
- * one code span and nothing else, which reads as code.
+ * one code span and nothing else, which reads as code, with any white space
+ * at its ends that commonmark.js drops, such as a no-break space.
  *
  * The item ends at a less indented line after a blank line, at a bullet
  * with text at the marker's own indent, or at the end of the text. Any other
@@ -220,8 +221,17 @@ function nextBullet(line: string, indent: number): boolean {
   return spaces !== undefined && spaces.length === indent && !STAR_OR_UNDERSCORE_BREAK.test(line.trim()) && !DASH_ROW.test(line);
 }
 
-/** Whether a paragraph's text, its lines joined and its ends trimmed, is one code span and nothing else. */
+/**
+ * Whether a paragraph is one code span and nothing else, as commonmark.js
+ * reads it. It joins a paragraph's lines and trims the ends with ECMAScript
+ * `trim`, which drops every white space and line ending character, such as a
+ * no-break space or a byte order mark, not only spaces and tabs. This does
+ * the same. A renderer that trims only spaces and tabs reads such a paragraph
+ * as code and text, so there the rule can only miss an item, never report a
+ * false one. Spaces inside the paragraph cannot make or break a code span,
+ * so only its ends are trimmed.
+ */
 function isOneCodeSpan(paragraph: readonly string[]): boolean {
-  const joined = paragraph.map(line => line.replace(/^ +/, "")).join("\n").replace(/ +$/, "");
+  const joined = paragraph.join("\n").trim();
   return joined.startsWith("`") && codeSpanEnds(joined).get(0) === joined.length;
 }

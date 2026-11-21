@@ -26,6 +26,42 @@ function held(line: number, paragraphs: number): { line: number; detail: string 
 /** An item of two paragraphs on lines 1 and 3, with the body at column 2. */
 const TWO = "- First paragraph.\n\n  Second paragraph.\n";
 
+/**
+ * The characters commonmark.js 0.31.2 drops from the ends of a paragraph,
+ * found by running it on every code point up to U+FFFF: those ECMAScript
+ * `trim` drops. The two line endings it also drops, U+000A and U+000D, are
+ * left out, as here they end a line instead.
+ */
+const TRIMMED_BY_COMMONMARK = [
+  0x09, 0x0b, 0x0c, 0x20, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005,
+  0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+];
+
+/** Characters that look like white space or nothing, which commonmark.js keeps as text at a paragraph's ends. */
+const KEPT_BY_COMMONMARK = [0x85, 0x180e, 0x200b, 0x2060];
+
+/** The line and paragraph separators, which stop the pattern a marker line is read with. */
+const SEPARATORS = [0x2028, 0x2029];
+
+/**
+ * An item of two paragraphs, one of them the code span `make test`, with a
+ * character and some text beside the span, at each place a paragraph can
+ * end: on the marker line after or before the span, after the span in the
+ * second paragraph, and on a line of its own after or before the span. The
+ * text goes before the character on a line of its own, so that a tab there
+ * is not read as indentation.
+ */
+function codeSpanPlaces(character: string, text: string): Array<[place: string, document: string]> {
+  return [
+    ["marker line, after", `- \`make test\`${character}${text}\n\n  Second.\n`],
+    ["marker line, before", `- ${text}${character}\`make test\`\n\n  Second.\n`],
+    ["second paragraph, after", `- First.\n\n  \`make test\`${character}${text}\n`],
+    ["line after, second paragraph", `- First.\n\n  \`make test\`\n  ${text}${character}\n`],
+    ["line before, second paragraph", `- First.\n\n  ${text}${character}\n  \`make test\`\n`],
+    ["line after, first paragraph", `- \`make test\`\n  ${text}${character}\n\n  Second.\n`],
+  ];
+}
+
 describe("bullet-paragraphs: an unordered item that directly holds two or more paragraphs", () => {
   test("an item of two paragraphs gives one finding on its marker line, and three give a count of 3", () => {
     expect(bullets(TWO)).toEqual([held(1, 2)]);
@@ -159,6 +195,32 @@ describe("an item that holds anything but paragraphs is not read", () => {
     expect(bullets("- Run it:\n\n  `make` and then `make test`.\n")).toEqual([held(1, 2)]);
     expect(bullets("- Run it:\n\n  `make` `test`\n")).toEqual([held(1, 2)]);
     expect(bullets("- Run it:\n\n  \\`make`\n")).toEqual([held(1, 2)]);
+  });
+
+  test("a paragraph of one code span counts as code with any white space at its ends that commonmark.js drops, wherever it stands", () => {
+    for (const code of TRIMMED_BY_COMMONMARK) {
+      const space = String.fromCharCode(code);
+      for (const [place, text] of codeSpanPlaces(space, "")) {
+        expect(bullets(text), `${place} U+${code.toString(16)}`).toEqual([]);
+      }
+    }
+  });
+
+  test("text beside the code span, or a character commonmark.js keeps, makes it a paragraph again", () => {
+    for (const code of TRIMMED_BY_COMMONMARK) {
+      const space = String.fromCharCode(code);
+      for (const [place, text] of codeSpanPlaces(space, "word")) {
+        // A separator with text on the marker line leaves the item unread, a miss.
+        const unread = place.startsWith("marker line") && SEPARATORS.includes(code);
+        expect(bullets(text), `${place} U+${code.toString(16)}`).toEqual(unread ? [] : [held(1, 2)]);
+      }
+    }
+    for (const code of KEPT_BY_COMMONMARK) {
+      const kept = String.fromCharCode(code);
+      for (const [place, text] of codeSpanPlaces(kept, "")) {
+        expect(bullets(text), `${place} U+${code.toString(16)}`).toEqual([held(1, 2)]);
+      }
+    }
   });
 
   test("a table row with no delimiter row, a pipe or a hash inside text, and a mid-line < are text", () => {

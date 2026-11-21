@@ -106,8 +106,8 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
     checks: [{ rule: "bullet-paragraphs", kind: "offline" }], needs: ["markdown"],
     limits: [
       "It reports an unordered list item that holds two or more paragraphs and nothing else, on its marker line, and names how many. A loose list, one with blank lines between its items, is read item by item, so items of one paragraph each give nothing. Ordered items are not read, such as `1. One` with a second paragraph.",
-      "An item that holds anything but paragraphs is not read, so an item of two paragraphs and a code block is missed. That covers any line in it that may start another block, such as a fence, indented code, a quotation, a list, a heading, a table's delimiter row, an underline, a thematic break, HTML or `$$`, and any line holding `]:`, which may define a link. A paragraph that is one code span and nothing else, such as `` `make test` ``, counts as code.",
-      "It reads an item only when its marker line is up to three spaces, a `-`, `*` or `+`, one to four spaces and text. So items in quotations, on another item's line, with nothing on the marker line or four or more columns in are not read. Nor is an item with a tab in the indentation of any line from its marker line to the line that ends it, or with a line four or more columns past its text. It ends at a less indented line after a blank line, or at a bullet with text at its marker's indent. Any other less indented line straight below its text leaves it unread, such as a lazy line or `2. Two`.",
+      "An item that holds anything but paragraphs is not read, so an item of two paragraphs and a code block is missed. That covers any line in it that may start another block, such as a fence, indented code, a quotation, a list, a heading, a table's delimiter row, an underline, a thematic break, HTML or `$$`, and any line holding `]:`, which may define a link. A paragraph that is one code span and nothing else, such as `` `make test` ``, counts as code. White space at its ends that commonmark.js drops, such as a no-break space, does not count.",
+      "It reads an item only when its marker line is up to three spaces, a `-`, `*` or `+`, one to four spaces and text. So items in quotations, on another item's line, with nothing on the marker line or four or more columns in are not read. Nor is an item with a tab in the indentation of any line that is not blank, from its marker line to the line that ends it, or with a line four or more columns past its text. It ends at a less indented line after a blank line, or at a bullet with text at its marker's indent. Any other less indented line straight below its text leaves it unread, such as a lazy line or `2. Two`.",
       "It reports only items it is sure of, so some are missed. It reads no item that holds or stands below a line holding the start of HTML that runs past a blank line, such as `<!--`, `<?`, `<!DOCTYPE` or `<pre`, or that Bun's renderer reads as one, such as `<style/>`. Nor does it read one below a line shaped like a fence, such as ```` ``` ```` or `> ~~~`, or below a line that opens an empty quotation or list item, such as `> >` or `-`. Such a line counts wherever it stands, in code too. Nor does it read an item with a `<` on any line between it and the blank line above it, or on the first line of a text that starts with a byte order mark.",
       "It counts paragraphs, not ideas, so a label paragraph above its body, such as `**Windows:**`, is reported. So is an item whose other paragraph is an image alone, such as `![shot](a.png)`, or shows nothing, such as `&nbsp;` alone. It reads CommonMark's blocks, not what a browser makes of raw HTML, so an item below a paragraph that leaves a tag such as `<details>` open is still read.",
     ],
@@ -394,6 +394,9 @@ const NON_BREAKING_HYPHEN = String.fromCharCode(0x2011);
 
 /** A capital I with a dot above, which looks like the I of Image and is another letter. */
 const DOTTED_CAPITAL_I = String.fromCharCode(0x130);
+
+/** A no-break space, which commonmark.js drops from the ends of a paragraph as it does a space. */
+const NO_BREAK_SPACE = String.fromCharCode(0xa0);
 
 /** The byte order mark, which an editor may write at the start of a file. */
 const BYTE_ORDER_MARK = String.fromCharCode(0xfeff);
@@ -713,12 +716,14 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  $$\n  x\n  $$\n", found: [], control: { from: "\n\n  $$\n  x\n  $$", to: "", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  [guide]: https://example.org\n", found: [], control: { from: "[guide]: https://example.org", to: "The guide.", found: [bulletParagraphs(3)] } },
   { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- Model list\n\n  `make test`\n", found: [], control: { from: "`make test`", to: "Run `make test`.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: `- Model list\n\n  \`make test\`${NO_BREAK_SPACE}\n`, found: [], control: { from: NO_BREAK_SPACE, to: `${NO_BREAK_SPACE}now`, found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "> - One.\n>\n>   Two.\n", found: [], control: { from: "> - One.\n>\n>   Two.", to: "- One.\n\n  Two.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- - One.\n\n    Two.\n", found: [], control: { from: "- - One.\n\n    Two.", to: "- One.\n\n  Two.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "-\n  One.\n\n  Two.\n", found: [], control: { from: "-\n  One.", to: "- One.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- Outer.\n\n    - Deep one.\n\n      Deep two.\n", found: [], control: { from: "    - Deep one.\n\n      Deep two.", to: "   - Deep one.\n\n     Deep two.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "-     One.\n\n      Two.\n", found: [], control: { from: "-     One.", to: "-    One.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n\tTwo.\n", found: [], control: { from: "\tTwo.", to: "  Two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\t\n  Two.\n", found: [TWO_PARAGRAPHS], control: { from: "\t\n  Two.", to: "\n\tTwo.", found: [] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "-    One.\n\n     Two.\n\n \tAfter.\n", found: [], control: { from: " \tAfter.", to: "After.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n  Two\n      carried on.\n", found: [], control: { from: "\n      carried on.", to: "\n  carried on.", found: [TWO_PARAGRAPHS] } },
   { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\nAfter.\n", found: [TWO_PARAGRAPHS], control: { from: "\n\nAfter.", to: "\nAfter.", found: [] } },
@@ -1210,7 +1215,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "3a": [6, 18, 21],
   "3b": [22, 3],
   "6a": [10, 1],
-  "8a": [4, 12, 11, 14, 4],
+  "8a": [4, 13, 12, 14, 4],
   "8c": [4],
   "9b": [8, 8, 26, 1],
   "10c": [3, 1],
@@ -1259,7 +1264,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "3a": ["bec14fbb73268aeb", "19259afeef2d29c4", "18e740d0195e1360"],
   "3b": ["a89a361732bfc545", "cb48ca7f8f73c2bf"],
   "6a": ["a0eca4bb5ee78b0b", "ac7780100b062b44"],
-  "8a": ["b56c1012e9ad9692", "d944fded0f09842d", "65726159ef455696", "aecc1e7cc08e1676", "000ae08fa612ec69"],
+  "8a": ["b56c1012e9ad9692", "3da900143a385002", "b7948deeb3641b27", "aecc1e7cc08e1676", "000ae08fa612ec69"],
   "8c": ["1e7ef38789ed8e7f"],
   "9b": ["99c493162f01aa4e", "a471bdd7bd76b27b", "b4c3f5010ee1eff7", "ceaaded3dfdafc7c"],
   "10c": ["715422e93c74c160", "9136f07360ae2af1"],
