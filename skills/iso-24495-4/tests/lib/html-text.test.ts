@@ -64,7 +64,7 @@ function keepUnlessHidden(reading: { text: string; hidden: boolean }, chunk: str
   reading.hidden = false;
 }
 
-describe("a value a reader sees whole is held", () => {
+describe("in these cases, a reading holds the value a reader sees whole", () => {
   test("review R2-1: a quoted `>` inside a tag that splits a code span does not end the tag", () => {
     expect(holds("Run it first.\n\n<pre>np<span title=\">\">m</span> test</pre>\n", "npm test")).toBe(true);
     // Controls: the same markup with no angle bracket, and the value genuinely cut.

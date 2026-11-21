@@ -180,9 +180,11 @@ When a value was looked for in a file in doubt, a closing line says that none is
 A value read with a new table is still looked for in the table, and one not there counts as elsewhere.
 
 A reading can find a block's start or end, or the markers that open a line, other than where CommonMark finds them. A number or code span can then still be listed though a reader sees it.
-Testing covers files where no line opens with `<` once its leading spaces, tabs and markers are taken off, and no quotation marker follows a list marker.
-In those, no value a reader sees whole, as the original writes it, was listed.
-That is tested, not proved.
+
+A value whose text stands whole in the new file as written, once white space is made single, is never listed.
+Markup that a renderer drops or moves can split a value that a reader sees whole, and that value may be listed.
+That markup can be an HTML tag, a quotation marker inside a fence, an inline table whose text a browser moves, or an inline link's label.
+Writing the value whole in the new version clears the row.
 
 A number also counts as held where the file as written, or its units, holds the same value in figures, or in English words up to the billions.
 A number of two or more runs of digits, such as `10.30`, also counts as held where those runs stand in the same order.
