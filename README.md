@@ -129,8 +129,8 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 **Not measured, because they are not sentences:**
 
 - fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`. `bullet-paragraphs` reads no item below a line in it shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`;
-- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, and `adjacent-alerts` reads no alert below a `<` in one. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
-- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, `adjacent-alerts` reads no alert below a `<` in one, and `bullet-paragraphs` no item below one holding `<!--`. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
+- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item. Nor does `bullet-paragraphs` read an item below a line in it shaped like a fence, starting HTML that runs past a blank line, or opening an empty list item;
 - a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;
 - a task marker, which is a control rather than two words.
 
@@ -187,7 +187,8 @@ It found 2 in 1 of 822 third-party Markdown files, each two alerts of one kind w
 The `bullet-paragraphs` rule reports an unordered list item that holds two or more paragraphs and nothing else, and names how many.
 Blank lines between items do not count, so a loose list of one-paragraph items is not reported, and ordered items are not read.
 An item that holds anything else is not read, such as code, a quotation, a nested list, a table or a paragraph that is one code span.
-It reports only items it is sure of, so it misses some, such as any below a line shaped like a fence and any four or more columns in.
+It misses some items, such as any four or more columns in and any below a line shaped like a fence, fenced code included.
+On the corpus named below, that fence guard alone leaves unread 7 of the 18 items it would otherwise report.
 
 To clear it, join the paragraphs into one paragraph on one idea, or promote the item to a subsection.
 It found 11 in 4 of 822 third-party Markdown files, 8 of them in one file, and none in this repository's own documents.

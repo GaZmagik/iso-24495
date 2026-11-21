@@ -407,8 +407,8 @@ describe("bullet-paragraphs checked against Bun's renderer, a test oracle", () =
       }
     }
     expect(shown).toEqual([]);
-    // The specimens above held 97 findings when this was written.
-    expect(checked).toBeGreaterThanOrEqual(97);
+    // The specimens above held 106 findings when this was written.
+    expect(checked).toBeGreaterThanOrEqual(106);
   });
 
   test.skipIf(renderer === undefined)("every finding in the seeded documents below shows as an unordered item of that many paragraphs in Bun's rendering", () => {
@@ -444,7 +444,7 @@ const AXES = {
   container: ["top", "bullet", "ordered", "quote"],
   above: ["none", "text", "angle-run", "angle-blank", "comment", "pre", "empty-container", "lone-quote", "fence", "near-fence"],
 } as const;
-type Choice = { [Axis in keyof typeof AXES]: (typeof AXES)[Axis][number] };
+type Choice = { [Axis in keyof typeof AXES]: (typeof AXES)[Axis][number]; };
 
 /** Each value that leaves the item unread. Any other value keeps it read. */
 const CLEARS: Readonly<Record<keyof typeof AXES, readonly string[]>> = {
@@ -484,7 +484,10 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
   const count = Number(choice.paragraphs);
   const item: string[] = [`${indent}${choice.marker}${gap}Marker${index} first.`];
   for (let paragraph = 2; paragraph <= count; paragraph++) {
-    item.push(...blank, `${column}Paragraph${paragraph} text.`);
+    for (const line of blank) {
+      item.push(line);
+    }
+    item.push(`${column}Paragraph${paragraph} text.`);
     if (paragraph === count && choice.wrap !== "none") {
       const deeper = { column: "", deeper: "  ", deep4: "    " }[choice.wrap];
       item.push(`${column}${deeper}carried on.`);
@@ -494,7 +497,10 @@ function seededDocument(choice: Choice, index: number): SeededDocument {
     const deeper = { column: "", deeper: "  ", deep4: "    " }[choice.wrap];
     item.push(`${column}${deeper}carried on.`);
   }
-  if (choice.extra !== "none") item.push("", ...EXTRA_BLOCK[choice.extra].map(line => `${column}${line}`));
+  if (choice.extra !== "none") item.push("");
+  for (const line of EXTRA_BLOCK[choice.extra]) {
+    item.push(`${column}${line}`);
+  }
   const after = {
     "eof": [], "sibling": [`${indent}${choice.marker} Sibling item.`], "after-blank": ["", "After the list."],
     "lazy": ["Lazy line."], "sibling-elsewhere": [`${choice.indent === "0" ? " " : ""}${choice.marker} Elsewhere item.`], "heading": ["# Heading"],
@@ -615,16 +621,24 @@ describe("bullet-paragraphs reads each line at most once, in time in proportion 
     expect(wide.read).toBeLessThanOrEqual(wide.lines);
   }, 120_000);
 
+  // The fastest of three scans is set against the fastest of three parses of
+  // the same text, because one run alone can be slowed by load, and a slower
+  // or busier machine slows both.
   test("a paragraph of 100,000 backtick runs, and lines of a million characters, scan as fast as the parse", () => {
     for (const body of ["` ``".repeat(100_000), "-:| ".repeat(250_000), "]".repeat(1_000_000), "<".repeat(1_000_000), "`".repeat(1_000_000)]) {
       const text = `- One.\n\n  ${body}x\n`;
       const parsed = structure(text);
-      const started = performance.now();
-      bulletParagraphViolations(text, parsed);
-      const scan = performance.now() - started;
-      const parseStarted = performance.now();
-      structure(text);
-      expect(scan, body.slice(0, 6)).toBeLessThan(3 * (performance.now() - parseStarted) + 50);
+      let scan = Number.POSITIVE_INFINITY;
+      let parse = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 3; run++) {
+        const started = performance.now();
+        bulletParagraphViolations(text, parsed);
+        scan = Math.min(scan, performance.now() - started);
+        const parseStarted = performance.now();
+        structure(text);
+        parse = Math.min(parse, performance.now() - parseStarted);
+      }
+      expect(scan, body.slice(0, 6)).toBeLessThan(3 * parse + 50);
     }
   }, 120_000);
 
@@ -632,12 +646,16 @@ describe("bullet-paragraphs reads each line at most once, in time in proportion 
   // its last character, so a guard that rescans it from each position fails.
   // The guards read every line whatever the items, so no items are passed:
   // the parse of lines of nested markers takes time in the square of their
-  // number, before the rule runs. The baseline is the same guards over a
-  // line of plain letters of the same length.
-  test("lines of a million characters that almost open a fence, a container or HTML take the guards as long as plain text", () => {
-    for (const line of ["> ".repeat(500_000), "- ".repeat(500_000), "1. ".repeat(300_000), "1".repeat(1_000_000), `${" ".repeat(999_999)}\t`, "<!".repeat(500_000), ">".repeat(1_000_000)]) {
-      const plain = "x".repeat(line.length);
-      expect(fastestGuards(`${line}x\n`), line.slice(0, 6)).toBeLessThan(3 * fastestGuards(`${plain}x\n`) + 50);
+  // number, before the rule runs. Each line is timed at two lengths, one four
+  // times the other. Work in proportion to the line takes about four times
+  // as long on the longer one, and work in the square of it sixteen times, so
+  // the bound of eight separates them with room for a busy machine.
+  test("lines of a million characters that almost open a fence, a container or HTML take the guards time in proportion to their length", () => {
+    for (const unit of ["> ", "- ", "1. ", "1", " ", "<!", ">"]) {
+      const short = Math.floor(250_000 / unit.length);
+      const shortTime = fastestGuards(`${unit.repeat(short)}x\n`);
+      const longTime = fastestGuards(`${unit.repeat(4 * short)}x\n`);
+      expect(longTime, JSON.stringify(unit)).toBeLessThan(8 * shortTime + 10);
     }
   }, 120_000);
 });

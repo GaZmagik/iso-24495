@@ -32,7 +32,7 @@ These recognition choices are project proxies and remain unmeasured on a corpus.
 Raw HTML structure, code and comments are excluded, though the empty signpost rule counts code and any raw HTML other than a comment beneath a heading as content.
 
 The adjacent alerts rule reads no alert below any `<`, even in code, comments or front matter, nor one whose marker the text defines as a link label. Nor does it read one below a line that opens an empty quotation or list item, such as `> >`, `>>` or `-`.
-The bullet paragraphs rule reads no item below a line shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`, even in code.
+The bullet paragraphs rule reads no item below a line shaped like a fence, fenced code included. Nor does it read one below a line starting HTML that runs past a blank line, such as `<!--`, even in code.
 Front matter is excluded from prose checks, but recognised edition metadata can satisfy the version or date rule.
 
 - **Contents list:** At six root H2 sections, require labelled contents or opening navigation containing two same-document fragment links in one block.
