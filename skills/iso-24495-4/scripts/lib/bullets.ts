@@ -35,11 +35,15 @@ const STAR_OR_UNDERSCORE_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
  *
  * It reports only an item it is sure of, and reads any other as no finding.
  * An item is read when its marker line is up to three spaces, a `-`, `*` or
- * `+`, one to four spaces and text, so items in quotations, on another item's
- * line or four or more columns in are not read. A bullet with text up to
- * three columns in is an item in CommonMark wherever it stands, unless HTML
- * or a fence holds it; one further in is an item only because of the lists
- * above it, which the structural reading can misplace. Each line of the item must be blank or plain text at its text's
+ * `+`, one to four spaces and text that is not all white space, so items in
+ * quotations, on another item's line or four or more columns in are not
+ * read. commonmark.js reads a marker followed by nothing but a form feed or
+ * a vertical tab as an empty item, which cannot break into a paragraph.
+ *
+ * A bullet with text up to three columns in is an item in CommonMark
+ * wherever it stands, unless HTML or a fence holds it; one further in is an
+ * item only because of the lists above it, which the structural reading can
+ * misplace. Each line of the item must be blank or plain text at its text's
  * column, up to three columns past it. A line that may start any other
  * block, such as code, a quotation, a list, a table, a heading, HTML or a
  * link definition, leaves the whole item unread. So does a paragraph that is
@@ -169,7 +173,7 @@ function shapedLikeFence(line: string): boolean {
 function paragraphsOf(lines: readonly string[], index: number, tally?: { lines: number }): number {
   const [, spaces, , gap, first] = MARKER_LINE.exec(lines[index] ?? "") ?? [];
   if (spaces === undefined || gap === undefined || first === undefined || gap.length > 4) return 0;
-  if (LONG_HTML.test(first) || !isPlainText(first)) return 0;
+  if (!hasText(first) || LONG_HTML.test(first) || !isPlainText(first)) return 0;
   const indent = spaces.length;
   const column = indent + 1 + gap.length;
   const paragraphs: string[][] = [[first]];
@@ -217,8 +221,19 @@ function isPlainText(content: string): boolean {
 
 /** Whether a line is a bullet with text at this indent, which ends the item above as the next item. */
 function nextBullet(line: string, indent: number): boolean {
-  const [, spaces] = MARKER_LINE.exec(line) ?? [];
-  return spaces !== undefined && spaces.length === indent && !STAR_OR_UNDERSCORE_BREAK.test(line.trim()) && !DASH_ROW.test(line);
+  const [, spaces, , , text] = MARKER_LINE.exec(line) ?? [];
+  return spaces !== undefined && spaces.length === indent && text !== undefined && hasText(text)
+    && !STAR_OR_UNDERSCORE_BREAK.test(line.trim()) && !DASH_ROW.test(line);
+}
+
+/**
+ * Whether the text after a marker holds something other than white space.
+ * commonmark.js counts a form feed and a vertical tab as white space there;
+ * ECMAScript `trim` drops those and more, so a marker followed only by them
+ * is never read as one with text.
+ */
+function hasText(text: string): boolean {
+  return text.trim() !== "";
 }
 
 /**

@@ -8,6 +8,8 @@ const TAB = String.fromCharCode(9);
 const CR = String.fromCharCode(13);
 const NBSP = String.fromCharCode(0xa0);
 const ZERO_WIDTH = String.fromCharCode(0x200b);
+const FORM_FEED = String.fromCharCode(0x0c);
+const VERTICAL_TAB = String.fromCharCode(0x0b);
 
 /** Every text a test below gave the rule, so the oracle can check each finding it made. */
 const SPECIMENS = new Set<string>();
@@ -146,6 +148,8 @@ describe("loose lists and items of one paragraph are not reported", () => {
     expect(bullets("- One.\n\nAfter.\n\n  Indented after.\n")).toEqual([]);
     expect(bullets(`${TWO}\nAfter the list.\n`)).toEqual([held(1, 2)]);
     expect(bullets(`${TWO}- Next.\n`)).toEqual([held(1, 2)]);
+    // A marker with only white space after it cannot break into a paragraph, so it is not the next item.
+    expect(bullets(`${TWO}- ${FORM_FEED}\n`)).toEqual([]);
     expect(bullets(`${TWO}* Next, in another list.\n`)).toEqual([held(1, 2)]);
   });
 
@@ -198,6 +202,12 @@ describe("an item that holds anything but paragraphs is not read", () => {
   });
 
   test("a paragraph of one code span counts as code with any white space at its ends that commonmark.js drops, wherever it stands", () => {
+    // The list is every character up to U+FFFF that trim drops, so none is left out.
+    const dropped: number[] = [];
+    for (let code = 0; code <= 0xffff; code++) {
+      if (code !== 0x0a && code !== 0x0d && `a${String.fromCharCode(code)}`.trim() === "a") dropped.push(code);
+    }
+    expect(TRIMMED_BY_COMMONMARK).toEqual(dropped);
     for (const code of TRIMMED_BY_COMMONMARK) {
       const space = String.fromCharCode(code);
       for (const [place, text] of codeSpanPlaces(space, "")) {
@@ -239,6 +249,11 @@ describe("an item the rule cannot read with confidence is not read", () => {
 
   test("an empty marker line, five spaces after the marker or a tab in the indentation leaves the item unread", () => {
     expect(bullets("-\n  One.\n\n  Two.\n")).toEqual([]);
+    for (const space of [FORM_FEED, VERTICAL_TAB, `${VERTICAL_TAB} ${FORM_FEED}`, NBSP]) {
+      expect(bullets(`Text.\n- ${space}\n\n  ${space}\n`), JSON.stringify(space)).toEqual([]);
+      expect(bullets(`- ${space}\n\n  Two.\n`), JSON.stringify(space)).toEqual([]);
+    }
+    expect(bullets("Text.\n- One.\n\n  Two.\n")).toEqual([held(2, 2)]);
     expect(bullets("-     One.\n\n      Two.\n")).toEqual([]);
     expect(bullets("-    One.\n\n      Two.\n")).toEqual([held(1, 2)]);
     expect(bullets(`-${TAB}One.\n\n  Two.\n`)).toEqual([]);
