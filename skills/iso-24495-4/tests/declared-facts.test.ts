@@ -21,6 +21,7 @@ const ECHO = [
   "|------|------|-------|--------|",
   "| `a.md` | headingNumbers | cited | 1 uncited-numbering question was not raised. |",
   "| `b.md` | headingNumbers | not-cited | 1 uncited-numbering question was reported as a finding. |",
+  "",
   "Not declared: headingNumbers for 1 of 3 Markdown files read.",
   "Not read: 1 declaration names a file this run did not read, so it changed nothing.",
   "Problem: The key `readerKnows` for `a.md` is not understood and is not honoured.",
@@ -122,6 +123,38 @@ describe("each command honours the facts file and echoes what it changed", () =>
       expect(formatPlan(withFacts)).toBe(formatPlan(without));
       expect(JSON.stringify(withFacts.documents)).toBe(JSON.stringify(without.documents));
       expect(numbering(without.mechanical.files)).toEqual({ "a.md": ["headingNumbers in .iso-24495-4/document-facts.json."], "b.md": ["headingNumbers in .iso-24495-4/document-facts.json."], "c.md": ["headingNumbers in .iso-24495-4/document-facts.json."] });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a hostile key or path reaches no command's rendered report as markup, and the table holds only honoured rows", async () => {
+    const directory = project();
+    const hostile = "|<img src=x onerror=alert(1)>";
+    writeFileSync(join(directory, ".iso-24495-4", "document-facts.json"), JSON.stringify({
+      version: 1, [hostile]: 0,
+      documents: { "a.md": { headingNumbers: "cited", [hostile]: 1 }, [`b${hostile}.md`]: "cited", [`c${hostile}.md`]: { headingNumbers: "no" } },
+    }));
+    try {
+      const echoes: string[] = [];
+      const text: string[] = [];
+      expect(runTextCli(["bun", "cli", directory, "--project-dir", directory], line => text.push(line), () => {})).toBe(0);
+      echoes.push(text[1] ?? "");
+      const corpus: string[] = [];
+      expect(runCorpusCli(["bun", "cli", directory], line => corpus.push(line), () => {})).toBe(0);
+      echoes.push(corpus.at(-1) ?? "");
+      const design: string[] = [];
+      expect(await runDesignCli(["bun", "cli", directory, "--project-dir", directory], line => design.push(line), () => {}, { env: {} })).toBe(0);
+      echoes.push(design[1] ?? "");
+      for (const echo of echoes) {
+        expect(echo).toStartWith("Declared facts");
+        const shown = Bun.markdown.html(echo);
+        expect(shown).not.toContain("<img");
+        expect(shown).not.toContain("onerror");
+        const table = shown.slice(shown.indexOf("<table>"), shown.indexOf("</table>"));
+        expect([...table.matchAll(/<tr>/g)]).toHaveLength(2);
+        expect(shown.slice(shown.indexOf("</table>")).match(/Problem: /g)).toHaveLength(4);
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

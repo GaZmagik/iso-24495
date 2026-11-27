@@ -7,7 +7,7 @@ import { lstatSync, readFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { structure, type Reading } from "./parse.ts";
 import { uncitedNumberingViolations, type HeadingNumbers } from "./numbering.ts";
-import { safeCell, safePathCell, safePathCode } from "./safe-text.ts";
+import { safeCell, safePathCell } from "./safe-text.ts";
 
 /** Where the facts file sits, from the project directory. */
 export const FACTS_FILE = ".iso-24495-4/document-facts.json";
@@ -85,28 +85,50 @@ export function readDocumentFacts(
   if (!isObject(parsed) || !Object.hasOwn(parsed, "version") || parsed.version !== VERSION) return nothingHonoured(`is not an object with "version": ${VERSION}`);
   const problems: string[] = [];
   for (const key of Object.keys(parsed)) {
-    if (key !== "version" && key !== "documents") problems.push(`The key ${safePathCode(key)} is not understood and is not honoured.`);
+    if (key !== "version" && key !== "documents") problems.push(`${capitalised(named("key", key))} is not understood and is not honoured.`);
   }
   const documents = new Map<string, DeclaredFacts>();
   const listed = Object.hasOwn(parsed, "documents") ? parsed.documents : {};
   if (!isObject(listed)) return nothingHonoured("has a \"documents\" that is not an object");
   for (const [file, entry] of Object.entries(listed)) {
     if (!isObject(entry)) {
-      problems.push(`The entry for ${safePathCode(file)} is not an object and is not honoured.`);
+      problems.push(`The entry for ${named("path", file)} is not an object and is not honoured.`);
       continue;
     }
     for (const key of Object.keys(entry)) {
-      if (key !== "headingNumbers") problems.push(`The key ${safePathCode(key)} for ${safePathCode(file)} is not understood and is not honoured.`);
+      if (key !== "headingNumbers") problems.push(`${capitalised(named("key", key))} for ${named("path", file)} is not understood and is not honoured.`);
     }
     if (!Object.hasOwn(entry, "headingNumbers")) continue;
     const value = entry.headingNumbers;
     if (value === "cited" || value === "not-cited") {
       documents.set(file, { headingNumbers: value });
     } else {
-      problems.push(`headingNumbers for ${safePathCode(file)} must be "cited" or "not-cited", so it is not honoured.`);
+      problems.push(`headingNumbers for ${named("path", file)} must be "cited" or "not-cited", so it is not honoured.`);
     }
   }
   return { source: FACTS_FILE, documents, problems };
+}
+
+/** Letters, digits and `. _ / -` alone, from 1 to 100 of them: the only keys and paths a problem quotes. */
+const SAFE_NAME = /^[A-Za-z0-9._/-]{1,100}$/;
+
+/**
+ * A key or path from the file that failed its check, as a problem names it.
+ * It is quoted in code only when `SAFE_NAME` holds for it, and otherwise
+ * only its length is given, so nothing of it can reach a renderer as markup.
+ *
+ * @returns `` the key `x` `` or `` `docs/a.md` ``, or `a key of 30 characters
+ *     (not shown)` or `a path of 30 characters (not shown)`.
+ */
+function named(noun: "key" | "path", value: string): string {
+  if (SAFE_NAME.test(value)) return noun === "key" ? `the key \`${value}\`` : `\`${value}\``;
+  const length = [...value].length;
+  return `a ${noun} of ${length} ${length === 1 ? "character" : "characters"} (not shown)`;
+}
+
+/** The text with its first letter in capitals. */
+function capitalised(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** A facts file that exists and declares nothing, with the one problem that says why. */
@@ -212,11 +234,12 @@ export function finishDeclared(run: DeclaredRun): DeclaredReport {
 
 /**
  * The report as Markdown lines: a table of each honoured declaration with
- * what it changed, how many Markdown files read declare nothing, how many
- * declarations name a file the run did not read, when any do, and each
- * problem. Paths are code spans, as `safePathCell` and `safePathCode` print
- * them, and values pass through `safeCell`. At most 20 problems are listed,
- * and the rest are counted.
+ * what it changed, then a blank line that ends the table, then how many
+ * Markdown files read declare nothing, how many declarations name a file the
+ * run did not read, when any do, and each problem. Paths in the table are
+ * code spans, as `safePathCell` prints them, and values pass through
+ * `safeCell`. A problem names a rejected key or path only as `named` does.
+ * At most 20 problems are listed, and the rest are counted.
  *
  * @param run The run the report was finished from, for its counts of
  *     Markdown files read and of those with a declaration.
@@ -229,6 +252,8 @@ export function formatDeclared(report: DeclaredReport, run: Pick<DeclaredRun, "m
   for (const effect of report.effects) {
     lines.push(`| ${safePathCell(effect.file)} | ${effect.fact} | ${safeCell(effect.value)} | ${effectWords(effect)} |`);
   }
+  // A blank line ends the table, so no line below can be read as a row.
+  lines.push("");
   const { markdownFiles } = run;
   lines.push(`Not declared: headingNumbers for ${markdownFiles - run.declaredMarkdownFiles} of ${markdownFiles} Markdown ${markdownFiles === 1 ? "file" : "files"} read.`);
   const { unread } = report;

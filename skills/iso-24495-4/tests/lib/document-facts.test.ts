@@ -96,9 +96,22 @@ describe("readDocumentFacts reads .iso-24495-4/document-facts.json", () => {
     expect(factsFor(facts, "toString")).toEqual({});
   });
 
-  test("a key that holds a control character or a backtick is printed safely", () => {
-    const facts = read(JSON.stringify({ version: 1, ["a`b\u0007"]: 1 }));
-    expect(facts.problems).toEqual(["The key ``a`b\\u0007`` is not understood and is not honoured."]);
+  test("a rejected key or path is quoted only when it holds letters, digits and . _ / - alone; otherwise its length is printed", () => {
+    const bell = `a${"`"}b${String.fromCharCode(7)}`;
+    const injected = "|<img src=x onerror=alert(1)>";
+    const path = "x|<img src=x>.md";
+    const facts = read(JSON.stringify({ version: 1, [bell]: 1, [injected]: 0, documents: { [path]: "cited", "docs/ok-file_1.md": { "bad key!": 1, headingNumbers: "maybe" } } }));
+    expect(facts.problems).toEqual([
+      "A key of 4 characters (not shown) is not understood and is not honoured.",
+      `A key of ${injected.length} characters (not shown) is not understood and is not honoured.`,
+      `The entry for a path of ${path.length} characters (not shown) is not an object and is not honoured.`,
+      "A key of 8 characters (not shown) for `docs/ok-file_1.md` is not understood and is not honoured.",
+      "headingNumbers for `docs/ok-file_1.md` must be \"cited\" or \"not-cited\", so it is not honoured.",
+    ]);
+    expect(read(JSON.stringify({ version: 1, documents: { [path]: { headingNumbers: "x" } } })).problems).toEqual([
+      `headingNumbers for a path of ${path.length} characters (not shown) must be "cited" or "not-cited", so it is not honoured.`,
+    ]);
+    expect(read(JSON.stringify({ version: 1, ["k".repeat(101)]: 1 })).problems).toEqual(["A key of 101 characters (not shown) is not understood and is not honoured."]);
   });
 
   test("a facts file or folder that is a symbolic link declares nothing, with one problem", () => {
@@ -151,6 +164,7 @@ describe("the run's record and the echo", () => {
       "| `a.md` | headingNumbers | cited | 1 uncited-numbering question was not raised. |",
       "| `b.md` | headingNumbers | not-cited | 1 uncited-numbering question was reported as a finding. |",
       "| `c.md` | headingNumbers | cited | No finding changed. |",
+      "",
       "Not declared: headingNumbers for 1 of 4 Markdown files read.",
     ].join("\n"));
   });
@@ -187,7 +201,7 @@ describe("the run's record and the echo", () => {
     const run = startDeclared(facts({}, problems));
     recordDeclared(run, "a.md", UNCITED, { fileName: "a.md", markdown: true });
     const lines = (formatDeclared(finishDeclared(run), run) ?? "").split("\n");
-    expect(lines.slice(3, 5)).toEqual(["Not declared: headingNumbers for 1 of 1 Markdown file read.", "Problem: Problem 0."]);
+    expect(lines.slice(3, 6)).toEqual(["", "Not declared: headingNumbers for 1 of 1 Markdown file read.", "Problem: Problem 0."]);
     expect(lines.filter(line => line.startsWith("Problem: "))).toHaveLength(20);
     expect(lines.at(-1)).toBe("Problems not listed: 3.");
   });
@@ -196,6 +210,15 @@ describe("the run's record and the echo", () => {
     const run = startDeclared(facts({ "a|b`c.md": { headingNumbers: "cited" } }));
     recordDeclared(run, "a|b`c.md", UNCITED, { fileName: "a|b`c.md", markdown: true });
     expect(formatDeclared(finishDeclared(run), run)?.split("\n")[3]).toBe("| ``a\\|b`c.md`` | headingNumbers | cited | 1 uncited-numbering question was not raised. |");
+  });
+
+  test("the table ends before the lines after it, so a renderer reads each of them as text, not as a row", () => {
+    const run = startDeclared(facts({ "a.md": { headingNumbers: "cited" } }, ["The key `x` is not understood and is not honoured.", "A key of 29 characters (not shown) is not understood and is not honoured."]));
+    recordDeclared(run, "a.md", UNCITED, { fileName: "a.md", markdown: true });
+    const shown = Bun.markdown.html(formatDeclared(finishDeclared(run), run) ?? "");
+    const table = shown.slice(shown.indexOf("<table>"), shown.indexOf("</table>"));
+    expect([...table.matchAll(/<tr>/g)]).toHaveLength(2);
+    expect(shown.slice(shown.indexOf("</table>"))).toContain("Problem: A key of 29 characters (not shown)");
   });
 
   test("several questions and findings are counted in the plural", () => {
