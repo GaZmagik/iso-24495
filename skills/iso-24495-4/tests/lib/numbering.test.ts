@@ -210,6 +210,20 @@ describe("what counts as a citation", () => {
     expect(lines(`${BASE}\nSee section\n3.\n`)).toEqual([5]);
   });
 
+  test("every marker a line opens with reads as one space, so a citation around one cites", () => {
+    for (const text of ["See step\n- 2 then.", "See step\n* 2 then.", "See step\n> - 2 then.", "See step\n+ 2 then.", "See step\n## 2 notes", "See step\n3. 2 more"]) {
+      expect(lines(`${BASE}\n${text}\n`), text).toEqual([]);
+    }
+    expect(lines(`${BASE}\nSee step\n- 3 then.\n`)).toEqual([5]);
+    // In `- 2.` the `2.` is a marker too, of a list inside the item, so nothing cites.
+    expect(lines(`${BASE}\nSee step\n- 2.\n`)).toEqual([5]);
+  });
+
+  test("a counted heading breaks a run of lines, so words either side of it do not join", () => {
+    // commonmark.js reads `See section` and `2.` as two paragraphs, with the heading between.
+    expect(lines("# T\n\n## 1. A\nSee section\n## 2. B\n2.\n")).toEqual([3]);
+  });
+
   test("a number that opens the next line after a citing word cites, list marker or not, so some list items quiet the rule", () => {
     // These are misses, never false findings: a renderer may read the number as text.
     for (const text of ["1. Read the guidelines\n2. Then run it.", "- Read the guidelines\n2. Then run it.", "See step\n1. Then run it."]) {
@@ -300,6 +314,8 @@ describe("what counts as a citation", () => {
     // commonmark.js 0.31.2 reads `See 2 extra` as one level-2 heading starting on line 5.
     expect(lines("# Contents\n\nEntries.\n\nSee 2\nextra\n---\n\n## 1. A\n\n## 2. B\n")).toEqual([]);
     expect(lines("# Contents\n\nEntries.\n\nSee 3\nextra\n---\n\n## 1. A\n\n## 2. B\n")).toEqual([9]);
+    // A line shaped like a heading inside that text does not end the section late, as the heading itself ends it first.
+    expect(lines("# Contents\n\nEntries.\n\nSee 2\n** # x\n---\n\n## 1. A\n\n## 2. B\n")).toEqual([]);
   });
 
   test("a contents section also ends at a line that may be a heading in any container, or that stands above an underline", () => {
@@ -328,6 +344,7 @@ describe("headings the rule cannot be sure of are not counted", () => {
     expect(lines("# T\n\n| a |\n|---|\n## 1. A\n## 2. B\n")).toEqual([]);
     expect(lines("# T\n\n| a |\n|---|\n\n## 1. A\n\n## 2. B\n")).toEqual([6]);
     expect(lines("# T\n\n```\nx | y\n```\n\n## 1. A\n\n## 2. B\n")).toEqual([7]);
+    expect(lines("# T\n\n## 1. A\n---\n## 2. B\n")).toEqual([3]);
   });
 
   test("below a line shaped like a fence straight below a table, no heading is counted", () => {
@@ -355,6 +372,9 @@ describe("headings the rule cannot be sure of are not counted", () => {
     expect(lines(`# T<!--\n\n<?pi\n\n-->\n?>${after}`)).toEqual([8]);
     expect(lines(`# T\n\n<?pi ?> <!--\n\n?>${after}`)).toEqual([]);
     expect(lines(`# T\n\n<!-- <?pi -->\n\n-->${after}`)).toEqual([]);
+    // A later start of another kind does not close the one already open.
+    expect(lines(`# T\n\n<?pi\n\n\`<pre>\` x\n\n</pre>${after}`)).toEqual([]);
+    expect(lines(`# T\n\n<?pi\n\n\`<pre>\` x\n\n</pre> ?>${after}`)).toEqual([9]);
   });
 
   test("below a line shaped like a fence inside HTML, no heading is counted", () => {

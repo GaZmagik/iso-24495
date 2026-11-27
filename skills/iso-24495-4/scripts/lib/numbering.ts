@@ -155,12 +155,14 @@ const LINE_START = /^[ \t>*+#=-]*(?:\d+[.)][ \t>*+#=-]*)*/;
  * or a bracket, as in `(2)`, `#2-setup` or `docs/02-setup.md`, as
  * `PATH_PART` reads one. Numbers are compared by value, so `02` cites `2.`.
  *
- * Each line is searched alone, and so is each run of lines with no blank
- * line between, with every line break as one space, both with the markers
- * each line opens with and without them. Each of those is also searched
- * with its emphasis and code marks taken out, and with its inline tags and
- * link targets taken out and its escapes and character references read. So
- * a citation that wraps, as `See section` above `2.`, cites, and so does
+ * Each line is searched alone, as written and with its emphasis and code
+ * marks taken out. Each run of lines with no blank line or skipped line
+ * between is searched too, joined with every line break as one space: once
+ * with the quotation markers and spaces each line opens with taken off, and
+ * once with every marker a line opens with taken off. Each of those is
+ * searched as it stands, and again with its inline tags, link targets and
+ * marks taken out and its escapes and character references read. So a
+ * citation that wraps, as `See section` above `2.`, cites, and so does
  * `See section &#50;.`. A number that only looks like a citation, such as
  * `in 2 minutes`, quiets the rule too.
  *
@@ -410,7 +412,7 @@ function consecutivePair(numbered: readonly Numbered[]): boolean {
 export function identifierOf(source: string, wording: string = source): string | null {
   const written = source.replace(/\s+/g, " ").trim();
   const shown = renderInline(wording).replace(/\s+/g, " ").trim();
-  if (VERSION_ONLY.test(written) || VERSION_ONLY.test(shown)) return null;
+  if (VERSION_ONLY.test(shown)) return null;
   const asWritten = IDENTIFIER.exec(written);
   const asShown = IDENTIFIER.exec(shown);
   if (asWritten === null || asShown === null) return null;
@@ -535,20 +537,19 @@ function cited(
 
 /**
  * Whether a run of lines with no blank line between holds a citation once
- * joined, each line break read as one space. The run is read with the
- * markers each line opens with, with its quotation markers taken off, and
- * with every marker `LINE_START` names taken off, as a line that opens with
- * `2.` may go on a paragraph or open a list item. Each of the three is read
- * as it stands, without its emphasis and code marks, and as `spelt` gives it.
+ * joined, each line break read as one space. The run is read twice: with
+ * the quotation markers and spaces each line opens with taken off, so a line
+ * that opens with `2.` goes on the line above, and with every marker
+ * `LINE_START` names taken off as well, so `See step` above `- 2` reads as
+ * `See step 2`. Each is read as it stands and as `spelt` gives it.
  */
 function citesInParagraph(paragraph: readonly string[], targets: Targets): boolean {
   if (paragraph.length === 0) return false;
   const readings = [
-    paragraph.map(line => line.replace(HARD_BREAK, "")).join(" "),
     paragraph.map(line => line.replace(QUOTE_MARKERS, "").replace(HARD_BREAK, "")).join(" "),
     paragraph.map(line => line.replace(LINE_START, "").replace(HARD_BREAK, "")).join(" "),
   ];
-  return readings.some(reading => citesInLine(reading, targets) || citesInLine(reading.replace(INLINE_MARKS, ""), targets) || citesInLine(spelt(reading), targets));
+  return readings.some(reading => citesInLine(reading, targets) || citesInLine(spelt(reading), targets));
 }
 
 /**

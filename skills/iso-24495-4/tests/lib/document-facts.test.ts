@@ -112,6 +112,7 @@ describe("readDocumentFacts reads .iso-24495-4/document-facts.json", () => {
       `headingNumbers for a path of ${path.length} characters (not shown) must be "cited" or "not-cited", so it is not honoured.`,
     ]);
     expect(read(JSON.stringify({ version: 1, ["k".repeat(101)]: 1 })).problems).toEqual(["A key of 101 characters (not shown) is not understood and is not honoured."]);
+    expect(read(JSON.stringify({ version: 1, "|": 1 })).problems).toEqual(["A key of 1 character (not shown) is not understood and is not honoured."]);
   });
 
   test("a facts file or folder that is a symbolic link declares nothing, with one problem", () => {
