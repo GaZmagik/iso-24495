@@ -534,7 +534,7 @@ function comparedWith(project: string, after: string): { closing: string[]; rest
 }
 
 describe("the two-version comparison, given --before", () => {
-  test("prints the comparison after the findings and before the reading, and the report holds it before the reading", () => {
+  test("prints the comparison after the findings and before the reading, and the report holds it before the declared facts and the reading", () => {
     const project = makeProject();
     try {
       writeFileSync(join(project, "old.md"), "# Guide\n\nClose the valve. Open the vent.\n");
@@ -561,7 +561,7 @@ describe("the two-version comparison, given --before", () => {
       ]);
       expect(output.stdout[2]).toStartWith("Part 5 checklist reading: ");
       const report = JSON.parse(readFileSync(json, "utf8")) as Record<string, unknown>;
-      expect(Object.keys(report).slice(-2)).toEqual(["restructure", "checklist"]);
+      expect(Object.keys(report).slice(-3)).toEqual(["restructure", "declared", "checklist"]);
       expect(report.restructure).toEqual({
         before: "old.md", after: "new.md", authorText: null,
         units: { before: 3, after: 3, authorText: 0 }, kept: 2, moved: [], stepOrder: [],

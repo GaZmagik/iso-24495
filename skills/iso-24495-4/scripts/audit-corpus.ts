@@ -29,18 +29,24 @@ import {
   FILLER_OPENINGS,
 } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
-import { layoutViolations } from "./lib/layout.ts";
+import { layoutViolations, type LayoutOptions } from "./lib/layout.ts";
+import type { HeadingNumbers } from "./lib/numbering.ts";
 import { emphasisMarkOffsets, withoutEmphasis } from "./lib/inline-wording.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 import { skippedEntryWarning } from "./lib/safe-text.ts";
 import { itemAt } from "./lib/item-at.ts";
+import { factsFor, finishDeclared, formatDeclared, readDocumentFacts, recordDeclared, startDeclared, type DeclaredRun } from "./lib/document-facts.ts";
 
 /**
  * Audits a corpus directory and prints the count of findings for each rule.
  *
  *   bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]
  *
- * `--json` also writes the full findings to that file, replacing it.
+ * `--json` also writes the full findings to that file, replacing it, with
+ * the declared facts under `declared`. When the directory holds
+ * `.iso-24495-4/document-facts.json`, its declarations are honoured, and
+ * after the total each is printed with what it changed, as `formatDeclared`
+ * sets out.
  *
  * Exit 0 means the audit ran, whatever it found. Exit 1 means the directory
  * could not be listed or the findings file could not be written. Exit 2 means
@@ -90,12 +96,14 @@ export function runCli(
   }
   try {
     const skipped: string[] = [];
-    const findings = auditCorpus(dir, (path) => skipped.push(path));
+    const declaredRun = startDeclared(readDocumentFacts(dir));
+    const findings = auditCorpus(dir, (path) => skipped.push(path), readFileSync, declaredRun);
+    const declared = finishDeclared(declaredRun);
     for (const path of skipped) {
       stderr(skippedEntryWarning(path));
     }
     if (jsonPath !== undefined) {
-      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      const problem = writeTextFile(jsonPath, JSON.stringify({ ...findings, declared }, null, 2), "--json");
       if (problem !== null) {
         stderr(`audit-corpus: ${problem}`);
         return 1;
@@ -108,6 +116,8 @@ export function runCli(
     }
     const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
     stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
+    const declaredText = formatDeclared(declared, declaredRun);
+    if (declaredText !== null) stdout(declaredText);
     return 0;
   } catch (error) {
     // The report is written without throwing, and an unreadable entry below
@@ -131,6 +141,10 @@ type ReadTextFile = (path: string, encoding: "utf8") => string;
  * @param onSkip Called with the path of each entry or file that could not be
  *     read. Such a file has no entry in the result.
  * @param readText Replaces the file reader.
+ * @param declared The run's record of declared facts, from
+ *     `readDocumentFacts` through `startDeclared`. Each file read is
+ *     recorded in it, with what its declaration changed, for the caller to
+ *     echo. Left out, no declaration is honoured.
  * @returns `files` is keyed by path from `dir`, with forward slashes, and
  *     holds an entry for every file read, findings or none. `totals` names
  *     only the rules that fired. Both are empty for an empty corpus.
@@ -140,6 +154,7 @@ export function auditCorpus(
   dir: string,
   onSkip?: (path: string) => void,
   readText: ReadTextFile = readFileSync,
+  declared: DeclaredRun = startDeclared({ source: null, documents: new Map(), problems: [] }),
 ): Findings {
   const paths = listTextFiles(dir, onSkip);
   // A corpus is audited from its own directory, so the project's acronyms
@@ -155,7 +170,10 @@ export function auditCorpus(
       onSkip?.(path);
       continue;
     }
-    const violations = auditText(text, { knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
+    const markdown = /\.(?:md|markdown)$/i.test(path);
+    const headingNumbers = factsFor(declared.facts, key).headingNumbers;
+    const violations = auditText(text, { knownAcronyms, fileName: path, markdown, ...(headingNumbers === undefined ? {} : { headingNumbers }) });
+    recordDeclared(declared, key, text, { fileName: path, markdown });
     findings.files[key] = { violations };
     for (const v of violations) {
       findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
@@ -176,6 +194,8 @@ export interface AuditOptions extends Reading {
   knownAcronyms?: ReadonlySet<string>;
   /** File-aware callers enable structural rules for Markdown rather than plain text. */
   markdown?: boolean;
+  /** What the author declared about the document's heading numbers, read by `uncited-numbering`. */
+  headingNumbers?: HeadingNumbers;
 }
 /**
  * Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
@@ -210,16 +230,18 @@ const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
 /**
  * Every mechanical finding in one text.
  *
- * The seven layout rules (`contents-list`, `opening-version-date`,
- * `bullet-depth`, `bullet-paragraphs`, `empty-signpost`, `adjacent-alerts`
- * and `overview-label`) run only when `options.markdown` is true. It
- * defaults to false, so a caller that passes no options gets the other rules
- * alone, and nothing in the result says that layout was skipped.
+ * The eight layout rules (`contents-list`, `opening-version-date`,
+ * `bullet-depth`, `bullet-paragraphs`, `empty-signpost`, `adjacent-alerts`,
+ * `uncited-numbering` and `overview-label`) run only when `options.markdown`
+ * is true. It defaults to false, so a caller that passes no options gets the
+ * other rules alone, and nothing in the result says that layout was skipped.
  *
  * @param text The whole document, with any line ending.
  * @param options `markdown` turns the layout rules on; pass true for a
  *     Markdown file and leave it unset for plain text. `fileName` only
- *     exempts files such as README from the edition advisory. `knownAcronyms`
+ *     exempts files such as README from the edition advisory, and a change
+ *     log or a licence from `uncited-numbering`. `headingNumbers` is what the
+ *     author declared about the heading numbers. `knownAcronyms`
  *     are passed over by the acronym rule, and must be in capitals without
  *     dots. `frontMatter` set to false reads a leading "---" block as text
  *     and switches the edition advisory off; unset, the block is metadata.
@@ -260,11 +282,16 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
     imageAltViolations(text, reading),
     genericAltViolations(text, reading),
     provisionalLabelViolations(text, reading),
-    options.markdown === true ? layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }) : [],
+    options.markdown === true ? layoutViolations(text, layoutReading(reading, fileName, options.headingNumbers)) : [],
   ]) {
     appendAll(violations, findings);
   }
   return violations;
+}
+
+/** What the layout rules are told: the reading, and the file name and declared heading numbers when given. */
+function layoutReading(reading: Reading, fileName: string | undefined, headingNumbers: HeadingNumbers | undefined): LayoutOptions {
+  return { ...reading, ...(fileName === undefined ? {} : { fileName }), ...(headingNumbers === undefined ? {} : { headingNumbers }) };
 }
 
 /** The sentence and paragraph length findings, with the sentence lengths that the average is taken from. */

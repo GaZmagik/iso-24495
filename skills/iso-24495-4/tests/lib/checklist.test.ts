@@ -12,6 +12,7 @@ import type { AuditDependencies } from "../../scripts/lib/jev/audit.ts";
 import { calibrationEvidence, MODEL, type RequestKind } from "../../scripts/lib/jev/catalogue.ts";
 import { parseDecimal } from "../../scripts/lib/jev/decimal.ts";
 import { classify, planDocument, type ExactAnswers } from "../../scripts/lib/jev/engine.ts";
+import type { HeadingNumbers } from "../../scripts/lib/numbering.ts";
 
 const MODULE_PATH = join(import.meta.dir, "..", "..", "scripts", "lib", "checklist.ts");
 const SKILL_PATH = join(import.meta.dir, "..", "..", "..", "iso-24495-5", "SKILL.md");
@@ -28,15 +29,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 26,
+  "fault": 27,
   "pass-only": 1,
-  "not-read": 29,
+  "not-read": 28,
   "needs-two-versions": 7,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 26;
+const FAULT_CLAUSES = 27;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -87,7 +88,16 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
       "It reads a document only when it counts 6 or more level-2 headings outside any Markdown list or quotation. It can count a `##` line that shows as text, such as one inside an HTML block like `<div>`, and a heading inside an HTML `<blockquote>`.",
     ],
   },
-  { id: "4a", demand: "Headings are numbered only where a reader must cite one by its identifier.", state: "not-read", checks: [], needs: [], limits: [] },
+  {
+    id: "4a", demand: "Headings are numbered only where a reader must cite one by its identifier.", state: "fault",
+    checks: [{ rule: "uncited-numbering", kind: "offline" }], needs: ["markdown"],
+    limits: [
+      "It reads a document with at least two headings below its title, outside every list and quotation, whose wording opens with a number, such as `1.`, `2)`, `3:` or `2.1`, two of them neighbours, such as `1.` and `2.` or `2.` and `2.1`. When nothing outside those headings and any contents section cites one, it reports once, on the first, and asks whether a reader must cite them. It says only that they are numbered and uncited, not that the numbering is wrong. Letters, Roman numerals and `Step 1:` are not read as numbers, nor is a version alone, such as `1.2.0`. A change log or a licence, by its file name, is not read.",
+      "It counts a heading as cited when its number stands after a word such as `section`, `step`, `rule`, `see` or `in`, alone or in a list or range such as `steps 1 to 3`, or beside a number word, as in `step two`. So does a dotted number standing alone, such as `2.1`, or a number opening a path, a fragment or a bracket, such as `(2)`, `#2-setup` or `docs/02-setup.md`. Every line but the counted headings and a contents section is searched, code, comments and front matter included, and numbers are compared by value. So a number that cites nothing, such as `in 2 minutes`, quiets it, while a citation by a heading's name alone is not seen.",
+      "It reports only documents it is sure of, so some are missed. It counts no heading with a `<` on any line from the blank line above it, and no setext heading without a blank line above it or with a `<` in its text. Nor does it count one after a line holding the start of HTML that runs past a blank line, such as `<!--` or `<pre`, until a line holds its end, such as `-->`, in code too. Below a line shaped like a fence inside such HTML it counts none. A contents section also ends at a line shaped like a heading in any container.",
+      "It reads what `.iso-24495-4/document-facts.json` declares as `headingNumbers` for the document's exact path. `cited` gives nothing, and `not-cited` makes the question a finding. A citation from outside the file, such as another document or an issue, is not seen, so only a declaration can say the numbers are cited from there.",
+    ],
+  },
   { id: "5a", demand: "Each chunk carries one idea.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "5b", demand: "Each chunk is separated from the next by a blank line.", state: "not-read", checks: [], needs: [], limits: [] },
   {
@@ -387,6 +397,14 @@ const EMPTY_HEADER = "table header has an empty column name";
 const EMPTY_SEE_ALSO = emptySignpost("See also");
 const ADJACENT_NOTE = adjacentAlert("NOTE", 1);
 const TWO_PARAGRAPHS = bulletParagraphs(2);
+/** What uncited-numbering sees in a document whose numbered headings nothing cites. */
+const NUMBERED_SEEN = "This heading and at least one other are numbered, and nothing in this file outside its headings and any contents section cites one by its number.";
+/** The question uncited-numbering asks when nothing is declared. */
+const NUMBERED_QUESTION = `${NUMBERED_SEEN} Must a reader cite these headings by their numbers? A project can declare the answer as headingNumbers in .iso-24495-4/document-facts.json.`;
+/** The finding uncited-numbering gives when the headings are declared not cited. */
+const NUMBERED_FAULT = `${NUMBERED_SEEN} .iso-24495-4/document-facts.json declares that readers do not cite these headings by number. Remove the numbers.`;
+/** A titled document with two numbered sections, on lines 5 and 9, that nothing cites. */
+const NUMBERED_GUIDE = "# Guide\n\nIntro.\n\n## 1. Install\n\nText.\n\n## 2. Run\n\nText.\n";
 const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it";
 
 /** A non-breaking hyphen, which looks like the hyphen in 24495-5 and is another character. */
@@ -447,6 +465,7 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "1a": { text: "# Title\n\n##### Too deep\n\nText.\n", reasons: { "heading-depth": [HEADING_FIVE] } },
   "3a": { text: SIX_SECTION_GUIDE, reasons: { "contents-list": [NO_CONTENTS] } },
   "3b": { text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${SIX_SECTIONS}`, reasons: { "contents-list": [CONTENTS_WORDING] } },
+  "4a": { text: NUMBERED_GUIDE, reasons: { "uncited-numbering": [NUMBERED_QUESTION] } },
   "6a": { text: "First, open the box. Second, lift the lid. Third, read the note.\n", reasons: { "prose-enumeration": [PROSE_RANKS] } },
   "8a": { text: "- Close the valve.\n\n  Then open the vent.\n", reasons: { "bullet-paragraphs": [TWO_PARAGRAPHS] } },
   "8c": { text: "- One\n  - Two\n    - Three\n", reasons: { "bullet-depth": [BULLET_THREE] } },
@@ -572,6 +591,8 @@ interface LimitReading {
   readonly authorText?: string;
   readonly fileName?: string;
   readonly frontMatter?: boolean;
+  /** What the author declared about the heading numbers, for `uncited-numbering`. */
+  readonly headingNumbers?: HeadingNumbers;
   readonly answers?: Answers;
 }
 
@@ -588,6 +609,7 @@ interface Control {
   readonly authorText?: string;
   readonly fileName?: string;
   readonly frontMatter?: boolean;
+  readonly headingNumbers?: HeadingNumbers;
   readonly answers?: Answers;
   readonly found: readonly string[];
 }
@@ -697,6 +719,32 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Bring: (1) gloves, (2) goggles and (3) boots.\n", found: [PROSE_RANKS], control: { from: "(1) gloves, (2) goggles and (3) boots", to: "gloves, goggles and boots", found: [] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 1. open the box, 2. lift the lid, 7. read the note.\n", found: [], control: { from: "7. read", to: "6. read", found: ["enumeration ranks 1, 2, 6 in prose; consider a list"] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: (1) open the box, (2) lift the lid, (7) read the note.\n", found: [], control: { from: "(7) read", to: "(6) read", found: ["enumeration ranks 1, 2, 6 in prose; consider a list"] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: NUMBERED_GUIDE, found: [NUMBERED_QUESTION], control: { from: "## 2. Run", to: "## Run", found: [] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: "# T\n\n## A. One\n\n## 2. Two\n", found: [], control: { from: "## A. One", to: "## 1. One", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: "# T\n\n## Step 1: One\n\n## 2. Two\n", found: [], control: { from: "Step 1:", to: "1.", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: "# T\n\n## 1.2.0\n\n## 1.2.1 Notes\n", found: [], control: { from: "## 1.2.0\n", to: "## 1.2.0 Notes\n", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: "# T\n\n## 1. A\n\n## 3. C\n", found: [], control: { from: "3. C", to: "2. C", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: NUMBERED_GUIDE, fileName: "CHANGELOG.md", found: [], control: { fileName: "guide.md", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 1, check: "uncited-numbering", text: "# T\n\n- ## 1. A\n\n## 2. B\n", found: [], control: { from: "- ## 1. A", to: "## 1. A", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\nSee step 2.\n`, found: [], control: { from: "See step 2.", to: "See it.", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: "# T\n\n## 2. A\n\n## 3. B\n\nSteps 1 to 4.\n", found: [], control: { from: "1 to 4", to: "5 to 9", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\nDo step two.\n`, found: [], control: { from: "step two", to: "two", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: "# T\n\n## 2.1 A\n\n## 2.2 B\n\nAs 2.2 says.\n", found: [], control: { from: "2.2 says", to: "it says", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\nAs (2) shows.\n`, found: [], control: { from: "(2)", to: "(two)", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\n[Run](docs/02-run.md)\n`, found: [], control: { from: "02-run", to: "run", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\n\`\`\`\nsee 1\n\`\`\`\n`, found: [], control: { from: "see 1", to: "see it", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\nDone in 2 minutes.\n`, found: [], control: { from: "in 2", to: "within 2", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 2, check: "uncited-numbering", text: `${NUMBERED_GUIDE}\nSee Run below.\n`, found: [NUMBERED_QUESTION], control: { from: "See Run", to: "See 2", found: [] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n<div>\n## 1. A\n\n## 2. B\n", found: [], control: { from: "<div>\n", to: "", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n| a |\n|---|\n| b |\n1\\. A\n---\n\n## 2. B\n", found: [], control: { from: "| b |\n", to: "| b |\n\n", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n1\\. A <b>x</b>\n---\n\n## 2. B\n", found: [], control: { from: " <b>x</b>", to: "", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n> q\n<!--\n\n## 1. A\n\n## 2. B\n", found: [], control: { from: "<!--", to: "-->", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n    <pre>\n\n## 1. A\n\n## 2. B\n", found: [], control: { from: "<pre>", to: "pre", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n<!-- a -->\n\n## 1. A\n\n## 2. B\n", found: [NUMBERED_QUESTION], control: { from: "<!-- a -->", to: "<!-- a", found: [] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n<div>\n```\n\n```\n\n## 1. A\n\n## 2. B\n", found: [], control: { from: "<div>\n```", to: "<div>\n\n```", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 3, check: "uncited-numbering", text: "# T\n\n## Contents\n\n- [A](#1-a)\n> # x\n\nSee 2.\n\n## 1. A\n\n## 2. B\n", found: [], control: { from: "> # x", to: "> x", found: [NUMBERED_QUESTION] } },
+  { clause: "4a", limit: 4, check: "uncited-numbering", text: NUMBERED_GUIDE, found: [NUMBERED_QUESTION], control: { headingNumbers: "cited", found: [] } },
+  { clause: "4a", limit: 4, check: "uncited-numbering", text: NUMBERED_GUIDE, headingNumbers: "not-cited", found: [NUMBERED_FAULT], control: { headingNumbers: "cited", found: [] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 2. open the box, 3. lift the lid, 4. read the note.\n", found: [], control: { from: "2. open", to: "1. open", found: ["enumeration ranks 1, 3, 4 in prose; consider a list"] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 1. open the box, 2. lift the lid.\n", found: [], control: { from: "2. lift the lid.", to: "2. lift the lid, 3. read the note.", found: [PROSE_RANKS] } },
   { clause: "6a", limit: 2, check: "prose-enumeration", text: "Clause (1) The supplier delivers. (2) The buyer pays. (3) Either party may end the contract.\n", found: [PROSE_RANKS], control: { from: "(1) The supplier", to: "The supplier", found: [] } },
@@ -1215,6 +1263,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "1a": [4],
   "3a": [6, 18, 21],
   "3b": [22, 3],
+  "4a": [7, 9, 8, 2],
   "6a": [10, 1],
   "8a": [4, 13, 13, 14, 4],
   "8c": [4],
@@ -1264,6 +1313,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "1a": ["05c161cc89c947e2"],
   "3a": ["bec14fbb73268aeb", "19259afeef2d29c4", "18e740d0195e1360"],
   "3b": ["a89a361732bfc545", "cb48ca7f8f73c2bf"],
+  "4a": ["e6a25aafcc2d24d8", "914e3a9e8fbe6376", "801aee55800f0826", "abd52085f2aa46ee"],
   "6a": ["a0eca4bb5ee78b0b", "ac7780100b062b44"],
   "8a": ["b56c1012e9ad9692", "3da900143a385002", "61c893009723ca44", "aecc1e7cc08e1676", "000ae08fa612ec69"],
   "8c": ["1e7ef38789ed8e7f"],
@@ -1295,6 +1345,7 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "1a": "634f9b7d0d8339ae",
   "3a": "05deb1c41fc09209",
   "3b": "2b287cac5742b449",
+  "4a": "666056d4e20fc7f9",
   "6a": "1fe5e2c752ffae09",
   "8a": "dfc8a23d0403eee8",
   "8c": "de544846e4fdb6fa",
@@ -1769,7 +1820,10 @@ function limitFound(reading: LimitReading): string[] {
     return [`${reading.check}:${decision.band}`, ...(decision.diagnosisGate === undefined ? [] : [decision.diagnosisGate.id])];
   }
   const text = reading.text ?? "";
-  const options = { markdown: true, ...(reading.fileName === undefined ? {} : { fileName: reading.fileName }), ...(reading.frontMatter === undefined ? {} : { frontMatter: reading.frontMatter }) };
+  const options = {
+    markdown: true, ...(reading.fileName === undefined ? {} : { fileName: reading.fileName }), ...(reading.frontMatter === undefined ? {} : { frontMatter: reading.frontMatter }),
+    ...(reading.headingNumbers === undefined ? {} : { headingNumbers: reading.headingNumbers }),
+  };
   return [...auditText(text, options), ...planDocument(text).findings].filter(finding => finding.rule === reading.check).map(finding => finding.detail);
 }
 
@@ -1783,6 +1837,7 @@ function underControl(specimen: LimitSpecimen): LimitReading {
   const text = specimen.text === undefined || control.from === undefined ? specimen.text : specimen.text.split(control.from).join(control.to ?? "");
   const fileName = control.fileName ?? specimen.fileName;
   const frontMatter = control.frontMatter ?? specimen.frontMatter;
+  const headingNumbers = control.headingNumbers ?? specimen.headingNumbers;
   const answers = control.answers ?? specimen.answers;
   const before = control.before ?? specimen.before;
   const authorText = control.authorText ?? specimen.authorText;
@@ -1793,6 +1848,7 @@ function underControl(specimen: LimitSpecimen): LimitReading {
     ...(authorText === undefined ? {} : { authorText }),
     ...(fileName === undefined ? {} : { fileName }),
     ...(frontMatter === undefined ? {} : { frontMatter }),
+    ...(headingNumbers === undefined ? {} : { headingNumbers }),
     ...(answers === undefined ? {} : { answers }),
   };
 }
@@ -2207,7 +2263,7 @@ describe("the Part 5 checklist clause registry", () => {
       expect(specimen.text === undefined, `${label} reads a text or answers`).toBe(specimen.answers !== undefined);
       expect(control.from === undefined, `${label} control gives both from and to`).toBe(control.to === undefined);
       expect(control.from !== undefined || control.before !== undefined || control.authorText !== undefined || control.fileName !== undefined
-        || control.frontMatter !== undefined || control.answers !== undefined, `${label} control changes something`).toBe(true);
+        || control.frontMatter !== undefined || control.headingNumbers !== undefined || control.answers !== undefined, `${label} control changes something`).toBe(true);
       if (control.from !== undefined) expect(specimen.text?.split(control.from).length, `${label} holds the control's text once`).toBe(2);
       expect(limitFound(specimen), label).toEqual([...specimen.found]);
       expect(limitFound(underControl(specimen)), `${label} under its control`).toEqual([...control.found]);

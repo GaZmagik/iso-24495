@@ -124,13 +124,13 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 - paragraphs, wherever they sit;
 - list items, which are often the longest sentences in a document;
 - quotations, including GitHub alerts such as `> [!WARNING]`;
-- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Six layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, and `empty-signpost` an empty referral heading. `adjacent-alerts` reads an underline that may make an alert one, `bullet-paragraphs` a heading or underline that leaves an item unread, and the Jev route's `opening-title` finding the title. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
+- headings, at any depth and in any container, through the heading rules, `link-text`, `image-alt`, `generic-alt`, `provisional-label` and the five word rules named below. `acronym-undefined` reads a definition in a heading, and reports only uses in prose. Seven layout rules read headings too: `opening-version-date`, `contents-list` and `overview-label` find a title and sections, `empty-signpost` an empty referral heading, and `uncited-numbering` numbered ones. `adjacent-alerts` reads an underline that may make an alert one, `bullet-paragraphs` a heading or underline that leaves an item unread, and the Jev route's `opening-title` finding the title. Given `--before`, the two-version comparison counts the headings a restructure adds or removes, once for each heading.
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`. `bullet-paragraphs` reads no item below a line in it shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`;
-- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, `adjacent-alerts` reads no alert below a `<` in one, and `bullet-paragraphs` no item below one holding `<!--`. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
-- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item. Nor does `bullet-paragraphs` read an item below a line in it shaped like a fence, starting HTML that runs past a blank line, or opening an empty list item;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`. `bullet-paragraphs` reads no item below a line in it shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`. `uncited-numbering` counts a citation in it, and counts no heading below such HTML until a line holds its end;
+- tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, `uncited-numbering` a citation, `adjacent-alerts` reads no alert below a `<` in one, and `bullet-paragraphs` no item below one holding `<!--`. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
+- YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item. Nor does `bullet-paragraphs` read an item below a line in it shaped like a fence, starting HTML that runs past a blank line, or opening an empty list item. `uncited-numbering` counts a citation in it;
 - a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;
 - a task marker, which is a control rather than two words.
 
@@ -156,8 +156,8 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 A leading `---` block is front matter, which the prose checks set aside as metadata. Text that cannot carry metadata, such as a pull request description, takes `--no-front-matter`, and the block is then read as text.
 
-Seven Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and one paragraph to a bullet. They also add an overview before detail, an empty signpost check and an adjacent alerts check.
-Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus. The three newest rules were run on one, as their paragraphs below say.
+Eight Markdown layout rules add contents navigation, an edition metadata advisory, unordered bullet depth and one paragraph to a bullet. They also add an overview before detail, an empty signpost check, an adjacent alerts check and a question about uncited heading numbers.
+Their [recognition limits](skills/iso-24495-text-audit/SKILL.md#markdown-layout-recognition) remain unmeasured on a corpus. The four newest rules were run on one, as their paragraphs below say.
 
 The edition advisory applies only to titled documents and asks whether readers need a version or date.
 Files named `readme`, `contributing`, `security` or `pull_request_template` are exempt in any folder, regardless of case or extension.
@@ -193,6 +193,27 @@ On the corpus named below, that fence guard alone leaves unread 7 of the 18 item
 To clear it, join the paragraphs into one paragraph on one idea, or promote the item to a subsection.
 It found 11 in 4 of 822 third-party Markdown files, 8 of them in one file, and none in this repository's own documents.
 Each of the 11 was read and judged a true finding.
+
+The `uncited-numbering` rule asks whether readers must cite a document's numbered headings, when two or more open with a number such as `1.` or `2.1` and nothing else cites one.
+It says only what it can see, that the headings are numbered and nothing in the file cites them by number, and never that the numbering is wrong.
+A citation counts after a word such as `section`, `step`, `rule` or `see`, as a dotted number such as `2.1`, or in a link such as `#2-setup`.
+It reports only documents it is sure of, so it misses some below HTML or a fence it cannot place, and it reads no change log or licence.
+
+To settle it, declare the answer in the facts file the next paragraph describes.
+It found 15 in 822 third-party Markdown files and none in this repository's own documents.
+A labeller who did not build the rule read all 15, and judged 14 true and 1 unclear.
+
+A project can declare facts about its documents in `.iso-24495-4/document-facts.json`, keyed by each file's exact path from the project directory:
+
+```json
+{ "version": 1, "documents": { "docs/spec.md": { "headingNumbers": "cited" } } }
+```
+
+There, `cited` quiets the numbering question, and `not-cited` turns it into a finding.
+The text, design and corpus audits honour the file, and print each declaration with what it changed.
+Any other key is reported as not understood and is never honoured.
+A broken file, a symbolic link or a path the run did not read is reported, and never stops the audit.
+The pull request text check reads no facts file.
 
 The existing rules cover sentence length, sentence averages, paragraph length, legalese, and heading depth. They also cover `heading-skip`, `heading-style`, `acronym-undefined`, `doublet`, `prose-enumeration`, `link-text`, `image-alt`, `generic-alt`, `wordy-phrase`, `complex-word`, `double-negative`, `filler-opening`, `table-header`, and `provisional-label`.
 

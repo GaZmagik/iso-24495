@@ -3,6 +3,7 @@ import type { Violation } from "./types.ts";
 import { renderInline } from "./inline-wording.ts";
 import { adjacentAlertViolations } from "./alerts.ts";
 import { bulletParagraphViolations } from "./bullets.ts";
+import { uncitedNumberingViolations, type HeadingNumbers } from "./numbering.ts";
 
 const SECTION_LIMIT = 6;
 const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
@@ -22,14 +23,16 @@ const SIGNPOST_LABELS: ReadonlySet<string> = new Set([
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 /**
  * What `layoutViolations` may be told besides the text. `fileName` exempts
- * a file such as a README from the edition advisory.
+ * a file such as a README from the edition advisory, and a change log or a
+ * licence from `uncited-numbering`. `headingNumbers` is what the author
+ * declared about the document's heading numbers.
  */
-export interface LayoutOptions extends Reading { fileName?: string }
+export interface LayoutOptions extends Reading { fileName?: string; headingNumbers?: HeadingNumbers }
 
 /**
  * The layout findings for one Markdown text: `opening-version-date`,
  * `bullet-depth`, `bullet-paragraphs`, `empty-signpost`, `adjacent-alerts`,
- * `contents-list` and `overview-label`.
+ * `uncited-numbering`, `contents-list` and `overview-label`.
  *
  * The contents and overview rules apply only to a document with six or more
  * level-2 headings outside any list or quotation. The edition advisory
@@ -75,6 +78,10 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     findings.push(finding);
   }
   for (const finding of bulletParagraphViolations(text, parsed)) {
+    findings.push(finding);
+  }
+  const numbering = { ...(reading.fileName === undefined ? {} : { fileName: reading.fileName }), ...(reading.headingNumbers === undefined ? {} : { headingNumbers: reading.headingNumbers }) };
+  for (const finding of uncitedNumberingViolations(text, parsed, numbering)) {
     findings.push(finding);
   }
   const sections = parsed.headings.filter(heading => heading.level === 2);

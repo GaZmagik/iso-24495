@@ -6,6 +6,10 @@ import { runAuditCli, selectDocuments, formatFindings, formatPlan, safeText, DIS
 import { MODEL, sha256 } from "../../../scripts/lib/jev/catalogue.ts";
 import { planDocument } from "../../../scripts/lib/jev/engine.ts";
 import { safePath } from "../../../scripts/lib/safe-text.ts";
+import { startDeclared } from "../../../scripts/lib/document-facts.ts";
+
+/** A record of declared facts for a selection built by hand, which declares nothing. */
+const NO_DECLARATIONS = startDeclared({ source: null, documents: new Map(), problems: [] });
 import { runCli as runTextCli } from "../../../../iso-24495-text-audit/scripts/audit-text.ts";
 import { runCli as runDesignCli } from "../../../../iso-24495-design-audit/scripts/design-audit.ts";
 
@@ -533,7 +537,7 @@ test("every line of the Jev audit that names a file prints it as a path", async 
   const empty = { candidates: [], findings: [] };
   const selection: Selection = {
     documents: [{ file: name, path: "p", plan: empty, refusal: REFUSAL }, { file: `${name}2`, path: "q", plan: empty }],
-    mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [`docs/${name}`],
+    mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [`docs/${name}`], declared: NO_DECLARATIONS,
   };
   const plan = formatPlan(selection, true, `out  ${override}.json`);
   expect(plan).not.toContain(override);
@@ -587,7 +591,7 @@ test("a hole in the argument list is refused, and so is what follows it", async 
 test("the preview says, after its totals, that a request may be sent up to six times and charged again", () => {
   const selection: Selection = {
     documents: [{ file: "doc.md", path: "p", plan: { candidates: [], findings: [] } }],
-    mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: ["doc.md"],
+    mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: ["doc.md"], declared: NO_DECLARATIONS,
   };
   const lines = formatPlan(selection).split("\n");
   const total = lines.indexOf("Total: 0 requests, 0 questions.");
@@ -600,7 +604,7 @@ test("the preview says, after its totals, that a request may be sent up to six t
 
 test("the disclosure version names the text that says a request may be sent again and charged again", () => {
   expect(DISCLOSURE_VERSION).toBe("0.8.0-r3");
-  const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [] };
+  const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [], declared: NO_DECLARATIONS };
   expect(formatPlan(selection).split("\n")[0]).toBe(`Transmission preview: TypeSafe, model ${MODEL}, disclosure 0.8.0-r3.`);
 });
 
@@ -629,7 +633,7 @@ test("the preview names every field a real send writes to the send log, and no o
       complete: "whether execution completed",
     };
     expect(records.map(record => Object.keys(record).sort())).toEqual([Object.keys(words).sort()]);
-    const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [] };
+    const selection: Selection = { documents: [], mechanical: { configHash: "c", files: {}, totals: {} }, skipped: [], paths: [], declared: NO_DECLARATIONS };
     const line = formatPlan(selection).split("\n").find(text => text.startsWith("A local send log records"));
     expect(line).toBe("A local send log records the disclosure version, a digest of the payloads sent, the selected paths, the timestamp and whether execution completed. It records transmission; it does not prove agreement.");
     for (const phrase of Object.values(words)) {
@@ -947,8 +951,9 @@ const NO_TITLE_SEND_BEFORE = "f09d0c6f0eaba71a3289ba9c49adb715e52387469e344aa1fc
 // The preview's JSON report as written once the checklist reading was added,
 // with filesNotReached and documentsNotSent in its run, with the seven
 // clauses the two-version comparison reads counted as fault clauses that
-// need the original version, and clauses 25a, 19d, 9b and 8a fault checks.
-const NO_TITLE_PREVIEW_JSON = "a0e7314a1e7e2517b86e632c79367a32a433d4d898f178f881a219a132188f5a";
+// need the original version, clauses 25a, 19d, 9b, 8a and 4a fault checks,
+// and the declared key before the reading, from a project with no facts file.
+const NO_TITLE_PREVIEW_JSON = "79504d20851648be091412fe45762eadfb16c609fa5d7c9d86310478fc51bd8d";
 const NO_TITLE_PREVIEW_JSON_BEFORE = "aaa36ebb767b04dc1b8078dfd2cfaf7c9a6ea5e19e4a83c3da20b3b6292c42b1";
 const NO_TITLE_BODIES_BEFORE = "a7cbaf21c2f26888b27b828be090bb7ce0eb7a996f6a8d1cc3d708805443f68c";
 const NO_TITLE_LOG_DIGEST_BEFORE = "bfca057c543a67dff65f26fce00ec30afde49d0d3ec36624a6e6c9e83a8bd491";
@@ -1331,10 +1336,12 @@ test("printing the title finding leaves a preview's JSON report as it was", asyn
     // The bytes as written, so a change to how the report is written fails here.
     expect(sha256(written)).toBe(NO_TITLE_PREVIEW_JSON);
     const report = JSON.parse(written);
-    expect(Object.keys(report).at(-1)).toBe("checklist");
+    expect(Object.keys(report).slice(-2)).toEqual(["declared", "checklist"]);
+    expect(report.declared).toEqual({ source: null, files: [], effects: [], problems: [] });
     delete report.checklist;
-    // Without the checklist key, the report holds what it held before the
-    // reading, key for key and in the same order.
+    delete report.declared;
+    // Without the declared and checklist keys, the report holds what it held
+    // before the reading, key for key and in the same order.
     const json = JSON.stringify(report, null, 2);
     expect(JSON.parse(json).jev.localFindings).toEqual([{ file: "doc.md", line: 1, rule: "opening-title", detail: "Add a level-1 document title. Purpose assessment is skipped without one." }]);
     expect(sha256(json)).toBe(NO_TITLE_PREVIEW_JSON_BEFORE);

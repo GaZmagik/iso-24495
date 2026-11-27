@@ -87,7 +87,16 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     item: 4,
     line: "- [ ] **Numbering:** Are headings numbered only where a reader must cite one by its identifier?",
     clauses: [
-      { id: "4a", demand: "Headings are numbered only where a reader must cite one by its identifier.", state: "not-read", checks: [], needs: [], limits: [] },
+      {
+        id: "4a", demand: "Headings are numbered only where a reader must cite one by its identifier.", state: "fault",
+        checks: [{ rule: "uncited-numbering", kind: "offline" }], needs: ["markdown"],
+        limits: [
+          "It reads a document with at least two headings below its title, outside every list and quotation, whose wording opens with a number, such as `1.`, `2)`, `3:` or `2.1`, two of them neighbours, such as `1.` and `2.` or `2.` and `2.1`. When nothing outside those headings and any contents section cites one, it reports once, on the first, and asks whether a reader must cite them. It says only that they are numbered and uncited, not that the numbering is wrong. Letters, Roman numerals and `Step 1:` are not read as numbers, nor is a version alone, such as `1.2.0`. A change log or a licence, by its file name, is not read.",
+          "It counts a heading as cited when its number stands after a word such as `section`, `step`, `rule`, `see` or `in`, alone or in a list or range such as `steps 1 to 3`, or beside a number word, as in `step two`. So does a dotted number standing alone, such as `2.1`, or a number opening a path, a fragment or a bracket, such as `(2)`, `#2-setup` or `docs/02-setup.md`. Every line but the counted headings and a contents section is searched, code, comments and front matter included, and numbers are compared by value. So a number that cites nothing, such as `in 2 minutes`, quiets it, while a citation by a heading's name alone is not seen.",
+          "It reports only documents it is sure of, so some are missed. It counts no heading with a `<` on any line from the blank line above it, and no setext heading without a blank line above it or with a `<` in its text. Nor does it count one after a line holding the start of HTML that runs past a blank line, such as `<!--` or `<pre`, until a line holds its end, such as `-->`, in code too. Below a line shaped like a fence inside such HTML it counts none. A contents section also ends at a line shaped like a heading in any container.",
+          "It reads what `.iso-24495-4/document-facts.json` declares as `headingNumbers` for the document's exact path. `cited` gives nothing, and `not-cited` makes the question a finding. A citation from outside the file, such as another document or an issue, is not seen, so only a declaration can say the numbers are cited from there.",
+        ],
+      },
     ],
   },
   {

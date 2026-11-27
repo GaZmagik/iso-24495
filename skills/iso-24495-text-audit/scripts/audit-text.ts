@@ -10,6 +10,7 @@ import {
 import { CHECKLIST } from "../../iso-24495-4/scripts/lib/checklist.ts";
 import { checklistReading, formatChecklistReading } from "../../iso-24495-4/scripts/lib/checklist-reading.ts";
 import { pathFailure, writeTextFile } from "../../iso-24495-4/scripts/lib/failure.ts";
+import { finishDeclared, formatDeclared, readDocumentFacts, recordDeclared, startDeclared, factsFor, type DeclaredRun, type DocumentFacts } from "../../iso-24495-4/scripts/lib/document-facts.ts";
 import { compareVersions, comparisonReport, formatComparison, type ComparedPaths, type Comparison } from "../../iso-24495-4/scripts/lib/restructure.ts";
 import { safeCell, safePathCell, skippedEntryWarning } from "../../iso-24495-4/scripts/lib/safe-text.ts";
 import type { Reading } from "../../iso-24495-4/scripts/lib/parse.ts";
@@ -149,7 +150,9 @@ export function runCli(
       stderr(`audit-text: ${comparing}`);
       return 1;
     }
-    const findings = auditTarget(target, projectDir, readFileSync, { frontMatter });
+    const declaredRun = startDeclared(readDocumentFacts(resolve(projectDir)));
+    const findings = auditTarget(target, projectDir, readFileSync, { frontMatter }, declaredRun);
+    const declared = finishDeclared(declaredRun);
     for (const path of findings.skipped) {
       stderr(skippedEntryWarning(path));
     }
@@ -167,11 +170,11 @@ export function runCli(
       jev: false,
       send: false,
       before: comparing !== null,
-      facts: [],
+      facts: declared.effects.length > 0 ? ["headingNumbers"] : [],
     });
     if (jsonPath !== undefined) {
       const restructure = comparing === null ? {} : { restructure: comparisonReport(comparing.comparison, comparing.paths) };
-      const problem = writeTextFile(jsonPath, JSON.stringify({ ...findings, ...restructure, checklist }, null, 2), "--json");
+      const problem = writeTextFile(jsonPath, JSON.stringify({ ...findings, ...restructure, declared, checklist }, null, 2), "--json");
       if (problem !== null) {
         stderr(`audit-text: ${problem}`);
         return 1;
@@ -179,6 +182,8 @@ export function runCli(
     }
     stdout(formatFindings(findings));
     if (comparing !== null) stdout(formatComparison(comparing.comparison, comparing.paths));
+    const declaredText = formatDeclared(declared, declaredRun);
+    if (declaredText !== null) stdout(declaredText);
     // Printed apart from the table: the pull request check reuses formatFindings, and prints no reading.
     stdout(formatChecklistReading(checklist, CHECKLIST));
     return 0;
@@ -291,6 +296,9 @@ export interface TextAuditResult extends Findings {
 
 type ReadTextFile = (path: string, encoding: "utf8") => string;
 
+/** A facts file that declares nothing, for a caller that passes no run. */
+const NO_FACTS: DocumentFacts = { source: null, documents: new Map(), problems: [] };
+
 function displayPath(path: string, projectDir: string): string {
   return relative(projectDir, path).replaceAll("\\", "/");
 }
@@ -307,6 +315,10 @@ function displayPath(path: string, projectDir: string): string {
  * @param readText Replaces the file reader.
  * @param reading Pass `frontMatter: false` for text that cannot carry front
  *     matter. A leading "---" block is then read as text.
+ * @param declared The run's record of declared facts, from
+ *     `readDocumentFacts` through `startDeclared`. Each file read is
+ *     recorded in it, with what its declaration changed, for the caller to
+ *     echo. Left out, no declaration is honoured.
  * @returns The findings for each file read, the totals for each rule that
  *     fired, and `skipped`, the full path of every entry that was not read.
  *     A file that cannot be read is skipped and never thrown, so a single
@@ -322,6 +334,7 @@ export function auditTarget(
   projectDir: string,
   readText: ReadTextFile = readFileSync,
   reading: Reading = {},
+  declared: DeclaredRun = startDeclared(NO_FACTS),
 ): TextAuditResult {
   const absoluteTarget = resolve(target);
   const absoluteProject = resolve(projectDir);
@@ -356,8 +369,12 @@ export function auditTarget(
     }
     // Read by name: a spread would miss a property that is inherited or not enumerable.
     const frontMatter = reading.frontMatter;
-    const violations = auditText(text, { ...(frontMatter === undefined ? {} : { frontMatter }), knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
-    findings.files[displayPath(path, absoluteProject)] = { violations };
+    const file = displayPath(path, absoluteProject);
+    const markdown = /\.(?:md|markdown)$/i.test(path);
+    const headingNumbers = factsFor(declared.facts, file).headingNumbers;
+    const violations = auditText(text, { ...(frontMatter === undefined ? {} : { frontMatter }), ...(headingNumbers === undefined ? {} : { headingNumbers }), knownAcronyms, fileName: path, markdown });
+    recordDeclared(declared, file, text, { ...(frontMatter === undefined ? {} : { frontMatter }), fileName: path, markdown });
+    findings.files[file] = { violations };
     for (const violation of violations) {
       findings.totals[violation.rule] = (findings.totals[violation.rule] ?? 0) + 1;
     }

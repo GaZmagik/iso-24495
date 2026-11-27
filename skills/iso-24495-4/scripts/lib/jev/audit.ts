@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { auditText, configHash, isAuditedDocument, listTextFiles, projectAcronyms } from "../../audit-corpus.ts";
 import { CHECKLIST } from "../checklist.ts";
 import { checklistReading, formatChecklistReading, type RunFacts } from "../checklist-reading.ts";
+import { finishDeclared, formatDeclared, factsFor, readDocumentFacts, recordDeclared, startDeclared, type DeclaredRun, type DocumentFacts } from "../document-facts.ts";
 import { frontMatterRange, toLines } from "../parse.ts";
 import type { Findings } from "../types.ts";
 import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvidence } from "./catalogue.ts";
@@ -58,7 +59,7 @@ export interface SelectedDocument {
  * findings for all of them, the entries passed over, and the selected
  * paths as a preview names them.
  */
-export interface Selection { documents: SelectedDocument[]; mechanical: Findings; skipped: string[]; paths: string[] }
+export interface Selection { documents: SelectedDocument[]; mechanical: Findings; skipped: string[]; paths: string[]; declared: DeclaredRun }
 /** One finding the engine made without asking Jev, with the document it is about. */
 type FileFinding = JevReport["localFindings"][number];
 // The header of the findings table that a send prints, and that a preview reuses for its local findings.
@@ -126,7 +127,11 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  *
  * Both modes run the whole offline text audit, `auditText`, on every selected
  * document, and print its findings before the disclosure. Those findings are
- * never sent. The Part 5 checklist reading follows them. It is read from the
+ * never sent. They honour what `.iso-24495-4/document-facts.json` under the
+ * project directory declares, and when that file exists the declared facts
+ * print after them, each with what it changed, as `formatDeclared` sets out.
+ * Neither the file nor its effects reach the plan, the disclosure or a
+ * request. The Part 5 checklist reading follows them. It is read from the
  * arguments and the selected files before any request, so no Jev answer
  * changes it.
  *
@@ -164,7 +169,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   }
   let selection: Selection;
   try {
-    selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter);
+    selection = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter, readDocumentFacts(resolve(args.projectDir)));
   } catch {
     stderr("The selected path could not be read or is not a supported document.");
     return 1;
@@ -175,8 +180,12 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   for (const document of selection.documents) {
     if (document.refusal !== undefined) stderr(`warning: not sent: ${safePath(document.file)}: ${document.refusal}`);
   }
+  const declared = finishDeclared(selection.declared);
   const checklist = checklistReading(CHECKLIST, runFacts(mode, args, selection));
   stdout(formatMechanical(selection.mechanical));
+  // The facts change only the offline findings, so they print with them, and nothing of them is sent.
+  const declaredText = formatDeclared(declared, selection.declared);
+  if (declaredText !== null) stdout(declaredText);
   stdout(formatChecklistReading(checklist, CHECKLIST));
   // A send prints the local findings with the Jev findings, so only a preview prints them here.
   const local = localFindings(selection);
@@ -184,7 +193,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   stdout(formatPlan(selection, args.includeText, args.json));
   if (!args.send) {
     try {
-      if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true, checklist }, null, 2));
+      if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: emptyReport(selection, false), preview: true, declared, checklist }, null, 2));
     } catch {
       stderr("The preview report could not be written.");
       return 1;
@@ -212,7 +221,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   }
   const digest = scopeDigest(selection, args);
   try {
-    const rebuilt = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter);
+    const rebuilt = selectDocuments(args.target, args.projectDir, mode, dependencies.read, args.frontMatter, readDocumentFacts(resolve(args.projectDir)));
     if (scopeDigest(rebuilt, args) !== digest) {
       stderr("The selected content or scope changed. Preview it and agree again. Nothing was sent.");
       return 2;
@@ -244,7 +253,7 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   try {
     const record: AuditLog = { disclosureVersion: DISCLOSURE_VERSION, digest: sha256(JSON.stringify(items.filter((item, index) => sent.has(index)).map(item => item.candidate.body))), paths: selection.paths, timestamp: (dependencies.now?.() ?? new Date()).toISOString(), complete: queue.failure === undefined };
     (dependencies.writeLog ?? writeAuditLog)(record, join(args.projectDir, ".iso-24495-4", "jev-audit.jsonl"));
-    if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report, checklist }, null, 2));
+    if (args.json !== undefined) writeFileSync(args.json, JSON.stringify({ mechanical: selection.mechanical, jev: report, declared, checklist }, null, 2));
   } catch {
     stderr("The audit log or report could not be written. Execution is incomplete.");
     return 1;
@@ -256,6 +265,9 @@ export async function runAuditCli(mode: "text" | "design", argv: string[], stdou
   }
   return 0;
 }
+
+/** A facts file that declares nothing, for a caller of `selectDocuments` that passes none. */
+const NO_FACTS: DocumentFacts = { source: null, documents: new Map(), problems: [] };
 
 /** The requests still to send, and the words of the first failure once one has failed. */
 interface Queue { items: Array<{ document: SelectedDocument; candidate: Candidate }>; sent: Set<number>; next: number; failure?: string }
@@ -295,6 +307,10 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
  * @param read Replaces the file reader.
  * @param frontMatter False makes the mechanical audit read a leading "---"
  *     block as text. The Jev plan reads it as front matter either way.
+ * @param facts What `readDocumentFacts` read. The mechanical audit honours
+ *     each declaration for a file read, and `declared` records it with what
+ *     it changed, for the caller to echo. Nothing of it reaches the plan.
+ *     Left out, no declaration is honoured.
  * @returns `documents` holds a plan for each file read, and `paths` the full
  *     path of each. A Markdown document that opens with a closed "---" block
  *     which `frontMatterRange` does not accept has a `refusal` and a plan
@@ -310,11 +326,11 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
  *     a selected directory is skipped instead. Whatever `planDocument`
  *     throws.
  */
-export function selectDocuments(target: string, projectDir: string, mode: "text" | "design" = "design", read: (path: string, encoding: "utf8") => string = readFileSync, frontMatter = true): Selection {
+export function selectDocuments(target: string, projectDir: string, mode: "text" | "design" = "design", read: (path: string, encoding: "utf8") => string = readFileSync, frontMatter = true, facts: DocumentFacts = NO_FACTS): Selection {
   const selected = resolve(target);
   const project = resolve(projectDir);
   const skipped: string[] = [];
-  const selection: Selection = { documents: [], mechanical: { configHash: configHash(), files: {}, totals: {} }, skipped, paths: [] };
+  const selection: Selection = { documents: [], mechanical: { configHash: configHash(), files: {}, totals: {} }, skipped, paths: [], declared: startDeclared(facts) };
   const stat = lstatSync(selected);
   if (stat.isSymbolicLink()) {
     skipped.push(selected);
@@ -335,7 +351,9 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
     const file = relative(project, path).replaceAll("\\", "/");
     selection.paths.push(path);
     const markdown = /\.(?:md|markdown)$/i.test(path);
-    const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter, markdown });
+    const headingNumbers = factsFor(facts, file).headingNumbers;
+    const violations = auditText(text, { knownAcronyms, fileName: path, frontMatter, markdown, ...(headingNumbers === undefined ? {} : { headingNumbers }) });
+    recordDeclared(selection.declared, file, text, { fileName: path, frontMatter, markdown });
     selection.mechanical.files[file] = { violations };
     for (const finding of violations) {
       selection.mechanical.totals[finding.rule] = (selection.mechanical.totals[finding.rule] ?? 0) + 1;
@@ -500,7 +518,8 @@ function judgement(file: string, candidate: Candidate, decision: Decision, inclu
  * `--send` together, so a text run that is not a preview had `--jev`. A
  * document is refused while the files are selected, before any request. This
  * route refuses `--no-front-matter`, so front matter is always read as such.
- * No option gives the original version, and no fact can be declared yet.
+ * No option gives the original version. A fact counts as declared when the
+ * facts file declares it for a file the run read.
  */
 function runFacts(mode: "text" | "design", args: Arguments, selection: Selection): RunFacts {
   return {
@@ -513,7 +532,7 @@ function runFacts(mode: "text" | "design", args: Arguments, selection: Selection
     jev: mode === "text" && !args.preview,
     send: args.send,
     before: false,
-    facts: [],
+    facts: selection.declared.effects.length > 0 ? ["headingNumbers"] : [],
   };
 }
 function formatMechanical(findings: Findings): string {

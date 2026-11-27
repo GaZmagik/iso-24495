@@ -114,7 +114,7 @@ Do not rewrite prose, change tone, or remove content. Those changes belong to Pa
 
 ## Audit proxy notes
 
-The text audit adds seven local Markdown layout rules; they are recognition proxies rather than claims of ISO conformance.
+The text audit adds eight local Markdown layout rules; they are recognition proxies rather than claims of ISO conformance.
 Its six-section trigger counts root H2 headings, including Contents, and ignores H3 headings and headings inside lists or quotations.
 Contents may cover part of the document in a different order, using lists, paragraphs, tables or resolved reference links.
 Wording mismatches are checked only at six sections, against resolved H2 targets.
@@ -122,6 +122,7 @@ Wording mismatches are checked only at six sections, against resolved H2 targets
 An empty signpost is reported at any section count: a referral heading such as See also with nothing beneath it.
 So are two GitHub alerts of one kind with only blank lines between, as a question of whether they serve one purpose.
 So is a bulleted item that holds two or more paragraphs and nothing else, where each item should be one paragraph.
+Numbered headings that nothing in the file cites are asked about, as a question of whether readers must cite them.
 
 The version or date proxy asks whether a titled document needs edition metadata when none is recognised.
 Standalone lines, metadata table rows, final parenthesised title suffixes and accessible badge text qualify.
