@@ -122,7 +122,7 @@ Wording mismatches are checked only at six sections, against resolved H2 targets
 An empty signpost is reported at any section count: a referral heading such as See also with nothing beneath it.
 So are two GitHub alerts of one kind with only blank lines between, as a question of whether they serve one purpose.
 So is a bulleted item that holds two or more paragraphs and nothing else, where each item should be one paragraph.
-Numbered headings that nothing in the file cites are asked about, as a question of whether readers must cite them.
+Numbered headings with no reference to them by number found as written in the file are asked about, as a question of whether readers must cite them.
 
 The version or date proxy asks whether a titled document needs edition metadata when none is recognised.
 Standalone lines, metadata table rows, final parenthesised title suffixes and accessible badge text qualify.

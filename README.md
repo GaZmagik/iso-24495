@@ -128,7 +128,7 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 **Not measured, because they are not sentences:**
 
-- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`. `bullet-paragraphs` reads no item below a line in it shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`. `uncited-numbering` counts a citation in it, and counts no heading below such HTML until a line holds its end;
+- fenced and indented code, which is a specimen rather than advice to give back to the writer. `adjacent-alerts` reads no alert below a `<` in it, nor any of a kind whose marker it defines as a link label. Nor does it read one below a line in it that opens an empty quotation or list item, such as `>>`. `bullet-paragraphs` reads no item below a line in it shaped like a fence, or one that starts HTML running past a blank line, such as `<!--`. `uncited-numbering` counts a citation in it, and counts no heading below such HTML until later lines hold the end of every kind that may be open;
 - tables, whose cells belong to a grid. Five rules read their cells and report findings in them: `table-header`, `link-text`, `image-alt`, `generic-alt` and `provisional-label`. `acronym-undefined` reads a definition in a cell, `uncited-numbering` a citation, `adjacent-alerts` reads no alert below a `<` in one, and `bullet-paragraphs` no item below one holding `<!--`. Two layout rules, `opening-version-date` and `contents-list`, read an edition field or a contents list set out in a table, and `empty-signpost` counts a table beneath a referral heading as content. Given `--before`, the two-version comparison compares their cells too;
 - YAML front matter, which is metadata, unless the audit is told the text has none. `adjacent-alerts` reads no alert below a `<` in it, or below a line in it that opens an empty list item. Nor does `bullet-paragraphs` read an item below a line in it shaped like a fence, starting HTML that runs past a blank line, or opening an empty list item. `uncited-numbering` counts a citation in it;
 - a GitHub alert label, which is a label, though `adjacent-alerts` reads it to tell one kind of alert from another;
@@ -194,14 +194,15 @@ To clear it, join the paragraphs into one paragraph on one idea, or promote the 
 It found 11 in 4 of 822 third-party Markdown files, 8 of them in one file, and none in this repository's own documents.
 Each of the 11 was read and judged a true finding.
 
-The `uncited-numbering` rule asks whether readers must cite a document's numbered headings, when two or more open with a number such as `1.` or `2.1` and nothing else cites one.
-It says only what it can see, that the headings are numbered and nothing in the file cites them by number, and never that the numbering is wrong.
-A citation counts after a word such as `section`, `step`, `rule` or `see`, as a dotted number such as `2.1`, or in a link such as `#2-setup`.
-It reports only documents it is sure of, so it misses some below HTML or a fence it cannot place, and it reads no change log or licence.
+The `uncited-numbering` rule asks whether readers must cite a document's numbered headings.
+It asks when two or more open with a number such as `1.` or `2.1`, and no reference to one by its number is found as written.
+It says what it searched, and never that the numbering is wrong.
+A citation counts after a word such as `section` or `see`, as a dotted number such as `2.1`, or in a link such as `#2-setup`, even when it wraps.
+It counts no heading below HTML, a table or a fence it cannot place, so it misses some documents, and it reads no change log or licence.
 
 To settle it, declare the answer in the facts file the next paragraph describes.
-It found 14 in 822 third-party Markdown files and none in this repository's own documents.
-A labeller who did not build the rule judged all 14 true.
+It found 13 in 822 third-party Markdown files and none in this repository's own documents.
+Two labellers who did not build the rule each judged all 13 true.
 
 A project can declare facts about its documents in `.iso-24495-4/document-facts.json`, keyed by each file's exact path from the project directory:
 
