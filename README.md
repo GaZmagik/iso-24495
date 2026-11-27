@@ -200,8 +200,8 @@ A citation counts after a word such as `section`, `step`, `rule` or `see`, as a 
 It reports only documents it is sure of, so it misses some below HTML or a fence it cannot place, and it reads no change log or licence.
 
 To settle it, declare the answer in the facts file the next paragraph describes.
-It found 15 in 822 third-party Markdown files and none in this repository's own documents.
-A labeller who did not build the rule read all 15, and judged 14 true and 1 unclear.
+It found 14 in 822 third-party Markdown files and none in this repository's own documents.
+A labeller who did not build the rule judged all 14 true.
 
 A project can declare facts about its documents in `.iso-24495-4/document-facts.json`, keyed by each file's exact path from the project directory:
 

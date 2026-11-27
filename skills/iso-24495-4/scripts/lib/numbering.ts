@@ -72,17 +72,24 @@ const WORD_NUMBER = new RegExp(
   String.raw`(?<![\p{L}\p{N}])(?:(?:${CITING_NOUNS})\.?\s+(${NUMBER_WORD})|(${NUMBER_WORD})\s+(?:${CITING_NOUNS}))(?![\p{L}\p{N}])`,
   "giu",
 );
-/** A dotted number standing alone, such as `2.1`, not part of a longer number. */
-const DOTTED = /(?<![\d.])\d{1,3}(?:\.\d{1,3})+(?![.\d])/g;
+/**
+ * A dotted number standing alone, such as `2.1`, not part of a longer number,
+ * though a full stop may end the sentence after it, as in `see 2.1.`.
+ */
+const DOTTED = /(?<![\d.])\d{1,3}(?:\.\d{1,3})+(?!\.?\d)/g;
 /**
  * A number that opens a part of a path, a link target, a fragment or a
- * bracket, and ends it or is followed by `-`, `_` or `.`: the `01` of
- * `categories/01-core/`, the `2` of `#2-install`, `(2)` or `[2]`, and the
- * `02` of `(02-setup.md)`. The part must start just after one of
- * `/ \ # ( [ <`, a quotation mark or an apostrophe, so the `3` of
- * `python-3.8` and the `1` of `?v=1` do not count.
+ * bracket, alone or after a citing noun and an optional `-` or `_`, and is
+ * followed by no letter or digit: the `01` of `categories/01-core/`, the `2`
+ * of `#2-install`, `(2)`, `[2]` or `#step-2-setup`, and the `02` of
+ * `(02-setup.md)`. The part must start just after one of `/ \ # ( [ <`, a
+ * quotation mark or an apostrophe, so the `3` of `python-3.8` and the `1` of
+ * `?v=1` do not count. Any number of digits is read, as a fragment drops
+ * the dots of `10.12`, giving `#1012-b`.
  */
-const PATH_PART = /(?<=[/\\#([<"'])(\d{1,3}(?:\.\d{1,3})*)(?=[-_./\\#?&()[\]<>"'|]|$|\s)/g;
+const PATH_PART = new RegExp(String.raw`(?<=[/\\#([<"'])(?:(?:${CITING_NOUNS})[-_]?)?(\d+(?:\.\d+)*)(?![\p{L}\p{N}])`, "giu");
+/** Emphasis, code and strike marks, which may stand between a citing word and its number, as in `step **2**`. */
+const INLINE_MARKS = /[*_`~]/g;
 
 /**
  * The `uncited-numbering` finding: a document whose headings are numbered
@@ -167,7 +174,7 @@ function numberedHeadings(headings: readonly Heading[]): Numbered[] {
  * holds its end: a comment, a processing instruction, a declaration, CDATA,
  * or a `pre`, `script`, `style` or `textarea` element, in any letter case.
  */
-const LONG_HTML = /<(?:(!--)|(\?)|(![A-Za-z])|(!\[CDATA\[)|(pre|script|style|textarea)(?=[\s/>]|$))/i;
+const LONG_HTML = /<(?:(!--)|(\?)|(![A-Za-z])|(!\[CDATA\[)|(pre|script|style|textarea)(?=[\s/>]|$))/gi;
 /** The start of a heading line outside any container: up to three spaces, one to six `#` and white space or the end. */
 const ATX_START = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 /** A line that may be a heading in some container: quotation and list markers, then `#` and white space or the end. */
@@ -176,12 +183,17 @@ const HEADING_SHAPE = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*#{1,6}(?:[ \t]|$)/;
 const QUOTE_MARKERS = /^[ \t>]*/;
 /** The quotation and list markers a line may open with. */
 const CONTAINER_MARKERS = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*/;
-/** A line that may underline a setext heading in some container. */
-const UNDERLINE_SHAPE = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*(?:=+|-+)[ \t]*$/;
+/**
+ * A line that may underline a setext heading in some container: container
+ * markers, `=` and `-` alone, ending with `=` or `-` and any spaces or tabs.
+ * It is wider than an underline, so it can only quiet the rule, and a run of
+ * dashes is read once, not once for each place a marker might end.
+ */
+const UNDERLINE_SHAPE = /^[ \t>*+=\d.)-]*[=-][ \t]*$/;
 /** A line shaped like a fence, after any container markers: three backticks or tildes. */
 const FENCE_SHAPE = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*(?:`{3}|~{3})/;
 /** What ends each kind of `LONG_HTML`, in the order of its groups. */
-const LONG_HTML_ENDS: readonly RegExp[] = [/-->/, /\?>/, />/, /\]\]>/, /<\/(?:pre|script|style|textarea)>/i];
+const LONG_HTML_ENDS: readonly RegExp[] = [/-->/g, /\?>/g, />/g, /\]\]>/g, /<\/(?:pre|script|style|textarea)>/gi];
 
 /**
  * Whether a heading may be read: none of its lines, nor any line between the
@@ -238,23 +250,28 @@ function clearOfHtml(lines: readonly string[]): (heading: Heading) => boolean {
  * Whether long HTML is open after one line: what ends it, or null when none
  * is open. A start and its end on one line close it again, and a start after
  * an end opens a new one.
+ *
+ * Each search starts where the last match ended and nothing is copied, so a
+ * line of many comments, such as `<!---->` repeated, is read once.
  */
 function longHtmlAfter(line: string, open: RegExp | null): RegExp | null {
   let end = open;
-  let rest = line;
-  // Each pass takes at least one character off the rest, so the loop ends.
+  let position = 0;
+  // Each pass moves the position past at least one character, so the loop ends.
   for (;;) {
     if (end !== null) {
-      const close = end.exec(rest);
+      end.lastIndex = position;
+      const close = end.exec(line);
       if (close === null) break;
-      rest = rest.slice(close.index + close[0].length);
+      position = close.index + close[0].length;
       end = null;
     }
-    const start = LONG_HTML.exec(rest);
+    LONG_HTML.lastIndex = position;
+    const start = LONG_HTML.exec(line);
     if (start === null) break;
     const kind = start.slice(1).findIndex(group => group !== undefined);
     end = LONG_HTML_ENDS[kind] ?? null;
-    rest = rest.slice(start.index + start[0].length);
+    position = start.index + start[0].length;
   }
   return end;
 }
@@ -361,7 +378,9 @@ function cited(
   for (const [index, line] of lines.entries()) {
     if (skipped[index] === 1) continue;
     if (tally !== undefined) tally.lines++;
-    if (citesInLine(line, targets)) return true;
+    // Read again without its marks, so `step **2**` cites as `step 2` does.
+    const unmarked = line.replace(INLINE_MARKS, "");
+    if (citesInLine(line, targets) || (unmarked !== line && citesInLine(unmarked, targets))) return true;
   }
   return false;
 }

@@ -40,14 +40,15 @@ export class UnsupportedSelection extends Error {
  *       [--before <file> [--author-text <file>]]
  *
  * `--project-dir` sets where paths are reported from and where the acronyms
- * file is looked for; the default is the current directory. `--json` also
+ * file and the declared facts file, `.iso-24495-4/document-facts.json`, are
+ * looked for; the default is the current directory. `--json` also
  * writes the findings to that file, replacing it. `--no-front-matter` reads a
  * leading "---" block as text.
  *
  * `--before` names the original of the selected file, which must then be one
  * file and not a directory. After the findings the command prints the
  * two-version comparison `formatComparison` describes, and the `--json`
- * report holds it under `restructure`, just before `checklist`.
+ * report holds it under `restructure`, before `declared` and `checklist`.
  * `--author-text` names wording the author gave for the restructure, and
  * needs `--before`. None of the three files may be a symbolic link, and each
  * must end in .md, .markdown or .txt.
@@ -58,8 +59,10 @@ export class UnsupportedSelection extends Error {
  * codes, 0 to 4, then apply, and the result is a promise.
  *
  * Otherwise nothing leaves the machine and the result is a number. After
- * the table of findings it prints the Part 5 checklist reading, and the
- * `--json` report holds the same reading under a last key, `checklist`.
+ * the table of findings and any comparison it prints the declared facts,
+ * when the facts file exists, as `formatDeclared` sets out, then the Part 5
+ * checklist reading. The `--json` report holds the facts under `declared`
+ * and the reading under a last key, `checklist`.
  * Exit 0 means the audit ran, whatever it found. Exit 1 means a path could not be
  * read, is a symbolic link the comparison does not follow, or names a file
  * with an unsupported ending, or the findings file could not be written.
@@ -67,7 +70,9 @@ export class UnsupportedSelection extends Error {
  * directory selected.
  *
  * @param argv The whole command line, so the path is at index 2.
- * @param stdout Receives the table of findings, then the checklist reading.
+ * @param stdout Receives the table of findings, then any comparison, then
+ *     the declared facts when the facts file exists, then the checklist
+ *     reading.
  * @param stderr Receives a warning for each skipped entry, and the reason for
  *     exit 1 or 2.
  * @param dependencies Passed to `runAuditCli`, and unused otherwise.

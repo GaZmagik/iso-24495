@@ -646,7 +646,7 @@ describe("a Jev route run that stops after its mechanical findings print has alr
 });
 
 /** The declared key of a report from a project with no facts file. */
-const NO_FACTS_FILE = { source: null, files: [], effects: [], problems: [] };
+const NO_FACTS_FILE = { source: null, files: [], effects: [], problems: [], unread: 0 };
 
 describe("the --json report of each audit gains a declared key and a checklist key, and nothing else", () => {
   const plainChecklist = {

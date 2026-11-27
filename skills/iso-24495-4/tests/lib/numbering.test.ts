@@ -31,6 +31,14 @@ function others(headingNumbers?: HeadingNumbers): string {
   return JSON.stringify(auditText(BASE, { markdown: true, ...(headingNumbers === undefined ? {} : { headingNumbers }) }).filter(finding => finding.rule !== "uncited-numbering"));
 }
 
+/** How long the rule takes on a text, the parse done beforehand. */
+function ruleTime(text: string): number {
+  const parsed = structure(text);
+  const started = performance.now();
+  uncitedNumberingViolations(text, parsed);
+  return performance.now() - started;
+}
+
 /** How many lines one run of the rule searched. */
 function searched(text: string): number {
   const tally = { lines: 0 };
@@ -278,7 +286,9 @@ describe("the work grows with the text", () => {
     const text = `# T\n\n${contents}## 1. A\n\n## 2. B\n\n${ranges}`;
     const started = performance.now();
     expect(uncitedNumberingViolations(text, structure(text))).toHaveLength(1);
-    expect(performance.now() - started).toBeLessThan(5000);
+    const taken = performance.now() - started;
+    // It took about 0.1 s on Windows when written, the parse included.
+    expect(taken).toBeLessThan(5000);
   });
 });
 
@@ -321,6 +331,57 @@ describe("uncited-numbering on seeded documents that vary what it keys on", () =
   });
 });
 
+
+describe("each citation form holds whatever follows it", () => {
+  const numbered = "# T\n\n## 1. A\n\n## 2. B\n";
+  const dotted = "# T\n\n## 2.1 A\n\n## 2.2 B\n";
+  const forms: ReadonlyArray<[string, string, string]> = [
+    ["see", numbered, "see 2"], ["step", numbered, "step 2"], ["rules", numbered, "rules 1 and 2"], ["section sign", numbered, "§2"],
+    ["number sign", numbered, "#2"], ["parenthesis", numbered, "(2)"], ["number word", numbered, "step two"], ["ordinal", numbered, "the second step"],
+    ["dotted", dotted, "2.2"], ["path", numbered, "[x](cat/02-b/)"], ["fragment", numbered, "[x](#2-b)"], ["bold number", numbered, "step **2**"],
+    ["code number", numbered, "step `2`"], ["emphasised word", numbered, "*step* 2"], ["bold dotted", dotted, "**2.2**"], ["noun in a link", numbered, "[x](https://a.b/c#step-2-b)"],
+  ];
+  const endings = [".", ",", ")", ":", "*", ";", "!", "?", "", "]", "'"];
+  for (const [name, document, form] of forms) {
+    test(`${name}: ${form}, then each ending`, () => {
+      const missed = endings.filter(ending => lines(`${document}\nCompare ${form}${ending}\n`).length > 0);
+      expect(missed).toEqual([]);
+      expect(lines(`${document}\nCompare nothing.\n`)).toEqual([3]);
+    });
+  }
+
+  test("a dotted number at the end of a sentence cites, and one inside a longer number does not", () => {
+    expect(lines("# T\n\n## 2.1 A\n\n## 2.2 B\n\nCompare with 2.2.\n")).toEqual([]);
+    expect(lines("# T\n\n## 2.1 A\n\n## 2.2 B\n\nVersion 2.2.4.\n")).toEqual([3]);
+  });
+
+  test("a fragment of a dotted identifier with more than three digits cites", () => {
+    expect(lines("# T\n\n## 10.11 A\n\n## 10.12 B\n\n[B](#1012-b)\n")).toEqual([]);
+    expect(lines("# T\n\n## 10.11 A\n\n## 10.12 B\n\n[B](#1013-b)\n")).toEqual([3]);
+  });
+
+  test("a number after a citing noun in a link target cites, and one after another word does not", () => {
+    expect(lines(`${BASE}\n[Set up](https://a.b/docs#step-2-configure)\n`)).toEqual([]);
+    expect(lines(`${BASE}\n[Set up](https://a.b/docs#node-2-configure)\n`)).toEqual([5]);
+  });
+});
+
+describe("the rule's own work stays linear on hostile lines", () => {
+  test("a long run of dashes is read once, not once for each place a marker might end", () => {
+    // Quadratic matching took 0.56 s at 20,000 dashes and four times that at
+    // twice as many, so 160,000 would take about 36 s.
+    expect(ruleTime(`${BASE}\n${"-".repeat(160000)}x\n`)).toBeLessThan(2000);
+  });
+
+  test("a line of many comments is searched once from each place, with nothing copied", () => {
+    // The structural reading takes about 100 s on such a line, so the rule is
+    // given the headings of the text above it, which stand on the same lines.
+    const text = `${BASE}\n${"<!---->".repeat(100000)}\n`;
+    const started = performance.now();
+    expect(uncitedNumberingViolations(text, structure(BASE))).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+});
 
 /** The part of Bun's renderer the oracle uses. Bun before 1.3.8 has none. */
 interface MarkdownRenderer {

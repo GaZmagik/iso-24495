@@ -22,8 +22,8 @@ const ECHO = [
   "| `a.md` | headingNumbers | cited | 1 uncited-numbering question was not raised. |",
   "| `b.md` | headingNumbers | not-cited | 1 uncited-numbering question was reported as a finding. |",
   "Not declared: headingNumbers for 1 of 3 Markdown files read.",
+  "Not read: 1 declaration names a file this run did not read, so it changed nothing.",
   "Problem: The key `readerKnows` for `a.md` is not understood and is not honoured.",
-  "Problem: 1 declaration names a file this run did not read, so it changed nothing.",
 ].join("\n");
 
 /** A project of three uncited documents and a facts file that declares two of them. */
@@ -72,7 +72,7 @@ describe("each command honours the facts file and echoes what it changed", () =>
       expect(numbering(report.files)).toEqual(HONOURED);
       expect(report.declared.source).toBe(".iso-24495-4/document-facts.json");
       expect(report.declared.files).toEqual([{ file: "a.md", headingNumbers: "cited" }, { file: "b.md", headingNumbers: "not-cited" }]);
-      expect(report.declared.problems).toHaveLength(2);
+      expect([report.declared.problems.length, report.declared.unread]).toEqual([1, 1]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

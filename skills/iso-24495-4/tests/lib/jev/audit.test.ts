@@ -1337,7 +1337,7 @@ test("printing the title finding leaves a preview's JSON report as it was", asyn
     expect(sha256(written)).toBe(NO_TITLE_PREVIEW_JSON);
     const report = JSON.parse(written);
     expect(Object.keys(report).slice(-2)).toEqual(["declared", "checklist"]);
-    expect(report.declared).toEqual({ source: null, files: [], effects: [], problems: [] });
+    expect(report.declared).toEqual({ source: null, files: [], effects: [], problems: [], unread: 0 });
     delete report.checklist;
     delete report.declared;
     // Without the declared and checklist keys, the report holds what it held

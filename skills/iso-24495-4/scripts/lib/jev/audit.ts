@@ -93,8 +93,9 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  *   checklist reading is its last key, `checklist`.
  * - `--include-judged-text` adds the full judged text to that report, and is
  *   refused without `--json`.
- * - `--project-dir <directory>` sets where paths are reported from and where
- *   the send log goes. The default is the current directory.
+ * - `--project-dir <directory>` sets where paths are reported from, where
+ *   the send log goes, and where the acronyms and declared facts files are
+ *   looked for. The default is the current directory.
  * - Text mode needs `--jev-preview`, or `--jev` together with `--send`.
  *   Design mode previews unless `--send` is given.
  * - `--no-front-matter` is refused here, as is any option given twice.
@@ -144,9 +145,10 @@ export interface JevReport { complete: boolean; failure?: string; limitation: st
  * @param mode "text" also accepts `.txt` files, and needs `--jev-preview`, or
  *     `--jev` with `--send`. "design" accepts Markdown alone.
  * @param argv The whole command line.
- * @param stdout Receives the mechanical findings, then the checklist reading,
- *     then in a preview any local findings, then the disclosure, then the Jev
- *     findings after a send.
+ * @param stdout Receives the mechanical findings, then the declared facts
+ *     when the facts file exists, then the checklist reading, then in a
+ *     preview any local findings, then the disclosure, then the Jev findings
+ *     after a send.
  * @param stderr Receives a warning for each skipped entry and each refused
  *     document, and the reason for every exit code but 0.
  * @param dependencies Replacements for the environment, the terminal, the

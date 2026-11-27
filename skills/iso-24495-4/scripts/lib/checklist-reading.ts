@@ -123,7 +123,7 @@ export interface RunFacts {
   readonly send: boolean;
   /** The original version of a restructured document was given, with the text audit's `--before`. */
   readonly before: boolean;
-  /** The names of the facts the author declared. None can be declared today. */
+  /** The names of the facts the author declared for a file the run read, from `.iso-24495-4/document-facts.json`. */
   readonly facts: readonly string[];
 }
 

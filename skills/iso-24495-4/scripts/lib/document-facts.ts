@@ -141,13 +141,16 @@ export interface DeclaredEffect {
 
 /**
  * The `declared` key of a report: the facts file, the files read that it
- * declares facts for, what each declaration changed, and its problems.
+ * declares facts for, what each declaration changed, its problems, and how
+ * many of its declarations name a file the run did not read. A run of one
+ * file reads only one of a project's files, so those are not problems.
  */
 export interface DeclaredReport {
   source: string | null;
   files: Array<{ file: string; headingNumbers: HeadingNumbers }>;
   effects: DeclaredEffect[];
   problems: string[];
+  unread: number;
 }
 
 /** One run's record of the declarations it honoured, filled as each file is read. */
@@ -195,23 +198,22 @@ export function recordDeclared(run: DeclaredRun, file: string, text: string, rea
 
 /**
  * The run's `declared` report. A declaration for a file the run did not read
- * changed nothing, and the problems count such declarations.
+ * changed nothing, and `unread` counts such declarations.
  */
 export function finishDeclared(run: DeclaredRun): DeclaredReport {
-  const unread = [...run.facts.documents.keys()].filter(file => !run.read.has(file)).length;
-  const problems = [...run.facts.problems];
-  if (unread > 0) problems.push(`${unread} ${unread === 1 ? "declaration names a file" : "declarations name files"} this run did not read, so ${unread === 1 ? "it" : "they"} changed nothing.`);
   return {
     source: run.facts.source,
     files: run.effects.map(effect => ({ file: effect.file, headingNumbers: effect.value })),
     effects: run.effects,
-    problems,
+    problems: [...run.facts.problems],
+    unread: [...run.facts.documents.keys()].filter(file => !run.read.has(file)).length,
   };
 }
 
 /**
  * The report as Markdown lines: a table of each honoured declaration with
- * what it changed, how many Markdown files read declare nothing, and each
+ * what it changed, how many Markdown files read declare nothing, how many
+ * declarations name a file the run did not read, when any do, and each
  * problem. Paths are code spans, as `safePathCell` and `safePathCode` print
  * them, and values pass through `safeCell`. At most 20 problems are listed,
  * and the rest are counted.
@@ -229,6 +231,8 @@ export function formatDeclared(report: DeclaredReport, run: Pick<DeclaredRun, "m
   }
   const { markdownFiles } = run;
   lines.push(`Not declared: headingNumbers for ${markdownFiles - run.declaredMarkdownFiles} of ${markdownFiles} Markdown ${markdownFiles === 1 ? "file" : "files"} read.`);
+  const { unread } = report;
+  if (unread > 0) lines.push(`Not read: ${unread} ${unread === 1 ? "declaration names a file" : "declarations name files"} this run did not read, so ${unread === 1 ? "it" : "they"} changed nothing.`);
   for (const problem of report.problems.slice(0, PROBLEMS_LISTED)) {
     lines.push(`Problem: ${problem}`);
   }

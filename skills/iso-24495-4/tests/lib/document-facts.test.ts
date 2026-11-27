@@ -143,7 +143,7 @@ describe("the run's record and the echo", () => {
     const report = finishDeclared(run);
     expect(report.files).toEqual([{ file: "a.md", headingNumbers: "cited" }, { file: "b.md", headingNumbers: "not-cited" }, { file: "c.md", headingNumbers: "cited" }]);
     expect(report.effects.map(effect => [effect.file, effect.questionsNotRaised, effect.questionsMadeFindings])).toEqual([["a.md", 1, 0], ["b.md", 0, 1], ["c.md", 0, 0]]);
-    expect(report.problems).toEqual([]);
+    expect([report.problems, report.unread]).toEqual([[], 0]);
     expect(formatDeclared(report, run)).toBe([
       `Declared facts (${FACTS_FILE})`,
       "| File | Fact | Value | Effect |",
@@ -170,11 +170,15 @@ describe("the run's record and the echo", () => {
     expect(finishDeclared(run).effects.map(effect => effect.questionsNotRaised)).toEqual([0, 0]);
   });
 
-  test("declarations for files the run did not read are counted as a problem", () => {
+  test("declarations for files the run did not read are counted apart from the problems", () => {
     const one = startDeclared(facts({ "gone.md": { headingNumbers: "cited" } }));
-    expect(finishDeclared(one).problems).toEqual(["1 declaration names a file this run did not read, so it changed nothing."]);
+    const report = finishDeclared(one);
+    expect([report.unread, report.problems]).toEqual([1, []]);
+    expect(formatDeclared(report, one)?.split("\n").at(-1)).toBe("Not read: 1 declaration names a file this run did not read, so it changed nothing.");
     const two = startDeclared(facts({ "a.md": { headingNumbers: "cited" }, "b.md": { headingNumbers: "cited" } }, ["Earlier."]));
-    expect(finishDeclared(two).problems).toEqual(["Earlier.", "2 declarations name files this run did not read, so they changed nothing."]);
+    const both = finishDeclared(two);
+    expect([both.unread, both.problems]).toEqual([2, ["Earlier."]]);
+    expect(formatDeclared(both, two)?.split("\n").slice(-2)).toEqual(["Not read: 2 declarations name files this run did not read, so they changed nothing.", "Problem: Earlier."]);
   });
 
   test("with no facts file nothing is printed; with one, its problems are listed up to 20 and the rest counted", () => {
@@ -195,7 +199,7 @@ describe("the run's record and the echo", () => {
   });
 
   test("several questions and findings are counted in the plural", () => {
-    const report = { source: FACTS_FILE, files: [], problems: [], effects: [
+    const report = { source: FACTS_FILE, files: [], problems: [], unread: 0, effects: [
       { file: "a.md", fact: "headingNumbers" as const, value: "cited" as const, rule: "uncited-numbering" as const, questionsNotRaised: 2, questionsMadeFindings: 0 },
       { file: "b.md", fact: "headingNumbers" as const, value: "not-cited" as const, rule: "uncited-numbering" as const, questionsNotRaised: 0, questionsMadeFindings: 2 },
     ] };
