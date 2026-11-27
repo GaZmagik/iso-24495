@@ -1,5 +1,6 @@
 // Release preflight: run by hand before a release is tagged. The logic lives in
-// the module beside this file, which says where this stage sits among the three.
+// `release-preflight.ts`, and `release-versions.ts` says where this stage sits
+// among the three.
 //
 // A release goes in this order:
 //
@@ -41,6 +42,6 @@
 // every release. Exit 2 means the release history could not be read, which
 // never counts as a pass.
 
-import { runPreflight } from "./release-versions.ts";
+import { runPreflight } from "./release-preflight.ts";
 
 process.exit(runPreflight(process.cwd(), console.log, console.error));

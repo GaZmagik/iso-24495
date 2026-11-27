@@ -6,8 +6,28 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The type check and the linter are development dependencies, and nothing a
+# user of the plugin runs needs them. A frozen install fails when bun.lock and
+# package.json disagree, so the gate never runs a version nobody reviewed.
+echo "==> Development dependencies, exactly as locked"
+bun install --frozen-lockfile
+
+# Each tool is called by its path. "bun run typecheck" once fell through to a
+# different compiler on PATH, in a clone where nothing was installed.
+echo "==> Type check"
+node_modules/.bin/tsc --noEmit
+
+# A warning fails too. A rule weakened to a warning for some files would
+# otherwise report its breach and still let it through.
+echo "==> Lint"
+node_modules/.bin/eslint . --max-warnings 0
+
 echo "==> Test suite with coverage thresholds"
-bun test
+# Tests that start a shell script, or read the whole repository, overran the
+# 5-second default whenever the machine was busy. They check behaviour, not
+# speed, and the timing guards set their own budgets. bunfig.toml cannot set
+# this: a "timeout" key under [test] is ignored, which a probe confirmed.
+bun test --timeout 60000
 
 # The suite imports the library modules directly, so a broken entry shim passes
 # it. This runs a shipped command through the same entry file users receive.
@@ -18,5 +38,11 @@ bun skills/iso-24495-4/scripts/audit-corpus-cli.ts .
 # entry file. The fixture keeps the gate offline and free of a token.
 echo "==> Traffic snapshot entry point against a fixture"
 bun scripts/traffic-snapshot-cli.ts --from-file scripts/tests/fixtures/traffic-sample.json --dry-run data
+
+# Every stage above runs where node_modules exists, so a shipped command that
+# imports a package passes them all and then fails for every user. This runs
+# each shipped command in a copy of the working tree with nothing installed.
+echo "==> Every shipped command, in a copy with nothing installed"
+bash scripts/check-without-packages.sh
 
 echo "==> All gates passed"

@@ -2,15 +2,21 @@
 // Emits counts and locations only. It never judges clarity and its output
 // must never be presented as ISO compliance.
 
-import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { join, relative } from "node:path";
 import {
   headings,
+  inlineText,
   markdownLinks,
   mergedSentences,
   normaliseReference,
+  proseBlocks,
   readerProseBlocks,
   readDocument,
+  structure,
+  tableCells,
+  tickRun,
+  toLines,
   type ProseBlock,
   type Reading,
   locateSentences,
@@ -23,12 +29,161 @@ import {
   FILLER_OPENINGS,
 } from "./lib/lexicon.ts";
 import type { Findings, Violation } from "./lib/types.ts";
+import { layoutViolations } from "./lib/layout.ts";
+import { emphasisMarkOffsets, withoutEmphasis } from "./lib/inline-wording.ts";
+import { pathFailure, writeTextFile } from "./lib/failure.ts";
+import { skippedEntryWarning } from "./lib/safe-text.ts";
+import { itemAt } from "./lib/item-at.ts";
 
-// Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
-// English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
-// 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
-// minimum sample are this project's own proxy choices, informed by local
-// session measurements that are not part of this repository.
+/**
+ * Audits a corpus directory and prints the count of findings for each rule.
+ *
+ *   bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]
+ *
+ * `--json` also writes the full findings to that file, replacing it.
+ *
+ * Exit 0 means the audit ran, whatever it found. Exit 1 means the directory
+ * could not be listed or the findings file could not be written. Exit 2 means
+ * the arguments were wrong.
+ *
+ * @param argv The whole command line, so the directory is at index 2.
+ * @param stdout Receives the table and the total, one line at a time.
+ * @param stderr Receives a warning for each skipped entry, and the reason for
+ *     exit 1 or 2.
+ */
+export function runCli(
+  argv: string[],
+  stdout: (text: string) => void,
+  stderr: (text: string) => void,
+): number {
+  const dir = argv[2];
+  if (!dir) {
+    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
+    return 2;
+  }
+  let jsonPath: string | undefined;
+  const seenOptions = new Set<string>();
+  for (let index = 3; index < argv.length; index++) {
+    const option = argv[index];
+    // A list with a hole holds no argument here. It is refused, so nothing after it goes unread.
+    if (option === undefined) {
+      stderr(`audit-corpus: argument ${index - 1} is missing; expected --json`);
+      return 2;
+    }
+    if (option !== "--json") {
+      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
+      stderr(`audit-corpus: ${kind} of ${option.length} characters at argument ${index - 1}; expected --json`);
+      return 2;
+    }
+    if (seenOptions.has(option)) {
+      stderr(`audit-corpus: ${option} appears more than once`);
+      return 2;
+    }
+    seenOptions.add(option);
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) {
+      stderr("audit-corpus: --json requires an output file");
+      return 2;
+    }
+    jsonPath = value;
+    index++;
+  }
+  try {
+    const skipped: string[] = [];
+    const findings = auditCorpus(dir, (path) => skipped.push(path));
+    for (const path of skipped) {
+      stderr(skippedEntryWarning(path));
+    }
+    if (jsonPath !== undefined) {
+      const problem = writeTextFile(jsonPath, JSON.stringify(findings, null, 2), "--json");
+      if (problem !== null) {
+        stderr(`audit-corpus: ${problem}`);
+        return 1;
+      }
+    }
+    stdout("| Rule | Violations |");
+    stdout("|------|------------|");
+    for (const [rule, count] of Object.entries(findings.totals)) {
+      stdout(`| ${rule} | ${count} |`);
+    }
+    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
+    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
+    return 0;
+  } catch (error) {
+    // The report is written without throwing, and an unreadable entry below
+    // the corpus directory is skipped. So a file fault here is the directory
+    // itself refusing to be listed.
+    stderr(`audit-corpus: ${pathFailure(error, dir, "<corpus-dir>", "cannot be listed")}`);
+    return 1;
+  }
+}
+
+type ReadTextFile = (path: string, encoding: "utf8") => string;
+
+/**
+ * Audits every document under a directory and totals the findings by rule.
+ *
+ * The directory is also the project: its `.iso-24495-4/acronyms.json` applies
+ * to every document. The layout rules run for Markdown files and not for
+ * `.txt` files.
+ *
+ * @param dir The corpus directory.
+ * @param onSkip Called with the path of each entry or file that could not be
+ *     read. Such a file has no entry in the result.
+ * @param readText Replaces the file reader.
+ * @returns `files` is keyed by path from `dir`, with forward slashes, and
+ *     holds an entry for every file read, findings or none. `totals` names
+ *     only the rules that fired. Both are empty for an empty corpus.
+ * @throws The file system error when `dir` itself cannot be listed.
+ */
+export function auditCorpus(
+  dir: string,
+  onSkip?: (path: string) => void,
+  readText: ReadTextFile = readFileSync,
+): Findings {
+  const paths = listTextFiles(dir, onSkip);
+  // A corpus is audited from its own directory, so the project's acronyms
+  // apply to every document in it.
+  const knownAcronyms = projectAcronyms(dir);
+  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
+  for (const path of paths) {
+    const key = relative(dir, path).replaceAll("\\", "/");
+    let text: string;
+    try {
+      text = readText(path, "utf8");
+    } catch {
+      onSkip?.(path);
+      continue;
+    }
+    const violations = auditText(text, { knownAcronyms, fileName: path, markdown: /\.(?:md|markdown)$/i.test(path) });
+    findings.files[key] = { violations };
+    for (const v of violations) {
+      findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
+    }
+  }
+  return findings;
+}
+
+/**
+ * What `auditText` may be told besides the text. Every member is optional.
+ * A caller that passes none gets the rules for plain text, with a leading
+ * "---" block read as front matter.
+ */
+export interface AuditOptions extends Reading {
+  /** The selected file name supplies document-specific scope exemptions. */
+  fileName?: string;
+  /** Extra acronyms this project treats as known. */
+  knownAcronyms?: ReadonlySet<string>;
+  /** File-aware callers enable structural rules for Markdown rather than plain text. */
+  markdown?: boolean;
+}
+/**
+ * Thresholds recalibrated 2026-08-13. Public guidance (Cutts, the Plain
+ * English Campaign, the Clear English Standard) specifies an AVERAGE of 15 to
+ * 20 words, not a per-sentence cap. The 30-word cap and the 10-sentence
+ * minimum sample are this project's own proxy choices, informed by local
+ * session measurements that are not part of this repository.
+ */
 export const ENGINE_THRESHOLDS = Object.freeze({
   sentenceWordLimit: 30,
   sentenceAverageLimit: 20,
@@ -40,22 +195,245 @@ export const ENGINE_THRESHOLDS = Object.freeze({
   acronymMaximumLetters: 6,
   acronymDefinitionWindow: 3,
   enumerationMinimumRanks: 3,
+  layoutRecognitionVersion: 8,
+  contentsMinimumSections: 6,
+  maximumUnorderedDepth: 2,
 });
 
 const SENTENCE_WORD_LIMIT = ENGINE_THRESHOLDS.sentenceWordLimit;
-const SENTENCE_AVERAGE_LIMIT = ENGINE_THRESHOLDS.sentenceAverageLimit;
-const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
 const PARAGRAPH_SENTENCE_LIMIT = ENGINE_THRESHOLDS.paragraphSentenceLimit;
+const AVERAGE_MIN_SENTENCES = ENGINE_THRESHOLDS.averageMinimumSentences;
+const SENTENCE_AVERAGE_LIMIT = ENGINE_THRESHOLDS.sentenceAverageLimit;
 const MAX_HEADING_LEVEL = ENGINE_THRESHOLDS.maximumHeadingLevel;
 const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
-// Exported so each audit surface and the repository guard read the same list.
-// Separate copies once disagreed about whether a .txt file was covered.
+
+/**
+ * Every mechanical finding in one text.
+ *
+ * The seven layout rules (`contents-list`, `opening-version-date`,
+ * `bullet-depth`, `bullet-paragraphs`, `empty-signpost`, `adjacent-alerts`
+ * and `overview-label`) run only when `options.markdown` is true. It
+ * defaults to false, so a caller that passes no options gets the other rules
+ * alone, and nothing in the result says that layout was skipped.
+ *
+ * @param text The whole document, with any line ending.
+ * @param options `markdown` turns the layout rules on; pass true for a
+ *     Markdown file and leave it unset for plain text. `fileName` only
+ *     exempts files such as README from the edition advisory. `knownAcronyms`
+ *     are passed over by the acronym rule, and must be in capitals without
+ *     dots. `frontMatter` set to false reads a leading "---" block as text
+ *     and switches the edition advisory off; unset, the block is metadata.
+ * @returns The findings grouped by rule, not sorted by line. Each `line` is
+ *     counted from 1. Empty when no rule fires, which is the result for empty
+ *     text and is not evidence that the text suits its readers.
+ */
+export function auditText(text: string, options: AuditOptions = {}): Violation[] {
+  // Every rule re-reads the text, so each is told the same thing about front matter.
+  const frontMatter = options.frontMatter;
+  const reading: Reading = frontMatter === undefined ? {} : { frontMatter };
+  const prose = proseLengthFindings(text, reading);
+  const fileName = options.fileName;
+  // Each rule's findings are added one at a time. A rule can give one finding
+  // for each word, image, heading or item, so a long document could give more
+  // than a call can take as separate arguments, which threw a RangeError.
+  const violations: Violation[] = [];
+  for (const findings of [
+    prose.findings,
+    legaleseViolations(text, reading),
+    sentenceAverageFindings(prose),
+    headingFindings(text, reading),
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    acronymViolations(text, options.knownAcronyms ?? new Set(), reading),
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    doubletViolations(text, reading),
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    proseEnumerationViolations(text, reading),
+    // The intended readers of a document include everyone who uses it, whether
+    // they see it, hear it or touch it. These two rules are the only ones here
+    // that serve a reader who is not looking at the page.
+    wordyPhraseViolations(text, reading),
+    complexWordViolations(text, reading),
+    doubleNegativeViolations(text, reading),
+    fillerOpeningViolations(text, reading),
+    tableHeaderViolations(text, reading),
+    linkTextViolations(text, reading),
+    imageAltViolations(text, reading),
+    genericAltViolations(text, reading),
+    provisionalLabelViolations(text, reading),
+    options.markdown === true ? layoutViolations(text, fileName === undefined ? reading : { ...reading, fileName }) : [],
+  ]) {
+    appendAll(violations, findings);
+  }
+  return violations;
+}
+
+/** The sentence and paragraph length findings, with the sentence lengths that the average is taken from. */
+interface ProseLengths {
+  findings: Violation[];
+  /** Words in each sentence the splitter found, for the sentences that hold any. */
+  sentenceLengths: number[];
+  /** Words in each sentence of the joined-up reading, which joins every doubtful full stop. */
+  mergedLengths: number[];
+}
+
+/**
+ * The `sentence-length` and `paragraph-length` findings for each prose block.
+ *
+ * @returns The findings in block order, and the length of every sentence in
+ *     both readings, for `sentenceAverageFindings`.
+ */
+function proseLengthFindings(text: string, reading: Reading): ProseLengths {
+  const violations: Violation[] = [];
+  const sentenceLengths: number[] = [];
+  const mergedLengths: number[] = [];
+  for (const block of readerProseBlocks(text, reading)) {
+    const paragraph = block.lines.join("\n");
+    // The splitter reports where each sentence starts, so nothing needs locating twice.
+    // Rebuilding a sentence as a regular expression threw on a long one.
+    for (const sentence of locateSentences(paragraph)) {
+      const words = wordCount(sentence.text);
+      if (words > 0) sentenceLengths.push(words);
+      if (words > SENTENCE_WORD_LIMIT) {
+        violations.push({
+          rule: "sentence-length",
+          line: lineAtOffset(block.line, paragraph, sentence.start),
+          detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
+        });
+      }
+    }
+    // Counted from the fewest sentences the paragraph can hold. An unresolved
+    // full stop must never manufacture the sentence that breaks the limit.
+    const fewest = mergedSentences(paragraph).length;
+    for (const sentence of mergedSentences(paragraph)) {
+      const words = wordCount(sentence);
+      if (words > 0) mergedLengths.push(words);
+    }
+    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
+      violations.push({
+        rule: "paragraph-length",
+        line: block.line,
+        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
+      });
+    }
+  }
+  return { findings: violations, sentenceLengths, mergedLengths };
+}
+
+/**
+ * The `sentence-average` finding, when the sentences are long on average.
+ *
+ * @returns One finding on line 1, or none.
+ */
+function sentenceAverageFindings({ sentenceLengths, mergedLengths }: ProseLengths): Violation[] {
+  // The standards specify an average across the document, not a cap; the cap
+  // above only catches genuine sprawl. Small samples are exempt because an
+  // average over a handful of sentences is noise, not judgement.
+  //
+  // Both readings must agree. Taking the longer reading alone let an undecided
+  // full stop lift a document over the ten-sentence sample floor and produce a
+  // finding the joined-up reading could not, which is the opposite of what
+  // abstention is for.
+  const reported = sentenceAverage(sentenceLengths);
+  const readings = [reported, sentenceAverage(mergedLengths)];
+  if (!readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) return [];
+  return [{
+    rule: "sentence-average",
+    line: 1,
+    detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
+  }];
+}
+
+/**
+ * The `heading-depth`, `heading-skip` and `heading-style` findings.
+ *
+ * @returns The findings for each heading in document order.
+ */
+function headingFindings(text: string, reading: Reading): Violation[] {
+  const violations: Violation[] = [];
+  const documentHeadings = headings(text, reading);
+  for (const [i, heading] of documentHeadings.entries()) {
+    if (heading.level > MAX_HEADING_LEVEL) {
+      violations.push({
+        rule: "heading-depth",
+        line: heading.line,
+        detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const previous = documentHeadings[i - 1];
+    if (previous && heading.level > previous.level + 1) {
+      violations.push({
+        rule: "heading-skip",
+        line: heading.line,
+        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
+      });
+    }
+
+    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
+    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
+    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
+    const headingWords = wordCount(headingText);
+    // Same abstention as the paragraph rule: a heading is only two sentences
+    // if it is two even when every doubtful stop is joined up.
+    const headingSentences = mergedSentences(headingText);
+    if (headingWords > HEADING_WORD_LIMIT) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
+      });
+    } else if (headingSentences.length >= 2) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: `${headingSentences.length} sentences in heading`,
+      });
+    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
+      violations.push({
+        rule: "heading-style",
+        line: heading.line,
+        detail: "heading ends with a full stop",
+      });
+    }
+  }
+  return violations;
+}
+
+/**
+ * Adds each item to the end of a list, one at a time.
+ *
+ * Exported so a test can pass it more items than a document of a sensible
+ * size gives. Spreading them into one push call throws a RangeError once
+ * they pass the engine's limit on arguments, which was 700,000 on Windows.
+ */
+export function appendAll<T>(target: T[], items: Iterable<T>): void {
+  for (const item of items) {
+    target.push(item);
+  }
+}
+
+/** How many sentences one reading found, and their mean length in words: 0 where it found none. */
+function sentenceAverage(lengths: number[]): { count: number; average: number } {
+  return {
+    count: lengths.length,
+    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
+  };
+}
+/**
+ * Exported so each audit surface and the repository guard read the same list.
+ * Separate copies once disagreed about whether a .txt file was covered.
+ */
 export const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
 
 /**
  * Whether this path is a document the engine audits. Every caller must use
  * this rather than its own test. Comparing extension lists proved nothing,
  * because one caller lower-cased the extension and another did not.
+ *
+ * @returns True when the path ends in .md, .markdown or .txt, in any letter
+ *     case. The path is judged by its name and never opened, so a directory
+ *     with such a name passes too.
  */
 export function isAuditedDocument(path: string): boolean {
   const lower = path.toLowerCase();
@@ -189,6 +567,16 @@ const ORDINAL_RANKS = new Map([
   ["sixth", 6], ["sixthly", 6],
 ]);
 
+/**
+ * A short fingerprint of the thresholds an audit ran with, kept in its
+ * findings so that two sets of findings can be seen to share their limits.
+ *
+ * @param thresholds The limits by name. The default is the limits this engine
+ *     ships with. The order of the names does not change the result.
+ * @returns Eight hexadecimal digits. It is a 32-bit hash, not a cryptographic
+ *     one, so it shows a change and proves nothing more. An empty record
+ *     still has a fingerprint.
+ */
 export function configHash(
   thresholds: Readonly<Record<string, number>> = ENGINE_THRESHOLDS,
 ): string {
@@ -209,13 +597,34 @@ let lineCacheEnds: number[] | null = null;
 
 function lineEnds(text: string): number[] {
   if (lineCacheText === text && lineCacheEnds !== null) return lineCacheEnds;
+  const ends = lineEndOffsets(text);
+  lineCacheText = text;
+  lineCacheEnds = ends;
+  return ends;
+}
+
+/** Where each line ending in the text stands, in order. */
+function lineEndOffsets(text: string): number[] {
   const ends: number[] = [];
   for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
     ends.push(at);
   }
-  lineCacheText = text;
-  lineCacheEnds = ends;
   return ends;
+}
+
+/** How many of the line endings, in order, stand before the offset. */
+function endsBefore(ends: readonly number[], offset: number): number {
+  let low = 0;
+  let high = ends.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (itemAt(ends, middle) < offset) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
 }
 
 /**
@@ -226,15 +635,26 @@ function lineEnds(text: string): number[] {
  * paragraph cost 10.8 seconds.
  */
 function lineAtOffset(blockLine: number, text: string, offset: number): number {
-  const ends = lineEnds(text);
-  let low = 0;
-  let high = ends.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if ((ends[middle] as number) < offset) low = middle + 1;
-    else high = middle;
-  }
-  return blockLine + low;
+  return blockLine + endsBefore(lineEnds(text), offset);
+}
+
+/**
+ * A finder of the line each offset in one text falls on, counted from 1.
+ *
+ * A rule that joins the document's lines into one text uses this rather than
+ * `lineAtOffset`. Joining makes a new string each time, and that cache checks
+ * a text with ===. Where another call had left an equal text there, each
+ * lookup compared the whole document: 80,000 images took 7.8 seconds.
+ *
+ * The line endings are collected at the first lookup, so a text with no
+ * finding costs nothing.
+ */
+function lineFinder(text: string): (offset: number) => number {
+  let ends: number[] | null = null;
+  return (offset) => {
+    ends ??= lineEndOffsets(text);
+    return 1 + endsBefore(ends, offset);
+  };
 }
 
 // The shape the scan looks for admits at most six initials once its dots are removed, so
@@ -242,7 +662,7 @@ function lineAtOffset(blockLine: number, text: string, offset: number): number {
 const LONGEST_ACRONYM = 6;
 
 function acronymFromToken(raw: string): { display: string; key: string } | null {
-  let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’\)\]}>,:;!?]+$/, "");
+  let token = raw.replace(/^["'“‘([{<]+/, "").replace(/["'”’)\]}>,:;!?]+$/, "");
   if (!ACRONYM_SHAPE.test(token) && token.endsWith(".")) token = token.slice(0, -1);
   if (!ACRONYM_SHAPE.test(token)) return null;
   const key = token.replaceAll(".", "");
@@ -250,7 +670,7 @@ function acronymFromToken(raw: string): { display: string; key: string } | null 
   return { display: token, key };
 }
 
-function isLetter(character: string | undefined): boolean {
+function isLetter(character?: string): boolean {
   return character !== undefined && /[A-Za-z]/.test(character);
 }
 
@@ -263,9 +683,13 @@ function isLetter(character: string | undefined): boolean {
  */
 function lettersOnly(raw: string): string {
   let start = 0;
-  while (start < raw.length && !isLetter(raw[start])) start += 1;
+  while (start < raw.length && !isLetter(raw[start])) {
+    start += 1;
+  }
   let end = raw.length;
-  while (end > start && !isLetter(raw[end - 1]) && raw[end - 1] !== ".") end -= 1;
+  while (end > start && !isLetter(raw[end - 1]) && raw[end - 1] !== ".") {
+    end -= 1;
+  }
   return raw.slice(start, end);
 }
 
@@ -284,17 +708,16 @@ function isUnambiguousNumeral(word: string): boolean {
 }
 
 function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): boolean {
-  const bare = (raw: string | undefined): string => (raw ?? "").replace(/[^A-Za-z]/g, "");
-  const previous = bare(tokens[index - 1]?.raw);
+  const previous = bareLetters(tokens[index - 1]?.raw);
   // "Chapters II, III and IV": the numbering word governs the whole list, not
   // just the numeral touching it, so look back a short way.
   for (let back = index - 1; back >= 0 && back >= index - 3; back--) {
-    if (NUMBERING_WORDS.has(bare(tokens[back]?.raw).toLowerCase())) return true;
+    if (NUMBERING_WORDS.has(bareLetters(tokens[back]?.raw).toLowerCase())) return true;
   }
   // "Pope Paul VI": the title sits before the given name, not before the
   // numeral, so look back a few tokens rather than one.
   for (let back = index - 1; back >= 0 && back >= index - 3; back--) {
-    if (NAMED_BY_NUMERAL.has(bare(tokens[back]?.raw))) return true;
+    if (NAMED_BY_NUMERAL.has(bareLetters(tokens[back]?.raw))) return true;
   }
   // "Sections II and IV": the neighbour is a numeral no acronym collides with.
   // A short numeral is no evidence, or "CI and CD" would excuse itself.
@@ -305,13 +728,13 @@ function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): bo
     && !NUMBERING_WORDS.has(previous.toLowerCase())) {
     return true;
   }
-  for (const neighbour of [previous, bare(tokens[index + 1]?.raw)]) {
+  for (const neighbour of [previous, bareLetters(tokens[index + 1]?.raw)]) {
     if (isUnambiguousNumeral(neighbour)) return true;
   }
   if (/^(?:and|or|to|through)$/i.test(previous)) {
     for (let back = index - 2; back >= 0 && back >= index - 4; back--) {
-      const candidate = bare(tokens[back]?.raw);
-      if (candidate && NUMBERING_WORDS.has(bare(tokens[back - 1]?.raw).toLowerCase())
+      const candidate = bareLetters(tokens[back]?.raw);
+      if (candidate && NUMBERING_WORDS.has(bareLetters(tokens[back - 1]?.raw).toLowerCase())
         && ROMAN_NUMERAL.test(candidate)) {
         return true;
       }
@@ -321,38 +744,58 @@ function hasNumberingEvidence(tokens: Array<{ raw: string }>, index: number): bo
   return false;
 }
 
+/** The letters of a token, or nothing where there is no token. */
+function bareLetters(raw?: string): string {
+  return (raw ?? "").replace(/[^A-Za-z]/g, "");
+}
+
 // Shouted text and a chain of initialisms have the same shape: capitals, of
 // similar length, side by side. They differ in one measurable way, which is
 // how many of the words are ordinary English. Counting tokens could not tell
 // "SAVE DATA FIRST" from "AWS IAM SSO MFA"; asking the lexicon can.
 function shoutedPositions(tokens: Array<{ raw: string }>): Set<number> {
   const shouted = new Set<number>();
-  const bare = (raw: string): string => raw.replace(/[^A-Za-z]/g, "").toLowerCase();
-  const markRun = (start: number, end: number): void => {
-    const length = end - start;
-    if (length < 2) return;
-    const known = tokens.slice(start, end).filter((token) => COMMON_WORDS.has(bare(token.raw))).length;
-    // A pair carries almost no evidence, so it must be entirely ordinary words
-    // to count as shouting. "ENABLE MFA" is one known word and one acronym, and
-    // half of two was enough to silence it. Longer runs can carry a minority of
-    // unknown words and still be a shout.
-    const enough = length === 2 ? known === 2 : known * 2 >= length;
-    if (!enough) return;
-    for (let j = start; j < end; j++) shouted.add(j);
-  };
   let runStart = 0;
   for (let i = 0; i <= tokens.length; i++) {
-    if (i < tokens.length && isAllCaps(tokens[i].raw)) continue;
-    markRun(runStart, i);
+    const token = tokens[i];
+    if (token !== undefined && isAllCaps(token.raw)) continue;
+    markRun(tokens, shouted, runStart, i);
     runStart = i + 1;
   }
   return shouted;
 }
 
+/** Adds a run of capitalised tokens to the shouted positions where enough are ordinary words. */
+function markRun(
+  tokens: Array<{ raw: string }>,
+  shouted: Set<number>,
+  start: number,
+  end: number,
+): void {
+  const length = end - start;
+  if (length < 2) return;
+  const known = tokens.slice(start, end)
+    .filter((token) => COMMON_WORDS.has(lowerCaseLetters(token.raw))).length;
+  // A pair carries almost no evidence, so it must be entirely ordinary words
+  // to count as shouting. "ENABLE MFA" is one known word and one acronym, and
+  // half of two was enough to silence it. Longer runs can carry a minority of
+  // unknown words and still be a shout.
+  const enough = length === 2 ? known === 2 : known * 2 >= length;
+  if (!enough) return;
+  for (let j = start; j < end; j++) {
+    shouted.add(j);
+  }
+}
+
+/** The letters of a token in lower case, as the lexicon lists a word. */
+function lowerCaseLetters(raw: string): string {
+  return raw.replace(/[^A-Za-z]/g, "").toLowerCase();
+}
+
 function expansionInitials(text: string): string {
   return (text.match(/[A-Za-z]+/g) ?? [])
     .filter((word) => !/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word))
-    .map((word) => word[0].toUpperCase())
+    .map((word) => word.charAt(0).toUpperCase())
     .join("");
 }
 
@@ -368,14 +811,14 @@ function expansionSpelling(
   tokens: ReadonlyArray<{ raw: string }>,
   from: number,
   want: number,
-  carried: ReadonlyArray<number>,
-  initials: ReadonlyArray<string>,
-  nextClose: ReadonlyArray<number>,
+  carried: readonly number[],
+  initials: readonly string[],
+  nextClose: readonly number[],
 ): string | null {
   let open = -1;
   const window = Math.min(from + ENGINE_THRESHOLDS.acronymDefinitionWindow, tokens.length);
   for (let at = from; at < window; at++) {
-    if ((tokens[at] as { raw: string }).raw.startsWith("(")) {
+    if (itemAt(tokens, at).raw.startsWith("(")) {
       open = at;
       break;
     }
@@ -383,12 +826,12 @@ function expansionSpelling(
   if (open === -1) return null;
   const close = nextClose[open] ?? tokens.length;
   if (close >= tokens.length) return null;
-  const opener = (tokens[open] as { raw: string }).raw;
+  const opener = itemAt(tokens, open).raw;
   if (open === close) return expansionInitials(opener.slice(1, opener.indexOf(")")));
-  const closer = (tokens[close] as { raw: string }).raw;
+  const closer = itemAt(tokens, close).raw;
   const first = expansionInitials(opener.slice(1));
   const last = expansionInitials(closer.slice(0, closer.indexOf(")")));
-  const between = (carried[close] as number) - (carried[open + 1] as number);
+  const between = itemAt(carried, close) - itemAt(carried, open + 1);
   if (first.length + between + last.length !== want) return null;
   return first + initials.slice(carried[open + 1], carried[close]).join("") + last;
 }
@@ -402,8 +845,12 @@ function acronymViolations(
   const defined = new Set<string>();
   const seen = new Set<string>();
   const definitionLocations = new Map<string, { line: number; column: number }>();
-  const document = readDocument(text, reading);
-  const blocks = readerProseBlocks(text, reading);
+  // One reading of the document, in which each link is already its label. Both scans
+  // below take their text from this one value, so a place in one is the same place in
+  // the other. They once read two texts, and a definition was then put after the use
+  // that followed it.
+  const { lines, blocks } = acronymReading(text, reading);
+  const written = toLines(text);
   // The block each line sits in. The words before a parenthesis carry across a soft
   // line break, which is a space to the reader, so "identity and access" wrapped
   // before "management (IAM)" still spells the acronym. They never carry across a
@@ -425,60 +872,53 @@ function acronymViolations(
   // they are carried forward rather than recovered by slicing the line from its start
   // every time. Slicing cost 8.8 seconds on 8,000 acronyms.
   let recent: string[] = [];
-  const carry = (fragment: string): void => {
-    for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
-      if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
-      recent.push(word);
-      if (recent.length > LONGEST_ACRONYM) recent.shift();
-    }
-  };
   let previousBlock: number | undefined;
-  for (let i = 0; i < document.lines.length; i++) {
-    if (document.hidden(i)) continue;
+  const marksByLine = pairedMarksByLine(lines, blockOfLine, written);
+  for (let i = 0; i < lines.length; i++) {
     const block = blockOfLine.get(i);
     if (block === undefined || block !== previousBlock) recent = [];
     previousBlock = block;
-    const sourceLine = document.lines[i] as string;
+    // Read without paired emphasis marks, so "(**IAM**)" defines as "(IAM)" does and
+    // "ident*ity*" still gives its initial. The text is one line, and its marks were
+    // paired across the whole block the line sits in. A block that may hold a link has
+    // none.
+    const marks = itemAt(marksByLine, i);
+    const sourceLine = withoutOffsets(itemAt(lines, i), 0, new Set(marks));
     let scanned = 0;
     for (const match of sourceLine.matchAll(/\(([A-Z][A-Z.]{1,5})\)/g)) {
-      const key = match[1].replaceAll(".", "");
-      carry(sourceLine.slice(scanned, match.index));
+      const key = match[1]?.replaceAll(".", "");
+      carry(recent, sourceLine.slice(scanned, match.index));
       scanned = match.index;
-      if (expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
+      if (key === undefined || expansionInitials(recent.slice(-key.length).join(" ")) !== key) continue;
       if (!definitionLocations.has(key)) {
-        definitionLocations.set(key, { line: i + 1, column: match.index });
+        definitionLocations.set(key, { line: i + 1, column: sourceColumn(match.index, marks) });
       }
     }
-    carry(sourceLine.slice(scanned));
+    carry(recent, sourceLine.slice(scanned));
   }
   for (const block of blocks) {
-    const tokens = block.lines.flatMap((line, lineIndex) =>
-      [...line.matchAll(/\S+/g)].map((match) => ({
-        raw: match[0],
-        line: block.line + lineIndex,
-        column: match.index,
-      })),
-    );
+    const tokens = unmarkedTokens(block, written);
     // The words that carry an initial, in order, and how many precede each token. An
     // expansion is judged against these rather than against the text it came from.
-    const carried: number[] = new Array(tokens.length + 1);
+    const carried = Array.from<number>({ length: tokens.length + 1 }).fill(0);
     const initials: string[] = [];
     carried[0] = 0;
     for (let at = 0; at < tokens.length; at++) {
-      initials.push(...expansionInitials((tokens[at] as { raw: string }).raw));
+      // One token can hold a million words, too many to spread into one call.
+      appendAll(initials, expansionInitials(itemAt(tokens, at).raw));
       carried[at + 1] = initials.length;
     }
 
     // The first token at or after each position that holds a closing bracket, built once
     // for the block so no acronym has to search forward for one.
-    const nextClose: number[] = new Array(tokens.length);
+    const nextClose = Array.from<number>({ length: tokens.length }).fill(0);
     for (let at = tokens.length - 1, closing = tokens.length; at >= 0; at--) {
-      if ((tokens[at] as { raw: string }).raw.includes(")")) closing = at;
+      if (itemAt(tokens, at).raw.includes(")")) closing = at;
       nextClose[at] = closing;
     }
     const shouted = shoutedPositions(tokens);
-    for (let i = 0; i < tokens.length; i++) {
-      const acronym = acronymFromToken(tokens[i].raw);
+    for (const [i, token] of tokens.entries()) {
+      const acronym = acronymFromToken(token.raw);
       if (!acronym || ACRONYM_ALLOWLIST.has(acronym.key) || known.has(acronym.key)) continue;
       if (ROMAN_NUMERAL.test(acronym.key)
         && (isUnambiguousNumeral(acronym.key) || hasNumberingEvidence(tokens, i))) {
@@ -501,19 +941,626 @@ function acronymViolations(
       if (COMMON_WORDS.has(acronym.key.toLowerCase())) continue;
       const definition = definitionLocations.get(acronym.key);
       const definitionPrecedes = definition !== undefined
-        && (definition.line < tokens[i].line
-          || (definition.line === tokens[i].line && definition.column <= tokens[i].column));
+        && (definition.line < token.line
+          || (definition.line === token.line && definition.column <= token.column));
       if (definitionPrecedes
         || defined.has(acronym.key) || seen.has(acronym.key)) continue;
       seen.add(acronym.key);
       violations.push({
         rule: "acronym-undefined",
-        line: tokens[i].line,
+        line: token.line,
         detail: `define acronym "${acronym.display}" on first use`,
       });
     }
   }
   return violations;
+}
+
+/**
+ * For each line of a document, where its paired emphasis marks sit in that line.
+ *
+ * The marks are paired across the whole block a line sits in, because emphasis can open
+ * on one line and close on a later one. Pairing each line alone left "identi*ty and
+ * access" above "management* (IAM)" with two marks that had no partner, so the word
+ * gave two initials and the expansion did not spell the acronym. The uses of an acronym
+ * were already read a block at a time, and the two readings now agree.
+ *
+ * They agree about links as well, because both ask `mayHoldLink` about the same source
+ * lines. A block that may hold a link gives no marks here and none to `unmarkedTokens`,
+ * for the reason `mayHoldLink` gives.
+ *
+ * A line in no block, such as a table row, is paired alone.
+ *
+ * @param lines The lines the scan for definitions reads, one for each source line.
+ * @param blockOfLine The block each line sits in, by the index of the line. Lines of one
+ *     block share a number and follow one another.
+ * @param written The document as `toLines` gives it, which is what `mayHoldLink` reads.
+ * @returns One list for each line, in the same order: the offsets of its paired marks,
+ *     ascending and counted from the start of that line. Empty for a line with none.
+ */
+function pairedMarksByLine(
+  lines: readonly string[],
+  blockOfLine: ReadonlyMap<number, number>,
+  written: readonly string[],
+): number[][] {
+  const marksByLine: number[][] = lines.map(() => []);
+  for (let first = 0; first < lines.length;) {
+    const block = blockOfLine.get(first);
+    let last = first;
+    while (block !== undefined && blockOfLine.get(last + 1) === block) {
+      last++;
+    }
+    let line = first;
+    let lineStart = 0;
+    const marks = mayHoldLink(written, first, last - first + 1)
+      ? []
+      : emphasisMarkOffsets(lines.slice(first, last + 1).join("\n"));
+    for (const mark of marks) {
+      // A mark is never the line break, so this stops on the line that holds it.
+      while (mark > lineStart + itemAt(lines, line).length) {
+        lineStart += itemAt(lines, line).length + 1;
+        line++;
+      }
+      itemAt(marksByLine, line).push(mark - lineStart);
+    }
+    first = last + 1;
+  }
+  return marksByLine;
+}
+
+/**
+ * What the acronym rule reads: the document with each link and image as its label.
+ *
+ * A reader never sees a destination or a title, so the rule must not read their words:
+ * "[identity and access management](guide) (IAM)" defines IAM. Brackets that form no
+ * link are shown as written, so their words stay.
+ *
+ * Which brackets form a link is decided once, by `linkSyntax`, on the source lines as
+ * written: before a backslash escape is taken for the character it escapes, and before
+ * anything in angle brackets is taken for an HTML tag. Both scans of the rule read this
+ * one result.
+ *
+ * What was removed is carried beside the text and never written into it. The document
+ * is read into lines and blocks twice, with one character standing where link syntax
+ * stood in the first reading and another in the second, and a place is dropped where
+ * the two readings differ. A character the document itself holds is alike in both, so
+ * it is kept, whatever it is. One character once stood for "removed" and every copy of
+ * it was deleted afterwards, the copies in the document too. Each copy keeps the
+ * shape of the document: every line is as long as it was and starts as it did, so
+ * every block is where it was.
+ *
+ * @returns `lines` has one entry for each source line, as `readDocument` gives them,
+ *     blank for code, front matter and a line that defines a reference. `blocks` are
+ *     the prose blocks as `proseBlocks` gives them. Both are without the syntax of
+ *     every link. A reference link is replaced only where the document defines its
+ *     label. With no square bracket in the text, both are as the parser gives them.
+ */
+export function acronymReading(text: string, reading: Reading = {}): { lines: string[]; blocks: ProseBlock[] } {
+  const removed = linkSyntax(text, reading);
+  const [one, two] = removed === null
+    ? [text, text]
+    : [marked(removed, String.fromCharCode(0xffff)), marked(removed, String.fromCharCode(0xfffe))];
+  const [linesOne, linesTwo] = [readDocument(one, reading).lines, readDocument(two, reading).lines];
+  const [blocksOne, blocksTwo] = [proseBlocks(one, reading), proseBlocks(two, reading)];
+  return {
+    lines: linesOne.map((line, index) => whereAlike(line, itemAt(linesTwo, index))),
+    blocks: blocksOne.map((block, index) => ({
+      line: block.line,
+      lines: block.lines.map((line, at) => whereAlike(line, itemAt(itemAt(blocksTwo, index).lines, at))),
+    })),
+  };
+}
+
+/** The characters of one text that stand unchanged at the same place in another of its length. */
+function whereAlike(one: string, two: string): string {
+  if (one === two) return one;
+  let alike = "";
+  for (let at = 0; at < one.length; at++) {
+    if (one[at] === two[at]) alike += one[at];
+  }
+  return alike;
+}
+
+/**
+ * The source lines of a document, and for each line a 1 at every place where link
+ * syntax stands. A place is one UTF-16 unit, which is what an index into a string
+ * counts, so a character outside the basic plane is two places.
+ */
+interface LinkSyntax {
+  written: string[];
+  removed: Uint8Array[];
+}
+
+/**
+ * The document with `mark` at every place where link syntax stands, and nothing else changed.
+ *
+ * A line is walked by UTF-16 unit, as the mask counts it. It was once spread into code
+ * points, so one character outside the basic plane moved every later mark on its line.
+ */
+function marked(syntax: LinkSyntax, mark: string): string {
+  return syntax.written
+    .map((line, index) => line.split("").map((unit, at) => (itemAt(syntax.removed, index)[at] === 1 ? mark : unit)).join(""))
+    .join("\n");
+}
+
+/**
+ * Where the syntax of every link and image stands in a document, or null where the
+ * text holds no square bracket and so no link.
+ *
+ * Links are looked for in each prose block, each heading and each other line a rule
+ * reads, such as a table row, so no link runs from one block into the next. Code,
+ * front matter and the lines that define references are left alone.
+ */
+function linkSyntax(text: string, reading: Reading): LinkSyntax | null {
+  const written = toLines(text);
+  if (!written.some((line) => line.includes("["))) return null;
+  const document = readDocument(text, reading);
+  const removed = written.map((line) => new Uint8Array(line.length));
+  const inBlock = new Set<number>();
+  const spans = [
+    ...proseBlocks(text, reading).map((block) => [block.line - 1, block.lines.length]),
+    ...headings(text, reading).map((heading) => [heading.line - 1, heading.lines]),
+  ] as Array<[first: number, count: number]>;
+  for (const [first, count] of spans) {
+    for (let line = first; line < first + count; line++) {
+      inBlock.add(line);
+    }
+  }
+  written.forEach((line, index) => {
+    // A line in no block is read alone, where a rule reads it at all. Code, front
+    // matter and a line that defines a reference are blank to every rule.
+    if (!inBlock.has(index) && itemAt(document.lines, index).trim() !== "") {
+      spans.push([index, 1]);
+    }
+  });
+  for (const [first, count] of spans) {
+    const source = written.slice(first, first + count).join("\n");
+    if (!source.includes("[")) continue;
+    const inBlockRemoved = linkSyntaxIn(source, document.references);
+    let start = 0;
+    for (let line = first; line < first + count; line++) {
+      itemAt(removed, line).set(inBlockRemoved.subarray(start, start + itemAt(written, line).length));
+      start += itemAt(written, line).length + 1;
+    }
+  }
+  return { written, removed };
+}
+
+/** An opening square bracket that no closing one has met yet. */
+interface OpenBracket {
+  at: number;
+  /** Whether "!" stands before it, which makes an image. */
+  image: boolean;
+}
+// The punctuation a backslash escapes, which is all of it in ASCII.
+const ESCAPABLE_AFTER_BACKSLASH = /[!-/:-@[-`{-~]/;
+
+/**
+ * Where the syntax of each link and image stands in the lines of one block.
+ *
+ * Brackets are paired as CommonMark pairs them, in one pass from left to right. A
+ * closing bracket takes the nearest opening one. Where a link follows, the two brackets
+ * and everything after the label are its syntax, and the label is not. A link then switches off every bracket
+ * that opened before it, because a link cannot sit inside the label of a link: the
+ * inner one is the link and the outer brackets are text. An image can hold a link, so
+ * it switches nothing off.
+ *
+ * A code span, an autolink and an HTML tag bind tighter than a link. Each is stepped
+ * over where the pass meets it, so a bracket inside one opens and closes nothing, and a
+ * backslash inside a code span escapes nothing. They are found in this pass and not
+ * before it, because a backtick or an angle bracket inside a destination is part of the
+ * link, and only this pass knows where a link has just ended.
+ *
+ * Nothing here scans ahead for a bracket. Each question about what follows one is
+ * answered from `linkMarks`, which reads the block once forwards and once backwards.
+ *
+ * @param source The source lines of one block, joined by line breaks.
+ * @param references The labels the document defines, each as `normaliseReference`
+ *     gives it.
+ * @param shownAsText Where given, each image and each code span found is added to
+ *     it, as the offset it starts at and the offset just past its end. A renderer
+ *     shows HTML anywhere in either as text, an image's alternative text included.
+ * @returns One entry for each UTF-16 unit of the block, which is each place an index
+ *     into `source` counts: 1 where it is link syntax, and 0 elsewhere. A pipe inside a destination or a title is 0, so a table row keeps its
+ *     cells. The entry for a line break means nothing: the caller takes the lines one
+ *     at a time. All 0 where the block holds no link, and empty for empty text.
+ */
+export function linkSyntaxIn(
+  source: string,
+  references: ReadonlySet<string>,
+  shownAsText?: Array<readonly [number, number]>,
+): Uint8Array {
+  const marks = linkMarks(source);
+  const syntax = new Uint8Array(source.length);
+  const open: OpenBracket[] = [];
+  // How many of the open brackets, counted from the first, a link has switched off.
+  let switchedOff = 0;
+  // The character a backslash last escaped. An exclamation mark there makes no image.
+  let escapedAt = -1;
+  for (let at = 0; at < source.length; at++) {
+    if (source[at] === "\\" && ESCAPABLE_AFTER_BACKSLASH.test(source[at + 1] ?? "")) {
+      at++;
+      escapedAt = at;
+    } else if (source[at] === "`") {
+      const end = codeSpanEnd(source, at, marks);
+      // Where no span opens, the end is just past the opening run.
+      if (shownAsText !== undefined && end > at + tickRun(source, at)) shownAsText.push([at, end]);
+      at = end - 1;
+    } else if (source[at] === "<") {
+      at = angleEnd(source, at, marks) - 1;
+    } else if (source[at] === "[") {
+      open.push({ at, image: source[at - 1] === "!" && escapedAt !== at - 1 });
+    } else if (source[at] === "]" && open.length > 0) {
+      const opener = open.pop() as OpenBracket;
+      const live = opener.image || open.length >= switchedOff;
+      switchedOff = Math.min(switchedOff, open.length);
+      const end = live ? linkEnd(source, opener, at, marks, references) : -1;
+      if (end === -1) continue;
+      if (opener.image) shownAsText?.push([opener.at - 1, end]);
+      syntax.fill(1, opener.at - (opener.image ? 1 : 0), opener.at + 1);
+      syntax.fill(1, at, end);
+      if (!opener.image) switchedOff = open.length;
+      at = end - 1;
+    }
+  }
+  for (let at = 0; at < source.length; at++) {
+    if (source[at] === "|") syntax[at] = 0;
+  }
+  return syntax;
+}
+
+/**
+ * The offset just past the code span that opens with the run of backticks at `at`, or
+ * just past that run where no later run has its length and so no span opens.
+ */
+function codeSpanEnd(source: string, at: number, marks: LinkMarks): number {
+  let end = at;
+  while (source[end] === "`") {
+    end++;
+  }
+  const length = end - at;
+  const later = marks.backtickRuns.get(length) ?? [];
+  // The runs behind this one can close nothing that is still to come.
+  while (later.length > 0 && (later.at(-1) as number) < end) {
+    later.pop();
+  }
+  return later.length > 0 ? (later.at(-1) as number) + length : end;
+}
+
+// An address in angle brackets: a scheme and a colon, or an email address.
+const AUTOLINK = /<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!$%&*+/=?^_{|}~-]+@[A-Za-z0-9.-]+)>/y;
+// The four kinds of raw HTML that run to a closing mark of their own.
+const HTML_TO_CLOSING_MARK: ReadonlyArray<[opening: RegExp, closing: string]> = [
+  [/<!--/y, "-->"],
+  [/<[?]/y, "?>"],
+  [/<!\[CDATA\[/y, "]]>"],
+  [/<![A-Za-z]/y, ">"],
+];
+
+/**
+ * The offset just past the autolink or the piece of raw HTML that opens at "<", or
+ * just past the "<" where it opens neither.
+ */
+function angleEnd(source: string, at: number, marks: LinkMarks): number {
+  AUTOLINK.lastIndex = at;
+  if (AUTOLINK.test(source)) return AUTOLINK.lastIndex;
+  for (const [opening, closing] of HTML_TO_CLOSING_MARK) {
+    opening.lastIndex = at;
+    if (!opening.test(source)) continue;
+    // A comment may close on the dashes that open it, as "<!-->" does.
+    const end = unclosedFrom(source, closing, at + 2, marks);
+    return end === -1 ? at + 1 : end + closing.length;
+  }
+  return tagEnd(source, at, marks);
+}
+
+/**
+ * Where `closing` next stands at or after `from`, or -1. A search that finds nothing
+ * is remembered, so that many openings with no closing mark are not each searched
+ * to the end of the block.
+ */
+function unclosedFrom(source: string, closing: string, from: number, marks: LinkMarks): number {
+  if (marks.neverCloses.has(closing)) return -1;
+  const found = source.indexOf(closing, from);
+  if (found === -1) marks.neverCloses.add(closing);
+  return found;
+}
+
+const TAG_NAME = /<[/]?[A-Za-z][A-Za-z0-9-]*/y;
+const ATTRIBUTE_NAME = /[A-Za-z_:][A-Za-z0-9_.:-]*/y;
+// A value with no quotes holds no white space, quote, "=", "<", ">" or backtick.
+const BARE_VALUE = new RegExp(`[^\\s${String.fromCharCode(34, 39)}=<>${String.fromCharCode(96)}]+`, "y");
+
+/**
+ * The offset just past the HTML tag that opens at "<", or just past the "<" where
+ * what follows is no tag. This is the CommonMark rule for an opening and a closing
+ * tag: a name, then attributes each after white space, each with a value or none,
+ * and ">" or "/>".
+ */
+function tagEnd(source: string, at: number, marks: LinkMarks): number {
+  TAG_NAME.lastIndex = at;
+  if (!TAG_NAME.test(source)) return at + 1;
+  let next = TAG_NAME.lastIndex;
+  const closing = source[at + 1] === "/";
+  // A closing tag has no attribute, and an attribute needs white space before it.
+  while (!closing && itemAt(marks.nextText, next) > next) {
+    const end = attributeEnd(source, itemAt(marks.nextText, next), marks);
+    if (end === -1) break;
+    next = end;
+  }
+  const last = itemAt(marks.nextText, next);
+  if (source[last] === ">") return last + 1;
+  return !closing && source[last] === "/" && source[last + 1] === ">" ? last + 2 : at + 1;
+}
+
+/** The offset just past the attribute that starts at `at`, its value included, or -1 where none starts there. */
+function attributeEnd(source: string, at: number, marks: LinkMarks): number {
+  ATTRIBUTE_NAME.lastIndex = at;
+  if (!ATTRIBUTE_NAME.test(source)) return -1;
+  const name = ATTRIBUTE_NAME.lastIndex;
+  const equals = itemAt(marks.nextText, name);
+  if (source[equals] !== "=") return name;
+  const value = itemAt(marks.nextText, equals + 1);
+  const quote = source.charCodeAt(value);
+  if (quote === 34 || quote === 39) {
+    const end = unclosedFrom(source, itemAt(source, value), value + 1, marks);
+    return end === -1 ? -1 : end + 1;
+  }
+  BARE_VALUE.lastIndex = value;
+  return BARE_VALUE.test(source) ? BARE_VALUE.lastIndex : -1;
+}
+
+/**
+ * The offset just past the link that a closing bracket ends, or -1 where it ends none.
+ *
+ * A link is one of three things: brackets and then a destination in parentheses;
+ * brackets and then a second pair that names a reference, or is empty and takes the
+ * label for the name; or brackets alone whose label names a reference. A reference
+ * counts only where the document defines it, and a second pair that names one the
+ * document does not define leaves the first pair as text as well.
+ *
+ * @param close The offset of the closing bracket.
+ */
+function linkEnd(
+  source: string,
+  opener: OpenBracket,
+  close: number,
+  marks: LinkMarks,
+  references: ReadonlySet<string>,
+): number {
+  if (source[close + 1] === "(") {
+    const end = inlineLinkEnd(source, close + 1, marks);
+    if (end !== -1) return end;
+  }
+  // A label that names a reference is short. Without this limit, each of many nested
+  // brackets would copy everything inside it.
+  const label = close - opener.at <= 1000 ? source.slice(opener.at + 1, close) : null;
+  const second = source[close + 1] === "[" ? itemAt(marks.nextBracket, close + 2) : -1;
+  if (second !== -1 && source[second] === "]") {
+    const name = second === close + 2 ? label : source.slice(close + 2, second);
+    return name !== null && references.has(normaliseReference(name)) ? second + 1 : -1;
+  }
+  return label !== null && references.has(normaliseReference(label)) ? close + 1 : -1;
+}
+
+/**
+ * The offset just past an inline link whose parenthesis opens at `open`, or -1 where
+ * what follows the label is no destination and title.
+ *
+ * This is the CommonMark rule: a destination, then a title after white space, either
+ * of them or neither, with white space allowed around both, and the closing
+ * parenthesis. A destination is in angle brackets, or holds no white space and ends at
+ * the parenthesis that closes the opening one. A title is in double quotes, single
+ * quotes or parentheses.
+ *
+ * It departs from the wording of that rule in one place, where the renderer of GitHub
+ * does: a bare destination that stops at white space may hold a parenthesis that never
+ * closes, so "(two(three 'a title')" is a link.
+ */
+function inlineLinkEnd(source: string, open: number, marks: LinkMarks): number {
+  const start = itemAt(marks.nextText, open + 1);
+  let afterDestination: number;
+  if (source[start] === "<") {
+    // In angle brackets a destination may hold spaces, and no line break or "<".
+    const closing = itemAt(marks.nextAngle, start + 1);
+    if (source[closing] !== ">") return -1;
+    afterDestination = closing + 1;
+  } else {
+    const closer = itemAt(marks.closer, open);
+    afterDestination = itemAt(marks.nextSpace, start);
+    if (closer !== -1 && closer < afterDestination) return closer + 1;
+  }
+  const next = itemAt(marks.nextText, afterDestination);
+  if (source[next] === ")") return next + 1;
+  // A title needs white space between it and the destination.
+  if (next === afterDestination) return -1;
+  const code = source.charCodeAt(next);
+  const titles = code === 34 ? marks.nextDouble : code === 39 ? marks.nextSingle : code === 40 ? marks.nextClose : null;
+  const titleEnd = titles === null ? -1 : itemAt(titles, next + 1);
+  // A title in parentheses holds no parenthesis of its own, so the first closing one
+  // must be the one that closes it.
+  if (titleEnd === -1 || (code === 40 && marks.closer[next] !== titleEnd)) return -1;
+  const last = itemAt(marks.nextText, titleEnd + 1);
+  return source[last] === ")" ? last + 1 : -1;
+}
+
+/**
+ * What `linkSyntaxIn` asks about a block, each answer an offset into it.
+ *
+ * Every list has an entry for each character and two more, so that a question about
+ * the place just past the end has an answer. "Next" means at that offset or after it.
+ * A character behind a backslash is never the answer, but for white space.
+ */
+interface LinkMarks {
+  /** 1 where the character is behind a backslash that escapes it. */
+  escaped: Uint8Array;
+  /** For "(", the ")" that closes it, or -1. */
+  closer: Int32Array;
+  /**
+   * For each length of a run of backticks, where the runs of that length start, the
+   * last of them first. `codeSpanEnd` drops each one as the reading passes it.
+   */
+  backtickRuns: Map<number, number[]>;
+  /** The closing marks that a search has already failed to find. */
+  neverCloses: Set<string>;
+  /** The next character that is not white space, or the length of the block. */
+  nextText: Int32Array;
+  /** The next white space or control character, or the length of the block. */
+  nextSpace: Int32Array;
+  /** The next "<", ">" or line break, or -1. */
+  nextAngle: Int32Array;
+  /** The next square bracket of either kind, or -1. */
+  nextBracket: Int32Array;
+  /** The next double quote, single quote and closing parenthesis, or -1. */
+  nextDouble: Int32Array;
+  nextSingle: Int32Array;
+  nextClose: Int32Array;
+}
+
+/**
+ * Reads a block once forwards and once backwards, and records what `LinkMarks` lists.
+ *
+ * This is what keeps the reading in step with the length of the block. A check that
+ * scanned forward from every "](" took 640 million steps on 16,000 nested labels.
+ *
+ * White space here is a space, a tab, a line break or any other control character.
+ * At the start of a line it is also ">", which marks a quotation and is no text.
+ */
+function linkMarks(source: string): LinkMarks {
+  const size = source.length + 2;
+  const marks: LinkMarks = {
+    escaped: new Uint8Array(size),
+    closer: new Int32Array(size).fill(-1),
+    backtickRuns: new Map(),
+    neverCloses: new Set(),
+    nextText: new Int32Array(size).fill(source.length),
+    nextSpace: new Int32Array(size).fill(source.length),
+    nextAngle: new Int32Array(size).fill(-1),
+    nextBracket: new Int32Array(size).fill(-1),
+    nextDouble: new Int32Array(size).fill(-1),
+    nextSingle: new Int32Array(size).fill(-1),
+    nextClose: new Int32Array(size).fill(-1),
+  };
+  const space = new Uint8Array(size);
+  const open: number[] = [];
+  let atLineStart = true;
+  for (let at = 0; at < source.length; at++) {
+    const code = source.charCodeAt(at);
+    if (code <= 32 || (atLineStart && code === 62)) {
+      space[at] = 1;
+      atLineStart = atLineStart || code === 10;
+      continue;
+    }
+    atLineStart = false;
+    if (code === 92 && ESCAPABLE_AFTER_BACKSLASH.test(source[at + 1] ?? "")) {
+      marks.escaped[at + 1] = 1;
+      at++;
+    } else if (code === 40) {
+      open.push(at);
+    } else if (code === 41 && open.length > 0) {
+      marks.closer[open.pop() as number] = at;
+    }
+  }
+  let runEnd = -1;
+  for (let at = source.length - 1; at >= 0; at--) {
+    const code = marks.escaped[at] === 1 ? 0 : source.charCodeAt(at);
+    marks.nextText[at] = space[at] === 1 ? itemAt(marks.nextText, at + 1) : at;
+    marks.nextSpace[at] = space[at] === 1 ? at : itemAt(marks.nextSpace, at + 1);
+    marks.nextAngle[at] = code === 60 || code === 62 || source[at] === "\n" ? at : itemAt(marks.nextAngle, at + 1);
+    marks.nextBracket[at] = code === 91 || code === 93 ? at : itemAt(marks.nextBracket, at + 1);
+    marks.nextDouble[at] = code === 34 ? at : itemAt(marks.nextDouble, at + 1);
+    marks.nextSingle[at] = code === 39 ? at : itemAt(marks.nextSingle, at + 1);
+    marks.nextClose[at] = code === 41 ? at : itemAt(marks.nextClose, at + 1);
+    // A run of backticks is every backtick in a row, whatever stands before the first:
+    // inside a code span a backslash escapes nothing.
+    if (source[at] !== "`") continue;
+    if (runEnd === -1) runEnd = at + 1;
+    if (source[at - 1] === "`") continue;
+    const starts = marks.backtickRuns.get(runEnd - at) ?? [];
+    starts.push(at);
+    marks.backtickRuns.set(runEnd - at, starts);
+    runEnd = -1;
+  }
+  return marks;
+}
+
+/**
+ * The words of a block as a reader sees them, each at its place in the source.
+ *
+ * Paired emphasis marks are taken out of each word, so "**IAM**" is the acronym and
+ * "**(identity" opens an expansion. The marks are paired across the whole block, because
+ * emphasis can open on one line and close on the next. A block that may hold a link
+ * keeps every mark, as `mayHoldLink` describes. The column is where the first
+ * character left of the word sits in the source line, marks before it counted. It is
+ * compared with where a definition sits in that line, so "**(IAM)**" must not appear to
+ * start before its own bracket.
+ *
+ * @param written The document as `toLines` gives it.
+ */
+function unmarkedTokens(
+  block: ProseBlock,
+  written: readonly string[],
+): Array<{ raw: string; line: number; column: number }> {
+  const marks = new Set(mayHoldLink(written, block.line - 1, block.lines.length)
+    ? []
+    : emphasisMarkOffsets(block.lines.join("\n")));
+  const tokens: Array<{ raw: string; line: number; column: number }> = [];
+  let lineStart = 0;
+  for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex++) {
+    const line = itemAt(block.lines, lineIndex);
+    for (const match of line.matchAll(/\S+/g)) {
+      const start = lineStart + match.index;
+      // White space ends the word and is never a mark, so this stops inside the word.
+      let leading = 0;
+      while (marks.has(start + leading)) {
+        leading++;
+      }
+      const raw = withoutOffsets(match[0], start, marks);
+      tokens.push({ raw, line: block.line + lineIndex, column: match.index + leading });
+    }
+    lineStart += line.length + 1;
+  }
+  return tokens;
+}
+
+/**
+ * Where a character sits in a source line, given its place in that line without marks.
+ *
+ * \param marks The offset in the source line of each mark that was removed, ascending.
+ */
+function sourceColumn(unmarked: number, marks: readonly number[]): number {
+  // Mark k lay before this character when it sat at or before it once the k marks
+  // ahead of it had gone. That holds for a first run of the marks, found by halving.
+  let low = 0;
+  let high = marks.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (itemAt(marks, middle) - middle <= unmarked) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return unmarked + low;
+}
+
+/** A piece of a text without the characters at the given offsets of that text. */
+function withoutOffsets(piece: string, start: number, offsets: ReadonlySet<number>): string {
+  if (offsets.size === 0) return piece;
+  let kept = "";
+  for (let at = 0; at < piece.length; at++) {
+    if (!offsets.has(start + at)) kept += piece[at];
+  }
+  return kept;
+}
+
+/** Adds the words of a fragment that carry an initial to the recent words, keeping the last few. */
+function carry(recent: string[], fragment: string): void {
+  for (const word of fragment.match(/[A-Za-z]+/g) ?? []) {
+    if (/^(?:a|an|and|for|in|of|on|the|to)$/i.test(word)) continue;
+    recent.push(word);
+    if (recent.length > LONGEST_ACRONYM) recent.shift();
+  }
 }
 
 const NAMED_WORK = "article|book|campaign|company|film|initiative|journal|organisation|" +
@@ -536,20 +1583,86 @@ const PROPER_NAME_CONTEXT = new RegExp(
  *
  * A Setext heading over several lines arrives as one line of text, so a finding in
  * it reports the line where the heading starts.
+ *
+ * Paired emphasis marks are removed, because a reader sees "in **order** to" and
+ * "_shall_" as the words alone. With the marks left in, a mark inside a phrase broke
+ * the match, and an underscore beside a word hid the word boundary. A strike is
+ * removed the same way: the struck words are still on the page, and were already
+ * reported where the whole phrase was struck. Code spans and escaped marks stay as
+ * written, so a term in backticks is still named and not used.
+ *
+ * A block that may hold a link keeps every mark, as `mayHoldLink` describes. A phrase
+ * split by emphasis in such a block is therefore not found.
  */
 function readerTextBlocks(text: string, reading: Reading): ProseBlock[] {
+  const written = toLines(text);
   const blocks = [
-    ...readerProseBlocks(text, reading),
-    ...headings(text, reading).map((heading) => ({ line: heading.line, lines: [heading.text] })),
+    ...readerProseBlocks(text, reading)
+      .map((block) => withoutEmphasisMarks(block, written, block.lines.length)),
+    ...headings(text, reading)
+      .map((heading) => withoutEmphasisMarks({ line: heading.line, lines: [heading.text] }, written, heading.lines)),
   ];
   return blocks.sort((a, b) => a.line - b.line);
+}
+
+/**
+ * The block with its paired emphasis marks removed, on the same lines.
+ *
+ * The marks are paired across the whole block, because emphasis can open on one line
+ * and close on the next. No line ending is removed, so each line keeps its number.
+ *
+ * @param written The document as `toLines` gives it.
+ * @param span How many source lines the block was read from. A heading over several
+ *     lines is one line of text.
+ * @returns The block itself, with every mark, where it may hold a link.
+ */
+function withoutEmphasisMarks(block: ProseBlock, written: readonly string[], span: number): ProseBlock {
+  if (mayHoldLink(written, block.line - 1, span)) return block;
+  return { line: block.line, lines: withoutEmphasis(block.lines.join("\n")).split("\n") };
+}
+
+/**
+ * Whether source lines may hold a link, an image, an autolink or a bare address.
+ *
+ * A block that may hold one is read as it was before emphasis was paired at all: no
+ * mark is removed. A link has syntax of its own, and a mark can sit in it or across its
+ * edge. Three attempts to pair marks around links each reported words that a browser
+ * does not show: "in *or[der*](u) to", "in or*[der](u)* to", and a backtick in a
+ * destination that closed a code span further on. A mark left in can only hide a
+ * finding.
+ *
+ * Four pieces of text are looked for, and a line that holds none holds no link:
+ *
+ * - "[", which every link, image and reference needs;
+ * - "<", which every autolink in angle brackets and every HTML tag needs;
+ * - "://", which every bare address with a protocol needs, such as one that begins
+ *   "https://";
+ * - "www.", in capitals or small letters, which every other bare address needs.
+ *
+ * GitHub links a bare address with no bracket, and a mark inside the address is part
+ * of that link: "https://e.com/*x in or*der to" shows "or*der". An email address is
+ * not looked for. GitHub finds one in text it has already read for emphasis, so the
+ * marks pair across it, and "mailto:" and "xmpp:" are found the same way.
+ *
+ * That is the whole test. It does not ask whether a bracket is a link or a word is an
+ * address, because that question is the one the pairing kept getting wrong. So a
+ * bracket in a code span, an escaped bracket, a task marker, an HTML tag and any
+ * "://" all count. Counting one too many loses a finding in that block. Missing a link
+ * reports words that no reader sees.
+ *
+ * @param written The document as `toLines` gives it, one entry for each source line.
+ * @param first The index of the first line to read, and `count` how many to read.
+ * @returns False when `count` is 0 or the lines lie past the end of the document.
+ */
+function mayHoldLink(written: readonly string[], first: number, count: number): boolean {
+  return written.slice(first, first + count).some((line) =>
+    line.includes("[") || line.includes("<") || line.includes("://") || line.toLowerCase().includes("www."));
 }
 
 function legaleseViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   for (const block of readerTextBlocks(text, reading)) {
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
+    for (const [i, line] of block.lines.entries()) {
       for (const term of LEGALESE) {
         const matches = withoutNamedTerms(line, term)
           .match(new RegExp(`\\b${term}\\b`, "gi"));
@@ -607,7 +1720,8 @@ function doubletViolations(text: string, reading: Reading): Violation[] {
 // about the destination.
 const UNINFORMATIVE_LINK = /^(?:click here|here|this|link|this link|read more|more|more info|details|see more|learn more|go|page|website|download)$/i;
 const HTML_ANCHOR = /<a\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/a\s*>/gi;
-const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
+/** An HTML image tag and its attributes. Exported so a test can hold `htmlImageTags` to exactly what this pattern finds. */
+export const HTML_IMAGE = /<img\b((?:"[^"]*"|'[^']*'|[^'">])*)>/gi;
 const HTML_TAG = /<(?:"[^"]*"|'[^']*'|[^'">])*>/g;
 
 function spokenText(label: string): string {
@@ -635,7 +1749,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     // One scan serves all three forms. Reading each with its own pattern was quadratic:
     // a label pattern scans to the end of the line from every "[" and then gives the
     // ground back one character at a time.
-    for (const link of markdownLinks(lines[i] as string)) {
+    for (const link of markdownLinks(itemAt(lines, i))) {
       // Skip image syntax: the alt-text rule owns that, and anything inside an alt
       // text, which a reader never meets as a link of its own.
       if (link.image || !link.rendered) continue;
@@ -668,6 +1782,7 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     }
   }
   const markup = markupLines.join("\n");
+  const lineOf = lineFinder(markup);
   // A link whose label runs over a line ending. The same scan finds it, filtered to the
   // labels that hold one.
   for (const link of markdownLinks(markup)) {
@@ -682,22 +1797,23 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, link.start),
+      line: lineOf(link.start),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
         : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
     });
   }
   for (const match of markup.matchAll(HTML_ANCHOR)) {
-    if (/\n[ \t]*\n/.test(match[0])) continue;
-    const target = htmlAttribute(match[1], "href");
+    const [whole, attributes, label] = match;
+    if (attributes === undefined || label === undefined || /\n[ \t]*\n/.test(whole)) continue;
+    const target = htmlAttribute(attributes, "href");
     if (target === null) continue;
-    const spoken = spokenText(match[2]);
+    const spoken = spokenText(label);
     const bare = /^<?(?:https?:\/\/|www\.)/i.test(spoken);
     if (spoken.length > 0 && !UNINFORMATIVE_LINK.test(spoken) && !bare) continue;
     violations.push({
       rule: "link-text",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineOf(match.index),
       detail: spoken.length === 0
         ? "link has no text; say where it goes"
         : `link text "${spoken}" describes no destination (${target.slice(0, 40)})`,
@@ -706,25 +1822,76 @@ function linkTextViolations(text: string, reading: Reading): Violation[] {
   return violations;
 }
 
+// The title that marks an image as decorative, in double or single quotes. A
+// title in parentheses is not read: the scan ends an image at its first ")",
+// which is the title's own, so the scan never holds the whole image.
+const DECORATIVE_TITLE = String.raw`(?:"decorative"|'decorative')`;
+// A destination that every renderer ends in the same place: any characters
+// but a space, angle bracket, parenthesis, quote or backslash, and none that
+// Unicode counts as whitespace, a separator, a control or a format character,
+// nor half a surrogate pair. The "u" flag reads an emoji as one
+// character and knows the categories. It never goes with the "i" flag, which
+// together with it would read the Kelvin sign as "k".
+const PLAIN_DESTINATION = /^[^ <>()"'\\\s\p{Z}\p{Cc}\p{Cf}\p{Cs}]+$/u;
+// An inline image's destination and title, as the scan gives them, when the
+// title is decorative: a destination with no space or tab, one space or tab,
+// then the title. `PLAIN_DESTINATION` then reads the destination.
+const DECORATIVE_INLINE = new RegExp(`^([^ \\t]+)[ \\t]${DECORATIVE_TITLE}$`, "i");
+// A reference label made only of ASCII letters, digits, spaces, hyphens and underscores.
+const PLAIN_LABEL = /^[A-Za-z0-9 _-]+$/;
+// A line that is nothing but a definition giving such a label a destination
+// and the decorative title, in the same form as `DECORATIVE_INLINE`.
+const DECORATIVE_DEFINITION = new RegExp(
+  `^\\[([A-Za-z0-9 _-]+)\\]: ([^ \\t]+)[ \\t]${DECORATIVE_TITLE}$`,
+  "i",
+);
+
 // An image with no alternative text is silence to a reader who cannot see it.
 // An empty alt is legitimate for a purely decorative image, so the writer can
 // mark that intent explicitly rather than leaving the alt blank by accident.
+//
+// The mark is the title decorative. It is honoured only on an image written in
+// one closed form, which both reference renderers read the same way:
+// `![](decoration.png "decorative")`, or `![][dec]` with one definition of
+// `dec`, written `[dec]: decoration.png "decorative"` on a line of its own.
+// A title in any other form is not honoured, even where a renderer shows it.
+// Three times, reading more of Markdown's grammar here took a title from text
+// that renders an image with no title.
 function imageAltViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   const { lines, markupLines, references, hidden } = readDocument(text, reading);
+  const written = toLines(text);
+  // Worked out once, and only for a document with an image that needs them.
+  let decorative: ReadonlySet<string> | null = null;
+  let imageEarlier: readonly boolean[] | null = null;
   for (let i = 0; i < lines.length; i++) {
     if (hidden(i)) continue;
+    const line = itemAt(lines, i);
+    const source = itemAt(written, i);
+    // The reader turns escapes, code spans and HTML into spaces in what the
+    // scan reads. Where it changed nothing, the line as written ends in it.
+    const asWritten = source.endsWith(line);
     // One scan finds both image forms, filtered to the ones with no alternative text.
-    for (const link of markdownLinks(lines[i] as string)) {
+    for (const link of markdownLinks(line)) {
       if (!link.image || link.kind === "shortcut" || !link.rendered) continue;
       if (link.label.trim().length > 0) continue;
       const target = link.target.trim();
+      const plain = asWritten && link.label === "";
       if (link.kind === "inline") {
         if (target.length === 0) continue;
-        // "decorative" as the title marks an image that carries no meaning.
-        // A filename containing the word does not express that decision.
-        if (/\s+(?:"decorative"|'decorative'|\(decorative\))\s*$/i.test(link.target)) continue;
-      } else if (!references.has(normaliseReference(target))) continue;
+        if (plain && decorativeInline(link.target)) continue;
+      } else {
+        if (!references.has(normaliseReference(target))) continue;
+        if (plain && PLAIN_LABEL.test(link.target)) {
+          decorative ??= decorativeLabels(written);
+          imageEarlier ??= imageSyntaxEarlier(written);
+          // The line as written ends in the line as read, so the image stands
+          // the same distance from the end of both.
+          const first = !itemAt(imageEarlier, i)
+            && source.indexOf("![") === source.length - line.length + link.start;
+          if (first && decorative.has(plainLabel(link.target))) continue;
+        }
+      }
       violations.push({
         rule: "image-alt",
         line: i + 1,
@@ -733,18 +1900,358 @@ function imageAltViolations(text: string, reading: Reading): Violation[] {
     }
   }
   const markup = markupLines.join("\n");
-  for (const match of markup.matchAll(HTML_IMAGE)) {
-    if (/\n[ \t]*\n/.test(match[0])) continue;
-    const attributes = match[1];
-    if (htmlAttribute(attributes, "alt") !== null) continue;
-    const target = (htmlAttribute(attributes, "src") ?? "image").slice(0, 40);
+  const lineOf = lineFinder(markup);
+  // The tags `HTML_IMAGE` matches, found without reading on from each
+  // unclosed "<img" to the end of the text: 20,000 of them took 6.4 seconds.
+  for (const tag of htmlImageTags(markup)) {
+    if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
+    if (htmlAttribute(tag.attributes, "alt") !== null) continue;
+    const target = (htmlAttribute(tag.attributes, "src") ?? "image").slice(0, 40);
     violations.push({
       rule: "image-alt",
-      line: lineAtOffset(1, markup, match.index),
+      line: lineOf(tag.start),
       detail: `image has no alternative text (${target})`,
     });
   }
   return violations;
+}
+
+/**
+ * For each line, whether image syntax, "![", stands on an earlier line of the
+ * same run of lines with no blank line between them.
+ *
+ * A reference image can sit inside an earlier image's alternative text or
+ * destination, and then a reader sees only that earlier image, with no title.
+ * Inline markup cannot cross a blank line, so an image with no "![" before it
+ * in its run sits inside no other image.
+ *
+ * @param written The document's lines as written.
+ */
+function imageSyntaxEarlier(written: readonly string[]): boolean[] {
+  const earlier: boolean[] = [];
+  let seen = false;
+  for (const line of written) {
+    // CommonMark counts a line of spaces and tabs as blank, and nothing else.
+    if (/^[ \t]*$/.test(line)) seen = false;
+    earlier.push(seen);
+    seen ||= line.includes("![");
+  }
+  return earlier;
+}
+
+/**
+ * The labels a reference image can be honoured for: each defined once, on a
+ * line that `DECORATIVE_DEFINITION` matches.
+ *
+ * A renderer takes a label's first definition, and matches labels by Unicode
+ * case folding, so "ß" matches "SS". Rather than follow either, this counts as
+ * a definition every "[" up to the next "]" that has a ":" straight after it,
+ * anywhere in the text, across lines and in code too. Each is keyed by its
+ * ASCII letters and digits alone, which can only count too many, and a label
+ * counted twice is not honoured. A label with a character beyond ASCII might
+ * fold to match one, so then no label is honoured at all.
+ *
+ * @param written The document's lines as written.
+ * @returns Each label in the form `plainLabel` gives.
+ */
+function decorativeLabels(written: readonly string[]): Set<string> {
+  const counts = new Map<string, number>();
+  const text = written.join("\n");
+  let open = -1;
+  for (let at = 0; at < text.length; at++) {
+    if (text[at] === "[") open = at;
+    if (text[at] !== "]") continue;
+    if (open !== -1 && text[at + 1] === ":") {
+      const label = text.slice(open + 1, at);
+      if (/[\u0080-\uffff]/.test(label)) return new Set();
+      const key = labelKey(label);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    open = -1;
+  }
+  const labels = new Set<string>();
+  for (const line of written) {
+    const [, label, destination = ""] = DECORATIVE_DEFINITION.exec(line) ?? [];
+    if (label === undefined || !PLAIN_DESTINATION.test(destination)) continue;
+    if (counts.get(labelKey(label)) === 1) labels.add(plainLabel(label));
+  }
+  return labels;
+}
+
+/** Whether an inline image's destination and title, as the scan gives them, are the decorative form. */
+function decorativeInline(target: string): boolean {
+  const [, destination = ""] = DECORATIVE_INLINE.exec(target) ?? [];
+  return PLAIN_DESTINATION.test(destination);
+}
+
+/** A label's ASCII letters and digits in lower case, the key two definitions are counted by. */
+function labelKey(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** A label of ASCII characters as a renderer matches it: trimmed, its spaces collapsed, in lower case. */
+function plainLabel(label: string): string {
+  return label.trim().replace(/ +/g, " ").toLowerCase();
+}
+
+// Words that name only the kind of image. Alternative text that is one of
+// them tells a listener that an image is there, and nothing about what it
+// shows. "Acme logo" says whose logo it is, so only the word alone counts.
+const GENERIC_ALT_WORDS = new Set(["image", "picture", "photo", "screenshot", "graphic", "figure", "diagram", "icon", "logo"]);
+
+// One image file's name: no space, slash or backslash, and one of these
+// extensions. A closed list, so that "Node.js" or "v1.2" is not a file name.
+const IMAGE_FILE_NAME = /^[^\s/\\]+\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?|avif)$/i;
+
+/**
+ * Part 5 asks a meaningful image to say what it shows, not what it is.
+ * Alternative text that is one word naming the kind of image, or that is the
+ * image's file name, reads as the image's type and not its content.
+ *
+ * It reads a Markdown image, inline or by reference where a definition
+ * supplies its label, and the alt attribute of an HTML image. It finds them
+ * in the lines as `readDocument` gives them, with HTML tags, code spans and
+ * escapes set aside, so a reference label holding one of those is not
+ * looked up as written, and the image is missed. It finds an HTML image by
+ * its "<img", even inside another tag's attribute. Clause 12b's limits say
+ * so, with examples. The alternative
+ * text is read as the reader of the line gives it, with emphasis marks
+ * removed and its spaces trimmed. Empty alternative text belongs to
+ * `image-alt`, so this rule never reads it.
+ *
+ * Exported so a test can time this rule apart from the others.
+ */
+export function genericAltViolations(text: string, reading: Reading = {}): Violation[] {
+  const violations: Violation[] = [];
+  const { lines, markupLines, references } = readDocument(text, reading);
+  // The reader gives each line of code or front matter as an empty line, so none holds an image.
+  for (let i = 0; i < lines.length; i++) {
+    for (const link of markdownLinks(itemAt(lines, i))) {
+      if (!link.image || !link.rendered) continue;
+      if (link.kind === "inline") {
+        // The reader gives HTML, a comment or an escape as spaces, so a
+        // destination such as `<a b.png>` reads as spaces. Only one with
+        // nothing in it at all is empty.
+        if (link.target.length === 0) continue;
+      } else {
+        // A label after the image, other than "[]", names its definition,
+        // and the image renders only where that label is defined. One the
+        // reader gave as spaces cannot be looked up, and is never the
+        // image's own.
+        if (link.target.length > 0 && link.target.trim().length === 0) continue;
+        const name = link.kind === "reference" ? link.target.trim() || link.label : link.label;
+        if (!references.has(normaliseReference(name))) continue;
+      }
+      const finding = genericAltFinding(link.label, i + 1);
+      if (finding !== null) violations.push(finding);
+    }
+  }
+  const markup = markupLines.join("\n");
+  const lineOf = lineFinder(markup);
+  let asText: Uint8Array | null = null;
+  for (const tag of htmlImageTags(markup)) {
+    if (/\n[ \t]*\n/.test(markup.slice(tag.start, tag.end))) continue;
+    const alt = altAttribute(tag.attributes);
+    if (alt === null) continue;
+    // With no "[" or backtick there is no link, image or code span, and nothing to read twice.
+    asText ??= /[[`]/.test(markup) ? htmlAsText(text, reading, markupLines, references) : new Uint8Array(0);
+    if (asText[tag.start] === 1) continue;
+    const finding = genericAltFinding(alt, lineOf(tag.start));
+    if (finding !== null) violations.push(finding);
+  }
+  return violations;
+}
+
+/**
+ * Where HTML in the document is shown as text, and so is no tag: a link's
+ * destination, title or reference label, the whole of an image, alternative
+ * text included, and a code span. `<img>` written there is no image. The
+ * reader already sets aside a code span in a paragraph, but not in a table row
+ * or a heading.
+ *
+ * Links are found where `linkSyntax` looks for them, in each prose block, each
+ * heading and each other line a rule reads, so no link runs from one block into
+ * the next. `linkSyntaxIn` reads them as CommonMark does, so an HTML tag binds
+ * tighter than a link, and `[t](x <img>)` is no link but text and an image.
+ *
+ * @param markupLines The document's lines with their HTML, as `readDocument` gives them.
+ * @returns One entry for each UTF-16 unit of `markupLines.join("\n")`: 1 where
+ *     HTML is shown as text, and 0 elsewhere.
+ */
+function htmlAsText(
+  text: string,
+  reading: Reading,
+  markupLines: readonly string[],
+  references: ReadonlySet<string>,
+): Uint8Array {
+  const starts: number[] = [];
+  let length = 0;
+  for (const line of markupLines) {
+    starts.push(length);
+    length += line.length + 1;
+  }
+  const asText = new Uint8Array(Math.max(length - 1, 0));
+  const spans = [
+    ...proseBlocks(text, reading).map((block) => [block.line - 1, block.lines.length]),
+    ...headings(text, reading).map((heading) => [heading.line - 1, heading.lines]),
+  ] as Array<[first: number, count: number]>;
+  const inBlock = new Set<number>();
+  for (const [first, count] of spans) {
+    for (let line = first; line < first + count; line++) {
+      inBlock.add(line);
+    }
+  }
+  markupLines.forEach((line, index) => {
+    if (!inBlock.has(index) && line.trim() !== "") spans.push([index, 1]);
+  });
+  for (const [first, count] of spans) {
+    // A block's lines stand together in the joined text, so an offset into the
+    // block is an offset into the text once the block's start is added.
+    const source = markupLines.slice(first, first + count).join("\n");
+    if (!/[[`]/.test(source)) continue;
+    const start = itemAt(starts, first);
+    const shown: Array<readonly [number, number]> = [];
+    const syntax = linkSyntaxIn(source, references, shown);
+    for (let at = 0; at < syntax.length; at++) {
+      if (syntax[at] === 1) asText[start + at] = 1;
+    }
+    // An image can hold another, so each is filled only past what is filled
+    // already. Filling each whole cost the square of the depth: 1,000 nested
+    // images filled 7,023,000 places in a text of 14,016.
+    shown.sort((one, two) => one[0] - two[0]);
+    let filled = 0;
+    for (const [from, to] of shown) {
+      if (to > filled) asText.fill(1, start + Math.max(from, filled), start + to);
+      filled = Math.max(filled, to);
+    }
+  }
+  return asText;
+}
+
+// One attribute of an HTML tag, read from where the last one ended: the
+// spaces and slashes before it, its name, and any value. A name runs to a
+// space, a slash, ">" or "=", as HTML reads it.
+const HTML_ATTRIBUTE = /[\s/]*([^\s/>][^\s/>=]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?/y;
+
+/**
+ * The value of an image tag's alt attribute, read one attribute at a time
+ * from the start, as HTML reads it. `htmlAttribute` searches the text instead,
+ * so it took `data-alt` or text inside another attribute's value for alt.
+ *
+ * @param attributes The text between "<img" and its closing ">".
+ * @returns The first alt attribute's value, "" when it has none, or null
+ *     when the tag has no alt attribute.
+ */
+function altAttribute(attributes: string): string | null {
+  const pattern = new RegExp(HTML_ATTRIBUTE.source, "y");
+  let at = 0;
+  while (at < attributes.length) {
+    pattern.lastIndex = at;
+    const match = pattern.exec(attributes);
+    if (match === null) return null;
+    if (match[1]?.toLowerCase() === "alt") return match[2] ?? match[3] ?? match[4] ?? "";
+    at = pattern.lastIndex;
+  }
+  return null;
+}
+
+/** One HTML image tag: where it starts and ends, and the text between "<img" and its closing ">". */
+export interface HtmlImageTag {
+  readonly start: number;
+  readonly end: number;
+  readonly attributes: string;
+}
+
+/**
+ * Each HTML image tag in the text: the matches `HTML_IMAGE` finds, found in
+ * time in proportion to the text.
+ *
+ * The pattern alone reads on from every "<img" with no closing ">" to the end
+ * of the text, so 20,000 of them on one line took seven seconds. Here each
+ * position's closing ">" is worked out once, from the end of the text back.
+ *
+ * @returns The tags in order, none overlapping, as `matchAll` would give them.
+ */
+export function htmlImageTags(text: string): HtmlImageTag[] {
+  const tags: HtmlImageTag[] = [];
+  let closings: Int32Array | null = null;
+  let after = 0;
+  for (const match of text.matchAll(/<img\b/gi)) {
+    // A match of the pattern consumes its tag, so an "<img" inside one is not another.
+    if (match.index < after) continue;
+    closings ??= tagClosings(text);
+    const from = match.index + match[0].length;
+    const close = closings[from] ?? -1;
+    if (close === -1) continue;
+    tags.push({ start: match.index, end: close + 1, attributes: text.slice(from, close) });
+    after = close + 1;
+  }
+  return tags;
+}
+
+/**
+ * For each position, the ">" that `HTML_IMAGE` would end a tag at if its
+ * attributes began there, or -1 where it would find none. Outside quotation
+ * marks the first ">" ends the tag. A quotation mark skips to its partner,
+ * and one with no partner ends the search with none.
+ */
+function tagClosings(text: string): Int32Array {
+  const closings = new Int32Array(text.length + 1).fill(-1);
+  let nextDouble = -1;
+  let nextSingle = -1;
+  for (let at = text.length - 1; at >= 0; at--) {
+    const character = text[at];
+    if (character === ">") {
+      closings[at] = at;
+    } else if (character === "\"" || character === "'") {
+      const partner = character === "\"" ? nextDouble : nextSingle;
+      closings[at] = partner === -1 ? -1 : closings[partner + 1] ?? -1;
+      if (character === "\"") {
+        nextDouble = at;
+      } else {
+        nextSingle = at;
+      }
+    } else {
+      closings[at] = closings[at + 1] ?? -1;
+    }
+  }
+  return closings;
+}
+
+/**
+ * The finding for one image's alternative text, or null when it says more
+ * than the kind of image or its file. Each step is one pass over the text,
+ * so a long alternative text costs time in proportion to its length.
+ */
+function genericAltFinding(alt: string, line: number): Violation | null {
+  const shown = alt.trim().slice(0, 40);
+  const spoken = withoutOuterMarks(alt.trim()).trim();
+  if (GENERIC_ALT_WORDS.has(spoken.toLowerCase())) {
+    return { rule: "generic-alt", line, detail: `alternative text "${shown}" names the kind of image, not what it shows` };
+  }
+  if (IMAGE_FILE_NAME.test(spoken)) {
+    return { rule: "generic-alt", line, detail: `alternative text "${shown}" is a file name, not what the image shows` };
+  }
+  return null;
+}
+
+/**
+ * Text without the emphasis and code marks at either end, paired or not.
+ * A mark inside a word stays, because a renderer shows "lo_go" as written.
+ * Counted from each end in turn, because a pattern anchored at the end
+ * retries from every mark in a long run of them.
+ */
+function withoutOuterMarks(text: string): string {
+  const marks = "*_~`";
+  let start = 0;
+  let end = text.length;
+  while (start < end && marks.includes(text.charAt(start))) {
+    start++;
+  }
+  while (end > start && marks.includes(text.charAt(end - 1))) {
+    end--;
+  }
+  return text.slice(start, end);
 }
 
 /**
@@ -767,8 +2274,7 @@ function withoutNamedTerms(line: string, term: string): string {
 function complexWordViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   for (const block of readerTextBlocks(text, reading)) {
-    for (let i = 0; i < block.lines.length; i++) {
-      const line = block.lines[i];
+    for (const [i, line] of block.lines.entries()) {
       for (const match of line.matchAll(/[A-Za-z']+/g)) {
         const plain = COMPLEX_WORDS.get(match[0].toLowerCase());
         if (!plain) continue;
@@ -812,11 +2318,21 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
   // templated document escaped the rule entirely.
   const blocks = readerProseBlocks(text, reading);
   if (blocks.length === 0) return [];
-  // Emphasis markers are stripped, not the words inside them: "**Certainly!**"
-  // is still a filler opening, and removing the emphasised text hid it. Smart
-  // apostrophes are normalised so "I'd" matches however it was typed.
-  const opening = (blocks[0].lines[0] ?? "")
-    .replace(/[*_`]/g, "")
+  const written = toLines(text);
+  const first = itemAt(blocks, 0);
+  // The marks of paired emphasis are removed, not the words inside them:
+  // "**Certainly!**" is still a filler opening, and removing the emphasised
+  // text hid it. A code span keeps its backticks, because it names a term and
+  // is not the writer speaking. Smart apostrophes are normalised so "I'd"
+  // matches however it was typed.
+  //
+  // A block that may hold a link is read as it was before emphasis was paired:
+  // every asterisk, underscore and backtick is removed, paired or not. A term in a
+  // code span is then reported as the opening again, in such a block alone.
+  const unmarked = mayHoldLink(written, first.line - 1, first.lines.length)
+    ? (first.lines[0] ?? "").replace(/[*_`]/g, "")
+    : withoutEmphasisMarks(first, written, first.lines.length).lines[0] ?? "";
+  const opening = unmarked
     .replace(/[‘’]/g, "'")
     .trimStart()
     .toLowerCase();
@@ -831,24 +2347,23 @@ function fillerOpeningViolations(text: string, reading: Reading): Violation[] {
     if (/^not\b/.test(remainder)) continue;
     return [{
       rule: "filler-opening",
-      line: blocks[0].line,
+      line: first.line,
       detail: `opens with "${filler}" instead of the answer`,
     }];
   }
   return [];
 }
 
-
-
 // A listener hears each cell announced against its column name, so a table
 // whose header cells are blank tells them nothing about what they are hearing.
 function tableHeaderViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
   const { lines, hidden } = readDocument(text, reading);
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (hidden(i)) continue;
-    const row = lines[i].trim();
-    const divider = lines[i + 1].trim();
+  for (const [i, header] of lines.entries()) {
+    const below = lines[i + 1];
+    if (below === undefined || hidden(i)) continue;
+    const row = header.trim();
+    const divider = below.trim();
     // Outer pipes are optional in GitHub markdown, and the divider may carry
     // alignment colons and padding. Requiring the tidiest form meant a table
     // written the common way was never checked at all.
@@ -866,6 +2381,118 @@ function tableHeaderViolations(text: string, reading: Reading): Violation[] {
     });
   }
   return violations;
+}
+
+// The number of Part 5, with no digit on either side. It is the one form every
+// citation here shares: ISO 24495-5, ISO/WD 24495-5 and the skill's name,
+// iso-24495-5. A name alone, such as "Part 5", is not read, because "Part 5"
+// of any other document would be read as well.
+const PART_5_CITATION = /(?<!\p{N})24495-5(?!\p{N})/u;
+
+// A word that says the standard is not yet published. A letter or digit on
+// either side makes another word, so "drafted" and "redraft" do not count, but
+// an underscore of emphasis does not, so "_draft_" does.
+const DRAFT_LABEL = /(?<![\p{L}\p{N}])(?:drafts?|provisional|unpublished)(?![\p{L}\p{N}])/iu;
+
+// Text in double quotation marks is a phrase being quoted, such as a
+// counter-example, not the document's own citation or its own label. A
+// curly quotation stops at the next opening mark, so an opener with no
+// closer reads on only to the next opener, not to the end of the text.
+const QUOTED_TEXT = /"[^"]*"|\u201c[^\u201c\u201d]*\u201d/g;
+
+/** One paragraph, list item, quotation, heading or table row, with the line it starts on. */
+export interface CitingUnit {
+  readonly line: number;
+  readonly text: string;
+}
+
+/**
+ * Part 5 asks a document that cites its skill or ISO 24495-5 to say that the
+ * standard is an unpublished draft. It asks what the document says, once, so
+ * one paragraph that cites it and carries a draft word is enough. A label in a
+ * paragraph that does not cite it is not beside the citation a reader meets.
+ *
+ * Each paragraph, list item, quotation, heading and table row is read on its
+ * own. Code, front matter, comments and link destinations are not read, nor is
+ * text in double quotation marks.
+ *
+ * @returns One finding at the first citation, or none when the document cites
+ *     nothing or one citing paragraph carries the label.
+ */
+function provisionalLabelViolations(text: string, reading: Reading): Violation[] {
+  // Most documents never name the standard, so they are not parsed again.
+  if (!PART_5_CITATION.test(text)) return [];
+  const units: CitingUnit[] = [
+    ...readerProseBlocks(text, reading).map((block) => ({ line: block.line, text: block.lines.join("\n") })),
+    ...headings(text, reading).map((heading) => ({ line: heading.line, text: heading.text })),
+    ...readerTableRows(text, reading),
+  ];
+  const first = firstUnlabelledCitation(units);
+  if (first === null) return [];
+  return [{
+    rule: "provisional-label",
+    line: first,
+    detail: "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it",
+  }];
+}
+
+/**
+ * The line of the earliest unit that cites Part 5, when no citing unit says
+ * the standard is a draft. Text in double quotation marks is read as absent.
+ *
+ * Exported so a test can pass it more units than a document of a sensible
+ * size would hold. The earliest line is kept as the units are read: spreading
+ * every citing line into one Math.min call threw a RangeError on a long table.
+ *
+ * @param units The paragraphs, list items, quotations, headings and table
+ *     rows, in any order.
+ * @returns The earliest citing line, or null when no unit cites the standard
+ *     or a citing unit carries a draft word.
+ */
+export function firstUnlabelledCitation(units: Iterable<CitingUnit>): number | null {
+  let first: number | null = null;
+  for (const unit of units) {
+    const unquoted = unit.text.replace(QUOTED_TEXT, " ");
+    if (!PART_5_CITATION.test(unquoted)) continue;
+    if (DRAFT_LABEL.test(unquoted)) return null;
+    if (first === null || unit.line < first) first = unit.line;
+  }
+  return first;
+}
+
+/**
+ * Each table row, its divider included, as a reader sees it.
+ *
+ * A row is split into cells first, as GitHub splits it, so a pipe inside
+ * what looks like a link ends the cell and the link with it. A cell past the
+ * header's last column is dropped, as GitHub drops it. Each cell then goes
+ * through `inlineText`, the reading that prose and headings get: a link or
+ * image becomes its label, a reference link only where its label is
+ * defined, and an HTML comment or tag becomes a space. The cells are joined
+ * by " | ", so two cells never make one word or one number.
+ *
+ * @returns One unit for each table line, at its 1-indexed line. Empty when the
+ *     text holds no table.
+ */
+function readerTableRows(text: string, reading: Reading): CitingUnit[] {
+  const { blocks, lines, destinations } = structure(text, reading);
+  // `destinations` has one key for each defined label, normalised, which is
+  // the set `inlineText` takes.
+  const defined = new Set(destinations.keys());
+  // The number of columns of each table, keyed by the index of its header line.
+  const columns = new Map<number, number>();
+  const rows: CitingUnit[] = [];
+  for (const [index, block] of blocks) {
+    if (block.kind !== "table") continue;
+    let width = columns.get(block.id);
+    if (width === undefined) {
+      width = tableCells(itemAt(lines, block.id).trim()).length;
+      columns.set(block.id, width);
+    }
+    const cells = tableCells(itemAt(lines, index).trim()).slice(0, width);
+    rows.push({ line: index + 1, text: cells.map((cell) => inlineText(cell, defined)).join(" | ") });
+  }
+  return rows;
 }
 
 function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
@@ -896,13 +2523,17 @@ function wordyPhraseViolations(text: string, reading: Reading): Violation[] {
 
 function proseEnumerationViolations(text: string, reading: Reading): Violation[] {
   const violations: Violation[] = [];
+  const written = toLines(text);
   for (const block of readerProseBlocks(text, reading)) {
-    const paragraph = block.lines.join(" ");
+    // Read without emphasis marks, which hid "_First_" and "**(1)**" from the patterns.
+    // A block that may hold a link keeps them, as `mayHoldLink` describes.
+    const paragraph = withoutEmphasisMarks(block, written, block.lines.length).lines.join(" ");
     const ranks = new Set<number>();
     // A hyphenated compound is one word, not a rank: "third-party service" is
     // not a third item, and counting it turned ordinary prose into a finding.
     for (const match of paragraph.matchAll(/\b(first|firstly|second|secondly|third|thirdly|fourth|fourthly|fifth|fifthly|sixth|sixthly)\b(?!-)/gi)) {
-      ranks.add(ORDINAL_RANKS.get(match[1].toLowerCase())!);
+      const rank = ORDINAL_RANKS.get(match[0].toLowerCase());
+      if (rank !== undefined) ranks.add(rank);
     }
     for (const match of paragraph.matchAll(/(?:^|\s)(?:\(([1-6])\)|([1-6])[.)])(?=\s|$)/g)) {
       ranks.add(Number(match[1] ?? match[2]));
@@ -930,6 +2561,11 @@ function proseEnumerationViolations(text: string, reading: Reading): Violation[]
  * The file holds an array of strings. Anything unreadable or malformed leaves
  * the core list alone rather than failing the audit, because an advisory tool
  * must never be the reason a document cannot be checked.
+ *
+ * @param directory The project root, which holds the `.iso-24495-4` folder.
+ * @returns The acronyms trimmed and in capitals, ready for
+ *     `AuditOptions.knownAcronyms`. Entries that are not text are dropped.
+ *     Empty when the file is missing, unreadable, not JSON or not an array.
  */
 export function projectAcronyms(directory: string): ReadonlySet<string> {
   const path = join(directory, ".iso-24495-4", "acronyms.json");
@@ -946,146 +2582,13 @@ export function projectAcronyms(directory: string): ReadonlySet<string> {
   }
 }
 
-export interface AuditOptions extends Reading {
-  /** Extra acronyms this project treats as known. */
-  knownAcronyms?: ReadonlySet<string>;
-}
-
-export function auditText(text: string, options: AuditOptions = {}): Violation[] {
-  // Every rule re-reads the text, so each is told the same thing about front matter.
-  const reading: Reading = { frontMatter: options.frontMatter };
-  const violations: Violation[] = [];
-  const sentenceLengths: number[] = [];
-  const mergedLengths: number[] = [];
-  for (const block of readerProseBlocks(text, reading)) {
-    const paragraph = block.lines.join("\n");
-    // The splitter reports where each sentence starts, so nothing needs locating twice.
-    // Rebuilding a sentence as a regular expression threw on a long one.
-    for (const sentence of locateSentences(paragraph)) {
-      const words = wordCount(sentence.text);
-      if (words > 0) sentenceLengths.push(words);
-      if (words > SENTENCE_WORD_LIMIT) {
-        violations.push({
-          rule: "sentence-length",
-          line: lineAtOffset(block.line, paragraph, sentence.start),
-          detail: `${words} words (limit ${SENTENCE_WORD_LIMIT})`,
-        });
-      }
-    }
-    // Counted from the fewest sentences the paragraph can hold. An unresolved
-    // full stop must never manufacture the sentence that breaks the limit.
-    const fewest = mergedSentences(paragraph).length;
-    for (const sentence of mergedSentences(paragraph)) {
-      const words = wordCount(sentence);
-      if (words > 0) mergedLengths.push(words);
-    }
-    if (fewest > PARAGRAPH_SENTENCE_LIMIT) {
-      violations.push({
-        rule: "paragraph-length",
-        line: block.line,
-        detail: `${fewest} sentences (limit ${PARAGRAPH_SENTENCE_LIMIT})`,
-      });
-    }
-  }
-  violations.push(...legaleseViolations(text, reading));
-  // The standards specify an average across the document, not a cap; the cap
-  // above only catches genuine sprawl. Small samples are exempt because an
-  // average over a handful of sentences is noise, not judgement.
-  //
-  // Both readings must agree. Taking the longer reading alone let an undecided
-  // full stop lift a document over the ten-sentence sample floor and produce a
-  // finding the joined-up reading could not, which is the opposite of what
-  // abstention is for.
-  const readings = [sentenceLengths, mergedLengths].map((lengths) => ({
-    count: lengths.length,
-    average: lengths.length === 0 ? 0 : lengths.reduce((a, b) => a + b, 0) / lengths.length,
-  }));
-  if (readings.every((r) => r.count >= AVERAGE_MIN_SENTENCES && r.average > SENTENCE_AVERAGE_LIMIT)) {
-    const reported = readings[0];
-    violations.push({
-      rule: "sentence-average",
-      line: 1,
-      detail: `average ${reported.average.toFixed(1)} words across ${reported.count} sentences (limit ${SENTENCE_AVERAGE_LIMIT})`,
-    });
-  }
-  const documentHeadings = headings(text, reading);
-  for (let i = 0; i < documentHeadings.length; i++) {
-    const heading = documentHeadings[i];
-    if (heading.level > MAX_HEADING_LEVEL) {
-      violations.push({
-        rule: "heading-depth",
-        line: heading.line,
-        detail: `heading level ${heading.level} (limit ${MAX_HEADING_LEVEL})`,
-      });
-    }
-
-    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-    const previous = documentHeadings[i - 1];
-    if (previous && heading.level > previous.level + 1) {
-      violations.push({
-        rule: "heading-skip",
-        line: heading.line,
-        detail: `heading jumps from level ${previous.level} to level ${heading.level}`,
-      });
-    }
-
-    // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-    const headingText = heading.text.replace(/^(?:\d+\.)+\s+/, "");
-    const headingForm = headingText.replace(/(?<!\\)[*_~]+$/, "");
-    const headingWords = wordCount(headingText);
-    // Same abstention as the paragraph rule: a heading is only two sentences
-    // if it is two even when every doubtful stop is joined up.
-    const headingSentences = mergedSentences(headingText);
-    if (headingWords > HEADING_WORD_LIMIT) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: `${headingWords} words (limit ${HEADING_WORD_LIMIT})`,
-      });
-    } else if (headingSentences.length >= 2) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: `${headingSentences.length} sentences in heading`,
-      });
-    } else if (headingForm.endsWith(".") && !headingForm.endsWith("...")) {
-      violations.push({
-        rule: "heading-style",
-        line: heading.line,
-        detail: "heading ends with a full stop",
-      });
-    }
-  }
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...acronymViolations(text, options.knownAcronyms ?? new Set(), reading));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...doubletViolations(text, reading));
-
-  // lucid-inspired, reimplemented; proxy choice, not a standard clause.
-  violations.push(...proseEnumerationViolations(text, reading));
-
-  // The intended readers of a document include everyone who uses it, whether
-  // they see it, hear it or touch it. These two rules are the only ones here
-  // that serve a reader who is not looking at the page.
-  violations.push(...wordyPhraseViolations(text, reading));
-  violations.push(...complexWordViolations(text, reading));
-  violations.push(...doubleNegativeViolations(text, reading));
-  violations.push(...fillerOpeningViolations(text, reading));
-  violations.push(...tableHeaderViolations(text, reading));
-  violations.push(...linkTextViolations(text, reading));
-  violations.push(...imageAltViolations(text, reading));
-  return violations;
-}
-
 function walk(
   dir: string,
   out: string[],
   onSkip: ((path: string) => void) | undefined,
   isRoot: boolean,
-  readDirectory: typeof readdirSync,
-  inspectEntry: typeof lstatSync,
+  readDirectory: (path: string) => string[],
+  inspectEntry: (path: string) => Stats,
 ): void {
   let entries: string[];
   try {
@@ -1124,98 +2627,30 @@ function walk(
   }
 }
 
+/**
+ * Every audited document under a directory, at any depth.
+ *
+ * `node_modules` and `.git` are not entered. A symbolic link is never
+ * followed, because it may leave the selected path or form a cycle.
+ *
+ * @param dir The directory to walk.
+ * @param onSkip Called with the path of each entry passed over: a link, an
+ *     entry that cannot be inspected, or a directory below `dir` that cannot
+ *     be listed. Without it those entries vanish silently.
+ * @param readDirectory Replaces the directory reader.
+ * @param inspectEntry Replaces the call that inspects one entry.
+ * @returns The paths sorted, each beginning with `dir` as it was given.
+ *     Empty when the directory holds no such file.
+ * @throws The file system error when `dir` itself cannot be listed, so a
+ *     mistyped path is never read as an empty corpus.
+ */
 export function listTextFiles(
   dir: string,
   onSkip?: (path: string) => void,
-  readDirectory: typeof readdirSync = readdirSync,
-  inspectEntry: typeof lstatSync = lstatSync,
+  readDirectory: (path: string) => string[] = readdirSync,
+  inspectEntry: (path: string) => Stats = lstatSync,
 ): string[] {
   const paths: string[] = [];
   walk(dir, paths, onSkip, true, readDirectory, inspectEntry);
   return paths.sort();
-}
-
-type ReadTextFile = (path: string, encoding: "utf8") => string;
-
-export function auditCorpus(
-  dir: string,
-  onSkip?: (path: string) => void,
-  readText: ReadTextFile = readFileSync,
-): Findings {
-  const paths = listTextFiles(dir, onSkip);
-  // A corpus is audited from its own directory, so the project's acronyms
-  // apply to every document in it.
-  const knownAcronyms = projectAcronyms(dir);
-  const findings: Findings = { configHash: configHash(), files: {}, totals: {} };
-  for (const path of paths) {
-    const key = relative(dir, path).replaceAll("\\", "/");
-    let text: string;
-    try {
-      text = readText(path, "utf8");
-    } catch {
-      onSkip?.(path);
-      continue;
-    }
-    const violations = auditText(text, { knownAcronyms });
-    findings.files[key] = { violations };
-    for (const v of violations) {
-      findings.totals[v.rule] = (findings.totals[v.rule] ?? 0) + 1;
-    }
-  }
-  return findings;
-}
-
-export function runCli(
-  argv: string[],
-  stdout: (text: string) => void,
-  stderr: (text: string) => void,
-): number {
-  const dir = argv[2];
-  if (!dir) {
-    stderr("Usage: bun audit-corpus-cli.ts <corpus-dir> [--json <out-file>]");
-    return 2;
-  }
-  let jsonPath: string | undefined;
-  const seenOptions = new Set<string>();
-  for (let index = 3; index < argv.length; index++) {
-    const option = argv[index];
-    if (option !== "--json") {
-      const kind = option.startsWith("--") ? "unknown option" : "unexpected argument";
-      stderr(`audit-corpus: ${kind}: ${option}`);
-      return 2;
-    }
-    if (seenOptions.has(option)) {
-      stderr(`audit-corpus: ${option} appears more than once`);
-      return 2;
-    }
-    seenOptions.add(option);
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      stderr("audit-corpus: --json requires an output file");
-      return 2;
-    }
-    jsonPath = value;
-    index++;
-  }
-  try {
-    const skipped: string[] = [];
-    const findings = auditCorpus(dir, (path) => skipped.push(path));
-    for (const path of skipped) {
-      stderr(`warning: skipped unreadable entry: ${path}`);
-    }
-    if (jsonPath !== undefined) {
-      writeFileSync(jsonPath, JSON.stringify(findings, null, 2));
-    }
-    stdout("| Rule | Violations |");
-    stdout("|------|------------|");
-    for (const [rule, count] of Object.entries(findings.totals)) {
-      stdout(`| ${rule} | ${count} |`);
-    }
-    const total = Object.values(findings.totals).reduce((a, b) => a + b, 0);
-    stdout(`\nTotal: ${total} across ${Object.keys(findings.files).length} files.`);
-    return 0;
-  } catch (error) {
-    stderr(`audit-corpus: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
-  }
 }

@@ -1,4 +1,4 @@
-# Sample With A High Average But No Single Offender
+# Sample With A High Average But No Single Offender (Version: 1.0)
 
 Every single sentence in this fixture document has been written quite deliberately to sit somewhere in the low twenties for its own word count. Not one of them ever crosses the thirty word cap, and so the per sentence rule can find nothing at all to report. The trouble in this prose only becomes visible when the engine steps back and considers the document as one whole connected piece of writing. A reader here faces sentence after sentence of this same sustained moderate length, with no shorter ones mixed in for relief.
 

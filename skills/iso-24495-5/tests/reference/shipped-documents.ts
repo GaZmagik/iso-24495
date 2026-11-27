@@ -49,6 +49,8 @@ export const SHIPPED_DOCUMENTS: readonly string[] = [
   "skills/iso-24495-5/assets/runbook-template.md",
   "skills/iso-24495-code/SKILL.md",
   "skills/iso-24495-code/agents/openai.yaml",
+  "skills/iso-24495-design-audit/SKILL.md",
+  "skills/iso-24495-design-audit/agents/openai.yaml",
   "skills/iso-24495-text-audit/SKILL.md",
   "skills/iso-24495-text-audit/agents/openai.yaml",
 ];

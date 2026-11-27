@@ -44,8 +44,11 @@ function reference(markdown: string): Blocks {
         level = node.type === "heading" ? node.level : 0;
       } else {
         const value = (text ?? "").replace(/\s+/g, " ").trim();
-        if (kind === "paragraph") paragraphs.push(value);
-        else found.push([level, value]);
+        if (kind === "paragraph") {
+          paragraphs.push(value);
+        } else {
+          found.push([level, value]);
+        }
         text = null;
         kind = null;
       }
@@ -65,7 +68,7 @@ function reference(markdown: string): Blocks {
  */
 function flatten(text: string): string {
   const code: string[] = [];
-  const masked = text.replace(/(?<!`)`([^`]+)`(?!`)/g, (_match, value: string) => {
+  const masked = text.replace(/(?<!`)`([^`]+)`(?!`)/g, (match, value: string) => {
     const index = code.push(value) - 1;
     return `\uE000${index}\uE001`;
   });
@@ -76,7 +79,7 @@ function flatten(text: string): string {
     .replace(/\*([^*]+)\*/g, "$1")
     .replace(/\\(.)/g, "$1")
     .replace(/<([a-z]+:[^>]*)>/gi, "$1")
-    .replace(/\uE000(\d+)\uE001/g, (_match, index: string) => code[Number(index)] ?? "")
+    .replace(/\uE000(\d+)\uE001/g, (match, index: string) => code[Number(index)] ?? "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -108,11 +111,11 @@ function reasonFor(lines: string[]): string | null {
   // Tabs are four columns here as well, or a tab-indented marker hides the
   // construct from this classifier while the engine sees it.
   const bare = lines.map((line) => {
-    let rest = line.replace(/	/g, "    ");
+    let rest = line.replace(/\t/g, "    ");
     for (;;) {
       const stripped = rest
-        .replace(/^(?: {0,3}>[ 	]?)+/, "")
-        .replace(/^ {0,3}(?:[-*+]|\d{1,9}[.)])[ 	]+/, "");
+        .replace(/^(?: {0,3}>[ \t]?)+/, "")
+        .replace(/^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
       if (stripped === rest) return rest;
       rest = stripped;
     }
@@ -133,7 +136,7 @@ function reasonFor(lines: string[]): string | null {
     // sign, while CommonMark keeps the raw HTML span open until "?>".
     || /<\?[^>\n]*>.*\?>/.test(joined)
     || /<!--[^\n]*--!>/.test(joined)
-    || /^ {0,3}\[[^\]^][^\]]*\]:[ 	]/m.test(joined)) {
+    || /^ {0,3}\[[^\]^][^\]]*\]:[ \t]/m.test(joined)) {
     return "A comment, declaration, processing instruction or link definition is invisible to a reader.";
   }
   if (/<\/?[a-z][^>]*>/i.test(joined)) {
@@ -204,6 +207,10 @@ const header = `// Block structure for ${rows.length} documents, checked against
 //
 // Never edit an expectation by hand to make a test pass.
 
+/**
+ * One document of the corpus, and the lines, paragraphs and headings this
+ * engine reads in it.
+ */
 export interface ReferenceShape {
   name: string;
   lines: string[];
@@ -213,6 +220,10 @@ export interface ReferenceShape {
   differsFromReference?: string;
 }
 
+/**
+ * Every document of the corpus, with the block structure the reference
+ * agreed to, or the reason this engine differs.
+ */
 export const REFERENCE_SHAPES: ReferenceShape[] = `;
 
 const target = join(import.meta.dir, "..", "fixtures", "reference-blocks.ts");

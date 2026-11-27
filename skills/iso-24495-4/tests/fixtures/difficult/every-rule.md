@@ -8,7 +8,7 @@ The supplier shall hereby utilise each and every record in order to ascertain th
 
 It is not uncommon for the XYZ service to fail. First check the logs, second restart the worker, and third tell the team.
 
-See [click here](https://example.com/refunds) and ![](diagram.png) for the details.
+See [click here](https://example.com/refunds), ![](diagram.png) and ![screenshot](screen.png) for the details of the ISO 24495-5 layout.
 
 | Step | |
 |---|---|

@@ -2,7 +2,7 @@
 name: iso-24495-2
 description: Sector-specific Plain Language standard for legal communication (ISO 24495-2:2025). Applied during contract drafting, license review, and legal/compliance writing.
 metadata:
-  version: "0.7.0"
+  version: "0.8.0"
   iso-standard: "ISO 24495-2:2025"
   iso-status: "published"
 ---
@@ -23,7 +23,7 @@ Extends ISO 24495-1:2023 for legal documents, contractual provisions, licenses, 
    - Plain language simplification must **never** alter legal rights, liabilities, or contractual enforceability. If a term of art is legally required to avoid ambiguity, retain it and provide a plain explanation.
 
 3. **Document Design Applies Here Too:**
-   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5 governs headings, navigation, chunking, signalling, and readers who cannot see the page.
+   - A legal document is a document, so `iso-24495-5` loads alongside this skill. Part 5, an unpublished draft standard, governs headings, navigation, chunking, signalling, and readers who cannot see the page.
    - Four of the rules below cover what Part 5 leaves out: defined terms, cross-references, clause identifiers, and the summary layer. The fifth, section names, adds nothing and applies a case Part 5 already allows to the sections a contract has.
    - Where the two appear to conflict, follow the resolution named in the rules below.
 

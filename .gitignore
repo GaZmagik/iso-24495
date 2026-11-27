@@ -1,1 +1,6 @@
 .claude/settings.local.json
+node_modules/
+# The calibration documents are other people's text and are not shipped here.
+# The calibration tests read them from ISO_24495_CALIBRATION_FIXTURES instead.
+/skills/iso-24495-4/tests/fixtures/jev/requests.json
+/skills/iso-24495-4/tests/fixtures/jev/extraction.json
