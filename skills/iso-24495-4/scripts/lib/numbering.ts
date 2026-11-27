@@ -1,5 +1,5 @@
 import { toLines, type Heading, type structure } from "./parse.ts";
-import { renderInline } from "./inline-wording.ts";
+import { decodeEntities, renderInline } from "./inline-wording.ts";
 import type { Violation } from "./types.ts";
 
 /**
@@ -59,14 +59,36 @@ const AFTER_WORD = new RegExp(
 );
 /** One number of such a list. */
 const LISTED_NUMBER = new RegExp(NUMBER, "g");
-/** Number words, so that `step two` or `the second rule` count as citing 2. */
+/** The number words from zero to nineteen, and their ordinals, each at its value. */
+const UNITS = [
+  "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+  "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+];
+const UNIT_ORDINALS = [
+  "zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+  "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth",
+];
+/** The tens from twenty to ninety, and their ordinals. */
+const TENS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+const TENS_ORDINALS = ["twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth"];
+/** Each number word alone, with its value, so that `step two` or `the second rule` count as citing 2. */
 const NUMBER_WORDS: ReadonlyMap<string, number> = new Map([
-  ["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5], ["six", 6], ["seven", 7], ["eight", 8],
-  ["nine", 9], ["ten", 10], ["eleven", 11], ["twelve", 12],
-  ["first", 1], ["second", 2], ["third", 3], ["fourth", 4], ["fifth", 5], ["sixth", 6], ["seventh", 7],
-  ["eighth", 8], ["ninth", 9], ["tenth", 10], ["eleventh", 11], ["twelfth", 12],
+  ...UNITS.map((word, value) => [word, value] as const), ...UNIT_ORDINALS.map((word, value) => [word, value] as const),
+  ...TENS.map((word, index) => [word, 20 + 10 * index] as const), ...TENS_ORDINALS.map((word, index) => [word, 20 + 10 * index] as const),
 ]);
-const NUMBER_WORD = [...NUMBER_WORDS.keys()].join("|");
+/**
+ * The highest number the number words spell. A document that counts a
+ * heading numbered past it is not reported, as a citation in words of that
+ * heading could not be read.
+ */
+const HIGHEST_WORD = 99;
+/**
+ * A number word: a ten and a unit, as in `twenty-one` or `thirty second`, or
+ * one word alone, the longest first so that `seventeen` is not read as
+ * `seven`.
+ */
+const NUMBER_WORD = String.raw`(?:${TENS.join("|")})[-\s]+(?:${[...UNITS.slice(1, 10), ...UNIT_ORDINALS.slice(1, 10)].join("|")})|${
+  [...NUMBER_WORDS.keys()].sort((one, two) => two.length - one.length).join("|")}`;
 /** A citing noun then a number word, or a number word then a citing noun. */
 const WORD_NUMBER = new RegExp(
   String.raw`(?<![\p{L}\p{N}])(?:(?:${CITING_NOUNS})\.?\s+(${NUMBER_WORD})|(${NUMBER_WORD})\s+(?:${CITING_NOUNS}))(?![\p{L}\p{N}])`,
@@ -90,30 +112,57 @@ const DOTTED = /(?<![\d.])\d{1,3}(?:\.\d{1,3})+(?!\.?\d)/g;
 const PATH_PART = new RegExp(String.raw`(?<=[/\\#([<"'])(?:(?:${CITING_NOUNS})[-_]?)?(\d+(?:\.\d+)*)(?![\p{L}\p{N}])`, "giu");
 /** Emphasis, code and strike marks, which may stand between a citing word and its number, as in `step **2**`. */
 const INLINE_MARKS = /[*_`~]/g;
+/** An inline HTML tag, opening or closing, such as `<em>` or `</b>`. */
+const INLINE_TAG = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/g;
+/** The target of an inline link, `](x)`, or the label of a reference link, `][x]`, so `[See section](x) 2` reads as `See section 2`. */
+const LINK_TARGET = /\]\([^()]*\)|\]\[[^\]]*\]/g;
+/** A backslash escape or a character reference, such as `\#` or `&#50;`. */
+const ESCAPE_OR_REFERENCE = /\\([!-/:-@[-`{-~])|&(?:#[xX][0-9a-fA-F]{1,6}|#\d{1,7}|[A-Za-z][A-Za-z0-9]{1,31});/g;
+/** A backslash that ends a line, a hard line break. */
+const HARD_BREAK = /\\$/;
+/** A line with nothing but spaces and tabs. */
+const BLANK = /^[ \t]*$/;
+/**
+ * The markers a line may open with: quotation and list markers, `#` and the
+ * `=` and `-` of an underline, and the spaces around them.
+ */
+const LINE_START = /^[ \t>*+#=-]*(?:\d+[.)][ \t>*+#=-]*)*/;
 
 /**
  * The `uncited-numbering` finding: a document whose headings are numbered
- * while nothing in it cites one by its number.
+ * while no reference to one by its number is found as written.
  *
- * A heading is numbered when its wording opens with a numeric identifier, as
- * `IDENTIFIER` reads one, and is not a version alone. Only headings outside
- * every list and quotation are counted, the first level-1 heading, the
- * title, is not, and at least two must be numbered. Letters and Roman
- * numerals are not read, so `A. Scope` and `IV. Terms` count as unnumbered,
- * and so does `Step 1: Install`.
+ * A heading is counted when its source wording opens with a numeric
+ * identifier, as `IDENTIFIER` reads one, and its rendered wording opens with
+ * the same one, so no formatting, escape or character reference stands
+ * before the number or inside it. A version alone is not counted. A dotted
+ * identifier, such as `2.1`, is counted only below a counted heading that
+ * its parent number, `2`, opens, so the file itself shows the section. Only
+ * headings outside every list and quotation are counted, and the first
+ * level-1 heading, the title, is not. At least two must be counted, two of
+ * them neighbours, such as `1.` and `2.` or `2.` and `2.1`, and none may be
+ * numbered past `HIGHEST_WORD`. Letters and Roman numerals are not read, so
+ * `A. Scope` and `IV. Terms` are not counted, and nor is `Step 1: Install`.
  *
- * The rest of the text is then searched for a citation of any of them. Every
- * line counts, code, comments and front matter included, except the
- * numbered headings' own lines and the lines of a contents section, which
- * runs from a heading such as Contents to the next heading at any level. A
- * heading is cited when its identifier stands after a citing word, as in
- * `see 2` or `steps 1 to 3`, when a number word stands beside a citing noun,
- * as in `step two`, when its dotted identifier stands alone, as in `2.1`, or
- * when its number opens a part of a path, a fragment or a bracket, as in
- * `(2)`, `#2-setup` or `docs/02-setup.md`, as `PATH_PART` reads one.
- * Numbers are compared by value, so `02` cites `2.`.
- * So a number that only looks like a citation, such as `in 2 minutes`,
- * quiets the rule: it reports only what it is sure of.
+ * The rest of the text is then searched for a citation of any heading whose
+ * wording opens with a number. Every line counts, code, comments and front
+ * matter included, except the counted headings' own lines and the lines of a
+ * contents section, which runs from a heading such as Contents to the next
+ * heading at any level. A heading is cited when its identifier stands after
+ * a citing word, as in `see 2` or `steps 1 to 3`, when a number word stands
+ * beside a citing noun, as in `step two`, when its dotted identifier stands
+ * alone, as in `2.1`, or when its number opens a part of a path, a fragment
+ * or a bracket, as in `(2)`, `#2-setup` or `docs/02-setup.md`, as
+ * `PATH_PART` reads one. Numbers are compared by value, so `02` cites `2.`.
+ *
+ * Each line is searched alone, and so is each run of lines with no blank
+ * line between, with every line break as one space, both with the markers
+ * each line opens with and without them. Each of those is also searched
+ * with its emphasis and code marks taken out, and with its inline tags and
+ * link targets taken out and its escapes and character references read. So
+ * a citation that wraps, as `See section` above `2.`, cites, and so does
+ * `See section &#50;.`. A number that only looks like a citation, such as
+ * `in 2 minutes`, quiets the rule too.
  *
  * A change log or a licence, by its file name, is not read.
  *
@@ -138,13 +187,15 @@ export function uncitedNumberingViolations(
   const lines = toLines(text);
   const clear = clearOfHtml(lines);
   const title = parsed.headings.find(heading => heading.level === 1);
-  const numbered = numberedHeadings(parsed.headings.filter(heading => heading !== title && clear(heading)));
-  const first = numbered[0];
-  if (first === undefined || !consecutivePair(numbered)) return [];
-  // Every heading that opens with a number is one a citation may name, the
-  // title and any the guards set aside included, and wherever it stands.
-  if (cited(lines, numbered, numberedHeadings(parsed.allHeadings), parsed, clear, tally)) return [];
-  const seen = "This heading and at least one other are numbered, and nothing in this file outside its headings and any contents section cites one by its number.";
+  const counted = countedHeadings(parsed.headings.filter(heading => heading !== title && clear(heading)), lines);
+  const first = counted[0];
+  if (first === undefined || !consecutivePair(counted)) return [];
+  if (counted.some(({ parts }) => (parts[0] ?? 0) > HIGHEST_WORD)) return [];
+  // Every heading whose wording opens with a number, however it is written,
+  // is one a citation may name, the title and any the guards set aside
+  // included, and wherever it stands.
+  if (cited(lines, counted, namedHeadings(parsed.allHeadings), parsed, clear, tally)) return [];
+  const seen = "This heading and at least one other are numbered, and no reference to one of them by its number is found as written in this file, outside those headings and any contents section.";
   return [{
     rule: "uncited-numbering", line: first.heading.line,
     detail: options.headingNumbers === "not-cited"
@@ -159,14 +210,47 @@ interface Numbered {
   parts: number[];
 }
 
-/** The headings whose wording opens with a numeric identifier, in order. */
-function numberedHeadings(headings: readonly Heading[]): Numbered[] {
-  const numbered: Numbered[] = [];
+/** The `#` marks and white space before an ATX heading's wording. */
+const ATX_PREFIX = /^ {0,3}#{1,6}(?:[ \t]+|$)/;
+
+/**
+ * The headings the finding counts, in order: each whose source wording and
+ * rendered wording open with the same identifier, as `identifierOf` reads
+ * them, and, when the identifier is dotted, below a counted heading that its
+ * parent number opens.
+ *
+ * @param lines The text's lines, from which each heading's source wording is read.
+ */
+function countedHeadings(headings: readonly Heading[], lines: readonly string[]): Numbered[] {
+  const counted: Numbered[] = [];
+  const shown = new Set<string>();
   for (const heading of headings) {
-    const identifier = identifierOf(heading.text);
-    if (identifier !== null) numbered.push({ heading, parts: identifier.split(".").map(Number) });
+    const source = heading.setext
+      ? lines.slice(heading.line - 1, heading.line - 1 + heading.lines).join(" ")
+      : (lines[heading.line - 1] ?? "").replace(ATX_PREFIX, "");
+    const identifier = identifierOf(source, heading.text);
+    if (identifier === null) continue;
+    const parts = identifier.split(".").map(Number);
+    if (parts.length > 1 && !shown.has(parts.slice(0, -1).join("."))) continue;
+    counted.push({ heading, parts });
+    shown.add(parts.join("."));
   }
-  return numbered;
+  return counted;
+}
+
+/**
+ * Every heading whose rendered wording opens with a numeric identifier, with
+ * any emphasis marks before it set aside, in order. A citation may name any
+ * of them, so this reads more widely than `identifierOf`, and can only quiet
+ * the rule.
+ */
+function namedHeadings(headings: readonly Heading[]): Numbered[] {
+  const named: Numbered[] = [];
+  for (const heading of headings) {
+    const identifier = namedIdentifierOf(heading.text);
+    if (identifier !== null) named.push({ heading, parts: identifier.split(".").map(Number) });
+  }
+  return named;
 }
 
 /**
@@ -192,6 +276,8 @@ const CONTAINER_MARKERS = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*/;
 const UNDERLINE_SHAPE = /^[ \t>*+=\d.)-]*[=-][ \t]*$/;
 /** A line shaped like a fence, after any container markers: three backticks or tildes. */
 const FENCE_SHAPE = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*(?:`{3}|~{3})/;
+/** A table's delimiter row, such as `|---|` or `--- | :-:`, after any quotation markers. It must also hold a `|`. */
+const TABLE_DELIMITER = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 /** What ends each kind of `LONG_HTML`, in the order of its groups. */
 const LONG_HTML_ENDS: readonly RegExp[] = [/-->/g, /\?>/g, />/g, /\]\]>/g, /<\/(?:pre|script|style|textarea)>/gi];
 
@@ -201,34 +287,48 @@ const LONG_HTML_ENDS: readonly RegExp[] = [/-->/g, /\?>/g, />/g, /\]\]>/g, /<\/(
  *
  * HTML can open a block that runs on to the next blank line, and the
  * structural reading still reads a heading inside it, such as a `##` line
- * straight below `<div>`. So no line from the last blank line above the
- * heading may hold a `<`, nor any text line of a setext heading. And HTML of
+ * straight below `<div>`. A table runs on to the next blank line too, and
+ * Bun's renderer reads a `##` line or a fence straight below one as a row.
+ * So no line from the last blank line above the heading may hold a `<` or a
+ * table's delimiter row, such as `|---|`, nor may any text line of a setext
+ * heading hold a `<`. And HTML of
  * the kinds `LONG_HTML` names runs on past blank lines to the line that
- * holds its end, so no line of the heading may stand after a line holding
- * such a start, anywhere and in code too, and before the next line holding
- * its end. The structural reading can misplace either, as below a quotation.
- * Below a line shaped like a fence that stands in either kind of HTML, no
- * heading is read at all: CommonMark reads that line as HTML, and the
- * structural reading may pair the fences the other way. A setext heading
- * must also stand below a blank line or open the text.
+ * holds its end. Any start of one, anywhere and in code too, may be the one
+ * CommonMark reads, so each kind is held open from its last start until a
+ * later line holds that kind's own end, whatever else opens or closes in
+ * between, and no line of the heading may stand while any kind is held open.
+ * The structural reading can misplace either kind of HTML, as below a
+ * quotation. Below a line shaped like a fence that stands in either kind of
+ * HTML, no heading is read at all: CommonMark reads that line as HTML, and
+ * the structural reading may pair the fences the other way. The same holds
+ * below a fence-shaped line straight below a table. A setext heading must
+ * also stand below a blank line or open the text.
  */
 function clearOfHtml(lines: readonly string[]): (heading: Heading) => boolean {
-  // 1 where the line is clear: no `<` above it since a blank line, and no long HTML open.
+  // 1 where the line is clear: no `<` or `|` above it since a blank line, and no long HTML open.
   const clearLine = new Uint8Array(lines.length + 2);
   // 1 where the line is blank, and for the line before the first.
   const blank = new Uint8Array(lines.length + 2);
   blank[0] = 1;
   let angle = false;
-  let end: RegExp | null = null;
+  // Whether a table's delimiter row stands above, since a blank line.
+  let table = false;
+  // 1 for each kind of long HTML that may be open, in the order of `LONG_HTML_ENDS`.
+  const open = new Uint8Array(LONG_HTML_ENDS.length);
+  let anyOpen = false;
   let fenceInHtml = false;
   for (const [index, line] of lines.entries()) {
-    clearLine[index + 1] = angle || end !== null || fenceInHtml ? 0 : 1;
-    if ((angle || end !== null) && FENCE_SHAPE.test(line)) fenceInHtml = true;
-    if (/^[ \t]*$/.test(line)) {
+    clearLine[index + 1] = angle || table || anyOpen || fenceInHtml ? 0 : 1;
+    if ((angle || table || anyOpen) && FENCE_SHAPE.test(line)) fenceInHtml = true;
+    if (BLANK.test(line)) {
       blank[index + 1] = 1;
       angle = false;
-    } else if (line.includes("<")) angle = true;
-    end = longHtmlAfter(line, end);
+      table = false;
+    } else {
+      if (line.includes("<")) angle = true;
+      if (line.includes("|") && TABLE_DELIMITER.test(line)) table = true;
+    }
+    anyOpen = longHtmlAfter(line, open);
   }
   return heading => {
     // A setext heading's text is the whole paragraph above its underline, so
@@ -247,40 +347,44 @@ function clearOfHtml(lines: readonly string[]): (heading: Heading) => boolean {
 }
 
 /**
- * Whether long HTML is open after one line: what ends it, or null when none
- * is open. A start and its end on one line close it again, and a start after
- * an end opens a new one.
+ * Updates which kinds of long HTML may be open after one line, and says
+ * whether any may. A kind that starts on the line stays open unless its own
+ * end follows its last start there. A kind already open closes at its own
+ * end anywhere on the line, unless it starts again after it.
  *
  * Each search starts where the last match ended and nothing is copied, so a
- * line of many comments, such as `<!---->` repeated, is read once.
+ * line of many comments, such as `<!---->` repeated, is read once for each
+ * kind.
+ *
+ * @param open One entry for each kind, in the order of `LONG_HTML_ENDS`: 1
+ *     where it may be open. Changed in place.
  */
-function longHtmlAfter(line: string, open: RegExp | null): RegExp | null {
-  let end = open;
-  let position = 0;
-  // Each pass moves the position past at least one character, so the loop ends.
-  for (;;) {
-    if (end !== null) {
-      end.lastIndex = position;
-      const close = end.exec(line);
-      if (close === null) break;
-      position = close.index + close[0].length;
-      end = null;
-    }
-    LONG_HTML.lastIndex = position;
-    const start = LONG_HTML.exec(line);
-    if (start === null) break;
+function longHtmlAfter(line: string, open: Uint8Array): boolean {
+  // For each kind, the offset just past its last start on this line, or -1.
+  const afterStart = new Int32Array(open.length).fill(-1);
+  LONG_HTML.lastIndex = 0;
+  // Each match takes at least two characters, so the loop ends.
+  for (let start = LONG_HTML.exec(line); start !== null; start = LONG_HTML.exec(line)) {
     const kind = start.slice(1).findIndex(group => group !== undefined);
-    end = LONG_HTML_ENDS[kind] ?? null;
-    position = start.index + start[0].length;
+    afterStart[kind] = start.index + start[0].length;
   }
-  return end;
+  let anyOpen = false;
+  for (const [kind, end] of LONG_HTML_ENDS.entries()) {
+    const from = afterStart[kind] ?? -1;
+    if (from >= 0 || open[kind] === 1) {
+      end.lastIndex = Math.max(from, 0);
+      open[kind] = end.test(line) ? 0 : 1;
+    }
+    if (open[kind] === 1) anyOpen = true;
+  }
+  return anyOpen;
 }
 
 /**
- * Whether two numbered headings are neighbours in one numbering: the same
+ * Whether two counted headings are neighbours in one numbering: the same
  * parts but the last, which differ by one, as `1.` and `2.` or `2.1` and
- * `2.2`, or a heading and its first child, as `2.` and `2.1`. So `2.0
- * Migration` beside `1.5 Notes` is not read as a numbering.
+ * `2.2`, or a heading and its first child, as `2.` and `2.1`. So `1.`
+ * beside `3.` alone is not read as a numbering.
  */
 function consecutivePair(numbered: readonly Numbered[]): boolean {
   const written = new Set(numbered.map(({ parts }) => parts.join(".")));
@@ -293,10 +397,34 @@ function consecutivePair(numbered: readonly Numbered[]): boolean {
 }
 
 /**
- * The identifier a heading's wording opens with, without its closing mark,
- * or null when it opens with none or is a version alone.
+ * The identifier a heading opens with, without its closing mark, when its
+ * source wording and its rendered wording both open with it, or null. So
+ * `*1. A`, `**1.** A`, `1\. A` and `&#49;. A` give null, and so does a
+ * version alone, such as `1.2.0`.
+ *
+ * @param source The heading's wording as the file holds it, after any `#`
+ *     marks.
+ * @param wording The same wording as the structural reading gives it, which
+ *     is rendered. The source by default.
  */
-export function identifierOf(text: string): string | null {
+export function identifierOf(source: string, wording: string = source): string | null {
+  const written = source.replace(/\s+/g, " ").trim();
+  const shown = renderInline(wording).replace(/\s+/g, " ").trim();
+  if (VERSION_ONLY.test(written) || VERSION_ONLY.test(shown)) return null;
+  const asWritten = IDENTIFIER.exec(written);
+  const asShown = IDENTIFIER.exec(shown);
+  if (asWritten === null || asShown === null) return null;
+  const identifier = asWritten[1] ?? asWritten[2] ?? null;
+  return identifier === (asShown[1] ?? asShown[2] ?? null) ? identifier : null;
+}
+
+/**
+ * The identifier a heading's rendered wording opens with once any emphasis
+ * marks before it are set aside, without its closing mark, or null when it
+ * opens with none or is a version alone. It reads what a citation may name,
+ * so it reads more widely than `identifierOf`.
+ */
+function namedIdentifierOf(text: string): string | null {
   const wording = renderInline(text).replace(/\s+/g, " ").trim().replace(/^[*_]+/, "");
   if (VERSION_ONLY.test(wording)) return null;
   const match = IDENTIFIER.exec(wording);
@@ -341,6 +469,13 @@ function cited(
     const mayStart = HEADING_SHAPE.test(lines[index] ?? "") || UNDERLINE_SHAPE.test(lines[index + 1] ?? "");
     shaped[index] = mayStart ? index : shaped[index + 1] ?? lines.length;
   }
+  // For each index, the first line of the run of lines with no blank line
+  // between that holds it. A setext heading's text may start there, above
+  // the line its underline marks.
+  const runStart = new Int32Array(lines.length);
+  for (const [index, line] of lines.entries()) {
+    runStart[index] = index > 0 && !BLANK.test(line) && !BLANK.test(lines[index - 1] ?? "") ? runStart[index - 1] ?? index : index;
+  }
   let after = 0;
   for (const heading of parsed.headings) {
     if (!CONTENTS_LABEL.test(label(heading.text)) || !clear(heading)) continue;
@@ -348,7 +483,11 @@ function cited(
       after++;
     }
     const own = heading.line - 1 + heading.lines + (heading.setext ? 1 : 0);
-    const end = Math.min((parsed.allHeadings[after]?.line ?? lines.length + 1) - 1, shaped[own] ?? lines.length);
+    // A line above an underline ends the section where its run starts, so
+    // every line of a setext heading's text stays outside it.
+    let stop = shaped[own] ?? lines.length;
+    if (stop < lines.length && !HEADING_SHAPE.test(lines[stop] ?? "")) stop = Math.max(own, runStart[stop] ?? stop);
+    const end = Math.min((parsed.allHeadings[after]?.line ?? lines.length + 1) - 1, stop);
     skipped.fill(1, heading.line - 1, Math.max(end, own));
   }
   const identifiers = new Set<string>();
@@ -364,7 +503,7 @@ function cited(
     const wordings = HEADING_SHAPE.test(line) ? [line.replace(HEADING_SHAPE, "")]
       : UNDERLINE_SHAPE.test(lines[index + 1] ?? "") ? [line.replace(QUOTE_MARKERS, ""), line.replace(CONTAINER_MARKERS, "")] : [];
     for (const wording of wordings) {
-      const identifier = identifierOf(wording);
+      const identifier = namedIdentifierOf(wording);
       if (identifier !== null) shapedParts.push(identifier.split(".").map(Number));
     }
   }
@@ -375,14 +514,53 @@ function cited(
     integers.add(parts[0] ?? 0);
   }
   const targets: Targets = { identifiers, integers: [...integers].sort((one, two) => one - two) };
+  // The lines since the last blank or skipped line, so a citation that
+  // wraps is read whole.
+  let paragraph: string[] = [];
   for (const [index, line] of lines.entries()) {
-    if (skipped[index] === 1) continue;
+    if (skipped[index] === 1 || BLANK.test(line)) {
+      if (citesInParagraph(paragraph, targets)) return true;
+      paragraph = [];
+      if (skipped[index] === 1) continue;
+    } else {
+      paragraph.push(line);
+    }
     if (tally !== undefined) tally.lines++;
     // Read again without its marks, so `step **2**` cites as `step 2` does.
     const unmarked = line.replace(INLINE_MARKS, "");
     if (citesInLine(line, targets) || (unmarked !== line && citesInLine(unmarked, targets))) return true;
   }
-  return false;
+  return citesInParagraph(paragraph, targets);
+}
+
+/**
+ * Whether a run of lines with no blank line between holds a citation once
+ * joined, each line break read as one space. The run is read with the
+ * markers each line opens with, with its quotation markers taken off, and
+ * with every marker `LINE_START` names taken off, as a line that opens with
+ * `2.` may go on a paragraph or open a list item. Each of the three is read
+ * as it stands, without its emphasis and code marks, and as `spelt` gives it.
+ */
+function citesInParagraph(paragraph: readonly string[], targets: Targets): boolean {
+  if (paragraph.length === 0) return false;
+  const readings = [
+    paragraph.map(line => line.replace(HARD_BREAK, "")).join(" "),
+    paragraph.map(line => line.replace(QUOTE_MARKERS, "").replace(HARD_BREAK, "")).join(" "),
+    paragraph.map(line => line.replace(LINE_START, "").replace(HARD_BREAK, "")).join(" "),
+  ];
+  return readings.some(reading => citesInLine(reading, targets) || citesInLine(reading.replace(INLINE_MARKS, ""), targets) || citesInLine(spelt(reading), targets));
+}
+
+/**
+ * Text with its inline tags and link targets taken out, its escapes and
+ * character references read, and then its emphasis and code marks taken
+ * out, so `<em>2</em>`, `[See section](x) 2` and `&#50;` give `2`,
+ * `See section 2` and `2`.
+ */
+function spelt(text: string): string {
+  return text.replace(INLINE_TAG, "").replace(LINK_TARGET, "")
+    .replace(ESCAPE_OR_REFERENCE, (whole, escaped?: string) => escaped ?? decodeEntities(whole))
+    .replace(INLINE_MARKS, "");
 }
 
 /** Whether a written number, such as `02` or `2.1.`, is a numbered heading's identifier. */
@@ -396,7 +574,9 @@ function citesInLine(line: string, targets: Targets): boolean {
     if (listCites(match[1] ?? "", targets)) return true;
   }
   for (const match of line.matchAll(WORD_NUMBER)) {
-    const value = NUMBER_WORDS.get((match[1] ?? match[2] ?? "").toLowerCase()) ?? 0;
+    // A ten and a unit add up, so `twenty-first` gives 21.
+    const words = (match[1] ?? match[2] ?? "").toLowerCase().split(/[-\s]+/);
+    const value = words.reduce((sum, word) => sum + (NUMBER_WORDS.get(word) ?? 0), 0);
     if (holdsBetween(targets.integers, value, value)) return true;
   }
   for (const match of line.matchAll(DOTTED)) {
