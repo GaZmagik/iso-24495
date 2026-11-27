@@ -102,7 +102,7 @@ function firstLineWhere(lines: readonly string[], holds: (line: string) => boole
  * The line counts wherever it stands, in code too, and also as a thematic
  * break such as `- - -`, so some alerts that render are not read.
  */
-function opensEmptyContainer(line: string): boolean {
+export function opensEmptyContainer(line: string): boolean {
   let quotes = 0;
   let lists = 0;
   let index = 0;

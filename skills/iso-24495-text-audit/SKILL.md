@@ -27,17 +27,19 @@ The audit reads Markdown as written and does not interpret raw HTML. It sets HTM
 
 ## Markdown layout recognition
 
-Six additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
+Seven additional mechanical rules apply to Markdown, while `.txt` remains mechanical-only without structural checks.
 These recognition choices are project proxies and remain unmeasured on a corpus.
 Raw HTML structure, code and comments are excluded, though the empty signpost rule counts code and any raw HTML other than a comment beneath a heading as content.
 
 The adjacent alerts rule reads no alert below any `<`, even in code, comments or front matter, nor one whose marker the text defines as a link label. Nor does it read one below a line that opens an empty quotation or list item, such as `> >`, `>>` or `-`.
+The bullet paragraphs rule reads no item below a line shaped like a fence, fenced code included. Nor does it read one below a line starting HTML that runs past a blank line, such as `<!--`, even in code.
 Front matter is excluded from prose checks, but recognised edition metadata can satisfy the version or date rule.
 
 - **Contents list:** At six root H2 sections, require labelled contents or opening navigation containing two same-document fragment links in one block.
 - **Wording comparison:** At six sections, resolved contents links must use the target H2 wording, preserving case, punctuation and numbering.
 - **Version or date:** Ask whether a titled document needs edition metadata when none is recognised in its opening or front matter.
 - **Bullet depth:** Report unordered items beyond two unordered ancestors, counting the item itself and ignoring ordered or quote containers.
+- **Bullet paragraphs:** Report an unordered item that holds two or more paragraphs and nothing else, naming how many. An item that holds code, a quotation, a list, a table, a heading or HTML is not read, nor is one in a quotation or four or more columns in. Blank lines between items do not count, so a loose list of one-paragraph items is not reported. It reports only items it is sure of, so some go unreported.
 - **Overview label:** At six root H2 sections, require an Overview or Summary heading before the first content H2, at any heading level outside lists and quotations.
 - **Empty signpost:** Report a heading worded as a referral, such as See also, Related or Resources, with nothing beneath it. Blank lines, comments, one-line link definitions, thematic breaks and invisible text count as nothing. Any other line counts as content, so some sections that show nothing go unreported. Its section ends at the next heading at its level or above, and headings in lists and quotations are not read.
 - **Adjacent alerts:** Report a GitHub alert, such as `> [!NOTE]`, that follows an alert of the same kind with only blank lines between. Alerts of different kinds, alerts in lists or quotations, and alerts with anything else between them are not reported. It reports only alerts it is sure of, so any below a `<` and some others go unreported. Ask whether the two serve one purpose before merging them.

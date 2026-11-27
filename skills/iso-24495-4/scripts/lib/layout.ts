@@ -2,6 +2,7 @@ import { markdownLinks, normaliseReference, structure, toLines, type Heading, ty
 import type { Violation } from "./types.ts";
 import { renderInline } from "./inline-wording.ts";
 import { adjacentAlertViolations } from "./alerts.ts";
+import { bulletParagraphViolations } from "./bullets.ts";
 
 const SECTION_LIMIT = 6;
 const CONTENTS_LABEL = /^(?:contents|table of contents|toc|key sections)$/i;
@@ -27,8 +28,8 @@ export interface LayoutOptions extends Reading { fileName?: string }
 
 /**
  * The layout findings for one Markdown text: `opening-version-date`,
- * `bullet-depth`, `empty-signpost`, `adjacent-alerts`, `contents-list` and
- * `overview-label`.
+ * `bullet-depth`, `bullet-paragraphs`, `empty-signpost`, `adjacent-alerts`,
+ * `contents-list` and `overview-label`.
  *
  * The contents and overview rules apply only to a document with six or more
  * level-2 headings outside any list or quotation. The edition advisory
@@ -71,6 +72,9 @@ export function layoutViolations(text: string, reading: LayoutOptions = {}): Vio
     findings.push(finding);
   }
   for (const finding of adjacentAlertViolations(text, parsed)) {
+    findings.push(finding);
+  }
+  for (const finding of bulletParagraphViolations(text, parsed)) {
     findings.push(finding);
   }
   const sections = parsed.headings.filter(heading => heading.level === 2);

@@ -59,7 +59,7 @@ Code and recognised front matter remain excluded, and raw HTML structure is unsu
 A leading `---` block counts as front matter only when it is closed and every line has a plain YAML shape.
 A document whose closed leading block fails that test is not sent at all, and the preview names it.
 
-Every selected document also gets the whole offline [text audit](../iso-24495-text-audit/SKILL.md), including its six Markdown layout rules.
+Every selected document also gets the whole offline [text audit](../iso-24495-text-audit/SKILL.md), including its seven Markdown layout rules.
 Its findings print before the disclosure, fill the JSON `mechanical` property, and are never sent.
 A refused document still gets them.
 

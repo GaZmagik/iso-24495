@@ -28,15 +28,15 @@ const CLAUSES_PER_ITEM = [1, 3, 2, 1, 2, 3, 1, 4, 3, 3, 1, 3, 2, 2, 6, 3, 2, 2, 
 
 /** How many clauses are in each state today. Moving a clause from one state to another changes this. */
 const STATE_TALLY: Readonly<Record<ClauseState, number>> = {
-  "fault": 25,
+  "fault": 26,
   "pass-only": 1,
-  "not-read": 30,
+  "not-read": 29,
   "needs-two-versions": 7,
   "not-checkable": 1,
 };
 
 /** How many clauses are in the fault state, each of which the option sweep reads. */
-const FAULT_CLAUSES = 25;
+const FAULT_CLAUSES = 26;
 
 /** The limit 20a and 23b share on what the comparison reads, because one check reads both. */
 const UNITS_READ_LIMIT = "It reads the sentences of paragraphs, list items, quotations, table cells and headings, the contents of code blocks, and the alternative text of Markdown images. "
@@ -101,7 +101,17 @@ const EXPECTED_CLAUSES: readonly Clause[] = [
   { id: "6b", demand: "Sets are in bulleted lists.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "6c", demand: "Forks are in a decision table or labelled conditions.", state: "not-read", checks: [], needs: [], limits: [] },
   { id: "7a", demand: "A table is tested at a named target width, or labelled records are used because no width is named.", state: "not-read", checks: [], needs: [], limits: [] },
-  { id: "8a", demand: "Each bulleted item is one paragraph.", state: "not-read", checks: [], needs: [], limits: [] },
+  {
+    id: "8a", demand: "Each bulleted item is one paragraph.", state: "fault",
+    checks: [{ rule: "bullet-paragraphs", kind: "offline" }], needs: ["markdown"],
+    limits: [
+      "It reports an unordered list item that holds two or more paragraphs and nothing else, on its marker line, and names how many. A loose list, one with blank lines between its items, is read item by item, so items of one paragraph each give nothing. Ordered items are not read, such as `1. One` with a second paragraph.",
+      "An item that holds anything but paragraphs is not read, so an item of two paragraphs and a code block is missed. That covers any line in it that may start another block, such as a fence, indented code, a quotation, a list, a heading, a table's delimiter row, an underline, a thematic break, HTML or `$$`, and any line holding `]:`, which may define a link. A paragraph that is one code span and nothing else, such as `` `make test` ``, counts as code. White space at its ends that commonmark.js drops, such as a no-break space, does not count.",
+      "It reads an item only when its marker line is up to three spaces, a `-`, `*` or `+`, one to four spaces and text. So items in quotations, on another item's line, four or more columns in, or with only white space on the marker line, such as a form feed, are not read. Nor is an item with a tab in the indentation of any line that is not blank, from its marker line to the line that ends it, or with a line four or more columns past its text. It ends at a less indented line after a blank line, or at a bullet with text at its marker's indent. Any other less indented line straight below its text leaves it unread, such as a lazy line or `2. Two`.",
+      "It reports only items it is sure of, so some are missed. It reads no item that holds or stands below a line holding the start of HTML that runs past a blank line, such as `<!--`, `<?`, `<!DOCTYPE` or `<pre`, or that Bun's renderer reads as one, such as `<style/>`. Nor does it read one below a line shaped like a fence, such as ```` ``` ```` or `> ~~~`, or below a line that opens an empty quotation or list item, such as `> >` or `-`. Such a line counts wherever it stands, in code too. Nor does it read an item with a `<` on any line between it and the blank line above it, or on the first line of a text that starts with a byte order mark.",
+      "It counts paragraphs, not ideas, so a label paragraph above its body, such as `**Windows:**`, is reported. So is an item whose other paragraph is an image alone, such as `![shot](a.png)`, or shows nothing, such as `&nbsp;` alone. It reads CommonMark's blocks, not what a browser makes of raw HTML, so an item below a paragraph that leaves a tag such as `<details>` open is still read.",
+    ],
+  },
   { id: "8b", demand: "Each bulleted item holds one idea.", state: "not-read", checks: [], needs: [], limits: [] },
   {
     id: "8c", demand: "Bulleted items are nested no deeper than 2 levels.", state: "fault",
@@ -376,6 +386,7 @@ const BULLET_THREE = "Unordered bullet depth 3 (limit 2). Flatten this item.";
 const EMPTY_HEADER = "table header has an empty column name";
 const EMPTY_SEE_ALSO = emptySignpost("See also");
 const ADJACENT_NOTE = adjacentAlert("NOTE", 1);
+const TWO_PARAGRAPHS = bulletParagraphs(2);
 const UNLABELLED = "no paragraph that cites ISO 24495-5 or its skill says the standard is a draft; say it is an unpublished draft where you cite it";
 
 /** A non-breaking hyphen, which looks like the hyphen in 24495-5 and is another character. */
@@ -383,6 +394,17 @@ const NON_BREAKING_HYPHEN = String.fromCharCode(0x2011);
 
 /** A capital I with a dot above, which looks like the I of Image and is another letter. */
 const DOTTED_CAPITAL_I = String.fromCharCode(0x130);
+
+/** A no-break space, which commonmark.js drops from the ends of a paragraph as it does a space. */
+const NO_BREAK_SPACE = String.fromCharCode(0xa0);
+
+/** The byte order mark, which an editor may write at the start of a file. */
+const BYTE_ORDER_MARK = String.fromCharCode(0xfeff);
+
+/** The bullet-paragraphs finding for an item that holds this many paragraphs. */
+function bulletParagraphs(paragraphs: number): string {
+  return `This bulleted item holds ${paragraphs} paragraphs. Make it one paragraph on one idea, or promote it to a subsection.`;
+}
 
 /** What `generic-alt` says of alternative text that is one word naming the kind of image. */
 /** The adjacent-alerts finding for an alert of this kind, on the line after the one given, three lines on. */
@@ -426,6 +448,7 @@ const SPECIMENS: Readonly<Record<string, ClauseSpecimen>> = {
   "3a": { text: SIX_SECTION_GUIDE, reasons: { "contents-list": [NO_CONTENTS] } },
   "3b": { text: `${GUIDE_OPENING}## Contents\n\n- [Wrong](#one)\n\n${SIX_SECTIONS}`, reasons: { "contents-list": [CONTENTS_WORDING] } },
   "6a": { text: "First, open the box. Second, lift the lid. Third, read the note.\n", reasons: { "prose-enumeration": [PROSE_RANKS] } },
+  "8a": { text: "- Close the valve.\n\n  Then open the vent.\n", reasons: { "bullet-paragraphs": [TWO_PARAGRAPHS] } },
   "8c": { text: "- One\n  - Two\n    - Three\n", reasons: { "bullet-depth": [BULLET_THREE] } },
   "9b": { text: "# Install guide\n\nVersion: 1.0\n\n> [!NOTE]\n> Close the valve.\n\n> [!NOTE]\n> Open the vent.\n", reasons: { "adjacent-alerts": [adjacentAlert("NOTE", 5)] } },
   "10c": { text: `${GUIDE_OPENING}The valve opens when the pressure rises.\n`, reasons: {} },
@@ -677,6 +700,54 @@ const LIMIT_SPECIMENS: readonly LimitSpecimen[] = [
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 2. open the box, 3. lift the lid, 4. read the note.\n", found: [], control: { from: "2. open", to: "1. open", found: ["enumeration ranks 1, 3, 4 in prose; consider a list"] } },
   { clause: "6a", limit: 1, check: "prose-enumeration", text: "Do this: 1. open the box, 2. lift the lid.\n", found: [], control: { from: "2. lift the lid.", to: "2. lift the lid, 3. read the note.", found: [PROSE_RANKS] } },
   { clause: "6a", limit: 2, check: "prose-enumeration", text: "Clause (1) The supplier delivers. (2) The buyer pays. (3) Either party may end the contract.\n", found: [PROSE_RANKS], control: { from: "(1) The supplier", to: "The supplier", found: [] } },
+  { clause: "8a", limit: 1, check: "bullet-paragraphs", text: "- Close the valve.\n\n  Then open the vent.\n", found: [TWO_PARAGRAPHS], control: { from: "\n\n  Then", to: " Then", found: [] } },
+  { clause: "8a", limit: 1, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  Three.\n", found: [bulletParagraphs(3)], control: { from: "\n\n  Three.", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 1, check: "bullet-paragraphs", text: "- One.\n\n- Two.\n\n- Three.\n", found: [], control: { from: "\n\n- Two.", to: "\n\n  Two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 1, check: "bullet-paragraphs", text: "1. One.\n\n   Two.\n", found: [], control: { from: "1. One.\n\n   Two.", to: "- One.\n\n  Two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  ```\n  code\n  ```\n", found: [], control: { from: "\n\n  ```\n  code\n  ```", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n      code\n", found: [], control: { from: "\n\n      code", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  > Quoted.\n", found: [], control: { from: "> Quoted.", to: "Quoted.", found: [bulletParagraphs(3)] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  - Nested.\n", found: [], control: { from: "- Nested.", to: "Nested.", found: [bulletParagraphs(3)] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  ## Heading\n", found: [], control: { from: "## Heading", to: "Heading", found: [bulletParagraphs(3)] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  | A |\n  |---|\n", found: [], control: { from: "\n  |---|", to: "", found: [bulletParagraphs(3)] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n  ===\n", found: [], control: { from: "\n  ===", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  ***\n", found: [], control: { from: "\n\n  ***", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  <div>Box</div>\n", found: [], control: { from: "<div>Box</div>", to: "Box", found: [bulletParagraphs(3)] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  $$\n  x\n  $$\n", found: [], control: { from: "\n\n  $$\n  x\n  $$", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\n  [guide]: https://example.org\n", found: [], control: { from: "[guide]: https://example.org", to: "The guide.", found: [bulletParagraphs(3)] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: "- Model list\n\n  `make test`\n", found: [], control: { from: "`make test`", to: "Run `make test`.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 2, check: "bullet-paragraphs", text: `- Model list\n\n  \`make test\`${NO_BREAK_SPACE}\n`, found: [], control: { from: NO_BREAK_SPACE, to: `${NO_BREAK_SPACE}now`, found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "> - One.\n>\n>   Two.\n", found: [], control: { from: "> - One.\n>\n>   Two.", to: "- One.\n\n  Two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- - One.\n\n    Two.\n", found: [], control: { from: "- - One.\n\n    Two.", to: "- One.\n\n  Two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "-\n  One.\n\n  Two.\n", found: [], control: { from: "-\n  One.", to: "- One.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "Text.\n- \f\n\n  Two.\n", found: [], control: { from: "\f", to: "One.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- Outer.\n\n    - Deep one.\n\n      Deep two.\n", found: [], control: { from: "    - Deep one.\n\n      Deep two.", to: "   - Deep one.\n\n     Deep two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "-     One.\n\n      Two.\n", found: [], control: { from: "-     One.", to: "-    One.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n\tTwo.\n", found: [], control: { from: "\tTwo.", to: "  Two.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\t\n  Two.\n", found: [TWO_PARAGRAPHS], control: { from: "\t\n  Two.", to: "\n\tTwo.", found: [] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "-    One.\n\n     Two.\n\n \tAfter.\n", found: [], control: { from: " \tAfter.", to: "After.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n  Two\n      carried on.\n", found: [], control: { from: "\n      carried on.", to: "\n  carried on.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n\nAfter.\n", found: [TWO_PARAGRAPHS], control: { from: "\n\nAfter.", to: "\nAfter.", found: [] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n  Two.\n- Next.\n", found: [TWO_PARAGRAPHS], control: { from: "- Next.", to: "2. Next.", found: [] } },
+  { clause: "8a", limit: 3, check: "bullet-paragraphs", text: "- One.\n\n  Two.\nLazy.\n", found: [], control: { from: "\nLazy.", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "<!-- note -->\n\n- One.\n\n  Two.\n", found: [], control: { from: "<!-- note -->", to: "Note.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "<?php echo 1; ?>\n\n- One.\n\n  Two.\n", found: [], control: { from: "<?php echo 1; ?>", to: "PHP.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "<!DOCTYPE html>\n\n- One.\n\n  Two.\n", found: [], control: { from: "<!DOCTYPE html>", to: "Doctype.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "<pre>x</pre>\n\n- One.\n\n  Two.\n", found: [], control: { from: "<pre>x</pre>", to: "Pre.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "<style/>\n\n- One.\n\n  Two.\n", found: [], control: { from: "<style/>", to: "<stylesheet/>", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "- One <!-- c --> more.\n\n  Two.\n", found: [], control: { from: " <!-- c -->", to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "```\ncode\n```\n\n- One.\n\n  Two.\n", found: [], control: { from: "```\ncode\n```", to: "Code.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "> ~~~\n\nText.\n\n- One.\n\n  Two.\n", found: [], control: { from: "> ~~~", to: "> Quoted.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "> >\n\nText.\n\n- One.\n\n  Two.\n", found: [], control: { from: "> >", to: "> Quoted.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "-\n\nText.\n\n- One.\n\n  Two.\n", found: [], control: { from: "-\n\nText.", to: "- Item.\n\nText.", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "    <!-- in code -->\n\n- One.\n\n  Two.\n", found: [], control: { from: "<!-- in code -->", to: "in code", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: "<b>Lead</b>\n- One.\n\n  Two.\n", found: [], control: { from: "<b>Lead</b>", to: "Lead", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: `${BYTE_ORDER_MARK}- One.\n\n  Two.\n`, found: [], control: { from: BYTE_ORDER_MARK, to: "", found: [TWO_PARAGRAPHS] } },
+  { clause: "8a", limit: 4, check: "bullet-paragraphs", text: ">\n\n- One.\n\n  Two.\n", found: [TWO_PARAGRAPHS], control: { from: ">\n", to: "> >\n", found: [] } },
+  { clause: "8a", limit: 5, check: "bullet-paragraphs", text: "* **Windows:**\n\n  Download the installer.\n", found: [TWO_PARAGRAPHS], control: { from: "\n\n  Download", to: " Download", found: [] } },
+  { clause: "8a", limit: 5, check: "bullet-paragraphs", text: "- One.\n\n  ![shot](a.png)\n", found: [TWO_PARAGRAPHS], control: { from: "\n\n  ![shot](a.png)", to: "", found: [] } },
+  { clause: "8a", limit: 5, check: "bullet-paragraphs", text: "- One.\n\n  &nbsp;\n", found: [TWO_PARAGRAPHS], control: { from: "&nbsp;", to: "", found: [] } },
+  { clause: "8a", limit: 5, check: "bullet-paragraphs", text: "Text <details>\n\n- One.\n\n  Two.\n", found: [TWO_PARAGRAPHS], control: { from: "<details>\n\n", to: "<details>\n", found: [] } },
   { clause: "8c", limit: 1, check: "bullet-depth", text: "- Outer\n  1. Ordered\n     - Inner\n", found: [], control: { from: "1. Ordered", to: "- Ordered", found: [BULLET_THREE] } },
   { clause: "8c", limit: 1, check: "bullet-depth", text: "- Outer\n  > - Inner\n  >   - Deep\n", found: [BULLET_THREE], control: { from: "  >   - Deep\n", to: "", found: [] } },
   { clause: "8c", limit: 1, check: "bullet-depth", text: "<ul><li>One<ul><li>Two<ul><li>Three</li></ul></li></ul></li></ul>\n", found: [], control: { from: "<ul><li>One<ul><li>Two<ul><li>Three</li></ul></li></ul></li></ul>", to: "- One\n  - Two\n    - Three", found: [BULLET_THREE] } },
@@ -1145,6 +1216,7 @@ const SPECIMENS_PER_LIMIT: Readonly<Record<string, readonly number[]>> = {
   "3a": [6, 18, 21],
   "3b": [22, 3],
   "6a": [10, 1],
+  "8a": [4, 13, 13, 14, 4],
   "8c": [4],
   "9b": [8, 8, 26, 1],
   "10c": [3, 1],
@@ -1193,6 +1265,7 @@ const LIMIT_SPECIMEN_DIGESTS: Readonly<Record<string, readonly string[]>> = {
   "3a": ["bec14fbb73268aeb", "19259afeef2d29c4", "18e740d0195e1360"],
   "3b": ["a89a361732bfc545", "cb48ca7f8f73c2bf"],
   "6a": ["a0eca4bb5ee78b0b", "ac7780100b062b44"],
+  "8a": ["b56c1012e9ad9692", "3da900143a385002", "61c893009723ca44", "aecc1e7cc08e1676", "000ae08fa612ec69"],
   "8c": ["1e7ef38789ed8e7f"],
   "9b": ["99c493162f01aa4e", "a471bdd7bd76b27b", "b4c3f5010ee1eff7", "ceaaded3dfdafc7c"],
   "10c": ["715422e93c74c160", "9136f07360ae2af1"],
@@ -1223,6 +1296,7 @@ const SPECIMEN_DIGESTS: Readonly<Record<string, string>> = {
   "3a": "05deb1c41fc09209",
   "3b": "2b287cac5742b449",
   "6a": "1fe5e2c752ffae09",
+  "8a": "dfc8a23d0403eee8",
   "8c": "de544846e4fdb6fa",
   "9b": "5090ff4499d5b3d2",
   "10c": "ecdf55f88967aded",
@@ -1897,8 +1971,8 @@ describe("the Part 5 checklist clause registry", () => {
   });
 
   // What this sweep establishes: each of the 12 sweeps runs the audit over
-  // one folder with its option and without it. For each of the 25 fault
-  // clauses, 300 cells, it compares the two runs on that clause's own
+  // one folder with its option and without it. For each of the 26 fault
+  // clauses, 312 cells, it compares the two runs on that clause's own
   // specimen, as written and behind front matter, each as a .md file and a
   // .txt file. A cell changes when one run names a check of the clause on
   // one of those four files and the other does not, or when an offline
