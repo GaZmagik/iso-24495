@@ -137,4 +137,5 @@ The words never include the service's reply or the key. An unexpected error prin
 - **Request report locations:** Create a report only when the user requests one and names its path.
 - **Keep decisions qualified:** Findings are proxies, not ISO judgements or document approval.
 - **State the scope:** The audit covers purpose, colour, a title and the text audit's offline rules. Never present it as a full Part 5 audit.
+- **Expect silence on doubtful fences:** A document that may pair code fences differently from CommonMark gets no local finding and no offline finding. The text audit names the two shapes. Its Jev requests are planned unchanged.
 - **Interpret with Part 5:** Use `iso-24495-5`, whose standard is an unpublished draft, when discussing document design.

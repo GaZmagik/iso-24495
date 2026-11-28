@@ -1467,3 +1467,45 @@ describe("htmlImageTags", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
+
+describe("a document whose fences parse.ts and CommonMark may pair differently", () => {
+  // Every rule's trigger, below each shape of issue 93. commonmark.js renders the triggers as code.
+  const triggers = [
+    "This sentence " + "word ".repeat(40) + "ends here.",
+    "The party shall comply hereinafter with the aforementioned terms.",
+    "###### Very deep heading.",
+    "First, open it. Second, read it. Third, close it. Please utilise the tool. This is not uncommon.",
+    "| | B |\n|---|---|\n| 1 | 2 |",
+    "Read [click here](https://example.com) now. ![](pic.png) ![image](pic.png) This follows ISO 24495-5.",
+    "- a\n  - b\n    - c",
+    "> [!NOTE]\n> one\n\n> [!NOTE]\n> two",
+    ["A", "B", "C", "D", "E", "F"].map(name => `## ${name}\n\nText ${name}.`).join("\n\n"),
+    "## See also",
+  ].join("\n\n");
+  const shapes = [
+    "# T\n\n<!-- c -->~~~\n\n~~~\n\n",
+    "# T\n\n<?x?>```\n\n```\n\n",
+    "# T\n\n<!X\n>~~~\n\n~~~\n\n",
+    "---\nnote: |\n  ~~~\n---\n\n# T\n\n",
+  ];
+
+  test("gives no finding, offline, whatever the document holds", () => {
+    expect(auditText(`# T\n\n${triggers}\n`, { markdown: true }).length).toBeGreaterThan(15);
+    for (const shape of shapes) {
+      expect(auditText(`${shape}${triggers}\n`, { markdown: true })).toEqual([]);
+      expect(auditText(`${shape}${triggers}\n`)).toEqual([]);
+    }
+  });
+
+  test("gives no finding that a comment's text, hidden as code, would have answered", () => {
+    expect(auditText("# T\n\n<!-- c -->~~~\nVersion 1.2.0\n~~~\n", { markdown: true })).toEqual([]);
+    expect(auditText("# T\n\nVersion 1.2.0\n", { markdown: true })).toEqual([]);
+  });
+
+  test("reads front matter switched off as text, as before", () => {
+    const text = "---\nnote: |\n  ~~~\n---\n\n# T\n\nWe did this in order to help.\n";
+    expect(auditText(text, { markdown: true, frontMatter: false })).toEqual([]);
+    const fenced = "---\nnote: |\n---\n\n# T\n\nWe did this in order to help.\n";
+    expect(auditText(fenced, { markdown: true, frontMatter: false }).map(finding => finding.rule)).toContain("wordy-phrase");
+  });
+});

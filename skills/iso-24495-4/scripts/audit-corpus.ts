@@ -34,6 +34,7 @@ import { emphasisMarkOffsets, withoutEmphasis } from "./lib/inline-wording.ts";
 import { pathFailure, writeTextFile } from "./lib/failure.ts";
 import { skippedEntryWarning } from "./lib/safe-text.ts";
 import { itemAt } from "./lib/item-at.ts";
+import { blocksInDoubt } from "./lib/block-doubt.ts";
 
 /**
  * Audits a corpus directory and prints the count of findings for each rule.
@@ -216,6 +217,13 @@ const HEADING_WORD_LIMIT = ENGINE_THRESHOLDS.headingWordLimit;
  * defaults to false, so a caller that passes no options gets the other rules
  * alone, and nothing in the result says that layout was skipped.
  *
+ * No rule reads a document that `blocksInDoubt` names: one with a fence
+ * straight after a comment, instruction or declaration, or with a line
+ * shaped like a fence in front matter that is read. There `parse.ts` and
+ * CommonMark pair the fences differently, so every rule could report text
+ * a renderer shows as code, or miss text it hides. The result is then
+ * empty, so a true finding is lost and no false one is given.
+ *
  * @param text The whole document, with any line ending.
  * @param options `markdown` turns the layout rules on; pass true for a
  *     Markdown file and leave it unset for plain text. `fileName` only
@@ -231,6 +239,7 @@ export function auditText(text: string, options: AuditOptions = {}): Violation[]
   // Every rule re-reads the text, so each is told the same thing about front matter.
   const frontMatter = options.frontMatter;
   const reading: Reading = frontMatter === undefined ? {} : { frontMatter };
+  if (blocksInDoubt(text, reading)) return [];
   const prose = proseLengthFindings(text, reading);
   const fileName = options.fileName;
   // Each rule's findings are added one at a time. A rule can give one finding
