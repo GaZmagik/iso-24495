@@ -136,7 +136,9 @@ A rule can only be as right as the text it reads. So the engine parses Markdown 
 
 The parser is checked against the CommonMark reference implementation. 302 documents are recorded in `skills/iso-24495-4/tests/fixtures/reference-blocks.ts`, and every one that this engine reads differently carries the reason why. The reference is not a dependency: it was installed outside the repository, asked once, and its answers kept.
 
-Two shapes are known to make this engine pair code fences differently from CommonMark. One is a fence straight after a comment, a processing instruction or a declaration on the same line. The other is a line shaped like a fence inside front matter, which CommonMark reads as a fence because it has no front matter. A document holding either gets no offline finding, no local design audit finding, and, given `--before`, a comparison of no text. Its Jev requests are planned unchanged.
+Two shapes are known to make this engine pair code fences differently from CommonMark. One is a fence straight after a comment, a processing instruction or a declaration on the same line. The other is a line shaped like a fence inside front matter, which CommonMark reads as a fence because it has no front matter.
+
+A document holding either shape gets no offline finding and no local design audit finding, though its Jev requests are planned unchanged. The check is broad, so it also silences a match inside code, or a quoted fence anywhere below a declaration or processing instruction. Given `--before`, when any version holds such a line, every version is compared as holding no text.
 
 ## User-invoked text audit
 

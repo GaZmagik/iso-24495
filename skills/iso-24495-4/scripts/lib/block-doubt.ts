@@ -1,11 +1,17 @@
 import { frontMatterRange, toLines, type Reading } from "./parse.ts";
 
-/** The end of a comment or a processing instruction, then a fence run. */
-const FENCE_AFTER_CLOSE = /(?:-->|\?>)[ \t]*(?:`{3,}|~{3,})/;
-/** The end of a declaration, then a fence run. Read only after a declaration has opened. */
+/**
+ * The end of a comment, then a fence run. `parse.ts` also ends a comment at
+ * `--!>`, and `?>` is the end CommonMark gives a processing instruction.
+ */
+const FENCE_AFTER_CLOSE = /(?:-->|--!>|\?>)[ \t]*(?:`{3,}|~{3,})/;
+/**
+ * Any `>`, then a fence run. `parse.ts` ends a declaration and a processing
+ * instruction at the first `>`, so this is read once either has opened.
+ */
 const FENCE_AFTER_ANGLE = />[ \t]*(?:`{3,}|~{3,})/;
-/** The start of a declaration, such as `<!DOCTYPE`, in either letter case. */
-const DECLARATION_OPEN = /<![A-Za-z]/;
+/** The start of a declaration, such as `<!DOCTYPE` in either letter case, or of a processing instruction. */
+const ANGLE_CLOSED_OPEN = /<![A-Za-z]|<\?/;
 /** A line shaped like a fence, however far it stands in. */
 const FENCE_SHAPED = /^[ \t]*(?:`{3,}|~{3,})/;
 
@@ -23,9 +29,10 @@ const FENCE_SHAPED = /^[ \t]*(?:`{3,}|~{3,})/;
  *
  * It matches more than these two forms, so it can cost findings, but it
  * never decides that a document is safe when one of the forms is present.
- * A fence after a comment counts wherever the comment opened. A fence after
- * `>` counts once any declaration has opened earlier in the text, which
- * includes a quoted fence below a declaration. A fence-shaped line counts
+ * A fence after `-->`, `--!>` or `?>` counts anywhere, even in code. A fence
+ * after `>` counts once any declaration or processing instruction has
+ * opened earlier in the text, which includes a quoted fence below one, even
+ * in code. A fence-shaped line counts
  * anywhere in the front matter, even where CommonMark would read it as
  * text or pair it inside the block.
  *
@@ -42,12 +49,12 @@ export function blocksInDoubt(text: string, reading: Reading = {}): boolean {
     const range = frontMatterRange(lines);
     if (range !== null && lines.slice(range.start + 1, range.end).some(line => FENCE_SHAPED.test(line))) return true;
   }
-  let declared = false;
+  let angleClosed = false;
   for (const line of lines) {
     if (FENCE_AFTER_CLOSE.test(line)) return true;
-    const opened = declared ? 0 : line.search(DECLARATION_OPEN);
+    const opened = angleClosed ? 0 : line.search(ANGLE_CLOSED_OPEN);
     if (opened !== -1) {
-      declared = true;
+      angleClosed = true;
       if (FENCE_AFTER_ANGLE.test(line.slice(opened))) return true;
     }
   }

@@ -25,7 +25,9 @@ The `prose-enumeration` rule flags three or more distinct ranks in a prose block
 
 The audit reads Markdown as written and does not interpret raw HTML. It sets HTML tags aside and reads the text between them, even where GitHub would hide or change that text.
 
-The audit reports nothing on a document where it may pair code fences differently from CommonMark. One such shape is a fence straight after a comment, a processing instruction or a declaration on the same line. The other is a line shaped like a fence in front matter that is read as front matter. With `--before`, a version holding either is compared as holding no text. A true finding there is lost, so an empty report is not a clean one.
+The audit reports nothing on a document where it may pair code fences differently from CommonMark. One such shape is a fence straight after a comment, a processing instruction or a declaration on the same line. The other is a line shaped like a fence in front matter that is read as front matter.
+
+The check is broad, so it also silences a match inside code, or a quoted fence anywhere below a declaration or processing instruction. With `--before`, when any version holds such a line, every version is compared as holding no text. A true finding there is lost, so an empty report is not a clean one.
 
 ## Markdown layout recognition
 

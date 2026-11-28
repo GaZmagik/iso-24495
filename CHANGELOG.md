@@ -31,7 +31,7 @@ All notable changes to the ISO 24495 Plain Language plugin. Versions follow [Sem
 
 ### Known limits
 
-- **Doubtful code fences give no findings.** A fence straight after a comment, instruction or declaration on one line, or a fence-shaped line in front matter, makes this engine and CommonMark pair fences differently. The audits then report nothing on that document, and a two-version comparison compares no text. Neither shape is in 822 third-party Markdown files or this repository's own documents.
+- **Doubtful code fences give no findings.** A fence straight after a comment, instruction or declaration on one line, or a fence-shaped line in front matter, makes this engine and CommonMark pair fences differently. The audits then report nothing on that document, nor on some that only resemble it, and a two-version comparison compares no text. Neither shape is in 822 third-party Markdown files or this repository's own documents.
 - **Historical cluster evidence.** Bounds describe agreement for protocol cluster representatives, assuming independent clusters. They are neither per-block reliability nor a document-level success probability.
 - **Recognition remains unmeasured.** Raw HTML structure and custom anchors are unsupported. Badge alternative text can be stale, and external versioning can cause advisory false positives.
 - **Service details remain unverified.** Pricing, retention and live transport behaviour were not checked. Findings remain proxies rather than ISO judgements.

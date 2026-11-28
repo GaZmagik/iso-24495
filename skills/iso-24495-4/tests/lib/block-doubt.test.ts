@@ -13,6 +13,10 @@ describe("a document whose blocks parse.ts and CommonMark may read differently",
       "<!-- c --> \t~~~~\n",
       "<!-->~~~\n",
       "<?x?>~~~\n",
+      "<?x>~~~\n",
+      "<?x\n>~~~\n",
+      "<!-- c --!>~~~\n",
+      "<!--\nc --!>~~~\n",
       "<!X>~~~\n",
       "<!doctype x>```\n",
       "<!--\nc -->~~~\n",
@@ -58,7 +62,7 @@ describe("a document whose blocks parse.ts and CommonMark may read differently",
   });
 
   test("reads a hostile line once", () => {
-    for (const line of ["<!A".repeat(200_000), ">".repeat(600_000), `-->${" ".repeat(600_000)}x`, `<!A${"> ".repeat(300_000)}`]) {
+    for (const line of ["<!A".repeat(200_000), "<?".repeat(300_000), ">".repeat(600_000), `-->${" ".repeat(600_000)}x`, `<!A${"> ".repeat(300_000)}`]) {
       const started = performance.now();
       expect(blocksInDoubt(line)).toBe(false);
       expect(performance.now() - started).toBeLessThan(1_000);
