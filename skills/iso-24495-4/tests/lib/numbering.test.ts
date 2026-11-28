@@ -280,6 +280,8 @@ describe("what counts as a citation", () => {
     // A `<` that starts no tag, as no tag holds the `<` after it, does not take the citation either.
     expect(lines(`${BASE}\nif x <y then see section <em>2</em>.\n`)).toEqual([]);
     expect(lines(`${BASE}\nif x <y then see section <em>3</em>.\n`)).toEqual([5]);
+    // A `<` with a space after it is text, so it and the `>` after it stay, and the words between them break the form.
+    expect(lines(`${BASE}\nSee section < x > 2.\n`)).toEqual([5]);
     // A lone `<` does not swallow the tags after it, which are still taken out.
     expect(lines(`${BASE}\n< see section <em>2</em>.\n`)).toEqual([]);
     // What only looks like a tag, as `&#x32;` cannot name an attribute, is shown as text, and read so.
