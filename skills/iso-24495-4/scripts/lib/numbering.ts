@@ -120,8 +120,12 @@ const INLINE_MARKS = /[*_`~]/g;
 const LINK_TARGET = /\]\((?:[^()]|\([^()]*\))*\)|\]\[[^\]]*\]/g;
 /** The square brackets of a link's text, so a shortcut reference such as `[See section] 2` reads as `See section 2`. */
 const LINK_BRACKETS = /[[\]]/g;
-/** What a tag's end is looked for by: its `>`, or a quotation mark that opens a value, which may hold a `>`. */
-const TAG_STOP = /[>"']/g;
+/**
+ * What a tag's end is looked for by: its `>`, a quotation mark that opens a
+ * value, which may hold a `>`, or a `<` outside any value, which no tag
+ * holds, so the walk ends there.
+ */
+const TAG_STOP = /[<>"']/g;
 /** What may follow a `<` that starts inline HTML: a letter, `/`, `!` or `?`. */
 const HTML_AFTER_ANGLE = /^[A-Za-z/!?]$/;
 /** What ends each kind of inline HTML that does not end at the first `>`, keyed by how it starts. */
@@ -592,7 +596,8 @@ function spelt(text: string, html: "taken out" | "kept" = "taken out"): string {
  * Text with what may be inline HTML taken out: a comment to its `-->`, a
  * processing instruction to its `?>`, CDATA to its `]]>`, and a tag or a
  * declaration to the next `>` outside a quoted value, so `<a title=">">`
- * goes whole. Only a `<` with a letter, `/`, `!` or `?` after it starts one,
+ * goes whole. A `<` outside a value before that `>` means no tag starts, so
+ * `x <y then <em>2</em>` keeps `<y then`. Only a `<` with a letter, `/`, `!` or `?` after it starts one,
  * and a `<` whose end never follows is kept. It reads more widely than a
  * renderer does, so it can only quiet the rule.
  *
@@ -641,6 +646,9 @@ function htmlEnd(text: string, at: number, unended: Set<string>): number {
       break;
     }
     if (stop[0] === ">") return stop.index + 1;
+    // No tag holds a `<` outside its values, so none starts here. A later
+    // `<` may start one, so nothing is noted as not found.
+    if (stop[0] === "<") return -1;
     const quote = stop[0];
     const closing = unended.has(quote) ? -1 : text.indexOf(quote, stop.index + 1);
     if (closing === -1) {

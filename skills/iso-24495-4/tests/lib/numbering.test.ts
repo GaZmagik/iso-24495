@@ -277,6 +277,9 @@ describe("what counts as a citation", () => {
     expect(lines(`${BASE}\n<\nstep &#x32;\n<![CDATA[x]]>\n`)).toEqual([]);
     // HTML is also read as written, so a `<` that a renderer shows as text cannot hide one either.
     expect(lines(`${BASE}\n<a\nstep &#x32;\n>\n`)).toEqual([]);
+    // A `<` that starts no tag, as no tag holds the `<` after it, does not take the citation either.
+    expect(lines(`${BASE}\nif x <y then see section <em>2</em>.\n`)).toEqual([]);
+    expect(lines(`${BASE}\nif x <y then see section <em>3</em>.\n`)).toEqual([5]);
     // A lone `<` does not swallow the tags after it, which are still taken out.
     expect(lines(`${BASE}\n< see section <em>2</em>.\n`)).toEqual([]);
     // What only looks like a tag, as `&#x32;` cannot name an attribute, is shown as text, and read so.
@@ -579,14 +582,20 @@ describe("the rule's own work stays linear on hostile lines", () => {
 
   test("HTML and link shapes that never end are looked for once, not once for each start", () => {
     // The structural reading is slow on such lines, so the rule is given the
-    // headings of the text above them, which stand on the same lines. Each
-    // took under 0.3 s on Windows when written.
+    // headings of the text above them, which stand on the same lines.
+    // A walk through every quoted value to an unended quotation mark, once
+    // for each `<a`, took 23 s at 20,000 starts before a `<` ended it. The
+    // slowest line here took 0.41 s on Windows when written.
     const parsed = structure(BASE);
-    for (const piece of ["<!--", "<?", "<![CDATA[", "<a ", "](", "]([", "\"<a \"", "'"]) {
-      const text = `${BASE}\nSee ${piece.repeat(100000)}\n`;
+    const hostile = [
+      ...["<!--", "<?", "<![CDATA[", "<a ", "](", "]([", "\"<a \"", "'"].map(piece => piece.repeat(100000)),
+      `${"<a \"x\" ".repeat(100000)}'`, `<a ${"\"<a \"".repeat(100000)}"'`,
+    ];
+    for (const line of hostile) {
+      const text = `${BASE}\nSee ${line}\n`;
       const started = performance.now();
-      expect(run(text, {}, parsed), piece).toHaveLength(1);
-      expect(performance.now() - started, piece).toBeLessThan(2000);
+      expect(run(text, {}, parsed), line.slice(0, 12)).toHaveLength(1);
+      expect(performance.now() - started, line.slice(0, 12)).toBeLessThan(2000);
     }
   });
 
