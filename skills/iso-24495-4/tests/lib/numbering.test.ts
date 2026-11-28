@@ -611,6 +611,55 @@ describe("the rule's own work stays linear on hostile lines", () => {
   });
 });
 
+describe("round 2: overlapping number words, mismatched raw HTML ends and long delimiter rows", () => {
+  test("a number word that names no heading does not hide a citation that shares its noun", () => {
+    const nouns = ["section", "step", "rule", "part", "chapter", "item", "point", "clause", "stage", "phase", "task", "option"];
+    const words = ["thirteen", "thirteenth", "twenty-first", "ninety", "nine", "eleventh"];
+    const missed: string[] = [];
+    for (const noun of nouns) {
+      for (const word of words) {
+        for (const text of [`${word} ${noun} one`, `${word} ${noun}\none`, `the ${noun} ${word} ${noun} two`]) {
+          if (lines(`${BASE}\n${text}\n`).length > 0) missed.push(text);
+        }
+      }
+    }
+    expect(missed).toEqual([]);
+    expect(lines(`${BASE}\nthirteen section nine\n`)).toEqual([5]);
+  });
+
+  test("wherever the round 1 matcher cited, the rule stays quiet", () => {
+    expect(lines(`${BASE}\nFollow step twenty-one step by step.\n`)).toEqual([]);
+    expect(lines(`${BASE}\ntwenty-first section two\n`)).toEqual([]);
+  });
+
+  test("a raw HTML element stays open until its own end tag, so a fence the two readings place apart stops the count", () => {
+    const openers = ["<pre>", "<script>", "<style>", "<textarea>"];
+    const closers = ["</pre>", "</script>", "</style>", "</textarea>"];
+    const reported: string[] = [];
+    for (const opener of openers) {
+      for (const closer of closers) {
+        for (const fence of ["~~~", "```"]) {
+          const name = opener.slice(1, -1);
+          const text = `# T\n\n${opener}\n${closer}\n\n${fence}\n</${name}>\n\n## 1. A\n## 2. B\n`;
+          if (lines(text).length > 0) reported.push(text);
+        }
+      }
+    }
+    expect(reported).toEqual([]);
+    // Without the fence the headings are real, and the question stands.
+    expect(lines("# T\n\n<pre>\n</style>\n\n</pre>\n\n## 1. A\n\n## 2. B\n")).toEqual([8]);
+  });
+
+  test("a delimiter row is read in time that grows with its length, accepted or not", () => {
+    const parsed = structure(BASE);
+    for (const line of ["|---" + " ".repeat(64000) + "x", " ".repeat(64000) + "x|---", "|---" + " ".repeat(64000), " ".repeat(64000) + "|---|", "| " + "-".repeat(64000) + " |"]) {
+      const started = performance.now();
+      expect(run(`${BASE}\n${line}\n`, {}, parsed), JSON.stringify(line.slice(0, 6))).toHaveLength(1);
+      expect(performance.now() - started, JSON.stringify(line.slice(0, 6))).toBeLessThan(500);
+    }
+  });
+});
+
 /** The part of Bun's renderer the oracle uses. Bun before 1.3.8 has none. */
 interface MarkdownRenderer {
   render(text: string, callbacks: Record<string, (children: string) => string>): string;

@@ -89,9 +89,23 @@ const HIGHEST_WORD = 99;
  */
 const NUMBER_WORD = String.raw`(?:${TENS.join("|")})[-\s]+(?:${[...UNITS.slice(1, 10), ...UNIT_ORDINALS.slice(1, 10)].join("|")})|${
   [...NUMBER_WORDS.keys()].sort((one, two) => two.length - one.length).join("|")}`;
+/** The number words round 1 read, in round 1's order. */
+const ROUND_ONE_WORDS = [
+  "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+  "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth",
+].join("|");
 /** A citing noun then a number word, or a number word then a citing noun. */
 const WORD_NUMBER = new RegExp(
   String.raw`(?<![\p{L}\p{N}])(?:(?:${CITING_NOUNS})\.?\s+(${NUMBER_WORD})|(${NUMBER_WORD})\s+(?:${CITING_NOUNS}))(?![\p{L}\p{N}])`,
+  "giu",
+);
+/**
+ * The same with the words of round 1 alone, one to twelve and their
+ * ordinals, exactly as round 1 wrote it, so every number word citation that
+ * round 1 read is still read: `one step` inside `twenty-one step`, say.
+ */
+const ROUND_ONE_WORD_NUMBER = new RegExp(
+  String.raw`(?<![\p{L}\p{N}])(?:(?:${CITING_NOUNS})\.?\s+(${ROUND_ONE_WORDS})|(${ROUND_ONE_WORDS})\s+(?:${CITING_NOUNS}))(?![\p{L}\p{N}])`,
   "giu",
 );
 /**
@@ -274,8 +288,11 @@ function namedHeadings(headings: readonly Heading[]): Numbered[] {
  * The start of HTML that CommonMark runs past a blank line, to the line that
  * holds its end: a comment, a processing instruction, a declaration, CDATA,
  * or a `pre`, `script`, `style` or `textarea` element, in any letter case.
+ * Each element is a kind of its own: CommonMark ends any of the four at the
+ * end tag of any, and the structural reading only at its own, so each is held
+ * open until its own end tag, the later of the two.
  */
-const LONG_HTML = /<(?:(!--)|(\?)|(![A-Za-z])|(!\[CDATA\[)|(pre|script|style|textarea)(?=[\s/>]|$))/gi;
+const LONG_HTML = /<(?:(!--)|(\?)|(![A-Za-z])|(!\[CDATA\[)|(pre)(?=[\s/>]|$)|(script)(?=[\s/>]|$)|(style)(?=[\s/>]|$)|(textarea)(?=[\s/>]|$))/gi;
 /** The start of a heading line outside any container: up to three spaces, one to six `#` and white space or the end. */
 const ATX_START = /^ {0,3}#{1,6}(?:[ \t]|$)/;
 /** A line that may be a heading in some container: quotation and list markers, then `#` and white space or the end. */
@@ -293,10 +310,55 @@ const CONTAINER_MARKERS = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*/;
 const UNDERLINE_SHAPE = /^[ \t>*+=\d.)-]*[=-][ \t]*$/;
 /** A line shaped like a fence, after any container markers: three backticks or tildes. */
 const FENCE_SHAPE = /^[ \t>*+-]*(?:\d+[.)][ \t>*+-]*)*(?:`{3}|~{3})/;
-/** A table's delimiter row, such as `|---|` or `--- | :-:`, after any quotation markers. It must also hold a `|`. */
-const TABLE_DELIMITER = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+/**
+ * Whether a line is a table's delimiter row, such as `|---|` or `--- | :-:`,
+ * after any quotation markers: cells as `isDelimiterCell` reads them, between
+ * pipes, with a pipe at either end optional. The caller also asks for a `|`.
+ * It reads each character a fixed number of times, so a long run of spaces
+ * costs its length, whether the row is accepted or not.
+ */
+function isDelimiterRow(line: string): boolean {
+  let at = 0;
+  let last = line.length;
+  while (at < last && (line[at] === " " || line[at] === "\t" || line[at] === ">")) {
+    at++;
+  }
+  while (last > at && (line[last - 1] === " " || line[last - 1] === "\t")) {
+    last--;
+  }
+  if (line[at] === "|") at++;
+  if (last > at && line[last - 1] === "|") last--;
+  let start = at;
+  for (let index = at; index <= last; index++) {
+    if (index < last && line[index] !== "|") continue;
+    if (!isDelimiterCell(line, start, index)) return false;
+    start = index + 1;
+  }
+  return true;
+}
+
+/** Whether `line` from `from` to `to` is one cell of a delimiter row: spaces, an optional `:`, dashes, an optional `:`, spaces. */
+function isDelimiterCell(line: string, from: number, to: number): boolean {
+  let at = from;
+  while (at < to && (line[at] === " " || line[at] === "\t")) {
+    at++;
+  }
+  if (at < to && line[at] === ":") at++;
+  const dashes = at;
+  while (at < to && line[at] === "-") {
+    at++;
+  }
+  if (at === dashes) return false;
+  if (at < to && line[at] === ":") at++;
+  while (at < to && (line[at] === " " || line[at] === "\t")) {
+    at++;
+  }
+  return at === to;
+}
+
+
 /** What ends each kind of `LONG_HTML`, in the order of its groups. */
-const LONG_HTML_ENDS: readonly RegExp[] = [/-->/g, /\?>/g, />/g, /\]\]>/g, /<\/(?:pre|script|style|textarea)>/gi];
+const LONG_HTML_ENDS: readonly RegExp[] = [/-->/g, /\?>/g, />/g, /\]\]>/g, /<\/pre>/gi, /<\/script>/gi, /<\/style>/gi, /<\/textarea>/gi];
 
 /**
  * Whether a heading may be read: none of its lines, nor any line between the
@@ -343,7 +405,7 @@ function clearOfHtml(lines: readonly string[]): (heading: Heading) => boolean {
       table = false;
     } else {
       if (line.includes("<")) angle = true;
-      if (line.includes("|") && TABLE_DELIMITER.test(line)) table = true;
+      if (line.includes("|") && isDelimiterRow(line)) table = true;
     }
     anyOpen = longHtmlAfter(line, open);
   }
@@ -670,11 +732,18 @@ function citesInLine(line: string, targets: Targets): boolean {
   for (const match of line.matchAll(AFTER_WORD)) {
     if (listCites(match[1] ?? "", targets)) return true;
   }
-  for (const match of line.matchAll(WORD_NUMBER)) {
-    // A ten and a unit add up, so `twenty-first` gives 21.
-    const words = (match[1] ?? match[2] ?? "").toLowerCase().split(/[-\s]+/);
-    const value = words.reduce((sum, word) => sum + (NUMBER_WORDS.get(word) ?? 0), 0);
-    if (holdsBetween(targets.integers, value, value)) return true;
+  // Each search for a number word starts again one character after the last
+  // match began, not after it ended, so `thirteen section` cannot hide the
+  // `section one` that shares its noun.
+  for (const pattern of [WORD_NUMBER, ROUND_ONE_WORD_NUMBER]) {
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(line); match !== null; match = pattern.exec(line)) {
+      // A ten and a unit add up, so `twenty-first` gives 21.
+      const words = (match[1] ?? match[2] ?? "").toLowerCase().split(/[-\s]+/);
+      const value = words.reduce((sum, word) => sum + (NUMBER_WORDS.get(word) ?? 0), 0);
+      if (holdsBetween(targets.integers, value, value)) return true;
+      pattern.lastIndex = match.index + 1;
+    }
   }
   for (const match of line.matchAll(DOTTED)) {
     if (names(match[0], targets)) return true;
