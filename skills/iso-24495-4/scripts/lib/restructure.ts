@@ -32,6 +32,7 @@ import { renderInline, renderInlineCode } from "./inline-wording.ts";
 import { figureFound, figureValues, foundIn, pairReworded, PIPE_ESCAPE, tablesFrom, WEIGHING_BUDGET, type FigureValue, type Found, type Meter, type ReworkedPair } from "./rewording.ts";
 import { inlineText, locateSentences, markdownLinks, normaliseReference, structure, tableCells, type ListStep, type LocatedSentence, type MarkdownLink, type Reading } from "./parse.ts";
 import { safeCell, safePathCode } from "./safe-text.ts";
+import { blocksInDoubt } from "./block-doubt.ts";
 
 /** A unit that is one slot Part 5 tells a restructure to leave where nothing serves, and nothing else. */
 const ONE_SLOT = /^\[Author needed:[^\]]*\]$/;
@@ -105,9 +106,14 @@ const EXCERPT_LENGTH = 60;
  *     An added unit that matches it comes from the author.
  * @param reading How every text is read. Front matter is not compared unless
  *     `frontMatter` is false, which reads it as text.
- * @returns What `compareUnits` returns for the units of each text.
+ * @returns What `compareUnits` returns for the units of each text. When
+ *     `blocksInDoubt` names any of the texts, every text counts as having
+ *     no units, so nothing is reported moved, dropped or added. There
+ *     `parse.ts` and CommonMark pair the fences differently, and a unit
+ *     could be text a renderer shows as code.
  */
 export function compareVersions(before: string, after: string, authorText: string | null, reading: Reading = {}): Comparison {
+  if ([before, after, authorText ?? ""].some(text => blocksInDoubt(text, reading))) return compareUnits([], [], []);
   return compareUnits(documentUnits(before, reading), documentUnits(after, reading), authorText === null ? [] : documentUnits(authorText, reading), after);
 }
 

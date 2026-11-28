@@ -4,6 +4,7 @@ import { auditText, configHash, isAuditedDocument, listTextFiles, projectAcronym
 import { CHECKLIST } from "../checklist.ts";
 import { checklistReading, formatChecklistReading, type RunFacts } from "../checklist-reading.ts";
 import { frontMatterRange, toLines } from "../parse.ts";
+import { blocksInDoubt } from "../block-doubt.ts";
 import type { Findings } from "../types.ts";
 import { calibrationEvidence, MODEL, sha256, validateCalibration, type GateEvidence } from "./catalogue.ts";
 import { createAsk, JevError, type Ask, type ClientOptions } from "./client.ts";
@@ -303,7 +304,9 @@ async function worker(queue: Queue, ask: Ask, includeText: boolean, report: JevR
  *     findings are kept. `skipped` holds every entry passed over. A target that is
  *     itself a symbolic link is skipped and not read, so `skipped` names it
  *     and every other list is empty. A directory with no supported file
- *     returns empty lists.
+ *     returns empty lists. A document that `blocksInDoubt` names, with
+ *     front matter read, keeps its requests but has no local finding,
+ *     because its title may be code to one reader and a heading to another.
  * @throws The file system error when the target does not exist or a selected
  *     directory cannot be listed. An `Error` when a selected file has an
  *     unsupported ending or cannot be read. A file that cannot be read inside
@@ -344,7 +347,9 @@ export function selectDocuments(target: string, projectDir: string, mode: "text"
       selection.documents.push({ file, path, plan: { candidates: [], findings: [] }, refusal: UNRECOGNISED_FRONT_MATTER });
       continue;
     }
-    selection.documents.push({ file, path, plan: markdown ? planDocument(text) : { candidates: [], findings: [] } });
+    const plan = markdown ? planDocument(text) : { candidates: [], findings: [] };
+    // The plan reads front matter, so the doubt does too. Its requests stay as planned.
+    selection.documents.push({ file, path, plan: blocksInDoubt(text) ? { candidates: plan.candidates, findings: [] } : plan });
   }
   return selection;
 }

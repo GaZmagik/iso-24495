@@ -1369,3 +1369,22 @@ test("a design send of a document with no title sends, logs and prints exactly w
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+// Issue 93: commonmark.js shows this title, which parse.ts reads as fenced code.
+test("a document whose fences parse.ts and CommonMark may pair differently gets no local finding, and its requests are unchanged", () => {
+  const directory = mkdtempSync(join(tmpdir(), "jev-doubt-"));
+  try {
+    const doubtful = "<!-- c -->~~~\n# T\n~~~\n\nWords.\n";
+    const untitled = "Words.\n";
+    writeFileSync(join(directory, "doubtful.md"), doubtful);
+    writeFileSync(join(directory, "untitled.md"), untitled);
+    const selected = selectDocuments(directory, directory);
+    const byFile = new Map(selected.documents.map(document => [document.file, document.plan]));
+    expect(byFile.get("doubtful.md")?.findings).toEqual([]);
+    expect(byFile.get("doubtful.md")?.candidates).toEqual(planDocument(doubtful).candidates);
+    expect(planDocument(doubtful).findings.map(finding => finding.rule)).toEqual(["opening-title"]);
+    expect(byFile.get("untitled.md")?.findings.map(finding => finding.rule)).toEqual(["opening-title"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

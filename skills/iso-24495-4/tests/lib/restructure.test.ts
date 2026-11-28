@@ -1150,3 +1150,21 @@ describe("matching takes time in proportion to the units", () => {
     expect(run.stdout.toString().trim()).toBe("1000000");
   }, 2 * CHILD_LIMIT_MS);
 });
+
+describe("a version whose fences parse.ts and CommonMark may pair differently", () => {
+  const before = "# T\n\nIntro words here.\n\n## Steps\n\nStep one is here.\n\nStep two is here.\n";
+  const swapped = "# T\n\nIntro words here.\n\n## Steps\n\nStep two is here.\n\nStep one is here.\n";
+  // commonmark.js renders everything below the second fence as code.
+  const doubtful = "# T\n\n<!-- c -->~~~\n\n~~~\n\nIntro words here.\n\n## Steps\n\nStep two is here.\n\nStep one is here.\n";
+
+  test("is compared as no units at all, so nothing is reported moved, dropped or added", () => {
+    expect(compareVersions(before, swapped, null).moved).toHaveLength(1);
+    for (const [one, two, author] of [[before, doubtful, null], [doubtful, before, null], [before, swapped, doubtful]] as const) {
+      const comparison = compareVersions(one, two, author);
+      expect([comparison.before, comparison.after, comparison.author, comparison.moved, comparison.dropped, comparison.added]).toEqual([[], [], [], [], [], []]);
+    }
+    const frontMatter = "---\nnote: |\n  ~~~\n---\n\n" + swapped;
+    expect(compareVersions(before, frontMatter, null).after).toEqual([]);
+    expect(compareVersions(before, frontMatter, null, { frontMatter: false }).after.length).toBeGreaterThan(0);
+  });
+});
