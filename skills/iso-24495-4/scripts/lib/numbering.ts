@@ -112,10 +112,20 @@ const DOTTED = /(?<![\d.])\d{1,3}(?:\.\d{1,3})+(?!\.?\d)/g;
 const PATH_PART = new RegExp(String.raw`(?<=[/\\#([<"'])(?:(?:${CITING_NOUNS})[-_]?)?(\d+(?:\.\d+)*)(?![\p{L}\p{N}])`, "giu");
 /** Emphasis, code and strike marks, which may stand between a citing word and its number, as in `step **2**`. */
 const INLINE_MARKS = /[*_`~]/g;
-/** An inline HTML tag, opening or closing, such as `<em>` or `</b>`. */
-const INLINE_TAG = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/g;
-/** The target of an inline link, `](x)`, or the label of a reference link, `][x]`, so `[See section](x) 2` reads as `See section 2`. */
-const LINK_TARGET = /\]\([^()]*\)|\]\[[^\]]*\]/g;
+/**
+ * The target of an inline link, `](x)`, with one depth of brackets inside it
+ * as in `](a(b)c)`, or the label of a reference link, `][x]`, so
+ * `[See section](x) 2` reads as `See section 2`.
+ */
+const LINK_TARGET = /\]\((?:[^()]|\([^()]*\))*\)|\]\[[^\]]*\]/g;
+/** The square brackets of a link's text, so a shortcut reference such as `[See section] 2` reads as `See section 2`. */
+const LINK_BRACKETS = /[[\]]/g;
+/** What a tag's end is looked for by: its `>`, or a quotation mark that opens a value, which may hold a `>`. */
+const TAG_STOP = /[>"']/g;
+/** What may follow a `<` that starts inline HTML: a letter, `/`, `!` or `?`. */
+const HTML_AFTER_ANGLE = /^[A-Za-z/!?]$/;
+/** What ends each kind of inline HTML that does not end at the first `>`, keyed by how it starts. */
+const INLINE_HTML_ENDS: ReadonlyArray<[string, string]> = [["<!--", "-->"], ["<?", "?>"], ["<![CDATA[", "]]>"]];
 /** A backslash escape or a character reference, such as `\#` or `&#50;`. */
 const ESCAPE_OR_REFERENCE = /\\([!-/:-@[-`{-~])|&(?:#[xX][0-9a-fA-F]{1,6}|#\d{1,7}|[A-Za-z][A-Za-z0-9]{1,31});/g;
 /** A backslash that ends a line, a hard line break. */
@@ -160,8 +170,9 @@ const LINE_START = /^[ \t>*+#=-]*(?:\d+[.)][ \t>*+#=-]*)*/;
  * between is searched too, joined with every line break as one space: once
  * with the quotation markers and spaces each line opens with taken off, and
  * once with every marker a line opens with taken off. Each of those is
- * searched as it stands, and again with its inline tags, link targets and
- * marks taken out and its escapes and character references read. So a
+ * searched as it stands, and again with its link targets, link brackets and
+ * marks taken out and its escapes and character references read, both with
+ * its inline HTML taken out and with it kept. So a
  * citation that wraps, as `See section` above `2.`, cites, and so does
  * `See section &#50;.`. A number that only looks like a citation, such as
  * `in 2 minutes`, quiets the rule too.
@@ -176,7 +187,7 @@ const LINE_START = /^[ \t>*+#=-]*(?:\d+[.)][ \t>*+#=-]*)*/;
  *     question.
  * @param tally When given, its `lines` grows by one for each line searched
  *     for a citation, so a test can count the work.
- * @returns One finding, on the first numbered heading, or none.
+ * @returns One finding, on the first counted heading, or none.
  */
 export function uncitedNumberingViolations(
   text: string,
@@ -443,9 +454,10 @@ interface Targets {
 
 /**
  * Whether any line outside the counted headings and any contents section
- * cites a heading that opens with a number. Each line is searched once, and
- * each number found is looked up in a set or by halving a sorted list, so
- * the time grows with the text and not with the number of headings.
+ * cites a heading that opens with a number. Each line is read a fixed
+ * number of times, alone and in its run of lines, and each number found is
+ * looked up in a set or by halving a sorted list, so the time grows with the
+ * text and not with the number of headings.
  *
  * @param counted The headings the finding counts, whose lines are not searched.
  * @param named Every heading a citation may name.
@@ -497,13 +509,19 @@ function cited(
   // A line that may be a heading in some reading names a target too, so a
   // heading the structural reading misses, as inside a fence it pairs
   // differently, can still be cited.
-  // A line above an underline is read both with its quotation markers taken
-  // off and with every container marker taken off, as `2.1 Scope` would lose
-  // its `2.` to the second.
+  // Every line of a run of lines that ends above an underline may start a
+  // setext heading's text, as one below a link definition does, so each is
+  // read both with its quotation markers taken off and with every container
+  // marker taken off, as `2.1 Scope` would lose its `2.` to the second.
+  const aboveUnderline = new Uint8Array(lines.length + 1);
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const next = lines[index + 1] ?? "";
+    aboveUnderline[index] = UNDERLINE_SHAPE.test(next) || (aboveUnderline[index + 1] === 1 && !BLANK.test(next)) ? 1 : 0;
+  }
   const shapedParts: number[][] = [];
   for (const [index, line] of lines.entries()) {
     const wordings = HEADING_SHAPE.test(line) ? [line.replace(HEADING_SHAPE, "")]
-      : UNDERLINE_SHAPE.test(lines[index + 1] ?? "") ? [line.replace(QUOTE_MARKERS, ""), line.replace(CONTAINER_MARKERS, "")] : [];
+      : aboveUnderline[index] === 1 ? [line.replace(QUOTE_MARKERS, ""), line.replace(CONTAINER_MARKERS, "")] : [];
     for (const wording of wordings) {
       const identifier = namedIdentifierOf(wording);
       if (identifier !== null) shapedParts.push(identifier.split(".").map(Number));
@@ -541,7 +559,8 @@ function cited(
  * the quotation markers and spaces each line opens with taken off, so a line
  * that opens with `2.` goes on the line above, and with every marker
  * `LINE_START` names taken off as well, so `See step` above `- 2` reads as
- * `See step 2`. Each is read as it stands and as `spelt` gives it.
+ * `See step 2`. Each is read as it stands and as `spelt` gives it, with
+ * inline HTML taken out and with it kept.
  */
 function citesInParagraph(paragraph: readonly string[], targets: Targets): boolean {
   if (paragraph.length === 0) return false;
@@ -549,19 +568,88 @@ function citesInParagraph(paragraph: readonly string[], targets: Targets): boole
     paragraph.map(line => line.replace(QUOTE_MARKERS, "").replace(HARD_BREAK, "")).join(" "),
     paragraph.map(line => line.replace(LINE_START, "").replace(HARD_BREAK, "")).join(" "),
   ];
-  return readings.some(reading => citesInLine(reading, targets) || citesInLine(spelt(reading), targets));
+  // A second spelling keeps HTML as written, as taking it out can take text
+  // a renderer shows.
+  return readings.some(reading => citesInLine(reading, targets) || citesInLine(spelt(reading), targets)
+    || citesInLine(spelt(reading, "kept"), targets));
 }
 
 /**
- * Text with its inline tags and link targets taken out, its escapes and
- * character references read, and then its emphasis and code marks taken
- * out, so `<em>2</em>`, `[See section](x) 2` and `&#50;` give `2`,
- * `See section 2` and `2`.
+ * Text with its link targets and link brackets taken out, then what
+ * `withoutHtml` takes for inline HTML, then its escapes and character
+ * references read, and then its emphasis and code marks taken out, so
+ * `<em>2</em>`, `[See section](x) 2` and `&#50;` give `2`, `See section 2`
+ * and `2`.
  */
-function spelt(text: string): string {
-  return text.replace(INLINE_TAG, "").replace(LINK_TARGET, "")
+function spelt(text: string, html: "taken out" | "kept" = "taken out"): string {
+  const linked = text.replace(LINK_TARGET, "").replace(LINK_BRACKETS, "");
+  return (html === "kept" ? linked : withoutHtml(linked))
     .replace(ESCAPE_OR_REFERENCE, (whole, escaped?: string) => escaped ?? decodeEntities(whole))
     .replace(INLINE_MARKS, "");
+}
+
+/**
+ * Text with what may be inline HTML taken out: a comment to its `-->`, a
+ * processing instruction to its `?>`, CDATA to its `]]>`, and a tag or a
+ * declaration to the next `>` outside a quoted value, so `<a title=">">`
+ * goes whole. Only a `<` with a letter, `/`, `!` or `?` after it starts one,
+ * and a `<` whose end never follows is kept. It reads more widely than a
+ * renderer does, so it can only quiet the rule.
+ *
+ * Once an end or a closing quotation mark is not found, it is not looked for
+ * again, as it is not found later either, so the text is read a fixed
+ * number of times.
+ */
+function withoutHtml(text: string): string {
+  let kept = "";
+  let from = 0;
+  const unended = new Set<string>();
+  for (let at = text.indexOf("<"); at !== -1; at = text.indexOf("<", from)) {
+    const close = htmlEnd(text, at, unended);
+    if (close === -1) {
+      kept += text.slice(from, at + 1);
+      from = at + 1;
+    } else {
+      kept += text.slice(from, at);
+      from = close;
+    }
+  }
+  return kept + text.slice(from);
+}
+
+/**
+ * Where the inline HTML that may start at a `<` ends: the offset just past
+ * its end, or -1 when none starts there or its end never follows.
+ *
+ * @param unended The ends and quotation marks already not found, which grows.
+ */
+function htmlEnd(text: string, at: number, unended: Set<string>): number {
+  if (!HTML_AFTER_ANGLE.test(text.charAt(at + 1))) return -1;
+  for (const [start, end] of INLINE_HTML_ENDS) {
+    if (!text.startsWith(start, at)) continue;
+    const close = unended.has(end) ? -1 : text.indexOf(end, at + 1);
+    if (close === -1) unended.add(end);
+    return close === -1 ? -1 : close + end.length;
+  }
+  // A tag or a declaration: the next `>`, stepping over each quoted value.
+  let position = at + 1;
+  while (!unended.has(">")) {
+    TAG_STOP.lastIndex = position;
+    const stop = TAG_STOP.exec(text);
+    if (stop === null) {
+      unended.add(">");
+      break;
+    }
+    if (stop[0] === ">") return stop.index + 1;
+    const quote = stop[0];
+    const closing = unended.has(quote) ? -1 : text.indexOf(quote, stop.index + 1);
+    if (closing === -1) {
+      unended.add(quote);
+      break;
+    }
+    position = closing + 1;
+  }
+  return -1;
 }
 
 /** Whether a written number, such as `02` or `2.1.`, is a numbered heading's identifier. */

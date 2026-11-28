@@ -7,8 +7,10 @@ import { auditText } from "../../scripts/audit-corpus.ts";
 
 /**
  * Every text a test below gave the rule, with the lines of the findings it
- * made there, so the oracle can check each one. Every call to the rule in
- * this file goes through `run`, which fills it.
+ * made there, so the oracle can check each one. Every direct call to the
+ * rule in this file goes through `run`, which fills it. The calls through
+ * `layoutViolations` and `auditText` give it `BASE` alone, which `run` also
+ * records.
  */
 const SPECIMENS = new Map<string, Set<number>>();
 
@@ -256,6 +258,35 @@ describe("what counts as a citation", () => {
     }
   });
 
+  test("inline HTML of every kind and every shape of link between a citing word and its number is read past", () => {
+    // commonmark.js 0.31.2 renders each of these with `See section 2.` in its text.
+    const spelt = [
+      "See section <!-- x --> 2.", "See section <?x?> 2.", "See section <a title=\">\">2</a>.", "See section <a href='>'>2</a>.", "[See section](a(b)c) 2.",
+      "[See section] 2.\n\n[see section]: x", "See section <![CDATA[x]]> 2.", "See section <!DOCTYPE x> 2.", "[See section](<a b>) 2.", "[See section](x \"t(i)\") 2.",
+      "![See section](x) 2.", "See section <span\nclass=\"a\">2</span>.", "See section <x-y>2</x-y>.", "[See section][r] 2.\n\n[r]: x",
+    ];
+    for (const text of spelt) {
+      expect(lines(`${BASE}\n${text}\n`), text).toEqual([]);
+      expect(lines(`${BASE}\n${text.replace(" 2", " 3").replace(">2", ">3")}\n`), `${text} with 3`).toEqual([5]);
+    }
+    // A comment runs to its `-->`, past any `>` inside it.
+    expect(lines(`${BASE}\nSee section <!-- a > b --> 2.\n`)).toEqual([]);
+    // A `<` that ends nowhere is text, and text between a citing word and its number breaks the form.
+    expect(lines(`${BASE}\nSee section < 2.\n`)).toEqual([5]);
+    // A `<` with no letter after it starts no HTML, so it cannot take a citation below it to the next `>`.
+    expect(lines(`${BASE}\n<\nstep &#x32;\n<![CDATA[x]]>\n`)).toEqual([]);
+    // HTML is also read as written, so a `<` that a renderer shows as text cannot hide one either.
+    expect(lines(`${BASE}\n<a\nstep &#x32;\n>\n`)).toEqual([]);
+    // A lone `<` does not swallow the tags after it, which are still taken out.
+    expect(lines(`${BASE}\n< see section <em>2</em>.\n`)).toEqual([]);
+    // What only looks like a tag, as `&#x32;` cannot name an attribute, is shown as text, and read so.
+    expect(lines(`${BASE}\nSee <a step &#x32; x>\n`)).toEqual([]);
+    // A quotation mark outside any tag does not pair with one inside a tag below it.
+    expect(lines(`${BASE}\n"\nSee section <a title=">">\n2.\n`)).toEqual([]);
+    // A citation inside quotation marks is read with them kept as well.
+    expect(lines(`${BASE}\nHe wrote "see section &#50;".\n`)).toEqual([]);
+  });
+
   test("number words reach ninety-nine, and a file that counts a number past them is not reported", () => {
     const teens = "# T\n\n## 13. A\n\n## 14. B\n";
     for (const text of ["See step thirteen.", "See the thirteenth step.", "See step 13."]) {
@@ -323,6 +354,12 @@ describe("what counts as a citation", () => {
     expect(lines(contents)).toEqual([]);
     expect(lines(contents.replace("> # x", "> x"))).toEqual([10]);
     expect(lines("# T\n\n## Contents\n\n>\nx\n---\n\nSee 2.\n\n## 1. A\n\n## 2. B\n")).toEqual([]);
+  });
+
+  test("any line of the run above an underline names a target, as a setext heading's text may start there", () => {
+    // commonmark.js 0.31.2 reads the last four lines as a level-2 heading, `10. x 2.`, once the link definition is taken.
+    expect(lines(`${BASE}\nsee section 10.\n\n[d]: x\n10. x\n2.\n-\n`)).toEqual([]);
+    expect(lines(`${BASE}\nsee section 11.\n\n[d]: x\n10. x\n2.\n-\n`)).toEqual([5]);
   });
 
   test("a line above an underline names a target in either reading of its markers", () => {
@@ -415,7 +452,7 @@ describe("uncited-numbering in the audits", () => {
 });
 
 describe("the work grows with the text", () => {
-  test("each line outside the counted headings is searched once, however many headings there are", () => {
+  test("each line outside the counted headings is counted once as searched, however many headings there are", () => {
     const body = "Text.\n".repeat(200);
     const few = `# T\n\n## 1. A\n\n## 2. B\n\n${body}`;
     expect(searched(few)).toBe(toLines(few).length - 2);
@@ -498,6 +535,25 @@ describe("each citation form holds whatever follows it", () => {
     });
   }
 
+  test("each form that holds a space cites with that space broken across lines, by a marker or a hard break", () => {
+    const breaks = ["\n", "\n> ", "\n- ", "\\\n", "  \n", "\n    "];
+    const missed: string[] = [];
+    let tried = 0;
+    for (const [, document, form] of forms) {
+      for (let at = form.indexOf(" "); at !== -1; at = form.indexOf(" ", at + 1)) {
+        for (const lineBreak of breaks) {
+          for (const ending of ["", ",", " here."]) {
+            tried++;
+            const text = `${document}\nCompare ${form.slice(0, at)}${lineBreak}${form.slice(at + 1)}${ending}\n`;
+            if (lines(text).length > 0) missed.push(text);
+          }
+        }
+      }
+    }
+    expect(missed).toEqual([]);
+    expect(tried).toBe(198);
+  });
+
   test("a dotted number at the end of a sentence cites, and one inside a longer number does not", () => {
     expect(lines("# T\n\n## 2. P\n\n### 2.1 A\n\n### 2.2 B\n\nCompare with 2.2.\n")).toEqual([]);
     expect(lines("# T\n\n## 2. P\n\n### 2.1 A\n\n### 2.2 B\n\nVersion 2.2.4.\n")).toEqual([3]);
@@ -521,7 +577,20 @@ describe("the rule's own work stays linear on hostile lines", () => {
     expect(ruleTime(`${BASE}\n${"-".repeat(160000)}x\n`)).toBeLessThan(2000);
   });
 
-  test("a line of many comments is searched once from each place, with nothing copied", () => {
+  test("HTML and link shapes that never end are looked for once, not once for each start", () => {
+    // The structural reading is slow on such lines, so the rule is given the
+    // headings of the text above them, which stand on the same lines. Each
+    // took under 0.3 s on Windows when written.
+    const parsed = structure(BASE);
+    for (const piece of ["<!--", "<?", "<![CDATA[", "<a ", "](", "]([", "\"<a \"", "'"]) {
+      const text = `${BASE}\nSee ${piece.repeat(100000)}\n`;
+      const started = performance.now();
+      expect(run(text, {}, parsed), piece).toHaveLength(1);
+      expect(performance.now() - started, piece).toBeLessThan(2000);
+    }
+  });
+
+  test("a line of many comments is read a fixed number of times, with nothing copied", () => {
     // The structural reading takes about 100 s on such a line, so the rule is
     // given the headings of the text above it, which stand on the same lines.
     const text = `${BASE}\n${"<!---->".repeat(100000)}\n`;
@@ -613,7 +682,7 @@ describe("uncited-numbering checked against Bun's renderer, a test oracle", () =
     expect(checked).toBeGreaterThan(100);
   });
 
-  test("this file calls the rule only through run, so the oracle sees every finding", () => {
+  test("this file calls the rule directly only through run, so the oracle sees every finding it makes", () => {
     const source = readFileSync(import.meta.path, "utf8");
     const calls = [...source.matchAll(/uncitedNumberingViolations\(/g)].length;
     // The one call, inside run.

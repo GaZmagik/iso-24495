@@ -222,6 +222,18 @@ describe("the run's record and the echo", () => {
     expect(shown.slice(shown.indexOf("</table>"))).toContain("Problem: A key of 29 characters (not shown)");
   });
 
+  test("an honoured declaration whose path holds a pipe and a tag renders as one cell of code", () => {
+    // Windows cannot hold such a file name, so the record is made directly.
+    const path = "x|<img src=x onerror=alert(1)>.md";
+    const run = startDeclared(facts({ [path]: { headingNumbers: "cited" } }));
+    recordDeclared(run, path, UNCITED, { fileName: path, markdown: true });
+    const shown = Bun.markdown.html(formatDeclared(finishDeclared(run), run) ?? "");
+    expect(shown).not.toContain("<img");
+    const rows = [...shown.matchAll(/<tr>([^]*?)<\/tr>/g)].map(row => [...(row[1] ?? "").matchAll(/<td>/g)].length);
+    expect(rows).toEqual([0, 4]);
+    expect(shown).toContain("<code>x|&lt;img src=x onerror=alert(1)&gt;.md</code>");
+  });
+
   test("several questions and findings are counted in the plural", () => {
     const report = { source: FACTS_FILE, files: [], problems: [], unread: 0, effects: [
       { file: "a.md", fact: "headingNumbers" as const, value: "cited" as const, rule: "uncited-numbering" as const, questionsNotRaised: 2, questionsMadeFindings: 0 },
