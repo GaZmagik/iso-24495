@@ -967,7 +967,10 @@ ${sentence}`)
       "---",
       "The supplier shall be audited.",
     ];
-    expect(rulesFor(scalar.join(BREAK))).toContain("legalese");
+    // Issue 93: a fence-shaped line in front matter silences the document.
+    // This pair closes inside it, so CommonMark shows the sentence, and the
+    // broad check loses a true finding here rather than risk a false one.
+    expect(rulesFor(scalar.join(BREAK))).toEqual([]);
   });
 
   // Round 11. The three scanners each kept their own fence and front matter
@@ -1000,7 +1003,9 @@ ${sentence}`)
     // A byte order mark precedes the opening delimiter in many Windows files.
     const withMark = byteOrderMark
       + ["---", "description: |", "  ```md", "---", legalese].join(BREAK);
-    expect(rulesFor(withMark)).toContain("legalese");
+    // Issue 93: CommonMark has no front matter, so it reads the fence as
+    // opening a code block that holds the sentence. The audit says nothing.
+    expect(rulesFor(withMark)).toEqual([]);
   });
 
   // The block scanners were normalised while three rules still split the text
@@ -1181,7 +1186,10 @@ ${sentence}`)
 
     // Jekyll closes front matter with dots, and an unclosed block hid the body.
     const dots = ["---", "description: |", "  ```md", "...", legalese];
-    expect(rulesFor(dots.join(BREAK))).toContain("legalese");
+    // Issue 93: CommonMark reads the fence as opening a code block that holds
+    // the sentence, so the audit says nothing. Without the fence, the body is read.
+    expect(rulesFor(dots.join(BREAK))).toEqual([]);
+    expect(rulesFor(["---", "description: |", "  md", "...", legalese].join(BREAK))).toContain("legalese");
   });
 
   // Round 15 re-swept the constructs and named what still blocked release.
